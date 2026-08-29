@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"prism/internal/canon"
 	"prism/internal/conformance"
 	"prism/internal/conformance/codec/chat"
 )
@@ -124,5 +125,29 @@ func TestRunnerDigestIntegrity(t *testing.T) {
 	res := conformance.NewRunner(chat.Builder{}).Run(context.Background(), c, conformance.Options{})
 	if res.Passed || res.Classification != conformance.ClassHarnessFailure || res.SecondaryCode != "contract_integrity" {
 		t.Fatalf("tampered digest: %+v", res)
+	}
+}
+
+func TestBuildRejectsUnsupportedItem(t *testing.T) {
+	got, err := (chat.Builder{}).Build(context.Background(), canon.Request{
+		Input: []canon.Item{canon.ReasoningItem{}},
+	}, conformance.BuildOptions{})
+	if err == nil {
+		t.Fatal("unsupported item must return an error")
+	}
+	if got != nil {
+		t.Fatalf("unsupported item returned request: %+v", got)
+	}
+}
+
+func TestBuildRejectsUnsupportedTool(t *testing.T) {
+	got, err := (chat.Builder{}).Build(context.Background(), canon.Request{
+		Tools: []canon.Tool{canon.CustomToolDef{}},
+	}, conformance.BuildOptions{})
+	if err == nil {
+		t.Fatal("unsupported tool must return an error")
+	}
+	if got != nil {
+		t.Fatalf("unsupported tool returned request: %+v", got)
 	}
 }
