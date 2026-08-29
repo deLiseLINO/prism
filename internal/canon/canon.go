@@ -35,10 +35,23 @@ type Sampling struct {
 	TopP              *float64
 	Stop              []string
 	ParallelToolCalls *bool
+	PresencePenalty   *float64
+	FrequencyPenalty  *float64
 	ServiceTier       ServiceTier
 }
 
-type TextOutput struct{ Verbosity TextVerbosity }
+type TextOutput struct {
+	Verbosity TextVerbosity
+	Format    *TextFormat
+}
+
+type TextFormat struct {
+	Type        string
+	Name        string
+	Description string
+	Schema      []byte
+	Strict      *bool
+}
 
 type Content interface{ content() }
 
@@ -162,8 +175,8 @@ type LocalShellToolDef struct{}
 
 type ToolSearchToolDef struct{ Limit int }
 
-func (FunctionTool) tool()     {}
-func (CustomToolDef) tool()    {}
+func (FunctionTool) tool()      {}
+func (CustomToolDef) tool()     {}
 func (LocalShellToolDef) tool() {}
 func (ToolSearchToolDef) tool() {}
 
@@ -185,6 +198,7 @@ const (
 	RoleUser Role = iota + 1
 	RoleAssistant
 	RoleSystem
+	RoleDeveloper
 )
 
 type ReasoningEffort uint8

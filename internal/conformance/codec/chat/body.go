@@ -93,10 +93,19 @@ func toolResultMessages(fo canon.FunctionOutput) []message {
 }
 
 func contentWire(content []canon.Content) any {
-	if len(content) == 1 {
-		if t, ok := content[0].(canon.TextContent); ok {
-			return t.Text
+	allText := true
+	for _, c := range content {
+		if _, ok := c.(canon.TextContent); !ok {
+			allText = false
+			break
 		}
+	}
+	if allText {
+		var sb strings.Builder
+		for _, c := range content {
+			sb.WriteString(c.(canon.TextContent).Text)
+		}
+		return sb.String()
 	}
 	parts := make([]any, 0, len(content))
 	for _, c := range content {
@@ -117,6 +126,8 @@ func roleWire(r canon.Role) string {
 		return "assistant"
 	case canon.RoleSystem:
 		return "system"
+	case canon.RoleDeveloper:
+		return "developer"
 	default:
 		return "user"
 	}

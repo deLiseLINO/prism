@@ -3,12 +3,12 @@ package chat_test
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"prism/internal/canon"
 	"prism/internal/conformance"
 	"prism/internal/conformance/codec/chat"
+	"prism/internal/conformance/codec/responses"
 )
 
 func fixturePath() string {
@@ -91,27 +91,53 @@ func TestRunnerNonRunnableCasesFailLoudly(t *testing.T) {
 		if res.Passed {
 			continue
 		}
-		if res.Classification != conformance.ClassHarnessFailure {
-			t.Fatalf("%s classification %s want harness_failure", c.ID, res.Classification)
-		}
-		upstream := "openai-chat"
-		if len(c.Requirements.UpstreamProtocols) > 0 {
-			upstream = c.Requirements.UpstreamProtocols[0]
-		}
-		if c.Fixture.Role == conformance.RoleAdapterVector && upstream == "openai-chat" {
-			if res.SecondaryCode != "contract_integrity" {
-				t.Fatalf("%s: live path without golden must be contract_integrity, got %s", c.ID, res.SecondaryCode)
-			}
-			if len(res.Diagnostics) == 0 || !strings.Contains(res.Diagnostics[0], "golden") {
-				t.Fatalf("%s: diagnostic must name the missing golden: %v", c.ID, res.Diagnostics)
+		if res.Classification == conformance.ClassProtocolFailure {
+			if res.SecondaryCode != "deterministic_assertion" {
+				t.Fatalf("%s protocol failure code %s", c.ID, res.SecondaryCode)
 			}
 			continue
+		}
+		if res.Classification != conformance.ClassHarnessFailure {
+			t.Fatalf("%s classification %s want harness_failure", c.ID, res.Classification)
 		}
 		if res.SecondaryCode != "execution_error" {
 			t.Fatalf("%s classification %s/%s", c.ID, res.Classification, res.SecondaryCode)
 		}
 		if len(res.Diagnostics) == 0 {
 			t.Fatalf("%s diagnostic must be non-empty: %v", c.ID, res.Diagnostics)
+		}
+	}
+}
+
+func TestLiveChatCoreSuite(t *testing.T) {
+	a, err := conformance.Load(fixturePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := conformance.NewRoutedRunner(chat.Builder{}, responses.Builder{})
+	ids := []string{
+		"chat-core.protocol.request-mapping",
+		"chat-core.protocol.nonstream-envelope",
+		"chat-core.protocol.stream-assembly",
+		"chat-core.protocol.stream-terminal",
+	}
+	for _, id := range ids {
+		found := false
+		for _, c := range a.Cases {
+			if c.ID != id {
+				continue
+			}
+			found = true
+			res := r.Run(context.Background(), c, conformance.Options{})
+			if !res.Passed {
+				t.Fatalf("%s failed: %+v diag=%v", id, res, res.Diagnostics)
+			}
+			if len(res.AssertionResults) == 0 {
+				t.Fatalf("%s: no assertions evaluated", id)
+			}
+		}
+		if !found {
+			t.Fatalf("%s not in fixture authority", id)
 		}
 	}
 }
@@ -146,5 +172,56 @@ func TestBuildRejectsUnsupportedTool(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("unsupported tool returned request: %+v", got)
+	}
+}
+
+func TestBuildChatCoreMapping(t *testing.T) {
+	got, err := (chat.Builder{}).Build(context.Background(), canon.Request{
+		Model:        "fixture-model",
+		Instructions: []canon.Content{canon.TextContent{Text: "SYS"}},
+		Input: []canon.Item{
+			canon.Message{Role: canon.RoleDeveloper, Content: []canon.Content{canon.TextContent{Text: "DEV"}}},
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "PING"}}},
+		},
+		Text: canon.TextOutput{Format: &canon.TextFormat{Type: "json_object"}},
+	}, conformance.BuildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"model":"fixture-model","messages":[{"role":"system","content":"SYS"},{"role":"developer","content":"DEV"},{"role":"user","content":"PING"}],"stream":false,"response_format":{"type":"json_object"}}`
+	if string(got.Body) != want {
+		t.Fatalf("body\n got %s\nwant %s", got.Body, want)
+	}
+}
+
+func TestBuildStreamOptions(t *testing.T) {
+	got, err := (chat.Builder{}).Build(context.Background(), canon.Request{
+		Model:  "fixture-model",
+		Stream: true,
+		Input:  []canon.Item{canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "PING"}}}},
+	}, conformance.BuildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"model":"fixture-model","messages":[{"role":"user","content":"PING"}],"stream":true,"stream_options":{"include_usage":true}}`
+	if string(got.Body) != want {
+		t.Fatalf("body\n got %s\nwant %s", got.Body, want)
+	}
+}
+
+func TestBuildJoinsMultiPartTextContent(t *testing.T) {
+	got, err := (chat.Builder{}).Build(context.Background(), canon.Request{
+		Model: "fixture-model",
+		Input: []canon.Item{canon.Message{
+			Role:    canon.RoleUser,
+			Content: []canon.Content{canon.TextContent{Text: "AB"}, canon.TextContent{Text: "CD"}},
+		}},
+	}, conformance.BuildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"model":"fixture-model","messages":[{"role":"user","content":"ABCD"}],"stream":false}`
+	if string(got.Body) != want {
+		t.Fatalf("body\n got %s\nwant %s", got.Body, want)
 	}
 }

@@ -3,10 +3,18 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"prism/internal/canon"
 	"prism/internal/conformance"
 )
+
+type jsonSchemaSpec struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
+}
 
 type Builder struct{}
 
@@ -14,6 +22,9 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 	messages, err := messagesFrom(req.Input)
 	if err != nil {
 		return nil, err
+	}
+	if sys := systemMessage(req.Instructions); sys != nil {
+		messages = append([]message{*sys}, messages...)
 	}
 	body := body{Model: req.Model, Messages: messages, Stream: req.Stream}
 	if req.Sampling.Temperature != nil {
@@ -27,6 +38,12 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 	}
 	if req.Sampling.ParallelToolCalls != nil {
 		body.ParallelToolCalls = req.Sampling.ParallelToolCalls
+	}
+	if req.Sampling.PresencePenalty != nil {
+		body.PresencePenalty = req.Sampling.PresencePenalty
+	}
+	if req.Sampling.FrequencyPenalty != nil {
+		body.FrequencyPenalty = req.Sampling.FrequencyPenalty
 	}
 	switch req.Sampling.ServiceTier {
 	case canon.TierFlex:
@@ -51,6 +68,12 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 	if tc, ok := toolChoiceFrom(req.ToolChoice); ok {
 		body.ToolChoice = tc
 	}
+	if rf, ok := responseFormat(req.Text.Format); ok {
+		body.ResponseFormat = rf
+	}
+	if req.Stream {
+		body.StreamOptions = json.RawMessage(`{"include_usage":true}`)
+	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -64,4 +87,51 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 		},
 		Body: raw,
 	}, nil
+}
+
+func systemMessage(instructions []canon.Content) *message {
+	var parts []string
+	for _, c := range instructions {
+		if t, ok := c.(canon.TextContent); ok {
+			parts = append(parts, t.Text)
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return &message{Role: "system", Content: strings.Join(parts, "\n\n")}
+}
+
+func responseFormat(f *canon.TextFormat) (json.RawMessage, bool) {
+	if f == nil {
+		return nil, false
+	}
+	switch f.Type {
+	case "json_object":
+		return json.RawMessage(`{"type":"json_object"}`), true
+	case "json_schema":
+		spec := jsonSchemaSpec{Name: "response"}
+		if f.Name != "" {
+			spec.Name = f.Name
+		}
+		if f.Description != "" {
+			spec.Description = f.Description
+		}
+		if len(f.Schema) > 0 {
+			spec.Schema = f.Schema
+		}
+		if f.Strict != nil {
+			spec.Strict = f.Strict
+		}
+		raw, err := json.Marshal(struct {
+			Type       string         `json:"type"`
+			JSONSchema jsonSchemaSpec `json:"json_schema"`
+		}{Type: "json_schema", JSONSchema: spec})
+		if err != nil {
+			return nil, false
+		}
+		return raw, true
+	default:
+		return nil, false
+	}
 }
