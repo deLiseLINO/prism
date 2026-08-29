@@ -9,11 +9,12 @@ import (
 
 	"prism/internal/conformance"
 	"prism/internal/conformance/codec/chat"
+	"prism/internal/conformance/codec/responses"
 )
 
 func main() {
 	fixturesPath := flag.String("fixtures", "cmd/prism-wirecheck/fixtures/protocol-v1-cases.json", "path to conformance fixture file")
-	caseID := flag.String("case", "responses-core.protocol.request-shape", "run one case by id")
+	caseID := flag.String("case", "", "run one case by id; empty runs the responses-core suite")
 	noSelfCheck := flag.Bool("no-self-check", false, "skip the DSL self-check gauntlet")
 	flag.Parse()
 
@@ -25,7 +26,7 @@ func main() {
 
 	suites := map[string]int{}
 	fixtures := 0
-	var selected *conformance.Case
+	var selected []conformance.Case
 	for i := range authority.Cases {
 		c := &authority.Cases[i]
 		suites[c.Suite]++
@@ -33,11 +34,17 @@ func main() {
 		if c.InitiatingRequest != nil {
 			fixtures++
 		}
-		if c.ID == *caseID {
-			selected = c
+		if *caseID != "" {
+			if c.ID == *caseID {
+				selected = append(selected, *c)
+			}
+			continue
+		}
+		if c.Suite == "responses-core" {
+			selected = append(selected, *c)
 		}
 	}
-	if selected == nil {
+	if len(selected) == 0 {
 		fmt.Fprintf(os.Stderr, "wirecheck: unknown case %q\n", *caseID)
 		os.Exit(1)
 	}
@@ -56,18 +63,22 @@ func main() {
 	fmt.Println("== live codec check ==")
 	fmt.Println()
 
-	res := conformance.NewRunner(chat.Builder{}).Run(context.Background(), *selected, conformance.Options{
+	runner := conformance.NewRoutedRunner(chat.Builder{}, responses.Builder{})
+	opts := conformance.Options{
 		BaseURL: "https://api.openai.com/v1",
 		APIKey:  "fixture-key",
 		Goldens: goldens,
-	})
-	printCase(*selected, res, goldens)
-	fmt.Println()
-
-	passed := 0
-	if res.Passed {
-		passed = 1
 	}
+	passed := 0
+	for i := range selected {
+		res := runner.Run(context.Background(), selected[i], opts)
+		printCase(selected[i], res, goldens)
+		fmt.Println()
+		if res.Passed {
+			passed++
+		}
+	}
+
 	selfCheckPassed := true
 	if !*noSelfCheck {
 		fmt.Println("== DSL self-check (synthetic, not part of the CL-00 authority) ==")
@@ -99,7 +110,7 @@ func main() {
 		summary += ", DSL core self-check FAILED"
 	}
 	fmt.Println(summary)
-	if !res.Passed || !selfCheckPassed {
+	if passed != len(selected) || !selfCheckPassed {
 		os.Exit(1)
 	}
 }

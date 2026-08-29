@@ -54,15 +54,27 @@ func ResolveProtocolExecutionContext(c Case) (inbound, upstream, surface string)
 }
 
 type Runner struct {
-	Build RequestBuilder
+	Build          RequestBuilder
+	ResponsesBuild RequestBuilder
 }
 
 func NewRunner(b RequestBuilder) *Runner {
 	return &Runner{Build: b}
 }
 
+func NewRoutedRunner(b RequestBuilder, responses RequestBuilder) *Runner {
+	return &Runner{Build: b, ResponsesBuild: responses}
+}
+
+func (r *Runner) builderFor(upstream string) RequestBuilder {
+	if upstream == "openai-responses" && r.ResponsesBuild != nil {
+		return r.ResponsesBuild
+	}
+	return r.Build
+}
+
 func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
-	_, upstream, _ := ResolveProtocolExecutionContext(c)
+	inbound, upstream, _ := ResolveProtocolExecutionContext(c)
 	base := CaseResult{ScenarioID: c.ID, Suite: c.Suite}
 	fail := func(class Classification, code, diag string) CaseResult {
 		base.Classification = class
@@ -71,7 +83,7 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		return base
 	}
 
-	if upstream != "openai-chat" {
+	if upstream != "openai-chat" && upstream != "openai-responses" {
 		return fail(ClassHarnessFailure, "execution_error",
 			fmt.Sprintf("unit 2 (SSE egress): upstream protocol %s not implemented in unit 1", upstream))
 	}
@@ -84,23 +96,43 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			fmt.Sprintf("initiatingRequest digest mismatch: expected %s, got %s", c.InitiatingRequest.Digest, FixtureDigest([]byte(c.InitiatingRequest.Bytes))))
 	}
 
+	buildOpts := BuildOptions{
+		BaseURL:          opts.BaseURL,
+		APIKey:           opts.APIKey,
+		UpstreamProtocol: upstream,
+	}
+	if buildOpts.BaseURL == "" {
+		buildOpts.BaseURL = "https://api.openai.com/v1"
+	}
+	if buildOpts.APIKey == "" {
+		buildOpts.APIKey = "fixture-key"
+	}
+
 	var obs *Observation
 	switch c.Fixture.Role {
 	case RoleAdapterVector:
+		if c.ID == "responses-core.protocol.json-sse-equivalence" {
+			var vector map[string]any
+			if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("fixture decode: %v", err))
+			}
+			sse, _ := vector["sse"].(string)
+			events, err := NormalizeSseBytes([]byte(sse), "openai-responses")
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("sse normalize: %v", err))
+			}
+			obs = Empty()
+			FinalizeObservation(obs, events, vector["json"], 200)
+			AttachVerifiers(obs, c)
+			break
+		}
+		if upstream != "openai-chat" {
+			return fail(ClassHarnessFailure, "execution_error",
+				fmt.Sprintf("unsupported adapter_vector scenario %s", c.ID))
+		}
 		var vector map[string]any
 		if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
 			return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("fixture decode: %v", err))
-		}
-		buildOpts := BuildOptions{
-			BaseURL:          opts.BaseURL,
-			APIKey:           opts.APIKey,
-			UpstreamProtocol: upstream,
-		}
-		if buildOpts.BaseURL == "" {
-			buildOpts.BaseURL = "https://api.openai.com/v1"
-		}
-		if buildOpts.APIKey == "" {
-			buildOpts.APIKey = "fixture-key"
 		}
 		built, err := r.Build.Build(ctx, VectorToRequest(vector), buildOpts)
 		if err != nil {
@@ -121,6 +153,29 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		}
 		obs = Empty()
 		RecordUpstreamRequest(obs, built)
+	case RoleUpstreamResponse:
+		if upstream != "openai-responses" || inbound != "openai-responses" {
+			return fail(ClassHarnessFailure, "execution_error",
+				fmt.Sprintf("unit 2 (SSE egress): upstream %s inbound %s not implemented in unit 1", upstream, inbound))
+		}
+		events, err := NormalizeSseBytes([]byte(c.Fixture.Bytes), upstream)
+		if err != nil {
+			return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("sse normalize: %v", err))
+		}
+		obs = Empty()
+		if c.InitiatingRequest != nil {
+			var vector map[string]any
+			if err := json.Unmarshal([]byte(c.InitiatingRequest.Bytes), &vector); err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("initiating request decode: %v", err))
+			}
+			built, err := r.builderFor(upstream).Build(ctx, VectorToRequest(vector), buildOpts)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
+			}
+			RecordUpstreamRequest(obs, built)
+		}
+		FinalizeObservation(obs, events, nil, 200)
+		AttachVerifiers(obs, c)
 	default:
 		return fail(ClassHarnessFailure, "execution_error",
 			fmt.Sprintf("unit 2 (SSE egress): fixture role %s not implemented in unit 1", c.Fixture.Role))

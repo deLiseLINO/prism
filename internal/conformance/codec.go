@@ -72,3 +72,10 @@ func ChatCompletionsURL(baseURL string) string {
 	}
 	return base + "/chat/completions"
 }
+
+func ResponsesURL(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	withoutEndpoint := strings.TrimSuffix(base, "/responses")
+	withoutV1 := strings.TrimSuffix(withoutEndpoint, "/v1")
+	return withoutV1 + "/v1/responses"
+}
