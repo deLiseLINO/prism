@@ -112,6 +112,14 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 	var obs *Observation
 	switch c.Fixture.Role {
 	case RoleAdapterVector:
+		if c.Suite == "tools-core" {
+			built, err := runToolsCoreAdapterVector(c, r, buildOpts)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("tools-core adapter vector: %v", err))
+			}
+			obs = built
+			break
+		}
 		if c.ID == "responses-core.protocol.json-sse-equivalence" {
 			var vector map[string]any
 			if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
@@ -208,9 +216,31 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			AttachVerifiers(obs, c)
 			break
 		}
+		if c.ID == "tools-core.protocol.choice-and-allowed-set" {
+			var vector map[string]any
+			if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("fixture decode: %v", err))
+			}
+			built, err := r.Build.Build(ctx, VectorToRequest(vector), buildOpts)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
+			}
+			obs = Empty()
+			RecordUpstreamRequest(obs, built)
+			AttachVerifiers(obs, c)
+			break
+		}
 		return fail(ClassHarnessFailure, "execution_error",
 			fmt.Sprintf("unit 2 (SSE egress): fixture role %s not implemented in unit 1", c.Fixture.Role))
 	case RoleUpstreamResponse:
+		if c.ID == "tools-core.protocol.parallel-correlation" {
+			built, err := runToolsCoreChatSse(c, r, buildOpts)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("tools-core sse: %v", err))
+			}
+			obs = built
+			break
+		}
 		if upstream == "openai-chat" {
 			obs = Empty()
 			if c.InitiatingRequest != nil {

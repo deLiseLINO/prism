@@ -67,13 +67,18 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 		}
 	}
 	if len(req.Tools) > 0 {
-		body.Tools, err = toolsFrom(req.Tools)
-		if err != nil {
-			return nil, err
+		tools := filterToolsByChoice(req.Tools, req.ToolChoice)
+		if len(tools) > 0 {
+			body.Tools, err = toolsFrom(tools)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
-	if tc, ok := toolChoiceFrom(req.ToolChoice); ok {
-		body.ToolChoice = tc
+	if len(body.Tools) > 0 {
+		if tc, ok := toolChoiceFrom(req.ToolChoice); ok {
+			body.ToolChoice = tc
+		}
 	}
 	if rf, ok := responseFormat(req.Text.Format); ok {
 		body.ResponseFormat = rf

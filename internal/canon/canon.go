@@ -170,6 +170,12 @@ type CustomToolDef struct {
 	Name        ToolName
 	Description string
 	Format      CustomToolFormat
+	Grammar     *ToolGrammar
+}
+
+type ToolGrammar struct {
+	Syntax     string
+	Definition string
 }
 
 type LocalShellToolDef struct{}
@@ -187,6 +193,20 @@ type ToolAuto struct{}
 type ToolNone struct{}
 type ToolRequired struct{}
 type ToolNamed struct{ Name ToolName }
+
+type AllowedToolMode uint8
+
+const (
+	AllowedAuto AllowedToolMode = iota + 1
+	AllowedRequired
+)
+
+type ToolAllowed struct {
+	Mode  AllowedToolMode
+	Tools []ToolName
+}
+
+func (ToolAllowed) toolChoice() {}
 
 func (ToolAuto) toolChoice()     {}
 func (ToolNone) toolChoice()     {}
@@ -243,6 +263,7 @@ type CustomToolFormat uint8
 const (
 	FormatText CustomToolFormat = iota + 1
 	FormatJSON
+	FormatGrammar
 )
 
 type CompactionKind uint8

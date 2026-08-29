@@ -31,11 +31,11 @@ type body struct {
 	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
 	StreamOptions     json.RawMessage `json:"stream_options,omitempty"`
 }
-
 type message struct {
-	Role       string `json:"role"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	Content    any    `json:"content"`
+	Role       string     `json:"role"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Content    any        `json:"content"`
+	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
 }
 
 type imageURLPart struct {
@@ -46,6 +46,17 @@ type imageURLPart struct {
 type reasoningWire struct {
 	Enabled bool   `json:"enabled"`
 	Effort  string `json:"effort,omitempty"`
+}
+
+type toolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function toolCallFunction `json:"function"`
+}
+
+type toolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type tool struct {
@@ -61,16 +72,81 @@ type toolFunction struct {
 
 func messagesFrom(items []canon.Item) ([]message, error) {
 	var out []message
+	var pending []pendingToolCall
+	var imageParts []any
+	flushImages := func() {
+		if len(imageParts) == 0 {
+			return
+		}
+		content := []any{map[string]any{"type": "text", "text": "[prism] image output from the preceding tool result(s):"}}
+		content = append(content, imageParts...)
+		out = append(out, message{Role: "user", Content: content})
+		imageParts = nil
+	}
+	flushPending := func() {
+		if len(pending) == 0 {
+			return
+		}
+		for _, call := range pending {
+			out = append(out, message{
+				Role:       "tool",
+				ToolCallID: call.id,
+				Content:    fmt.Sprintf("[prism] no tool result was recorded for %q; execution status unknown — do not treat this as success, failure, or user-provided input.", call.name),
+			})
+		}
+		pending = nil
+		flushImages()
+	}
 	for _, item := range items {
-		switch m := item.(type) {
+		switch it := item.(type) {
 		case canon.Message:
-			out = append(out, message{Role: roleWire(m.Role), Content: contentWire(m.Content)})
+			flushPending()
+			out = append(out, message{Role: roleWire(it.Role), Content: contentWire(it.Content)})
+		case canon.FunctionCall:
+			args := string(it.Arguments)
+			if args == "" {
+				args = "{}"
+			}
+			out = append(out, message{
+				Role:    "assistant",
+				Content: "",
+				ToolCalls: []toolCall{{
+					ID:   string(it.CallID),
+					Type: "function",
+					Function: toolCallFunction{
+						Name:      string(it.Name),
+						Arguments: args,
+					},
+				}},
+			})
+			pending = append(pending, pendingToolCall{id: string(it.CallID), name: string(it.Name)})
 		case canon.FunctionOutput:
-			out = append(out, toolResultMessages(m)...)
+			id := string(it.CallID)
+			text := toolResultTextForWire(it.Output)
+			parts := toolResultImageChatParts(it.Output)
+			matched := false
+			for i, call := range pending {
+				if call.id == id {
+					pending = append(pending[:i], pending[i+1:]...)
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				flushPending()
+				out = append(out, toolResultMessages(it)...)
+				continue
+			}
+			out = append(out, message{Role: "tool", ToolCallID: id, Content: text})
+			imageParts = append(imageParts, parts...)
+			if len(pending) == 0 {
+				flushImages()
+			}
 		default:
 			return nil, fmt.Errorf("chat messages: unsupported canonical item %T", item)
 		}
 	}
+	flushPending()
 	return out, nil
 }
 
@@ -95,6 +171,35 @@ func toolResultMessages(fo canon.FunctionOutput) []message {
 		out = append(out, message{Role: "user", Content: images})
 	}
 	return out
+}
+
+type pendingToolCall struct{ id, name string }
+
+func toolResultTextForWire(content []canon.Content) string {
+	var text strings.Builder
+	for _, c := range content {
+		if t, ok := c.(canon.TextContent); ok {
+			text.WriteString(t.Text)
+		}
+	}
+	return text.String()
+}
+
+func toolResultImageChatParts(content []canon.Content) []any {
+	var parts []any
+	for _, c := range content {
+		img, ok := c.(canon.ImageContent)
+		if !ok {
+			continue
+		}
+		url := "data:" + img.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
+		imageURL := map[string]any{"url": url}
+		if img.Detail != "" {
+			imageURL["detail"] = img.Detail
+		}
+		parts = append(parts, map[string]any{"type": "image_url", "image_url": imageURL})
+	}
+	return parts
 }
 
 func contentWire(content []canon.Content) any {
@@ -201,7 +306,70 @@ func toolChoiceFrom(tc canon.ToolChoice) (json.RawMessage, bool) {
 	case canon.ToolNamed:
 		raw, _ := json.Marshal(map[string]any{"type": "function", "function": map[string]any{"name": string(t.Name)}})
 		return raw, true
+	case canon.ToolAllowed:
+		switch {
+		case t.Mode == canon.AllowedRequired && len(t.Tools) == 1:
+			name, _ := json.Marshal(string(t.Tools[0]))
+			raw := json.RawMessage(`{"type":"function","function":{"name":` + string(name) + `}}`)
+			return raw, true
+		case t.Mode == canon.AllowedRequired:
+			return json.RawMessage(`"required"`), true
+		default:
+			return json.RawMessage(`"auto"`), true
+		}
 	default:
 		return nil, false
+	}
+}
+
+func filterToolsByChoice(tools []canon.Tool, choice canon.ToolChoice) []canon.Tool {
+	switch choice.(type) {
+	case canon.ToolAllowed, canon.ToolNamed, canon.ToolNone:
+	default:
+		return tools
+	}
+	allowed := map[string]struct{}{}
+	named := ""
+	switch t := choice.(type) {
+	case canon.ToolAllowed:
+		for _, name := range t.Tools {
+			allowed[string(name)] = struct{}{}
+		}
+	case canon.ToolNamed:
+		named = string(t.Name)
+	case canon.ToolNone:
+		return nil
+	}
+	var out []canon.Tool
+	for _, tool := range tools {
+		name := toolName(tool)
+		if name == "" {
+			continue
+		}
+		if named != "" {
+			if name == named {
+				out = append(out, tool)
+			}
+			continue
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[name]; ok {
+				out = append(out, tool)
+			}
+			continue
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
+func toolName(t canon.Tool) string {
+	switch tt := t.(type) {
+	case canon.FunctionTool:
+		return string(tt.Name)
+	case canon.CustomToolDef:
+		return string(tt.Name)
+	default:
+		return ""
 	}
 }
