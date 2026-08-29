@@ -34,6 +34,9 @@ type inputItem struct {
 	Role      string        `json:"role,omitempty"`
 	Content   []contentPart `json:"content,omitempty"`
 	CallID    string        `json:"call_id,omitempty"`
+	Name      string        `json:"name,omitempty"`
+	Arguments string        `json:"arguments,omitempty"`
+	Input     string        `json:"input,omitempty"`
 	Output    string        `json:"output,omitempty"`
 	Signature string        `json:"signature,omitempty"`
 }
@@ -51,6 +54,13 @@ type tool struct {
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
+	Format      *toolFormat     `json:"format,omitempty"`
+}
+
+type toolFormat struct {
+	Type       string `json:"type"`
+	Syntax     string `json:"syntax,omitempty"`
+	Definition string `json:"definition,omitempty"`
 }
 
 func inputFrom(items []canon.Item) (any, error) {
@@ -76,6 +86,8 @@ func inputFrom(items []canon.Item) (any, error) {
 				Content:   []contentPart{{Type: "reasoning_text", Text: it.Content}},
 				Signature: it.Signature,
 			})
+		case canon.FunctionCall:
+			out = append(out, inputItem{Type: "function_call", CallID: string(it.CallID), Name: string(it.Name), Arguments: string(it.Arguments)})
 		case canon.FunctionOutput:
 			text, err := outputText(it.Output)
 			if err != nil {
@@ -86,10 +98,13 @@ func inputFrom(items []canon.Item) (any, error) {
 				CallID: string(it.CallID),
 				Output: text,
 			})
+		case canon.CustomToolCall:
+			out = append(out, inputItem{Type: "custom_tool_call", CallID: string(it.CallID), Name: string(it.Name), Input: it.Input})
+		case canon.CustomToolOutput:
+			out = append(out, inputItem{Type: "custom_tool_call_output", CallID: string(it.CallID), Output: it.Output})
 		default:
 			return nil, fmt.Errorf("responses input: unsupported canonical item %T", item)
 		}
-
 	}
 	return out, nil
 }
@@ -137,19 +152,29 @@ func effortWire(e canon.ReasoningEffort) string {
 func toolsFrom(tools []canon.Tool) ([]tool, error) {
 	var out []tool
 	for _, t := range tools {
-		fn, ok := t.(canon.FunctionTool)
-		if !ok {
+		switch tt := t.(type) {
+		case canon.FunctionTool:
+			tf := tool{Type: "function", Name: string(tt.Name), Description: tt.Description}
+			if len(tt.Parameters) > 0 {
+				tf.Parameters = tt.Parameters
+			}
+			if tt.Strict {
+				strict := true
+				tf.Strict = &strict
+			}
+			out = append(out, tf)
+		case canon.CustomToolDef:
+			tf := tool{Type: "custom", Name: string(tt.Name), Description: tt.Description}
+			switch {
+			case tt.Grammar != nil:
+				tf.Format = &toolFormat{Type: "grammar", Syntax: tt.Grammar.Syntax, Definition: tt.Grammar.Definition}
+			default:
+				return nil, fmt.Errorf("responses tools: unsupported custom tool format %d", tt.Format)
+			}
+			out = append(out, tf)
+		default:
 			return nil, fmt.Errorf("responses tools: unsupported canonical tool %T", t)
 		}
-		tf := tool{Type: "function", Name: string(fn.Name), Description: fn.Description}
-		if len(fn.Parameters) > 0 {
-			tf.Parameters = fn.Parameters
-		}
-		if fn.Strict {
-			strict := true
-			tf.Strict = &strict
-		}
-		out = append(out, tf)
 	}
 	return out, nil
 }

@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"prism/internal/canon"
 )
@@ -58,6 +59,16 @@ func VectorToRequest(vector map[string]any) canon.Request {
 			req.Text.Format = textFormatFrom(tf)
 		}
 	}
+	if rawTools, ok := vector["tools"].([]any); ok {
+		if tools, err := vectorTools(rawTools); err == nil {
+			req.Tools = tools
+		}
+	}
+	if rawChoice, ok := vector["tool_choice"]; ok {
+		if tc, ok := toolChoiceFromVector(rawChoice); ok {
+			req.ToolChoice = tc
+		}
+	}
 	return req
 }
 
@@ -98,6 +109,106 @@ func effortFrom(label string) (canon.ReasoningEffort, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func vectorTools(raw []any) ([]canon.Tool, error) {
+	var out []canon.Tool
+	for _, rv := range raw {
+		m, ok := rv.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("tools entry must be an object")
+		}
+		t, _ := m["type"].(string)
+		if t == "" {
+			if _, hasName := m["name"]; hasName {
+				t = "function"
+			}
+		}
+		name, _ := m["name"].(string)
+		if name == "" {
+			return nil, fmt.Errorf("tool missing name")
+		}
+		switch t {
+		case "function":
+			fn := canon.FunctionTool{Name: canon.ToolName(name)}
+			fn.Description, _ = m["description"].(string)
+			if strict, ok := m["strict"].(bool); ok {
+				fn.Strict = strict
+			}
+			if params, ok := m["parameters"]; ok {
+				raw, err := json.Marshal(params)
+				if err != nil {
+					return nil, err
+				}
+				fn.Parameters = raw
+			}
+			out = append(out, fn)
+		case "custom":
+			def := canon.CustomToolDef{Name: canon.ToolName(name)}
+			def.Description, _ = m["description"].(string)
+			if formatMap, ok := m["format"].(map[string]any); ok {
+				ft, _ := formatMap["type"].(string)
+				switch ft {
+				case "grammar":
+					def.Format = canon.FormatGrammar
+					def.Grammar = &canon.ToolGrammar{}
+					def.Grammar.Syntax, _ = formatMap["syntax"].(string)
+					def.Grammar.Definition, _ = formatMap["definition"].(string)
+				default:
+					return nil, fmt.Errorf("custom tool format %q unsupported", ft)
+				}
+			}
+			out = append(out, def)
+		default:
+			return nil, fmt.Errorf("unsupported tool type %q", t)
+		}
+	}
+	return out, nil
+}
+
+func toolChoiceFromVector(v any) (canon.ToolChoice, bool) {
+	switch tc := v.(type) {
+	case string:
+		switch tc {
+		case "none":
+			return canon.ToolNone{}, true
+		case "auto":
+			return canon.ToolAuto{}, true
+		case "required":
+			return canon.ToolRequired{}, true
+		}
+	case map[string]any:
+		t, _ := tc["type"].(string)
+		switch t {
+		case "allowed_tools":
+			mode, _ := tc["mode"].(string)
+			var tools []canon.ToolName
+			if rawTools, ok := tc["tools"].([]any); ok {
+				for _, rt := range rawTools {
+					rm, ok := rt.(map[string]any)
+					if !ok {
+						continue
+					}
+					name, _ := rm["name"].(string)
+					if name != "" {
+						tools = append(tools, canon.ToolName(name))
+					}
+				}
+			}
+			m := canon.AllowedAuto
+			if mode == "required" {
+				m = canon.AllowedRequired
+			}
+			return canon.ToolAllowed{Mode: m, Tools: tools}, true
+		case "function":
+			fn, _ := tc["function"].(map[string]any)
+			name, _ := fn["name"].(string)
+			if name != "" {
+				return canon.ToolNamed{Name: canon.ToolName(name)}, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func contentFrom(v any) []canon.Content {
