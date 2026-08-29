@@ -1,0 +1,27 @@
+{
+  "provenance": {
+    "sourceCommit": "prism reference, MIT",
+    "url": ["src/adapters/openai-responses.ts:1949", "src/providers/openai-tiers.ts:11", "src/server/responses/ws-upstream.ts:18"],
+    "method": ["src/adapters/openai-responses.ts:2134"],
+    "contentTypeFirst": ["src/adapters/openai-responses.ts:1940", "src/adapters/openai-responses.ts:1950"],
+    "forwardHeaderOrder": ["src/adapters/openai-responses.ts:35-53", "src/adapters/openai-responses.ts:1963-1966"],
+    "authorizationAndAccountOverride": ["src/adapters/openai-responses.ts:1970-1971", "src/codex/auth-context.ts:632-635"],
+    "openaiBetaValue": ["tests/codex-auth-context.test.ts:938-947"],
+    "clientRequestIDShape": ["src/adapters/anthropic.ts:1055", "src/vision/anthropic-describe.ts:131"]
+  },
+  "fingerprint": {
+    "method": "POST",
+    "url": "https://chatgpt.com/backend-api/codex/responses",
+    "headers": [
+      {"name": "Content-Type", "value": "application/json"},
+      {"name": "session_id", "value": "sess-1"},
+      {"name": "originator", "value": "codex_cli"},
+      {"name": "user-agent", "value": "codex/1.0"},
+      {"name": "x-responsesapi-include-timing-metrics", "value": "true"},
+      {"name": "Authorization", "value": "Bearer tok-1"},
+      {"name": "chatgpt-account-id", "value": "acct-1"},
+      {"name": "openai-beta", "value": "responses=experimental"},
+      {"name": "x-client-request-id", "value": "req-1"}
+    ]
+  }
+}
