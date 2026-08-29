@@ -1,0 +1,209 @@
+package server
+
+import (
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"time"
+
+	"prism/internal/account"
+	"prism/internal/config"
+	ingresschat "prism/internal/ingress/chat"
+	ingressmessages "prism/internal/ingress/messages"
+	"prism/internal/ingress/responses"
+	"prism/internal/provider"
+	"prism/internal/routing"
+)
+
+type Clock interface {
+	Now() time.Time
+	After(d time.Duration) <-chan time.Time
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time                         { return time.Now() }
+func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+type Options struct {
+	Planner    routing.Planner
+	Registry   *provider.Registry
+	Pool       account.Pool
+	Config     *config.Manager
+	Management http.Handler
+	Clock      Clock
+	QuotaGroup account.QuotaGroup
+	OnWarning  func(responses.Warning)
+}
+
+type Server struct {
+	router   routing.Router
+	planner  routing.Planner
+	registry *provider.Registry
+	pool     account.Pool
+	cfg      *config.Manager
+	mgmt     http.Handler
+	clock    Clock
+	group    account.QuotaGroup
+	onWarn   func(responses.Warning)
+
+	ingressResponses *responses.Ingress
+	ingressChat      ingresschat.Ingress
+	ingressMessages  ingressmessages.Ingress
+}
+
+const defaultQuotaGroup = account.QuotaGroup("default")
+
+func New(opts Options) *Server {
+	clock := opts.Clock
+	if clock == nil {
+		clock = realClock{}
+	}
+	group := opts.QuotaGroup
+	if group == "" {
+		group = defaultQuotaGroup
+	}
+	onWarn := opts.OnWarning
+	if onWarn == nil {
+		onWarn = func(w responses.Warning) {
+			log.Printf("server: ingress warning kind=%s detail=%s", w.Kind, w.Detail)
+		}
+	}
+	s := &Server{
+		planner:  opts.Planner,
+		registry: opts.Registry,
+		pool:     opts.Pool,
+		cfg:      opts.Config,
+		mgmt:     opts.Management,
+		clock:    clock,
+		group:    group,
+		onWarn:   onWarn,
+	}
+	s.router = routing.NewRouter(opts.Pool, opts.Registry, opts.Planner, group)
+	s.ingressResponses = responses.New(func(warn responses.Warning) { s.onWarn(warn) })
+	return s
+}
+
+var routeMethods = map[string]string{
+	"/v1/responses":             http.MethodPost,
+	"/v1/chat/completions":      http.MethodPost,
+	"/v1/messages":              http.MethodPost,
+	"/v1/messages/count_tokens": http.MethodPost,
+	"/v1/responses/compact":     http.MethodPost,
+	"/v1/models":                http.MethodGet,
+}
+
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/responses", s.admit(s.handleResponses))
+	mux.HandleFunc("POST /v1/chat/completions", s.admit(s.handleChat))
+	mux.HandleFunc("POST /v1/messages", s.admit(s.handleMessages))
+	mux.HandleFunc("POST /v1/messages/count_tokens", s.admit(s.handleCountTokens))
+	mux.HandleFunc("POST /v1/responses/compact", s.admit(s.handleCompact))
+	mux.HandleFunc("GET /v1/models", s.admit(s.handleModels))
+	for path, method := range routeMethods {
+		mux.HandleFunc(path, methodNotAllowed(method))
+	}
+	if s.mgmt != nil {
+		mux.Handle("/api/v1/", s.mgmt)
+	}
+	mux.HandleFunc("/", notFound)
+	return mux
+}
+
+func (s *Server) admit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !loopback(r.RemoteAddr) && bearer(r) == "" {
+			writeJSON(w, http.StatusUnauthorized, errorEnvelope{
+				Error: errorObject{Code: "unauthorized", Message: "missing bearer token"},
+			})
+			return
+		}
+		next(w, r)
+	}
+}
+
+func loopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func bearer(r *http.Request) string {
+	const prefix = "Bearer "
+	v := r.Header.Get("Authorization")
+	if len(v) > len(prefix) && v[:len(prefix)] == prefix {
+		return v[len(prefix):]
+	}
+	return ""
+}
+
+func methodNotAllowed(allow string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Allow", allow)
+		writeJSON(w, http.StatusMethodNotAllowed, errorEnvelope{
+			Error: errorObject{Code: "method_not_allowed", Message: "method " + r.Method + " not allowed"},
+		})
+	}
+}
+
+func notFound(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotFound, errorEnvelope{
+		Error: errorObject{Code: "not_found", Message: "unknown route"},
+	})
+}
+
+func newRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("server: request id entropy: %v", err))
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+type errorObject struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Param   string `json:"param,omitempty"`
+}
+
+type errorEnvelope struct {
+	Error errorObject `json:"error"`
+}
+
+type chatErrorBody struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Param   string `json:"param,omitempty"`
+}
+
+type chatErrorEnvelope struct {
+	Error chatErrorBody `json:"error"`
+}
+
+type messagesErrorBody struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+type messagesErrorEnvelope struct {
+	Type  string            `json:"type"`
+	Error messagesErrorBody `json:"error"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("server: encode response: %v", err)
+	}
+}
