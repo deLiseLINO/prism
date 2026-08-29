@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"prism/internal/canon"
 	"prism/internal/execution"
 	"prism/internal/quota"
 )
@@ -70,19 +71,9 @@ type Lease struct {
 
 type QuotaGroup string
 
-type ModelID string
-
-type Usage struct {
-	InputTokens       int64
-	OutputTokens      int64
-	CachedInputTokens int64
-	ReasoningTokens   int64
-	TotalTokens       int64
-}
-
 type AcquireRequest struct {
 	Provider   ProviderID
-	Model      ModelID
+	Model      canon.ModelID
 	QuotaGroup QuotaGroup
 	Session    execution.SessionKey
 	Thread     execution.ThreadKey
@@ -90,7 +81,7 @@ type AcquireRequest struct {
 
 type Outcome interface{ outcome() }
 
-type TurnSucceeded struct{ Usage Usage }
+type TurnSucceeded struct{ Usage canon.Usage }
 
 type AuthRejected struct{}
 
