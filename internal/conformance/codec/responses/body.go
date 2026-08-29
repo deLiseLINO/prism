@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"prism/internal/canon"
+	"prism/internal/conformance"
 )
 
 type body struct {
@@ -36,23 +37,9 @@ type inputItem struct {
 	Name      string        `json:"name,omitempty"`
 	Arguments string        `json:"arguments,omitempty"`
 	Input     string        `json:"input,omitempty"`
-	Output    string        `json:"output,omitempty"`
+	Output    any           `json:"output,omitempty"`
 	Signature string        `json:"signature,omitempty"`
 }
-
-type functionCallItem struct {
-	Type      string `json:"type"`
-	CallID    string `json:"call_id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-type functionCallOutputItem struct {
-	Type   string `json:"type"`
-	CallID string `json:"call_id"`
-	Output any    `json:"output"`
-}
-
 type contentPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
@@ -75,13 +62,14 @@ type toolFormat struct {
 	Definition string `json:"definition,omitempty"`
 }
 
-func inputFrom(items []canon.Item) (any, error) {
-	out := make([]any, 0, len(items))
+func inputFrom(items []canon.Item) (any, []string, error) {
+	out := make([]inputItem, 0, len(items))
+	var warnings []string
 	for _, item := range items {
-		switch it := item.(type) {
+		switch m := item.(type) {
 		case canon.Message:
-			parts := make([]contentPart, 0, len(it.Content))
-			for _, c := range it.Content {
+			parts := make([]contentPart, 0, len(m.Content))
+			for _, c := range m.Content {
 				switch p := c.(type) {
 				case canon.TextContent:
 					parts = append(parts, contentPart{Type: "input_text", Text: p.Text})
@@ -90,36 +78,32 @@ func inputFrom(items []canon.Item) (any, error) {
 					parts = append(parts, contentPart{Type: "input_image", ImageURL: url, Detail: p.Detail})
 				}
 			}
-			out = append(out, inputItem{Type: "message", Role: roleWire(it.Role), Content: parts})
+			out = append(out, inputItem{Type: "message", Role: roleWire(m.Role), Content: parts})
 		case canon.ReasoningItem:
 			out = append(out, inputItem{
 				Type:      "reasoning",
-				ID:        string(it.ID),
-				Content:   []contentPart{{Type: "reasoning_text", Text: it.Content}},
-				Signature: it.Signature,
+				ID:        string(m.ID),
+				Content:   []contentPart{{Type: "reasoning_text", Text: m.Content}},
+				Signature: m.Signature,
 			})
 		case canon.FunctionCall:
-			out = append(out, functionCallItem{
-				Type:      "function_call",
-				CallID:    string(it.CallID),
-				Name:      string(it.Name),
-				Arguments: string(it.Arguments),
+			out = append(out, inputItem{
+				Type: "function_call", ID: string(m.ID), CallID: string(m.CallID),
+				Name: string(m.Name), Arguments: string(m.Arguments),
 			})
 		case canon.FunctionOutput:
-			out = append(out, functionCallOutputItem{
-				Type:   "function_call_output",
-				CallID: string(it.CallID),
-				Output: functionCallOutputWire(it.Output),
-			})
+			out = append(out, inputItem{Type: "function_call_output", CallID: string(m.CallID), Output: functionCallOutputWire(m.Output)})
 		case canon.CustomToolCall:
-			out = append(out, inputItem{Type: "custom_tool_call", CallID: string(it.CallID), Name: string(it.Name), Input: it.Input})
+			out = append(out, inputItem{Type: "custom_tool_call", ID: string(m.ID), CallID: string(m.CallID), Name: string(m.Name), Input: m.Input})
 		case canon.CustomToolOutput:
-			out = append(out, inputItem{Type: "custom_tool_call_output", CallID: string(it.CallID), Output: it.Output})
+			out = append(out, inputItem{Type: "custom_tool_call_output", CallID: string(m.CallID), Output: m.Output})
+		case canon.CompactionMarker, canon.LocalShellCall, canon.LocalShellOutput, canon.ToolSearchCall, canon.ToolSearchOutput:
+			warnings = append(warnings, "skip_exotic_item:"+conformance.ExoticItemName(item))
 		default:
-			return nil, fmt.Errorf("responses input: unsupported canonical item %T", item)
+			return nil, nil, fmt.Errorf("responses input: unsupported canonical item %T", item)
 		}
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 func functionCallOutputWire(content []canon.Content) any {
@@ -143,7 +127,6 @@ func functionCallOutputWire(content []canon.Content) any {
 	}
 	return parts
 }
-
 func roleWire(r canon.Role) string {
 	switch r {
 	case canon.RoleAssistant:

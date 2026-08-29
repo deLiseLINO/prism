@@ -12,7 +12,7 @@ import (
 type Builder struct{}
 
 func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.BuildOptions) (*conformance.UpstreamRequest, error) {
-	input, err := inputFrom(req.Input)
+	input, warnings, err := inputFrom(req.Input)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +69,7 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 			{Name: "Content-Type", Value: "application/json"},
 			{Name: "Authorization", Value: "Bearer " + opts.APIKey},
 		},
-		Body: raw,
+		Body:     raw,
+		Warnings: warnings,
 	}, nil
 }

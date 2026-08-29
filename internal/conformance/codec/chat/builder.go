@@ -20,7 +20,7 @@ type jsonSchemaSpec struct {
 type Builder struct{}
 
 func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.BuildOptions) (*conformance.UpstreamRequest, error) {
-	messages, err := messagesFrom(req.Input)
+	messages, warnings, err := messagesFrom(req.Input)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +86,12 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 	if req.Stream {
 		body.StreamOptions = json.RawMessage(`{"include_usage":true}`)
 	}
+	if req.Text.Format != nil {
+		body.ResponseFormat, err = responseFormatWire(req.Text.Format)
+		if err != nil {
+			return nil, err
+		}
+	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -97,7 +103,8 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 			{Name: "Content-Type", Value: "application/json"},
 			{Name: "Authorization", Value: "Bearer " + opts.APIKey},
 		},
-		Body: raw,
+		Body:     raw,
+		Warnings: warnings,
 	}, nil
 }
 

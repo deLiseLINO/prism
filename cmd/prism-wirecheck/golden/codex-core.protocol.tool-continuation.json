@@ -1,0 +1,16 @@
+{
+  "caseId": "codex-core.protocol.tool-continuation",
+  "method": "POST",
+  "url": "http://127.0.0.1:1/v1/responses",
+  "headers": [
+    {
+      "name": "Content-Type",
+      "value": "application/json"
+    },
+    {
+      "name": "Authorization",
+      "value": "Bearer fixture-key"
+    }
+  ],
+  "body": "{\"model\":\"fixture-model\",\"input\":[{\"type\":\"function_call\",\"id\":\"fc_fixture\",\"call_id\":\"call_fixture\",\"name\":\"lookup\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_fixture\",\"output\":\"RESULT\"}],\"stream\":false}"
+}

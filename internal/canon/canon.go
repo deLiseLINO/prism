@@ -44,7 +44,6 @@ type TextOutput struct {
 	Verbosity TextVerbosity
 	Format    *TextFormat
 }
-
 type TextFormat struct {
 	Type        string
 	Name        string

@@ -1,0 +1,16 @@
+{
+  "caseId": "codex-core.protocol.previous-response-replay",
+  "method": "POST",
+  "url": "http://127.0.0.1:1/v1/responses",
+  "headers": [
+    {
+      "name": "Content-Type",
+      "value": "application/json"
+    },
+    {
+      "name": "Authorization",
+      "value": "Bearer fixture-key"
+    }
+  ],
+  "body": "{\"model\":\"fixture-model\",\"store\":true,\"input\":[{\"role\":\"user\",\"content\":\"ONE\"},{\"role\":\"assistant\",\"content\":\"TWO\"},{\"role\":\"user\",\"content\":\"THREE\"}]}"
+}

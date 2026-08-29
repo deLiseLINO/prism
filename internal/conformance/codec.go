@@ -9,12 +9,12 @@ import (
 )
 
 type UpstreamRequest struct {
-	Method  string
-	URL     string
-	Headers Headers
-	Body    []byte
+	Method   string
+	URL      string
+	Headers  Headers
+	Body     []byte
+	Warnings []string
 }
-
 type BuildOptions struct {
 	BaseURL             string
 	APIKey              string
