@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"prism/internal/canon"
 )
@@ -31,8 +32,14 @@ type body struct {
 }
 
 type message struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"`
+	Role       string `json:"role"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Content    any    `json:"content"`
+}
+
+type imageURLPart struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type tool struct {
@@ -50,13 +57,39 @@ type toolFunction struct {
 func messagesFrom(items []canon.Item) ([]message, error) {
 	var out []message
 	for _, item := range items {
-		m, ok := item.(canon.Message)
-		if !ok {
+		switch m := item.(type) {
+		case canon.Message:
+			out = append(out, message{Role: roleWire(m.Role), Content: contentWire(m.Content)})
+		case canon.FunctionOutput:
+			out = append(out, toolResultMessages(m)...)
+		default:
 			return nil, fmt.Errorf("chat messages: unsupported canonical item %T", item)
 		}
-		out = append(out, message{Role: roleWire(m.Role), Content: contentWire(m.Content)})
 	}
 	return out, nil
+}
+
+func toolResultMessages(fo canon.FunctionOutput) []message {
+	var text []string
+	var images []any
+	for _, c := range fo.Output {
+		switch p := c.(type) {
+		case canon.TextContent:
+			text = append(text, p.Text)
+		case canon.ImageContent:
+			url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+			images = append(images, map[string]any{"type": "image_url", "image_url": imageURLPart{URL: url, Detail: p.Detail}})
+		}
+	}
+	content := strings.Join(text, "")
+	if content == "" && len(images) > 0 {
+		content = strings.Repeat("[image]", len(images))
+	}
+	out := []message{{Role: "tool", ToolCallID: string(fo.CallID), Content: content}}
+	if len(images) > 0 {
+		out = append(out, message{Role: "user", Content: images})
+	}
+	return out
 }
 
 func contentWire(content []canon.Content) any {
@@ -72,7 +105,7 @@ func contentWire(content []canon.Content) any {
 			parts = append(parts, map[string]any{"type": "text", "text": p.Text})
 		case canon.ImageContent:
 			url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
-			parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}})
+			parts = append(parts, map[string]any{"type": "image_url", "image_url": imageURLPart{URL: url, Detail: p.Detail}})
 		}
 	}
 	return parts

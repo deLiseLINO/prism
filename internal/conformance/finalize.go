@@ -270,6 +270,13 @@ func AttachVerifiers(o *Observation, c Case) {
 	if c.ID == "responses-core.protocol.json-sse-equivalence" {
 		o.Verifiers["json_sse_equivalence"] = evaluateJsonSseEquivalence(c)
 	}
+	if c.ID == "vision-core.protocol.modality-gate" {
+		var vector map[string]any
+		if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err == nil {
+			o.Verifiers["modality_path"] = modalityPath(vector)
+			o.Verifiers["silent_image_drop"] = silentImageDrop(vector)
+		}
+	}
 }
 
 func evaluateCallResultOrder(o *Observation) string {

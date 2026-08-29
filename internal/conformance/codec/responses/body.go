@@ -37,6 +37,7 @@ type contentPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 type tool struct {
@@ -61,7 +62,7 @@ func inputFrom(items []canon.Item) (any, error) {
 				parts = append(parts, contentPart{Type: "input_text", Text: p.Text})
 			case canon.ImageContent:
 				url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
-				parts = append(parts, contentPart{Type: "input_image", ImageURL: url})
+				parts = append(parts, contentPart{Type: "input_image", ImageURL: url, Detail: p.Detail})
 			}
 		}
 		out = append(out, inputItem{Type: "message", Role: roleWire(m.Role), Content: parts})
