@@ -89,3 +89,41 @@ func TestVectorToRequest(t *testing.T) {
 		t.Fatalf("fallback content %+v", m2.Content)
 	}
 }
+
+func TestVectorToRequestChatCoreFields(t *testing.T) {
+	req := VectorToRequest(map[string]any{
+		"context": map[string]any{
+			"systemPrompt": []any{"SYS"},
+			"messages": []any{
+				map[string]any{"role": "developer", "content": "DEV", "timestamp": 0},
+				map[string]any{"role": "user", "content": "PING", "timestamp": 1},
+			},
+		},
+		"options": map[string]any{"textFormat": map[string]any{"type": "json_object"}},
+	})
+	if len(req.Instructions) != 1 {
+		t.Fatalf("instructions %d", len(req.Instructions))
+	}
+	sys, ok := req.Instructions[0].(canon.TextContent)
+	if !ok || sys.Text != "SYS" {
+		t.Fatalf("instructions content %+v", req.Instructions)
+	}
+	if len(req.Input) != 2 {
+		t.Fatalf("input %d", len(req.Input))
+	}
+	dev, ok := req.Input[0].(canon.Message)
+	if !ok || dev.Role != canon.RoleDeveloper {
+		t.Fatalf("first message %+v", req.Input[0])
+	}
+	devText, ok := dev.Content[0].(canon.TextContent)
+	if !ok || devText.Text != "DEV" {
+		t.Fatalf("developer content %+v", dev.Content)
+	}
+	user, ok := req.Input[1].(canon.Message)
+	if !ok || user.Role != canon.RoleUser {
+		t.Fatalf("second message %+v", req.Input[1])
+	}
+	if req.Text.Format == nil || req.Text.Format.Type != "json_object" {
+		t.Fatalf("text format %+v", req.Text.Format)
+	}
+}

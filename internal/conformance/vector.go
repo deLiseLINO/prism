@@ -1,6 +1,10 @@
 package conformance
 
-import "prism/internal/canon"
+import (
+	"encoding/json"
+
+	"prism/internal/canon"
+)
 
 func VectorToRequest(vector map[string]any) canon.Request {
 	var req canon.Request
@@ -14,6 +18,11 @@ func VectorToRequest(vector map[string]any) canon.Request {
 	}
 	mapped := false
 	if c, ok := vector["context"].(map[string]any); ok {
+		if sp, ok := c["systemPrompt"].([]any); ok && len(sp) > 0 {
+			if s, ok := sp[0].(string); ok {
+				req.Instructions = []canon.Content{canon.TextContent{Text: s}}
+			}
+		}
 		if msgs, ok := c["messages"].([]any); ok {
 			mapped = true
 			for _, mv := range msgs {
@@ -40,8 +49,33 @@ func VectorToRequest(vector map[string]any) canon.Request {
 		if t, ok := o["temperature"].(float64); ok {
 			req.Sampling.Temperature = &t
 		}
+		if tf, ok := o["textFormat"].(map[string]any); ok {
+			req.Text.Format = textFormatFrom(tf)
+		}
 	}
 	return req
+}
+
+func textFormatFrom(m map[string]any) *canon.TextFormat {
+	t, ok := m["type"].(string)
+	if !ok {
+		return nil
+	}
+	f := &canon.TextFormat{Type: t}
+	if name, ok := m["name"].(string); ok {
+		f.Name = name
+	}
+	if desc, ok := m["description"].(string); ok {
+		f.Description = desc
+	}
+	if schema, ok := m["schema"].(map[string]any); ok {
+		raw, _ := json.Marshal(schema)
+		f.Schema = raw
+	}
+	if strict, ok := m["strict"].(bool); ok {
+		f.Strict = &strict
+	}
+	return f
 }
 
 func contentFrom(v any) []canon.Content {
@@ -77,6 +111,8 @@ func roleFrom(role string) canon.Role {
 		return canon.RoleAssistant
 	case "system":
 		return canon.RoleSystem
+	case "developer":
+		return canon.RoleDeveloper
 	default:
 		return canon.RoleUser
 	}

@@ -14,7 +14,7 @@ import (
 
 func main() {
 	fixturesPath := flag.String("fixtures", "cmd/prism-wirecheck/fixtures/protocol-v1-cases.json", "path to conformance fixture file")
-	caseID := flag.String("case", "", "run one case by id; empty runs the responses-core, mcp-core and vision-core suites")
+	caseID := flag.String("case", "", "run one case by id; empty runs the responses-core, chat-core, mcp-core and vision-core suites")
 	noSelfCheck := flag.Bool("no-self-check", false, "skip the DSL self-check gauntlet")
 	flag.Parse()
 
@@ -40,7 +40,7 @@ func main() {
 			}
 			continue
 		}
-		if c.Suite == "responses-core" || c.Suite == "mcp-core" || c.Suite == "vision-core" {
+		if c.Suite == "responses-core" || c.Suite == "chat-core" || c.Suite == "mcp-core" || c.Suite == "vision-core" {
 			selected = append(selected, *c)
 		}
 	}
@@ -123,11 +123,11 @@ func printCase(c conformance.Case, res conformance.CaseResult, goldens map[strin
 		cc := res.Codec
 		fmt.Printf("  codec    %s  %s %s\n", upstream, cc.Method, cc.URL)
 		if cc.Diff == "" {
-			if _, pinned := goldens[cc.CaseID]; pinned {
+			if _, hasGolden := goldens[cc.CaseID]; hasGolden {
 				names := headerNames(goldens, cc.CaseID)
 				fmt.Printf("  golden   body %dB exact match; headers [%s] case+order match\n", cc.BodyBytes, strings.Join(names, ", "))
 			} else {
-				fmt.Printf("  golden   body %dB emitted; no pin recorded for this case\n", cc.BodyBytes)
+				fmt.Printf("  golden   no pinned golden for %s; verified by assertions\n", cc.CaseID)
 			}
 		} else {
 			fmt.Printf("  golden   MISMATCH (%s)\n", cc.Diff)

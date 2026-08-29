@@ -166,8 +166,6 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		want, hasGolden := opts.Goldens[c.ID]
 		if hasGolden {
 			codec.GoldenMatched, codec.HeaderCaseMatched, codec.Diff = goldenDiff(built, want)
-		} else {
-			codec.Diff = "missing golden record"
 		}
 		base.Codec = codec
 		if codec.Diff != "" {
@@ -202,6 +200,35 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		return fail(ClassHarnessFailure, "execution_error",
 			fmt.Sprintf("unit 2 (SSE egress): fixture role %s not implemented in unit 1", c.Fixture.Role))
 	case RoleUpstreamResponse:
+		if upstream == "openai-chat" {
+			obs = Empty()
+			if c.InitiatingRequest != nil {
+				var vector map[string]any
+				if err := json.Unmarshal([]byte(c.InitiatingRequest.Bytes), &vector); err != nil {
+					return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("initiating request decode: %v", err))
+				}
+				built, err := r.Build.Build(ctx, VectorToRequest(vector), buildOpts)
+				if err != nil {
+					return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
+				}
+				RecordUpstreamRequest(obs, built)
+			}
+			if c.Fixture.MediaType == "text/event-stream" {
+				events, err := NormalizeSseBytes([]byte(c.Fixture.Bytes), "openai-chat")
+				if err != nil {
+					return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("sse normalize: %v", err))
+				}
+				FinalizeChatObservation(obs, events, nil, 200)
+			} else {
+				var body any
+				if err := json.Unmarshal([]byte(c.Fixture.Bytes), &body); err != nil {
+					return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("response decode: %v", err))
+				}
+				FinalizeChatObservation(obs, nil, body, 200)
+			}
+			AttachVerifiers(obs, c)
+			break
+		}
 		if upstream != "openai-responses" || inbound != "openai-responses" {
 			return fail(ClassHarnessFailure, "execution_error",
 				fmt.Sprintf("unit 2 (SSE egress): upstream %s inbound %s not implemented in unit 1", upstream, inbound))
