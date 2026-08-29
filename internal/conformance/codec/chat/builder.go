@@ -11,7 +11,11 @@ import (
 type Builder struct{}
 
 func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.BuildOptions) (*conformance.UpstreamRequest, error) {
-	body := body{Model: req.Model, Messages: messagesFrom(req.Input), Stream: req.Stream}
+	messages, err := messagesFrom(req.Input)
+	if err != nil {
+		return nil, err
+	}
+	body := body{Model: req.Model, Messages: messages, Stream: req.Stream}
 	if req.Sampling.Temperature != nil {
 		body.Temperature = req.Sampling.Temperature
 	}
@@ -39,7 +43,10 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 		body.ReasoningEffort = &effort
 	}
 	if len(req.Tools) > 0 {
-		body.Tools = toolsFrom(req.Tools)
+		body.Tools, err = toolsFrom(req.Tools)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if tc, ok := toolChoiceFrom(req.ToolChoice); ok {
 		body.ToolChoice = tc

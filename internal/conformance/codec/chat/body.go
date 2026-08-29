@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 
 	"prism/internal/canon"
 )
@@ -46,16 +47,16 @@ type toolFunction struct {
 	Strict      *bool           `json:"strict,omitempty"`
 }
 
-func messagesFrom(items []canon.Item) []message {
+func messagesFrom(items []canon.Item) ([]message, error) {
 	var out []message
 	for _, item := range items {
 		m, ok := item.(canon.Message)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("chat messages: unsupported canonical item %T", item)
 		}
 		out = append(out, message{Role: roleWire(m.Role), Content: contentWire(m.Content)})
 	}
-	return out
+	return out, nil
 }
 
 func contentWire(content []canon.Content) any {
@@ -105,12 +106,12 @@ func effortWire(e canon.ReasoningEffort) string {
 	}
 }
 
-func toolsFrom(tools []canon.Tool) []tool {
+func toolsFrom(tools []canon.Tool) ([]tool, error) {
 	var out []tool
 	for _, t := range tools {
 		fn, ok := t.(canon.FunctionTool)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("chat tools: unsupported canonical tool %T", t)
 		}
 		tf := toolFunction{Name: string(fn.Name), Description: fn.Description}
 		if len(fn.Parameters) > 0 {
@@ -122,7 +123,7 @@ func toolsFrom(tools []canon.Tool) []tool {
 		}
 		out = append(out, tool{Type: "function", Function: tf})
 	}
-	return out
+	return out, nil
 }
 
 func toolChoiceFrom(tc canon.ToolChoice) (json.RawMessage, bool) {
