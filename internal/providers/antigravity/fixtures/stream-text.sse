@@ -1,0 +1,5 @@
+data: {"response":{"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"text":" world"}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":4,"cachedContentTokenCount":3,"thoughtsTokenCount":7}}}

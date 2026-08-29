@@ -1,0 +1,5 @@
+data: {"response":{"candidates":[{"content":{"parts":[{"thought":true,"text":"thinking","thoughtSignature":"AbCdEf123456+/7890_-sig"}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"},"id":"call_1"},"thoughtSignature":"XyZ987654321+/abc=-sig"}],"role":"model"},"finishReason":"STOP"}]}}
+
+data: {"response":{"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":9,"cachedContentTokenCount":5,"thoughtsTokenCount":3}}}

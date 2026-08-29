@@ -1,0 +1,22 @@
+{
+  "models": {
+    "gemini-3.7-flash": {
+      "displayName": "Gemini 3.7 Flash",
+      "quotaInfoByTier": {
+        "default-tier": {
+          "remainingFraction": 0.75,
+          "resetTime": "2026-08-30T00:00:00Z"
+        }
+      }
+    },
+    "claude-sonnet-4-5": {
+      "displayName": "Claude Sonnet 4.5",
+      "quotaInfos": [
+        {
+          "remainingPercentage": 40,
+          "resetTime": "1770000000"
+        }
+      ]
+    }
+  }
+}
