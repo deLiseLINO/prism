@@ -331,7 +331,7 @@ func textFormatFrom(format map[string]any) *canon.TextFormat {
 		}
 	}
 	if strict, ok := format["strict"].(bool); ok {
-		tf.Strict = strict
+		tf.Strict = &strict
 	}
 	return tf
 }

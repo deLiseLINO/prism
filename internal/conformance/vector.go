@@ -72,28 +72,6 @@ func VectorToRequest(vector map[string]any) canon.Request {
 	return req
 }
 
-func textFormatFrom(m map[string]any) *canon.TextFormat {
-	t, ok := m["type"].(string)
-	if !ok {
-		return nil
-	}
-	f := &canon.TextFormat{Type: t}
-	if name, ok := m["name"].(string); ok {
-		f.Name = name
-	}
-	if desc, ok := m["description"].(string); ok {
-		f.Description = desc
-	}
-	if schema, ok := m["schema"].(map[string]any); ok {
-		raw, _ := json.Marshal(schema)
-		f.Schema = raw
-	}
-	if strict, ok := m["strict"].(bool); ok {
-		f.Strict = &strict
-	}
-	return f
-}
-
 func effortFrom(label string) (canon.ReasoningEffort, bool) {
 	switch label {
 	case "minimal":

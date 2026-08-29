@@ -147,15 +147,21 @@ func TestResponsesBuildInitiatingRequest(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsUnsupportedItem(t *testing.T) {
+func TestBuildSkipsExoticItemWithWarning(t *testing.T) {
 	got, err := (responses.Builder{}).Build(context.Background(), canon.Request{
 		Input: []canon.Item{canon.CompactionMarker{}},
 	}, conformance.BuildOptions{})
-	if err == nil {
-		t.Fatal("unsupported item must return an error")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got != nil {
-		t.Fatalf("unsupported item returned request: %+v", got)
+	found := false
+	for _, w := range got.Warnings {
+		if strings.Contains(w, "skip_exotic_item:compaction_marker") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("exotic item must be skipped with a typed warning: %v", got.Warnings)
 	}
 }
 

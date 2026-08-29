@@ -25,7 +25,7 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 		return nil, err
 	}
 	if sys := systemMessage(req.Instructions); sys != nil {
-		messages = append([]message{*sys}, messages...)
+		messages = append([]any{*sys}, messages...)
 	}
 	body := body{Model: req.Model, Messages: messages, Stream: req.Stream}
 	if req.Sampling.Temperature != nil {
@@ -85,12 +85,6 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 	}
 	if req.Stream {
 		body.StreamOptions = json.RawMessage(`{"include_usage":true}`)
-	}
-	if req.Text.Format != nil {
-		body.ResponseFormat, err = responseFormatWire(req.Text.Format)
-		if err != nil {
-			return nil, err
-		}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
