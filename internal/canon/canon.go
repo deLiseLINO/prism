@@ -47,6 +47,7 @@ type TextContent struct{ Text string }
 type ImageContent struct {
 	MIMEType string
 	Data     []byte
+	Detail   string
 }
 
 func (TextContent) content()  {}

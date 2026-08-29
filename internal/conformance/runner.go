@@ -126,6 +126,11 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			AttachVerifiers(obs, c)
 			break
 		}
+		if c.ID == "vision-core.protocol.modality-gate" {
+			obs = Empty()
+			AttachVerifiers(obs, c)
+			break
+		}
 		if upstream != "openai-chat" {
 			return fail(ClassHarnessFailure, "execution_error",
 				fmt.Sprintf("unsupported adapter_vector scenario %s", c.ID))
@@ -133,6 +138,23 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		var vector map[string]any
 		if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
 			return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("fixture decode: %v", err))
+		}
+		if c.ID == "vision-core.protocol.tool-result-image" {
+			req, err := toolResultRequest(vector)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("tool-result vector: %v", err))
+			}
+			built, err := r.Build.Build(ctx, req, buildOpts)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
+			}
+			base.Codec = &CodecCheckResult{
+				CaseID: c.ID, Method: built.Method, URL: built.URL, BodyBytes: len(built.Body),
+			}
+			obs = Empty()
+			RecordUpstreamRequest(obs, built)
+			AttachVerifiers(obs, c)
+			break
 		}
 		built, err := r.Build.Build(ctx, VectorToRequest(vector), buildOpts)
 		if err != nil {
@@ -153,6 +175,32 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		}
 		obs = Empty()
 		RecordUpstreamRequest(obs, built)
+	case RoleClientRequest:
+		if c.ID == "vision-core.protocol.input-image" {
+			req, err := RequestFromWire(inbound, []byte(c.Fixture.Bytes))
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("ingress parse: %v", err))
+			}
+			built, err := r.builderFor(upstream).Build(ctx, req, buildOpts)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
+			}
+			base.Codec = &CodecCheckResult{
+				CaseID: c.ID, Method: built.Method, URL: built.URL, BodyBytes: len(built.Body),
+			}
+			if want, ok := opts.Goldens[c.ID]; ok {
+				base.Codec.GoldenMatched, base.Codec.HeaderCaseMatched, base.Codec.Diff = goldenDiff(built, want)
+				if base.Codec.Diff != "" {
+					return fail(ClassHarnessFailure, "contract_integrity", "codec emitted wrong wire bytes: "+base.Codec.Diff)
+				}
+			}
+			obs = Empty()
+			RecordUpstreamRequest(obs, built)
+			AttachVerifiers(obs, c)
+			break
+		}
+		return fail(ClassHarnessFailure, "execution_error",
+			fmt.Sprintf("unit 2 (SSE egress): fixture role %s not implemented in unit 1", c.Fixture.Role))
 	case RoleUpstreamResponse:
 		if upstream != "openai-responses" || inbound != "openai-responses" {
 			return fail(ClassHarnessFailure, "execution_error",
