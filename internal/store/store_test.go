@@ -82,6 +82,37 @@ func TestRefreshWritesNewGenerationOldRemainsReadable(t *testing.T) {
 	}
 }
 
+func TestPutIdempotentIdenticalBytesConverge(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if err := s.PutIdempotent(ctx, prov, acct, gen1, blobA); err != nil {
+		t.Fatalf("initial put: %v", err)
+	}
+	if err := s.PutIdempotent(ctx, prov, acct, gen1, blobA); err != nil {
+		t.Fatalf("retry after rename crash with identical bytes: %v", err)
+	}
+	got, ok, err := s.Get(ctx, prov, acct, gen1)
+	if err != nil || !ok || !bytes.Equal(got, blobA) {
+		t.Fatalf("blob after idempotent retry: ok=%v got=%q err=%v", ok, got, err)
+	}
+}
+
+func TestPutIdempotentDifferentBytesConflict(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if err := s.Put(ctx, prov, acct, gen1, blobA); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	err := s.PutIdempotent(ctx, prov, acct, gen1, blobB)
+	if !errors.Is(err, ErrCredentialConflict) {
+		t.Fatalf("conflicting put: got %v want ErrCredentialConflict", err)
+	}
+	got, ok, err := s.Get(ctx, prov, acct, gen1)
+	if err != nil || !ok || !bytes.Equal(got, blobA) {
+		t.Fatalf("original blob altered by conflict: ok=%v got=%q err=%v", ok, got, err)
+	}
+}
+
 func TestCrashBetweenWriteAndRenameLeavesPreviousGeneration(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

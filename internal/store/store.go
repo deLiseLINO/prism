@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,9 +23,33 @@ type CredentialStore interface {
 }
 
 var (
-	ErrCredentialExists = errors.New("store: credential generation already exists")
-	ErrLockUnavailable  = errors.New("store: refresh lock held by another process")
+	ErrCredentialExists   = errors.New("store: credential generation already exists")
+	ErrCredentialConflict = errors.New("store: credential generation exists with different bytes")
+	ErrLockUnavailable    = errors.New("store: refresh lock held by another process")
 )
+
+func (s *FileCredentialStore) PutIdempotent(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration, blob []byte) error {
+	for {
+		err := s.Put(ctx, p, a, g, blob)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, ErrCredentialExists) {
+			return err
+		}
+		existing, ok, gerr := s.Get(ctx, p, a, g)
+		if gerr != nil {
+			return gerr
+		}
+		if !ok {
+			continue
+		}
+		if !bytes.Equal(existing, blob) {
+			return ErrCredentialConflict
+		}
+		return nil
+	}
+}
 
 const (
 	staleLockAge = 60 * time.Second
