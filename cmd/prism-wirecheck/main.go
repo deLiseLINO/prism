@@ -14,7 +14,7 @@ import (
 
 func main() {
 	fixturesPath := flag.String("fixtures", "cmd/prism-wirecheck/fixtures/protocol-v1-cases.json", "path to conformance fixture file")
-	caseID := flag.String("case", "", "run one case by id; empty runs the responses-core suite")
+	caseID := flag.String("case", "", "run one case by id; empty runs the responses-core and mcp-core suites")
 	noSelfCheck := flag.Bool("no-self-check", false, "skip the DSL self-check gauntlet")
 	flag.Parse()
 
@@ -40,7 +40,7 @@ func main() {
 			}
 			continue
 		}
-		if c.Suite == "responses-core" {
+		if c.Suite == "responses-core" || c.Suite == "mcp-core" {
 			selected = append(selected, *c)
 		}
 	}
