@@ -1,0 +1,16 @@
+{
+  "caseId": "codex-core.protocol.compaction-and-special-items",
+  "method": "POST",
+  "url": "https://api.openai.com/v1/chat/completions",
+  "headers": [
+    {
+      "name": "Content-Type",
+      "value": "application/json"
+    },
+    {
+      "name": "Authorization",
+      "value": "Bearer fixture-key"
+    }
+  ],
+  "body": "{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"tool\",\"tool_call_id\":\"call_shell\",\"content\":\"ok\"}],\"stream\":false}"
+}

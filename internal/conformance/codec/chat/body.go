@@ -7,11 +7,12 @@ import (
 	"strings"
 
 	"prism/internal/canon"
+	"prism/internal/conformance"
 )
 
 type body struct {
 	Model             canon.ModelID   `json:"model"`
-	Messages          []message       `json:"messages"`
+	Messages          []any           `json:"messages"`
 	Stream            bool            `json:"stream"`
 	ServiceTier       *string         `json:"service_tier,omitempty"`
 	ReasoningSplit    *bool           `json:"reasoning_split,omitempty"`
@@ -31,6 +32,7 @@ type body struct {
 	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
 	StreamOptions     json.RawMessage `json:"stream_options,omitempty"`
 }
+
 type message struct {
 	Role       string     `json:"role"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
@@ -63,6 +65,7 @@ type tool struct {
 	Type     string       `json:"type"`
 	Function toolFunction `json:"function,omitempty"`
 }
+
 type toolFunction struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
@@ -70,8 +73,9 @@ type toolFunction struct {
 	Strict      *bool           `json:"strict,omitempty"`
 }
 
-func messagesFrom(items []canon.Item) ([]message, error) {
-	var out []message
+func messagesFrom(items []canon.Item) ([]any, []string, error) {
+	var out []any
+	var warnings []string
 	var pending []pendingToolCall
 	var imageParts []any
 	flushImages := func() {
@@ -120,6 +124,23 @@ func messagesFrom(items []canon.Item) ([]message, error) {
 				}},
 			})
 			pending = append(pending, pendingToolCall{id: string(it.CallID), name: string(it.Name)})
+		case canon.CustomToolCall:
+			args, err := json.Marshal(map[string]any{"input": it.Input})
+			if err != nil {
+				return nil, nil, err
+			}
+			out = append(out, message{
+				Role:    "assistant",
+				Content: "",
+				ToolCalls: []toolCall{{
+					ID:   string(it.CallID),
+					Type: "function",
+					Function: toolCallFunction{
+						Name:      string(it.Name),
+						Arguments: string(args),
+					},
+				}},
+			})
 		case canon.FunctionOutput:
 			id := string(it.CallID)
 			text := toolResultTextForWire(it.Output)
@@ -134,7 +155,9 @@ func messagesFrom(items []canon.Item) ([]message, error) {
 			}
 			if !matched {
 				flushPending()
-				out = append(out, toolResultMessages(it)...)
+				for _, tm := range toolResultMessages(it) {
+					out = append(out, tm)
+				}
 				continue
 			}
 			out = append(out, message{Role: "tool", ToolCallID: id, Content: text})
@@ -142,12 +165,16 @@ func messagesFrom(items []canon.Item) ([]message, error) {
 			if len(pending) == 0 {
 				flushImages()
 			}
+		case canon.CustomToolOutput:
+			out = append(out, message{Role: "tool", ToolCallID: string(it.CallID), Content: it.Output})
+		case canon.CompactionMarker, canon.LocalShellCall, canon.LocalShellOutput, canon.ToolSearchCall, canon.ToolSearchOutput:
+			warnings = append(warnings, "skip_exotic_item:"+conformance.ExoticItemName(item))
 		default:
-			return nil, fmt.Errorf("chat messages: unsupported canonical item %T", item)
+			return nil, nil, fmt.Errorf("chat messages: unsupported canonical item %T", item)
 		}
 	}
 	flushPending()
-	return out, nil
+	return out, warnings, nil
 }
 
 func toolResultMessages(fo canon.FunctionOutput) []message {

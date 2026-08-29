@@ -1,0 +1,16 @@
+{
+  "caseId": "codex-core.protocol.structured-output",
+  "method": "POST",
+  "url": "https://api.openai.com/v1/chat/completions",
+  "headers": [
+    {
+      "name": "Content-Type",
+      "value": "application/json"
+    },
+    {
+      "name": "Authorization",
+      "value": "Bearer fixture-key"
+    }
+  ],
+  "body": "{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":\"PING\"}],\"stream\":false,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"answer\",\"schema\":{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"],\"additionalProperties\":false},\"strict\":true}}}"
+}

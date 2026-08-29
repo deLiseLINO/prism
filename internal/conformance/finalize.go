@@ -267,6 +267,11 @@ func AttachVerifiers(o *Observation, c Case) {
 	}
 	o.Verifiers["nonoverlap_order"] = ids
 	o.Verifiers["call_result_order"] = evaluateCallResultOrder(o)
+	if c.ID == "codex-core.protocol.compaction-and-special-items" {
+		o.Verifiers["compaction_replayed"] = evaluateCompactionReplayed(c)
+		o.Verifiers["local_shell_correlated"] = evaluateLocalShellCorrelated(c)
+		o.Verifiers["tool_search_error"] = evaluateToolSearchError(c)
+	}
 	if c.ID == "responses-core.protocol.json-sse-equivalence" {
 		o.Verifiers["json_sse_equivalence"] = evaluateJsonSseEquivalence(c)
 	}
@@ -326,6 +331,73 @@ func evaluateCallResultOrder(o *Observation) string {
 		return "pass"
 	}
 	return "fail"
+}
+func evaluateCompactionReplayed(c Case) bool {
+	var vector map[string]any
+	if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
+		return false
+	}
+	input, _ := vector["input"].([]any)
+	for _, iv := range input {
+		item, ok := iv.(map[string]any)
+		if !ok {
+			continue
+		}
+		if item["type"] == "context_compaction" {
+			_, ok := item["encrypted_content"].(string)
+			return ok
+		}
+	}
+	return false
+}
+
+func evaluateLocalShellCorrelated(c Case) bool {
+	var vector map[string]any
+	if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
+		return false
+	}
+	input, _ := vector["input"].([]any)
+	shellID := ""
+	for _, iv := range input {
+		item, ok := iv.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch item["type"] {
+		case "local_shell_call":
+			shellID, _ = item["call_id"].(string)
+		case "function_call_output":
+			if shellID != "" {
+				callID, _ := item["call_id"].(string)
+				return callID == shellID
+			}
+		}
+	}
+	return false
+}
+
+func evaluateToolSearchError(c Case) string {
+	var vector map[string]any
+	if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
+		return ""
+	}
+	input, _ := vector["input"].([]any)
+	failed := 0
+	errText := ""
+	for _, iv := range input {
+		item, ok := iv.(map[string]any)
+		if !ok {
+			continue
+		}
+		if item["type"] == "tool_search_output" && item["status"] == "failed" {
+			failed++
+			errText, _ = item["error"].(string)
+		}
+	}
+	if failed != 1 {
+		return ""
+	}
+	return errText
 }
 
 func evaluateJsonSseEquivalence(c Case) string {

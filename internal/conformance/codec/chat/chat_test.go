@@ -3,6 +3,7 @@ package chat_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"prism/internal/canon"
@@ -97,6 +98,22 @@ func TestRunnerNonRunnableCasesFailLoudly(t *testing.T) {
 		if res.Classification == conformance.ClassProtocolFailure {
 			if res.SecondaryCode != "deterministic_assertion" {
 				t.Fatalf("%s protocol failure code %s", c.ID, res.SecondaryCode)
+			}
+			continue
+		}
+		upstream := "openai-chat"
+		if len(c.Requirements.UpstreamProtocols) > 0 {
+			upstream = c.Requirements.UpstreamProtocols[0]
+		}
+		if (c.Fixture.Role == conformance.RoleAdapterVector || c.Fixture.Role == conformance.RoleClientRequest) && upstream == "openai-chat" && res.SecondaryCode == "contract_integrity" {
+			found := false
+			for _, d := range res.Diagnostics {
+				if strings.Contains(d, "golden") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("%s: diagnostic must name the missing golden: %v", c.ID, res.Diagnostics)
 			}
 			continue
 		}
