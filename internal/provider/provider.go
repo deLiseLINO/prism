@@ -14,8 +14,6 @@ import (
 
 type Wire uint8
 
-type Event interface{ event() }
-
 const (
 	WireCodex Wire = iota + 1
 	WireAntigravity
@@ -94,7 +92,7 @@ func (c ErrorClass) FailoverAllowed() bool {
 }
 
 type Sink interface {
-	Emit(Event) error
+	Emit(canon.Event) error
 }
 
 type RunRequest struct {
@@ -143,7 +141,7 @@ type CompactRequest struct {
 
 type CompactResult struct {
 	Summary canon.Message
-	Usage   account.Usage
+	Usage   canon.Usage
 }
 
 type Compactor interface {

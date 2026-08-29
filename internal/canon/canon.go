@@ -271,3 +271,122 @@ const (
 	CompactionAuto CompactionKind = iota + 1
 	CompactionExplicit
 )
+
+type Event interface{ event() }
+
+type ItemStarted struct{ Item Item }
+
+type TextDelta struct {
+	ItemID ItemID
+	Text   string
+}
+
+type ReasoningDelta struct {
+	ItemID ItemID
+	Text   string
+}
+
+type ToolArgumentsDelta struct {
+	ItemID ItemID
+	Bytes  []byte
+}
+
+type CustomToolInputDelta struct {
+	ItemID ItemID
+	Text   string
+}
+
+type ItemStateAvailable struct {
+	ItemID ItemID
+	State  OpaqueRef
+}
+
+type ItemFinished struct{ Item Item }
+
+type TurnFinished struct {
+	Status Status
+	Usage  Usage
+}
+
+type TurnFailed struct {
+	Failure Failure
+	Usage   Usage
+}
+
+func (ItemStarted) event()          {}
+func (TextDelta) event()            {}
+func (ReasoningDelta) event()       {}
+func (ToolArgumentsDelta) event()   {}
+func (CustomToolInputDelta) event() {}
+func (ItemStateAvailable) event()   {}
+func (ItemFinished) event()         {}
+func (TurnFinished) event()         {}
+func (TurnFailed) event()           {}
+
+type Status struct {
+	kind   StatusKind
+	reason IncompleteReason
+}
+
+func Completed() Status { return Status{kind: StatusCompleted} }
+
+func Incomplete(r IncompleteReason) Status {
+	return Status{kind: StatusIncomplete, reason: r}
+}
+
+func (s Status) Kind() StatusKind { return s.kind }
+
+func (s Status) Reason() (IncompleteReason, bool) {
+	return s.reason, s.kind == StatusIncomplete
+}
+
+type StatusKind uint8
+
+const (
+	StatusCompleted StatusKind = iota + 1
+	StatusIncomplete
+)
+
+type IncompleteReason uint8
+
+const (
+	IncompleteMaxOutputTokens IncompleteReason = iota + 1
+	IncompleteContentFilter
+	IncompleteUpstreamStall
+	IncompleteAdapterEOF
+	IncompleteClientDisconnected
+	IncompleteBufferLimit
+)
+
+type Failure struct {
+	Reason  FailureReason
+	Message string
+}
+
+type FailureReason uint8
+
+const (
+	FailUnauthorized FailureReason = iota + 1
+	FailForbidden
+	FailRateLimited
+	FailQuotaExhausted
+	FailServerOverloaded
+	FailContextLength
+	FailInvalidRequest
+	FailOriginRejected
+	FailCyberPolicy
+	FailToolUndeclared
+	FailToolArgsMalformed
+	FailUpstreamTransport
+	FailNotFound
+	FailTimeout
+	FailUnknown
+)
+
+type Usage struct {
+	InputTokens       int64
+	OutputTokens      int64
+	CachedInputTokens int64
+	ReasoningTokens   int64
+	TotalTokens       int64
+}

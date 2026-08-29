@@ -244,16 +244,12 @@ func TestRegistryRejectsInvalidRegistrations(t *testing.T) {
 	}
 }
 
-type captureSink struct{ events []Event }
+type captureSink struct{ events []canon.Event }
 
-func (s *captureSink) Emit(ev Event) error {
+func (s *captureSink) Emit(ev canon.Event) error {
 	s.events = append(s.events, ev)
 	return nil
 }
-
-type testEvent struct{ n int }
-
-func (testEvent) event() {}
 
 func TestRunnerContractEmitsAndReturns(t *testing.T) {
 	runner := funcRunner(func(ctx context.Context, req RunRequest, sink Sink) error {
@@ -266,7 +262,7 @@ func TestRunnerContractEmitsAndReturns(t *testing.T) {
 		if req.Facts.RequestID == "" {
 			t.Fatal("RunRequest did not carry facts")
 		}
-		return sink.Emit(testEvent{n: 1})
+		return sink.Emit(canon.TextDelta{ItemID: "i1", Text: "delta"})
 	})
 	sink := &captureSink{}
 	req := RunRequest{
@@ -280,6 +276,9 @@ func TestRunnerContractEmitsAndReturns(t *testing.T) {
 	}
 	if len(sink.events) != 1 {
 		t.Fatalf("sink received %d events, want 1", len(sink.events))
+	}
+	if _, ok := sink.events[0].(canon.TextDelta); !ok {
+		t.Fatalf("sink event is %T, want canon.TextDelta", sink.events[0])
 	}
 }
 
