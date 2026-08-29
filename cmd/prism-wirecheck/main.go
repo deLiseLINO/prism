@@ -1,0 +1,159 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+
+	"prism/internal/conformance"
+	"prism/internal/conformance/codec/chat"
+)
+
+func main() {
+	fixturesPath := flag.String("fixtures", "cmd/prism-wirecheck/fixtures/protocol-v1-cases.json", "path to conformance fixture file")
+	caseID := flag.String("case", "responses-core.protocol.request-shape", "run one case by id")
+	noSelfCheck := flag.Bool("no-self-check", false, "skip the DSL self-check gauntlet")
+	flag.Parse()
+
+	authority, err := conformance.Load(*fixturesPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wirecheck: %v\n", err)
+		os.Exit(1)
+	}
+
+	suites := map[string]int{}
+	fixtures := 0
+	var selected *conformance.Case
+	for i := range authority.Cases {
+		c := &authority.Cases[i]
+		suites[c.Suite]++
+		fixtures++
+		if c.InitiatingRequest != nil {
+			fixtures++
+		}
+		if c.ID == *caseID {
+			selected = c
+		}
+	}
+	if selected == nil {
+		fmt.Fprintf(os.Stderr, "wirecheck: unknown case %q\n", *caseID)
+		os.Exit(1)
+	}
+
+	fmt.Printf("wirecheck: authority=%q sourceCommit=%s dsl=%s evidenceSchema=%s\n",
+		conformance.AuthorityFile, authority.SourceCommit, authority.AssertionDSLVersion, authority.EvidenceSchemaVersion)
+	fmt.Printf("wirecheck: manifest OK: %d cases, %d suites, %d fixtures (digests verified)\n\n",
+		len(authority.Cases), len(suites), fixtures)
+
+	goldens, err := conformance.LoadGoldens("cmd/prism-wirecheck/golden")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wirecheck: goldens: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("== live codec check ==")
+	fmt.Println()
+
+	res := conformance.NewRunner(chat.Builder{}).Run(context.Background(), *selected, conformance.Options{
+		BaseURL: "https://api.openai.com/v1",
+		APIKey:  "fixture-key",
+		Goldens: goldens,
+	})
+	printCase(*selected, res, goldens)
+	fmt.Println()
+
+	passed := 0
+	if res.Passed {
+		passed = 1
+	}
+	selfCheckPassed := true
+	if !*noSelfCheck {
+		fmt.Println("== DSL self-check (synthetic, not part of the CL-00 authority) ==")
+		fmt.Println()
+		pointer, jcs, digest, operators, rules, err := runSelfCheck(authority)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "wirecheck: self-check: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(pointer.line("pointer", "vectors OK", `RFC 6901 + reference quirks: ~0/~1, "-", leading zeros`))
+		fmt.Println(jcs.line("jcs", "vectors OK", "RFC 8785: key order, -0, NaN reject, HTML chars unescaped"))
+		fmt.Println(digest.line("digest", "vectors OK", "fixture/scenario/suite domain tags"))
+		fmt.Println(operators.line("operators", "synthetic assertions OK", "13 operators x pass/fail"))
+		fmt.Println(rules.line("rules", "ordered first-match OK", "incl. expected-failure synthesis before required-assertion"))
+		fmt.Println()
+		selfCheckPassed = pointer.ok == pointer.total &&
+			jcs.ok == jcs.total &&
+			digest.ok == digest.total &&
+			operators.ok == operators.total &&
+			rules.ok == rules.total
+	}
+
+	summary := fmt.Sprintf("wirecheck: %d codec case passed", passed)
+	if *noSelfCheck {
+		summary += ", DSL core self-check skipped"
+	} else if selfCheckPassed {
+		summary += ", DSL core self-check passed"
+	} else {
+		summary += ", DSL core self-check FAILED"
+	}
+	fmt.Println(summary)
+	if !res.Passed || !selfCheckPassed {
+		os.Exit(1)
+	}
+}
+
+func printCase(c conformance.Case, res conformance.CaseResult, goldens map[string]conformance.Golden) {
+	fmt.Println(res.ScenarioID)
+	inbound, upstream, surface := conformance.ResolveProtocolExecutionContext(c)
+	fmt.Printf("  context  inbound=%s upstream=%s surface=%s\n", inbound, upstream, surface)
+	if res.Codec != nil {
+		cc := res.Codec
+		fmt.Printf("  codec    %s  %s %s\n", upstream, cc.Method, cc.URL)
+		if cc.Diff == "" {
+			names := headerNames(goldens, cc.CaseID)
+			fmt.Printf("  golden   body %dB exact match; headers [%s] case+order match\n", cc.BodyBytes, strings.Join(names, ", "))
+		} else {
+			fmt.Printf("  golden   MISMATCH (%s)\n", cc.Diff)
+		}
+	}
+	for _, a := range res.AssertionResults {
+		status := "PASS"
+		if !a.Passed {
+			status = "FAIL " + string(a.Reason)
+		}
+		selector := assertionSelector(c, a.ID)
+		fmt.Printf("  assert   %-12s%-16s %-45s%s\n", a.ID, a.Operator, selector, status)
+	}
+	verdict := "PASS"
+	if !res.Passed {
+		verdict = "FAIL"
+	}
+	fmt.Printf("  verdict  %s  classification=%s secondary=%s (reference runner semantics)\n",
+		verdict, res.Classification, res.SecondaryCode)
+	for _, d := range res.Diagnostics {
+		fmt.Printf("  diag     %s\n", d)
+	}
+}
+
+func assertionSelector(c conformance.Case, id string) string {
+	for _, a := range c.Assertions {
+		if a.ID == id {
+			return a.Selector
+		}
+	}
+	return ""
+}
+
+func headerNames(goldens map[string]conformance.Golden, caseID string) []string {
+	g, ok := goldens[caseID]
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(g.Headers))
+	for _, h := range g.Headers {
+		names = append(names, h.Name)
+	}
+	return names
+}

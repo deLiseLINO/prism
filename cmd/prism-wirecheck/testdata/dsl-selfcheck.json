@@ -1,0 +1,4130 @@
+{
+ "comment": "prism-wirecheck DSL self-check gauntlet. Synthetic vectors; NOT part of the CL-00 authority. The Go runner appends 4 non-representable JCS reject vectors (NaN, +Inf, -Inf, invalid UTF-8) to the 10 below, totaling 14.",
+ "pointer": [
+  {
+   "name": "root",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/",
+   "present": true,
+   "expected": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   }
+  },
+  {
+   "name": "empty pointer",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "",
+   "present": false
+  },
+  {
+   "name": "relative",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "foo",
+   "present": false
+  },
+  {
+   "name": "nested object",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/bar",
+   "present": true,
+   "expected": 1
+  },
+  {
+   "name": "missing key",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/nope",
+   "present": false
+  },
+  {
+   "name": "traverse scalar",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/scalar/0",
+   "present": false
+  },
+  {
+   "name": "traverse null",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/nil/x",
+   "present": false
+  },
+  {
+   "name": "array with key token",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/name",
+   "present": false
+  },
+  {
+   "name": "array index",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/0",
+   "present": true,
+   "expected": 10
+  },
+  {
+   "name": "array out of range",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/3",
+   "present": false
+  },
+  {
+   "name": "array on empty",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/empty/0",
+   "present": false
+  },
+  {
+   "name": "array minus",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/-",
+   "present": false
+  },
+  {
+   "name": "array leading zero",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/01",
+   "present": false
+  },
+  {
+   "name": "array double zero",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/00",
+   "present": false
+  },
+  {
+   "name": "array negative",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/-1",
+   "present": false
+  },
+  {
+   "name": "array non numeric",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/1a",
+   "present": false
+  },
+  {
+   "name": "array element path",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/1/name",
+   "present": true,
+   "expected": "two"
+  },
+  {
+   "name": "array second element",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/2/name",
+   "present": true,
+   "expected": "three"
+  },
+  {
+   "name": "array element missing key",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list/1/nope",
+   "present": false
+  },
+  {
+   "name": "tilde1 to slash",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/a~1b",
+   "present": true,
+   "expected": "slash"
+  },
+  {
+   "name": "tilde0 to tilde",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/m~0n",
+   "present": true,
+   "expected": "tilde"
+  },
+  {
+   "name": "tilde01 to tilde1",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/a~01b",
+   "present": true,
+   "expected": "decoded"
+  },
+  {
+   "name": "literal tilde2",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/x~2",
+   "present": true,
+   "expected": "literal2"
+  },
+  {
+   "name": "trailing tilde",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/x~",
+   "present": true,
+   "expected": "trail"
+  },
+  {
+   "name": "literal tilde3",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/x~3y",
+   "present": true,
+   "expected": "literal3"
+  },
+  {
+   "name": "unicode key",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/日本語",
+   "present": true,
+   "expected": "jp"
+  },
+  {
+   "name": "space key",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo/a b",
+   "present": true,
+   "expected": "space"
+  },
+  {
+   "name": "bool value",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/flag",
+   "present": true,
+   "expected": true
+  },
+  {
+   "name": "float value",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/pi",
+   "present": true,
+   "expected": 3.14
+  },
+  {
+   "name": "null value",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/nil",
+   "present": true,
+   "expected": null
+  },
+  {
+   "name": "object value",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/foo",
+   "present": true,
+   "expected": {
+    "bar": 1,
+    "a/b": "slash",
+    "m~n": "tilde",
+    "a~1b": "decoded",
+    "x~2": "literal2",
+    "x~": "trail",
+    "x~3y": "literal3",
+    "": "empty-key",
+    "日本語": "jp",
+    "a b": "space"
+   }
+  },
+  {
+   "name": "array value",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/list",
+   "present": true,
+   "expected": [
+    10,
+    {
+     "name": "two"
+    },
+    {
+     "name": "three"
+    }
+   ]
+  },
+  {
+   "name": "scalar value",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/scalar",
+   "present": true,
+   "expected": 5
+  },
+  {
+   "name": "empty array value",
+   "doc": {
+    "foo": {
+     "bar": 1,
+     "a/b": "slash",
+     "m~n": "tilde",
+     "a~1b": "decoded",
+     "x~2": "literal2",
+     "x~": "trail",
+     "x~3y": "literal3",
+     "": "empty-key",
+     "日本語": "jp",
+     "a b": "space"
+    },
+    "list": [
+     10,
+     {
+      "name": "two"
+     },
+     {
+      "name": "three"
+     }
+    ],
+    "flag": true,
+    "pi": 3.14,
+    "nil": null,
+    "scalar": 5,
+    "empty": []
+   },
+   "selector": "/empty",
+   "present": true,
+   "expected": []
+  }
+ ],
+ "jcs": [
+  {
+   "name": "key order",
+   "value": {
+    "b": 1,
+    "a": 2
+   },
+   "canonical": "{\"a\":2,\"b\":1}"
+  },
+  {
+   "name": "minus zero",
+   "value": {
+    "n": -0.0
+   },
+   "canonical": "{\"n\":0}"
+  },
+  {
+   "name": "html unescaped",
+   "value": {
+    "s": "<>&"
+   },
+   "canonical": "{\"s\":\"<>&\"}"
+  },
+  {
+   "name": "escapes",
+   "value": {
+    "s": "a\"b\\c\nd\te\ff\rg\u0000h"
+   },
+   "canonical": "{\"s\":\"a\\\"b\\\\c\\nd\\te\\ff\\rg\\u0000h\"}"
+  },
+  {
+   "name": "line separators",
+   "value": {
+    "s": "  "
+   },
+   "canonical": "{\"s\":\"\\u2028\\u2029\"}"
+  },
+  {
+   "name": "big exponent",
+   "value": {
+    "n": 1e+21
+   },
+   "canonical": "{\"n\":1e+21}"
+  },
+  {
+   "name": "small exponent",
+   "value": {
+    "n": 1.5e-07
+   },
+   "canonical": "{\"n\":1.5e-7}"
+  },
+  {
+   "name": "plain fraction",
+   "value": {
+    "n": 0.1
+   },
+   "canonical": "{\"n\":0.1}"
+  },
+  {
+   "name": "int64 precision loss",
+   "value": {
+    "n": 9007199254740993
+   },
+   "canonical": "{\"n\":9007199254740992}"
+  },
+  {
+   "name": "routerl char",
+   "value": {
+    "s": "𝄞"
+   },
+   "canonical": "{\"s\":\"𝄞\"}"
+  }
+ ],
+ "digest": [
+  {
+   "name": "fixture tag",
+   "domain": "fixture",
+   "payload": "{\"modelId\":\"fixture-model\",\"context\":{\"messages\":[{\"role\":\"user\",\"content\":\"PING\",\"timestamp\":0}]},\"stream\":false,\"options\":{\"temperature\":0}}",
+   "expected": "ccc7549e8bcfe4e28d0d4a87c14e622ecfb75973600b5eef830d83620c5bd0f8"
+  },
+  {
+   "name": "scenario tag",
+   "domain": "scenario",
+   "payload": {
+    "schemaVersion": 1,
+    "id": "test.scenario",
+    "version": "1.0.0",
+    "suite": {
+     "id": "test-suite",
+     "version": "1.0.0",
+     "evidenceLayer": "protocol_conformance"
+    },
+    "evidenceLayer": "protocol_conformance",
+    "capability": "test.capability",
+    "verificationRole": "required",
+    "requirements": {
+     "inboundProtocols": [
+      "openai-responses"
+     ],
+     "upstreamProtocols": [
+      "openai-chat"
+     ],
+     "surfaces": [
+      "responses-http"
+     ],
+     "requiredClaims": [],
+     "requiredHarnessFeatures": [
+      "adapter_vector"
+     ],
+     "platforms": [],
+     "routePreconditions": []
+    },
+    "fixtures": [
+     {
+      "id": "fx-1",
+      "role": "adapter_vector",
+      "mediaType": "application/vnd.prism.adapter-vector+json",
+      "digest": "d1",
+      "byteLength": 3,
+      "syntheticMarker": "prism-synthetic-v1"
+      
+     }
+    ],
+    "executionLimits": {
+     "totalTimeoutMs": 10000,
+     "maxRequests": 4
+    },
+    "assertions": [
+     {
+      "id": "a1",
+      "operator": "json_path_equals",
+      "selector": "/upstream/requests/0/json/model",
+      "expected": "fixture-model",
+      "required": true
+     }
+    ],
+    "failureRules": [],
+    "artifactPolicy": {
+     "allowed": [
+      "assertion_report"
+     ]
+    },
+    "freshness": {
+     "maxAgeMs": null
+    }
+   },
+   "expected": "17e73872dc2f8f7cfd8df560495e1748f9f963138404c614a529e6b4d2cf5a2c"
+  },
+  {
+   "name": "suite tag",
+   "domain": "suite",
+   "payload": {
+    "schemaVersion": 1,
+    "id": "responses-core",
+    "version": "1.0.0",
+    "evidenceLayer": "protocol_conformance",
+    "capability": "protocol.responses.core",
+    "assertionDslVersion": "1.0.0",
+    "evidenceSchemaVersion": "1.0.0",
+    "freshness": {
+     "maxAgeMs": null
+    },
+    "contradictionRule": "newest-required-observation-v1",
+    "scenarios": [
+     {
+      "id": "responses-core.protocol.request-shape",
+      "version": "1.0.0",
+      "role": "required",
+      "manifestDigest": "d1"
+     }
+    ],
+    "verificationRule": "all-applicable-required-pass-v1"
+   },
+   "expected": "254ffd232a57240f0d89bbf6162fa13ce449a64a15a36d99bbc20b48ddedbd6b"
+  }
+ ],
+ "operators": [
+  {
+   "name": "http_status_equals pass",
+   "assertion": {
+    "id": "http_status_equals pass",
+    "operator": "http_status_equals",
+    "selector": "",
+    "expected": 200,
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "http_status_equals fail",
+   "assertion": {
+    "id": "http_status_equals fail",
+    "operator": "http_status_equals",
+    "selector": "",
+    "expected": 404,
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "value_mismatch"
+  },
+  {
+   "name": "json_path_equals pass",
+   "assertion": {
+    "id": "json_path_equals pass",
+    "operator": "json_path_equals",
+    "selector": "/upstream/requests/0/json/model",
+    "expected": "fixture-model",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "json_path_equals fail",
+   "assertion": {
+    "id": "json_path_equals fail",
+    "operator": "json_path_equals",
+    "selector": "/upstream/requests/0/json/model",
+    "expected": "other-model",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "value_mismatch"
+  },
+  {
+   "name": "json_path_present pass",
+   "assertion": {
+    "id": "json_path_present pass",
+    "operator": "json_path_present",
+    "selector": "/client/response/terminal",
+    "expected": null,
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "json_path_present fail",
+   "assertion": {
+    "id": "json_path_present fail",
+    "operator": "json_path_present",
+    "selector": "/client/response/doesNotExist",
+    "expected": null,
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "selector_missing"
+  },
+  {
+   "name": "json_path_absent pass",
+   "assertion": {
+    "id": "json_path_absent pass",
+    "operator": "json_path_absent",
+    "selector": "/client/response/doesNotExist",
+    "expected": null,
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "json_path_absent fail",
+   "assertion": {
+    "id": "json_path_absent fail",
+    "operator": "json_path_absent",
+    "selector": "/client/response/terminal",
+    "expected": null,
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "selector_present"
+  },
+  {
+   "name": "sse_event_sequence pass",
+   "assertion": {
+    "id": "sse_event_sequence pass",
+    "operator": "sse_event_sequence",
+    "selector": "",
+    "expected": [
+     "response.output_text.delta",
+     "response.output_text.delta",
+     "response.completed"
+    ],
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "sse_event_sequence fail",
+   "assertion": {
+    "id": "sse_event_sequence fail",
+    "operator": "sse_event_sequence",
+    "selector": "",
+    "expected": [
+     "response.output_text.delta",
+     "response.completed"
+    ],
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "event_sequence_mismatch"
+  },
+  {
+   "name": "sse_event_count pass",
+   "assertion": {
+    "id": "sse_event_count pass",
+    "operator": "sse_event_count",
+    "selector": "",
+    "expected": {
+     "event": "response.output_text.delta",
+     "count": 2
+    },
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "sse_event_count fail",
+   "assertion": {
+    "id": "sse_event_count fail",
+    "operator": "sse_event_count",
+    "selector": "",
+    "expected": {
+     "event": "response.output_text.delta",
+     "count": 3
+    },
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "event_count_mismatch"
+  },
+  {
+   "name": "terminal_signal_equals pass",
+   "assertion": {
+    "id": "terminal_signal_equals pass",
+    "operator": "terminal_signal_equals",
+    "selector": "",
+    "expected": "finished",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "terminal_signal_equals fail",
+   "assertion": {
+    "id": "terminal_signal_equals fail",
+    "operator": "terminal_signal_equals",
+    "selector": "",
+    "expected": "failed",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "value_mismatch"
+  },
+  {
+   "name": "id_matches pass",
+   "assertion": {
+    "id": "id_matches pass",
+    "operator": "id_matches",
+    "selector": "/client/response/toolCalls/0/id",
+    "expected": "responses_call",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "id_matches fail",
+   "assertion": {
+    "id": "id_matches fail",
+    "operator": "id_matches",
+    "selector": "/client/response/toolCalls/0/id",
+    "expected": "responses_message",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "id_grammar_mismatch"
+  },
+  {
+   "name": "id_stable_across_events pass",
+   "assertion": {
+    "id": "id_stable_across_events pass",
+    "operator": "id_stable_across_events",
+    "selector": "",
+    "expected": [
+     "/verifiers/firstId",
+     "/verifiers/secondId"
+    ],
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "id_stable_across_events fail",
+   "assertion": {
+    "id": "id_stable_across_events fail",
+    "operator": "id_stable_across_events",
+    "selector": "",
+    "expected": [
+     "/verifiers/firstId",
+     "/verifiers/thirdId"
+    ],
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "id_not_stable"
+  },
+  {
+   "name": "id_correlates pass",
+   "assertion": {
+    "id": "id_correlates pass",
+    "operator": "id_correlates",
+    "selector": "",
+    "expected": [
+     "/verifiers/firstId",
+     "/verifiers/secondId"
+    ],
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "id_correlates fail",
+   "assertion": {
+    "id": "id_correlates fail",
+    "operator": "id_correlates",
+    "selector": "",
+    "expected": [
+     "/verifiers/firstId",
+     "/verifiers/thirdId"
+    ],
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "id_correlation_mismatch"
+  },
+  {
+   "name": "tool_call_equals pass",
+   "assertion": {
+    "id": "tool_call_equals pass",
+    "operator": "tool_call_equals",
+    "selector": "/client/response/toolCalls/0/arguments",
+    "expected": {
+     "q": "x"
+    },
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "tool_call_equals fail",
+   "assertion": {
+    "id": "tool_call_equals fail",
+    "operator": "tool_call_equals",
+    "selector": "/client/response/toolCalls/0/arguments",
+    "expected": {
+     "q": "z"
+    },
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "value_mismatch"
+  },
+  {
+   "name": "tool_result_correlates pass",
+   "assertion": {
+    "id": "tool_result_correlates pass",
+    "operator": "tool_result_correlates",
+    "selector": "",
+    "expected": {
+     "call": "/client/response/toolCalls/0/id",
+     "result": "/verifiers/resultId"
+    },
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "tool_result_correlates fail",
+   "assertion": {
+    "id": "tool_result_correlates fail",
+    "operator": "tool_result_correlates",
+    "selector": "",
+    "expected": {
+     "call": "/client/response/toolCalls/0/id",
+     "result": "/verifiers/thirdId"
+    },
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "tool_result_correlation_mismatch"
+  },
+  {
+   "name": "normalized_text_equals pass",
+   "assertion": {
+    "id": "normalized_text_equals pass",
+    "operator": "normalized_text_equals",
+    "selector": "",
+    "expected": "hello",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": true,
+   "reason": ""
+  },
+  {
+   "name": "normalized_text_equals fail",
+   "assertion": {
+    "id": "normalized_text_equals fail",
+    "operator": "normalized_text_equals",
+    "selector": "",
+    "expected": "goodbye",
+    "required": true
+   },
+   "observation": {
+    "client": {
+     "request": {
+      "status": 0,
+      "headers": {},
+      "json": null,
+      "rawBytes": 0
+     },
+     "response": {
+      "status": 200,
+      "headers": {
+       "content-type": "text/event-stream"
+      },
+      "json": null,
+      "events": [
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "hel"
+        },
+        "ordinal": 0
+       },
+       {
+        "event": "response.output_text.delta",
+        "data": {
+         "delta": "lo"
+        },
+        "ordinal": 1
+       },
+       {
+        "event": "response.completed",
+        "data": {},
+        "ordinal": 2
+       }
+      ],
+      "toolCalls": [
+       {
+        "id": "call_abc_123",
+        "name": "lookup",
+        "arguments": {
+         "q": "x"
+        },
+        "kind": "function",
+        "ordinal": 0
+       },
+       {
+        "id": "call_def_456",
+        "name": "lookup",
+        "arguments": {
+         "q": "y"
+        },
+        "kind": "function",
+        "ordinal": 1
+       }
+      ],
+      "mcpCalls": [],
+      "terminal": "finished",
+      "normalizedText": "hello"
+     }
+    },
+    "upstream": {
+     "requests": [
+      {
+       "status": 0,
+       "headers": {},
+       "json": {
+        "model": "fixture-model",
+        "messages": [
+         {
+          "role": "user",
+          "content": "PING"
+         }
+        ],
+        "stream": false,
+        "temperature": 0
+       },
+       "rawBytes": 102
+      }
+     ],
+     "responses": []
+    },
+    "process": {
+     "exitCode": null
+    },
+    "verifiers": {
+     "firstId": "msg_1",
+     "secondId": "msg_1",
+     "thirdId": "msg_2",
+     "resultId": "call_abc_123"
+    }
+   },
+   "pass": false,
+   "reason": "value_mismatch"
+  }
+ ],
+ "rules": [
+  {
+   "name": "contract-integrity first match",
+   "symptom": "harness_failure",
+   "synthesize": null,
+   "expectRule": "contract-integrity",
+   "expectClass": "harness_failure",
+   "expectCode": "contract_integrity"
+  },
+  {
+   "name": "time-limit first match",
+   "symptom": "total_timeout",
+   "synthesize": null,
+   "expectRule": "time-limit",
+   "expectClass": "timeout",
+   "expectCode": "scenario_time_limit"
+  },
+  {
+   "name": "resource-limit first match",
+   "symptom": "output_token_limit",
+   "synthesize": null,
+   "expectRule": "resource-limit",
+   "expectClass": "budget_exhausted",
+   "expectCode": "scenario_resource_limit"
+  },
+  {
+   "name": "fallback via no_prior_rule",
+   "symptom": "no_prior_rule",
+   "synthesize": null,
+   "expectRule": "fallback",
+   "expectClass": "inconclusive",
+   "expectCode": "unclassified"
+  },
+  {
+   "name": "expected-failure synthesis before required-assertion",
+   "symptom": "expected_failure_exact_match",
+   "synthesize": {
+    "expectedClass": "capability_failure",
+    "expectedCode": "modality_gate",
+    "onMatch": "pass"
+   },
+   "expectRule": "expected-failure-exact-match",
+   "expectClass": "capability_failure",
+   "expectCode": "modality_gate"
+  }
+ ]
+}
