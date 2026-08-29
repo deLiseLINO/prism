@@ -1,0 +1,17 @@
+{
+  "fingerprint": {
+    "method": "POST",
+    "url": "https://chatgpt.com/backend-api/codex/responses",
+    "headers": [
+      {"name": "Content-Type", "value": "application/json"},
+      {"name": "session_id", "value": "sess-1"},
+      {"name": "originator", "value": "codex_cli"},
+      {"name": "user-agent", "value": "codex/1.0"},
+      {"name": "x-responsesapi-include-timing-metrics", "value": "true"},
+      {"name": "Authorization", "value": "Bearer tok-1"},
+      {"name": "chatgpt-account-id", "value": "acct-1"},
+      {"name": "openai-beta", "value": "responses=experimental"},
+      {"name": "x-client-request-id", "value": "req-1"}
+    ]
+  }
+}

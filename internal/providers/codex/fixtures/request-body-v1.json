@@ -1,0 +1,23 @@
+{
+  "request": {
+    "model": "gpt-5.2-codex",
+    "instructions": "Be terse.",
+    "input": [
+      {"type": "message", "id": "msg-1", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+      {"type": "reasoning", "id": "rs-1", "summary": [{"type": "summary_text", "text": "thinking"}], "encrypted_content": "native-blob"},
+      {"type": "function_call", "id": "fc-1", "call_id": "call-1", "name": "lookup"},
+      {"type": "function_call_output", "id": "out-1", "call_id": "call-1", "output": "42"}
+    ],
+    "tools": [
+      {"type": "function", "name": "lookup", "description": "finds", "parameters": {"type": "object"}, "strict": true}
+    ],
+    "tool_choice": "auto",
+    "parallel_tool_calls": false,
+    "reasoning": {"effort": "high", "summary": "auto"},
+    "temperature": 0.5,
+    "top_p": 0.9,
+    "stream": true,
+    "store": false,
+    "include": ["reasoning.encrypted_content"]
+  }
+}
