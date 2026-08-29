@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -69,6 +70,14 @@ type RunError struct {
 	ReplaySafe bool
 	RetryAfter time.Duration
 	Cause      error
+}
+
+func (e RunError) Error() string {
+	return fmt.Sprintf("provider: run error kind=%d class=%d accepted=%t replaySafe=%t retryAfter=%s", e.Kind, e.Class, e.Accepted, e.ReplaySafe, e.RetryAfter)
+}
+
+func (e RunError) Unwrap() error {
+	return e.Cause
 }
 
 func (k RunErrorKind) FailoverAllowed() bool {
