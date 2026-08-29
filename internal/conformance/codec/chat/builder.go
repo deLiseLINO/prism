@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"prism/internal/canon"
@@ -57,7 +58,13 @@ func (Builder) Build(ctx context.Context, req canon.Request, opts conformance.Bu
 		body.MaxTokens = &req.MaxOutputTokens
 	}
 	if effort := effortWire(req.Reasoning.Effort); effort != "" {
-		body.ReasoningEffort = &effort
+		if wire, ok := mapReasoningEffort(opts.ReasoningEffortMap, effort); ok {
+			if opts.ReasoningWireFormat == "gateway-object" && !nativeOpenAI(opts.BaseURL) {
+				body.Reasoning = &reasoningWire{Enabled: true, Effort: wire}
+			} else {
+				body.ReasoningEffort = &wire
+			}
+		}
 	}
 	if len(req.Tools) > 0 {
 		body.Tools, err = toolsFrom(req.Tools)
@@ -134,4 +141,12 @@ func responseFormat(f *canon.TextFormat) (json.RawMessage, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func nativeOpenAI(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	return u.Hostname() == "api.openai.com"
 }

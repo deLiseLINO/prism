@@ -149,7 +149,7 @@ func TestResponsesBuildInitiatingRequest(t *testing.T) {
 
 func TestBuildRejectsUnsupportedItem(t *testing.T) {
 	got, err := (responses.Builder{}).Build(context.Background(), canon.Request{
-		Input: []canon.Item{canon.ReasoningItem{}},
+		Input: []canon.Item{canon.CompactionMarker{}},
 	}, conformance.BuildOptions{})
 	if err == nil {
 		t.Fatal("unsupported item must return an error")

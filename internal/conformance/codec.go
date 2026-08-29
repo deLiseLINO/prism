@@ -16,9 +16,11 @@ type UpstreamRequest struct {
 }
 
 type BuildOptions struct {
-	BaseURL          string
-	APIKey           string
-	UpstreamProtocol string
+	BaseURL             string
+	APIKey              string
+	UpstreamProtocol    string
+	ReasoningWireFormat string
+	ReasoningEffortMap  map[string]string
 }
 
 type RequestBuilder interface {
