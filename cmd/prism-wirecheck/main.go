@@ -122,13 +122,15 @@ func printCase(c conformance.Case, res conformance.CaseResult, goldens map[strin
 	if res.Codec != nil {
 		cc := res.Codec
 		fmt.Printf("  codec    %s  %s %s\n", upstream, cc.Method, cc.URL)
-		if cc.Diff == "" {
+		if cc.Diff == "" && cc.GoldenPinned {
 			names := headerNames(goldens, cc.CaseID)
 			if len(names) == 0 {
 				fmt.Println("  golden   none pinned; assertions only")
 			} else {
 				fmt.Printf("  golden   body %dB exact match; headers [%s] case+order match\n", cc.BodyBytes, strings.Join(names, ", "))
 			}
+		} else if cc.Diff == "" {
+			fmt.Printf("  golden   body %dB, no golden pinned (assertion-only case)\n", cc.BodyBytes)
 		} else {
 			fmt.Printf("  golden   MISMATCH (%s)\n", cc.Diff)
 		}

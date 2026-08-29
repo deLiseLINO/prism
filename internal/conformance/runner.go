@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"prism/internal/canon"
 )
 
 type Options struct {
@@ -18,6 +20,7 @@ type CodecCheckResult struct {
 	Method            string
 	URL               string
 	BodyBytes         int
+	GoldenPinned      bool
 	GoldenMatched     bool
 	HeaderCaseMatched bool
 	Diff              string
@@ -230,8 +233,35 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			AttachVerifiers(obs, c)
 			break
 		}
-		return fail(ClassHarnessFailure, "execution_error",
-			fmt.Sprintf("unit 2 (SSE egress): fixture role %s not implemented in unit 1", c.Fixture.Role))
+		if inbound != "anthropic-messages" {
+			return fail(ClassHarnessFailure, "execution_error",
+				fmt.Sprintf("client_request ingress: inbound protocol %s not implemented", inbound))
+		}
+		if upstream != "openai-responses" {
+			return fail(ClassHarnessFailure, "execution_error",
+				fmt.Sprintf("client_request ingress: upstream protocol %s not implemented", upstream))
+		}
+		req, err := DecodeMessagesRequest([]byte(c.Fixture.Bytes))
+		if err != nil {
+			return fail(ClassHarnessFailure, "fixture_decode_failure", fmt.Sprintf("fixture decode: %v", err))
+		}
+		built, err := r.builderFor(upstream).Build(ctx, req, buildOpts)
+		if err != nil {
+			return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
+		}
+		codec := &CodecCheckResult{
+			CaseID: c.ID, Method: built.Method, URL: built.URL, BodyBytes: len(built.Body),
+		}
+		if want, hasGolden := opts.Goldens[c.ID]; hasGolden {
+			codec.GoldenPinned = true
+			codec.GoldenMatched, codec.HeaderCaseMatched, codec.Diff = goldenDiff(built, want)
+			if codec.Diff != "" {
+				return fail(ClassHarnessFailure, "contract_integrity", "codec emitted wrong wire bytes: "+codec.Diff)
+			}
+		}
+		base.Codec = codec
+		obs = Empty()
+		RecordUpstreamRequest(obs, built)
 	case RoleUpstreamResponse:
 		if c.ID == "tools-core.protocol.parallel-correlation" {
 			built, err := runToolsCoreChatSse(c, r, buildOpts)
@@ -270,21 +300,38 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			AttachVerifiers(obs, c)
 			break
 		}
-		if upstream != "openai-responses" || inbound != "openai-responses" {
+		if upstream != "openai-responses" {
 			return fail(ClassHarnessFailure, "execution_error",
-				fmt.Sprintf("unit 2 (SSE egress): upstream %s inbound %s not implemented in unit 1", upstream, inbound))
+				fmt.Sprintf("SSE egress: upstream protocol %s not implemented", upstream))
+		}
+		if inbound != "openai-responses" && inbound != "anthropic-messages" {
+			return fail(ClassHarnessFailure, "execution_error",
+				fmt.Sprintf("SSE egress: inbound protocol %s not implemented", inbound))
 		}
 		events, err := NormalizeSseBytes([]byte(c.Fixture.Bytes), upstream)
 		if err != nil {
 			return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("sse normalize: %v", err))
 		}
+		if inbound == "anthropic-messages" {
+			events = TranslateResponsesEvents(events)
+		}
 		obs = Empty()
 		if c.InitiatingRequest != nil {
-			var vector map[string]any
-			if err := json.Unmarshal([]byte(c.InitiatingRequest.Bytes), &vector); err != nil {
-				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("initiating request decode: %v", err))
+			var req canon.Request
+			switch inbound {
+			case "anthropic-messages":
+				req, err = DecodeMessagesRequest([]byte(c.InitiatingRequest.Bytes))
+				if err != nil {
+					return fail(ClassHarnessFailure, "fixture_decode_failure", fmt.Sprintf("initiating request decode: %v", err))
+				}
+			default:
+				var vector map[string]any
+				if err := json.Unmarshal([]byte(c.InitiatingRequest.Bytes), &vector); err != nil {
+					return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("initiating request decode: %v", err))
+				}
+				req = VectorToRequest(vector)
 			}
-			built, err := r.builderFor(upstream).Build(ctx, VectorToRequest(vector), buildOpts)
+			built, err := r.builderFor(upstream).Build(ctx, req, buildOpts)
 			if err != nil {
 				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
 			}
@@ -302,7 +349,7 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		AttachVerifiers(obs, c)
 	default:
 		return fail(ClassHarnessFailure, "execution_error",
-			fmt.Sprintf("unit 2 (SSE egress): fixture role %s not implemented in unit 1", c.Fixture.Role))
+			fmt.Sprintf("fixture role %s not implemented", c.Fixture.Role))
 	}
 
 	obsJSON, err := obs.JSON()

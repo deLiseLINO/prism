@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"prism/internal/canon"
 )
@@ -41,6 +40,19 @@ type inputItem struct {
 	Signature string        `json:"signature,omitempty"`
 }
 
+type functionCallItem struct {
+	Type      string `json:"type"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type functionCallOutputItem struct {
+	Type   string `json:"type"`
+	CallID string `json:"call_id"`
+	Output any    `json:"output"`
+}
+
 type contentPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
@@ -64,7 +76,7 @@ type toolFormat struct {
 }
 
 func inputFrom(items []canon.Item) (any, error) {
-	out := make([]inputItem, 0, len(items))
+	out := make([]any, 0, len(items))
 	for _, item := range items {
 		switch it := item.(type) {
 		case canon.Message:
@@ -87,16 +99,17 @@ func inputFrom(items []canon.Item) (any, error) {
 				Signature: it.Signature,
 			})
 		case canon.FunctionCall:
-			out = append(out, inputItem{Type: "function_call", CallID: string(it.CallID), Name: string(it.Name), Arguments: string(it.Arguments)})
+			out = append(out, functionCallItem{
+				Type:      "function_call",
+				CallID:    string(it.CallID),
+				Name:      string(it.Name),
+				Arguments: string(it.Arguments),
+			})
 		case canon.FunctionOutput:
-			text, err := outputText(it.Output)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, inputItem{
+			out = append(out, functionCallOutputItem{
 				Type:   "function_call_output",
 				CallID: string(it.CallID),
-				Output: text,
+				Output: functionCallOutputWire(it.Output),
 			})
 		case canon.CustomToolCall:
 			out = append(out, inputItem{Type: "custom_tool_call", CallID: string(it.CallID), Name: string(it.Name), Input: it.Input})
@@ -109,16 +122,26 @@ func inputFrom(items []canon.Item) (any, error) {
 	return out, nil
 }
 
-func outputText(content []canon.Content) (string, error) {
-	var sb strings.Builder
-	for _, c := range content {
-		p, ok := c.(canon.TextContent)
-		if !ok {
-			return "", fmt.Errorf("responses output: unsupported canonical content %T", c)
+func functionCallOutputWire(content []canon.Content) any {
+	if len(content) == 1 {
+		if t, ok := content[0].(canon.TextContent); ok {
+			return t.Text
 		}
-		sb.WriteString(p.Text)
 	}
-	return sb.String(), nil
+	if len(content) == 0 {
+		return ""
+	}
+	parts := make([]contentPart, 0, len(content))
+	for _, c := range content {
+		switch p := c.(type) {
+		case canon.TextContent:
+			parts = append(parts, contentPart{Type: "input_text", Text: p.Text})
+		case canon.ImageContent:
+			url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+			parts = append(parts, contentPart{Type: "input_image", ImageURL: url})
+		}
+	}
+	return parts
 }
 
 func roleWire(r canon.Role) string {

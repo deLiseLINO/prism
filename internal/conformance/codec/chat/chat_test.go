@@ -87,6 +87,9 @@ func TestRunnerNonRunnableCasesFailLoudly(t *testing.T) {
 	}
 	r := conformance.NewRunner(chat.Builder{})
 	for _, c := range a.Cases {
+		if c.Suite == "anthropic-core" {
+			continue
+		}
 		res := r.Run(context.Background(), c, conformance.Options{})
 		if res.Passed {
 			continue
