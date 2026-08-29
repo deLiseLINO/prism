@@ -75,10 +75,11 @@ type Message struct {
 }
 
 type ReasoningItem struct {
-	ID      ItemID
-	Content string
-	Summary []TextContent
-	State   OpaqueRef
+	ID        ItemID
+	Content   string
+	Signature string
+	Summary   []TextContent
+	State     OpaqueRef
 }
 
 type FunctionCall struct {

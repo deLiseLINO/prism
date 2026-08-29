@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"prism/internal/canon"
 )
@@ -28,9 +29,13 @@ type reasoning struct {
 }
 
 type inputItem struct {
-	Type    string        `json:"type"`
-	Role    string        `json:"role,omitempty"`
-	Content []contentPart `json:"content,omitempty"`
+	Type      string        `json:"type"`
+	ID        string        `json:"id,omitempty"`
+	Role      string        `json:"role,omitempty"`
+	Content   []contentPart `json:"content,omitempty"`
+	CallID    string        `json:"call_id,omitempty"`
+	Output    string        `json:"output,omitempty"`
+	Signature string        `json:"signature,omitempty"`
 }
 
 type contentPart struct {
@@ -51,23 +56,54 @@ type tool struct {
 func inputFrom(items []canon.Item) (any, error) {
 	out := make([]inputItem, 0, len(items))
 	for _, item := range items {
-		m, ok := item.(canon.Message)
-		if !ok {
+		switch it := item.(type) {
+		case canon.Message:
+			parts := make([]contentPart, 0, len(it.Content))
+			for _, c := range it.Content {
+				switch p := c.(type) {
+				case canon.TextContent:
+					parts = append(parts, contentPart{Type: "input_text", Text: p.Text})
+				case canon.ImageContent:
+					url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
+					parts = append(parts, contentPart{Type: "input_image", ImageURL: url, Detail: p.Detail})
+				}
+			}
+			out = append(out, inputItem{Type: "message", Role: roleWire(it.Role), Content: parts})
+		case canon.ReasoningItem:
+			out = append(out, inputItem{
+				Type:      "reasoning",
+				ID:        string(it.ID),
+				Content:   []contentPart{{Type: "reasoning_text", Text: it.Content}},
+				Signature: it.Signature,
+			})
+		case canon.FunctionOutput:
+			text, err := outputText(it.Output)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, inputItem{
+				Type:   "function_call_output",
+				CallID: string(it.CallID),
+				Output: text,
+			})
+		default:
 			return nil, fmt.Errorf("responses input: unsupported canonical item %T", item)
 		}
-		parts := make([]contentPart, 0, len(m.Content))
-		for _, c := range m.Content {
-			switch p := c.(type) {
-			case canon.TextContent:
-				parts = append(parts, contentPart{Type: "input_text", Text: p.Text})
-			case canon.ImageContent:
-				url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
-				parts = append(parts, contentPart{Type: "input_image", ImageURL: url, Detail: p.Detail})
-			}
-		}
-		out = append(out, inputItem{Type: "message", Role: roleWire(m.Role), Content: parts})
+
 	}
 	return out, nil
+}
+
+func outputText(content []canon.Content) (string, error) {
+	var sb strings.Builder
+	for _, c := range content {
+		p, ok := c.(canon.TextContent)
+		if !ok {
+			return "", fmt.Errorf("responses output: unsupported canonical content %T", c)
+		}
+		sb.WriteString(p.Text)
+	}
+	return sb.String(), nil
 }
 
 func roleWire(r canon.Role) string {

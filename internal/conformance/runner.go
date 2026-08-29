@@ -3,6 +3,7 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -131,10 +132,6 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			AttachVerifiers(obs, c)
 			break
 		}
-		if upstream != "openai-chat" {
-			return fail(ClassHarnessFailure, "execution_error",
-				fmt.Sprintf("unsupported adapter_vector scenario %s", c.ID))
-		}
 		var vector map[string]any
 		if err := json.Unmarshal([]byte(c.Fixture.Bytes), &vector); err != nil {
 			return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("fixture decode: %v", err))
@@ -156,23 +153,37 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			AttachVerifiers(obs, c)
 			break
 		}
-		built, err := r.Build.Build(ctx, VectorToRequest(vector), buildOpts)
-		if err != nil {
+		requests, err := r.buildReasoningVector(ctx, c, vector, buildOpts)
+		if err != nil && !errors.Is(err, errUnhandledAdapterVector) {
 			return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
 		}
+		if errors.Is(err, errUnhandledAdapterVector) {
+			if upstream != "openai-chat" {
+				return fail(ClassHarnessFailure, "execution_error",
+					fmt.Sprintf("unsupported adapter_vector scenario %s", c.ID))
+			}
+			built, err := r.Build.Build(ctx, VectorToRequest(vector), buildOpts)
+			if err != nil {
+				return fail(ClassHarnessFailure, "execution_error", fmt.Sprintf("codec build: %v", err))
+			}
+			requests = []*UpstreamRequest{built}
+		}
+		last := requests[len(requests)-1]
 		codec := &CodecCheckResult{
-			CaseID: c.ID, Method: built.Method, URL: built.URL, BodyBytes: len(built.Body),
+			CaseID: c.ID, Method: last.Method, URL: last.URL, BodyBytes: len(last.Body),
 		}
 		want, hasGolden := opts.Goldens[c.ID]
 		if hasGolden {
-			codec.GoldenMatched, codec.HeaderCaseMatched, codec.Diff = goldenDiff(built, want)
+			codec.GoldenMatched, codec.HeaderCaseMatched, codec.Diff = goldenDiff(last, want)
 		}
 		base.Codec = codec
 		if codec.Diff != "" {
 			return fail(ClassHarnessFailure, "contract_integrity", "codec emitted wrong wire bytes: "+codec.Diff)
 		}
 		obs = Empty()
-		RecordUpstreamRequest(obs, built)
+		for _, req := range requests {
+			RecordUpstreamRequest(obs, req)
+		}
 	case RoleClientRequest:
 		if c.ID == "vision-core.protocol.input-image" {
 			req, err := RequestFromWire(inbound, []byte(c.Fixture.Bytes))

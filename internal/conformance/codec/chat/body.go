@@ -23,6 +23,7 @@ type body struct {
 	TopP              *float64        `json:"top_p,omitempty"`
 	Stop              []string        `json:"stop,omitempty"`
 	ReasoningEffort   *string         `json:"reasoning_effort,omitempty"`
+	Reasoning         *reasoningWire  `json:"reasoning,omitempty"`
 	PresencePenalty   *float64        `json:"presence_penalty,omitempty"`
 	FrequencyPenalty  *float64        `json:"frequency_penalty,omitempty"`
 	PromptCacheKey    *string         `json:"prompt_cache_key,omitempty"`
@@ -42,11 +43,15 @@ type imageURLPart struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type reasoningWire struct {
+	Enabled bool   `json:"enabled"`
+	Effort  string `json:"effort,omitempty"`
+}
+
 type tool struct {
 	Type     string       `json:"type"`
 	Function toolFunction `json:"function,omitempty"`
 }
-
 type toolFunction struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
@@ -148,6 +153,21 @@ func effortWire(e canon.ReasoningEffort) string {
 	default:
 		return ""
 	}
+}
+
+const effortOmitSentinel = "__omit__"
+
+func mapReasoningEffort(m map[string]string, requested string) (string, bool) {
+	if m == nil {
+		return requested, true
+	}
+	if v, ok := m[requested]; ok {
+		if v == effortOmitSentinel {
+			return "", false
+		}
+		return v, true
+	}
+	return requested, true
 }
 
 func toolsFrom(tools []canon.Tool) ([]tool, error) {

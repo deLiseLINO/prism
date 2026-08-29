@@ -45,6 +45,11 @@ func VectorToRequest(vector map[string]any) canon.Request {
 		}
 		req.Input = []canon.Item{canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: input}}}}
 	}
+	if s, ok := vector["requested"].(string); ok {
+		if e, ok := effortFrom(s); ok {
+			req.Reasoning.Effort = e
+		}
+	}
 	if o, ok := vector["options"].(map[string]any); ok {
 		if t, ok := o["temperature"].(float64); ok {
 			req.Sampling.Temperature = &t
@@ -76,6 +81,23 @@ func textFormatFrom(m map[string]any) *canon.TextFormat {
 		f.Strict = &strict
 	}
 	return f
+}
+
+func effortFrom(label string) (canon.ReasoningEffort, bool) {
+	switch label {
+	case "minimal":
+		return canon.EffortMinimal, true
+	case "low":
+		return canon.EffortLow, true
+	case "medium":
+		return canon.EffortMedium, true
+	case "high":
+		return canon.EffortHigh, true
+	case "xhigh":
+		return canon.EffortXHigh, true
+	default:
+		return 0, false
+	}
 }
 
 func contentFrom(v any) []canon.Content {
