@@ -91,6 +91,7 @@ func (Ingress) Parse(_ context.Context, hr *http.Request) (canon.Request, execut
 		Input:           items,
 		MaxOutputTokens: maxTokensFrom(b.MaxTokens),
 		Sampling:        samplingFrom(b),
+		Reasoning:       reasoningFrom(b.ReasoningEffort),
 	}
 	if req.Tools, err = toolsFrom(b.Tools); err != nil {
 		return canon.Request{}, execution.Facts{}, err
@@ -139,6 +140,27 @@ func maxTokensFrom(maxTokens *int) int {
 		return 0
 	}
 	return *maxTokens
+}
+
+func reasoningFrom(effort *string) canon.ReasoningConfig {
+	if effort == nil {
+		return canon.ReasoningConfig{}
+	}
+	switch *effort {
+	case "minimal":
+		return canon.ReasoningConfig{Effort: canon.EffortMinimal}
+	case "off", "none":
+		return canon.ReasoningConfig{Effort: canon.EffortOff}
+	case "low":
+		return canon.ReasoningConfig{Effort: canon.EffortLow}
+	case "medium":
+		return canon.ReasoningConfig{Effort: canon.EffortMedium}
+	case "high":
+		return canon.ReasoningConfig{Effort: canon.EffortHigh}
+	case "xhigh":
+		return canon.ReasoningConfig{Effort: canon.EffortXHigh}
+	}
+	return canon.ReasoningConfig{}
 }
 
 func samplingFrom(b body) canon.Sampling {
@@ -373,6 +395,7 @@ type body struct {
 	PresencePenalty   *float64        `json:"presence_penalty"`
 	FrequencyPenalty  *float64        `json:"frequency_penalty"`
 	ParallelToolCalls *bool           `json:"parallel_tool_calls"`
+	ReasoningEffort   *string         `json:"reasoning_effort"`
 	Tools             []tool          `json:"tools"`
 	ToolChoice        json.RawMessage `json:"tool_choice"`
 }

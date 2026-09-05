@@ -1,0 +1,27 @@
+{
+  "name": "@prism/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p renderer/tsconfig.json",
+    "build": "node build.mjs",
+    "dev": "npm run build && electron .",
+    "test": "vitest run",
+    "verify": "bash ../../verify/scripts/quality-gate.sh local",
+    "verify:live": "bash ../../verify/scripts/quality-gate.sh live"
+  },
+  "dependencies": {
+    "@prism/contracts": "*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "electron": "^38.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.2"
+  }
+}

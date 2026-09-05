@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"prism/internal/account"
+	"prism/internal/auth"
 	"prism/internal/config"
+	"prism/internal/integrations"
 	"prism/internal/provider"
 	"prism/internal/quota"
 )
@@ -126,22 +128,23 @@ func (q *fakeQuotaSource) Quota(ctx context.Context, id account.AccountID) (quot
 }
 
 type fakeAuth struct {
-	startURL    string
-	callbackErr error
-	lastCode    string
+	start        auth.AuthStart
+	status       auth.AuthStatus
+	callbackErr  error
+	lastCallback auth.AuthCallback
 }
 
-func (a *fakeAuth) Start(ctx context.Context, id string) (string, error) {
-	return a.startURL, nil
+func (a *fakeAuth) Start(ctx context.Context, provider account.ProviderID) (auth.AuthStart, error) {
+	return a.start, nil
 }
 
-func (a *fakeAuth) Callback(ctx context.Context, id, code string) error {
-	a.lastCode = code
+func (a *fakeAuth) Complete(ctx context.Context, provider account.ProviderID, cb auth.AuthCallback) error {
+	a.lastCallback = cb
 	return a.callbackErr
 }
 
-func (a *fakeAuth) Status(ctx context.Context, id string) (AuthStatus, error) {
-	return AuthStatus{State: "authorized"}, nil
+func (a *fakeAuth) Status(ctx context.Context, provider account.ProviderID, session auth.AuthSessionID) (auth.AuthStatus, error) {
+	return a.status, nil
 }
 
 type testEnv struct {
@@ -186,14 +189,17 @@ func newEnv(t *testing.T) *testEnv {
 		},
 	}
 	creds := &fakeCreds{store: map[string][]byte{}}
-	auth := &fakeAuth{startURL: "https://oauth.example.com/authorize"}
+	fake := &fakeAuth{
+		start:  auth.AuthStart{Session: "s1", URL: "https://oauth.example.com/authorize"},
+		status: auth.AuthStatus{State: auth.StatusAuthorized},
+	}
 	catalog := &fakeCatalog{models: []provider.Model{
 		{ID: "gpt-5.3", Alias: "gpt-5.3-codex", Caps: provider.ModelCaps{Reasoning: true, CustomTools: true}},
 	}}
 	srv := New(pool, m, catalog, &fakeQuotaSource{snapshots: map[account.AccountID]quota.Snapshot{
 		"a1": {Used: 42, Limit: int64Ptr(100), Source: quota.SourceEndpoint},
-	}}, creds, auth)
-	return &testEnv{srv: srv, handler: srv.Handler(), pool: pool, creds: creds, auth: auth, cfg: m}
+	}}, creds, fake, integrations.NewRegistry())
+	return &testEnv{srv: srv, handler: srv.Handler(), pool: pool, creds: creds, auth: fake, cfg: m}
 }
 
 func int64Ptr(v int64) *int64 { return &v }
@@ -456,7 +462,7 @@ func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
 	assertErrorBody(t, env.do(t, http.MethodDelete, "/api/v1/accounts/a1", ""), http.StatusNotFound, "not_found")
 
 	plainPool := &noDeletePool{}
-	srv := New(plainPool, env.cfg, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, nil)
+	srv := New(plainPool, env.cfg, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, nil, integrations.NewRegistry())
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/a1", strings.NewReader(""))
 	rec2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec2, req)
@@ -670,15 +676,16 @@ func TestAuthRoutesDelegate(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("start status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if got := decodeBody[AuthStartResponse](t, rec); got.URL != "https://oauth.example.com/authorize" {
-		t.Fatalf("start url = %q", got.URL)
+	start := decodeBody[AuthStartResponse](t, rec)
+	if start.Session != "s1" || start.URL != "https://oauth.example.com/authorize" {
+		t.Fatalf("start = %+v", start)
 	}
-	rec = env.do(t, http.MethodPost, "/api/v1/auth/codex/callback", `{"code":"abc"}`)
+	rec = env.do(t, http.MethodPost, "/api/v1/auth/codex/callback", `{"session":"s1","code":"abc","state":"st1"}`)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("callback status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if env.auth.lastCode != "abc" {
-		t.Fatalf("callback code = %q, want abc", env.auth.lastCode)
+	if env.auth.lastCallback.Session != "s1" || env.auth.lastCallback.Code != "abc" || env.auth.lastCallback.State != "st1" {
+		t.Fatalf("callback = %+v", env.auth.lastCallback)
 	}
 	rec = env.do(t, http.MethodGet, "/api/v1/auth/codex/status", "")
 	if rec.Code != http.StatusOK {

@@ -44,7 +44,7 @@ type stubCreds struct {
 	err  error
 }
 
-func (s stubCreds) Credential(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration) (CredentialPair, error) {
+func (s stubCreds) Credential(ctx context.Context, lease account.Lease) (CredentialPair, error) {
 	if s.err != nil {
 		return CredentialPair{}, s.err
 	}
@@ -250,8 +250,11 @@ func TestRunnerRepairAndReplay(t *testing.T) {
 	if len(bodies) != 2 {
 		t.Fatalf("bodies = %d, want 2 (original + repaired replay)", len(bodies))
 	}
-	if !strings.Contains(bodies[0], "not-a-type") {
-		t.Fatalf("original body missing the rejected schema: %s", bodies[0])
+	if !strings.Contains(bodies[0], `"broken"`) {
+		t.Fatalf("original body missing the property name: %s", bodies[0])
+	}
+	if strings.Contains(bodies[0], `not-a-type`) {
+		t.Fatalf("invalid type must not reach the wire: %s", bodies[0])
 	}
 	if !strings.Contains(bodies[1], `{"type":"object","properties":{}}`) {
 		t.Fatalf("repaired body must carry the empty object schema: %s", bodies[1])
@@ -291,22 +294,36 @@ func TestRunnerRunErrorClassification(t *testing.T) {
 	}
 }
 
-func TestRunnerCredentialFailureClassifiedUnauthorized(t *testing.T) {
-	runner, err := NewRunner(stubCreds{err: errors.New("missing generation")}, http.DefaultClient, DefaultBaseURL)
-	if err != nil {
-		t.Fatalf("NewRunner: %v", err)
+func TestRunnerCredentialFailureClassification(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		class provider.ErrorClass
+		kind  provider.RunErrorKind
+	}{
+		{"rejected grant", account.ErrNeedsReauth, provider.ClassUnauthorized, provider.TerminalOmitted},
+		{"transient refresh", account.ErrRefreshTransient, provider.ClassTransport, provider.Retryable},
+		{"unknown", errors.New("missing generation"), provider.ClassTransport, provider.Retryable},
 	}
-	var sink recordingSink
-	err = runner.Run(context.Background(), testRequest(), &sink)
-	var runErr provider.RunError
-	if !errors.As(err, &runErr) {
-		t.Fatalf("expected RunError, got %v", err)
-	}
-	if runErr.Class != provider.ClassUnauthorized || runErr.Kind != provider.TerminalOmitted {
-		t.Fatalf("class/kind = %v/%v", runErr.Class, runErr.Kind)
-	}
-	if len(sink.events) != 0 {
-		t.Fatalf("no events must be emitted before the wire: %v", sink.events)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runner, err := NewRunner(stubCreds{err: tc.err}, http.DefaultClient, DefaultBaseURL)
+			if err != nil {
+				t.Fatalf("NewRunner: %v", err)
+			}
+			var sink recordingSink
+			runErr := runner.Run(context.Background(), testRequest(), &sink)
+			var re provider.RunError
+			if !errors.As(runErr, &re) {
+				t.Fatalf("expected RunError, got %v", runErr)
+			}
+			if re.Class != tc.class || re.Kind != tc.kind {
+				t.Fatalf("class/kind = %v/%v, want %v/%v", re.Class, re.Kind, tc.class, tc.kind)
+			}
+			if len(sink.events) != 0 {
+				t.Fatalf("no events must be emitted before the wire: %v", sink.events)
+			}
+		})
 	}
 }
 

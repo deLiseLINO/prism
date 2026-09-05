@@ -20,6 +20,7 @@ const (
 	WireAntigravity
 	WireResponses
 	WireMessages
+	WireChat
 )
 
 type Target struct {
@@ -30,6 +31,7 @@ type Target struct {
 	Model        canon.ModelID
 	Timeout      time.Duration
 	MaxFailovers int
+	Policy       account.SelectionPolicy
 }
 
 type CommitState uint8
@@ -78,6 +80,21 @@ func (e RunError) Error() string {
 
 func (e RunError) Unwrap() error {
 	return e.Cause
+}
+
+// CredentialRunError maps a credential-source failure to a RunError. A
+// provider-rejected grant fails over as unauthorized; transient refresh
+// failures stay retryable; unknown sources of failure remain retryable
+// transport-class so a store hiccup never marks an account for re-auth.
+func CredentialRunError(err error) RunError {
+	switch {
+	case errors.Is(err, account.ErrNeedsReauth):
+		return RunError{Kind: TerminalOmitted, Class: ClassUnauthorized, ReplaySafe: true, Cause: err}
+	case errors.Is(err, account.ErrRefreshTransient):
+		return RunError{Kind: Retryable, Class: ClassTransport, ReplaySafe: true, Cause: err}
+	default:
+		return RunError{Kind: Retryable, Class: ClassTransport, ReplaySafe: true, Cause: err}
+	}
 }
 
 func (k RunErrorKind) FailoverAllowed() bool {

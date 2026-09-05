@@ -107,6 +107,7 @@ func (t *Tracker) delta(id canon.ItemID) error {
 	if _, live := t.open[id]; !live {
 		return ErrItemNotStarted
 	}
+	t.lastActivity = t.clock.Now()
 	return nil
 }
 

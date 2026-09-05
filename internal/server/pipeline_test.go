@@ -216,6 +216,7 @@ func TestMessagesRouteHappyPath(t *testing.T) {
 func TestUnknownRouteNotFound(t *testing.T) {
 	h := newTestServer(t, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/v1/nope", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -234,6 +235,7 @@ func TestWrongMethod(t *testing.T) {
 		{"/v1/models", http.MethodPost},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.RemoteAddr = "127.0.0.1:1234"
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusMethodNotAllowed {

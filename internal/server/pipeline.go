@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -78,7 +79,6 @@ type pipeline struct {
 	tracker         *stream.Tracker
 	clock           Clock
 	mu              sync.Mutex
-	flusher         http.Flusher
 	terminalWritten bool
 }
 
@@ -112,7 +112,7 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 		return
 	}
 	sink := s.newSink(w, proto, req, facts)
-	p := &pipeline{sink: sink, tracker: stream.NewTrackerWithClock(s.clock), clock: s.clock, flusher: w.(http.Flusher)}
+	p := &pipeline{sink: sink, tracker: stream.NewTrackerWithClock(s.clock), clock: s.clock}
 	if err := sink.Begin(); err != nil {
 		return
 	}
@@ -122,8 +122,36 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 	defer close(done)
 	go p.watchStall(ctx, cancel, done)
 	res := s.router.Turn(ctx, req, facts, sink.Lifecycle(), p)
+	if f, failed := res.Terminal.(routing.Failed); failed && !req.Stream && proto != protocolResponses {
+		w.WriteHeader(failureStatus(f.Event.Failure.Reason))
+	}
 	p.finish(res)
 	sink.Close()
+}
+
+func failureStatus(r canon.FailureReason) int {
+	switch r {
+	case canon.FailUnauthorized:
+		return http.StatusUnauthorized
+	case canon.FailForbidden:
+		return http.StatusForbidden
+	case canon.FailRateLimited:
+		return http.StatusTooManyRequests
+	case canon.FailQuotaExhausted:
+		return http.StatusTooManyRequests
+	case canon.FailContextLength:
+		return http.StatusRequestEntityTooLarge
+	case canon.FailInvalidRequest, canon.FailToolUndeclared, canon.FailToolArgsMalformed:
+		return http.StatusBadRequest
+	case canon.FailNotFound:
+		return http.StatusNotFound
+	case canon.FailTimeout:
+		return http.StatusGatewayTimeout
+	case canon.FailClientClosed:
+		return 499
+	default:
+		return http.StatusBadGateway
+	}
 }
 
 func (s *Server) newSink(w http.ResponseWriter, proto protocol, req canon.Request, facts execution.Facts) streamSink {
@@ -145,16 +173,17 @@ func (s *Server) newSink(w http.ResponseWriter, proto protocol, req canon.Reques
 		c := egresschat.New(w, req.Stream)
 		return &chatSink{c: c, header: egresschat.ResponseHeader{ID: id, Model: req.Model, CreatedAt: now}}
 	default:
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		m := egressmessages.New(w)
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		m := egressmessages.New(w, req.Stream)
 		return &messagesSink{e: m, header: egressmessages.ResponseHeader{ID: id, Model: req.Model, CreatedAt: now}}
 	}
 }
 
-func (p *pipeline) flush() {
-	p.flusher.Flush()
-}
 func (p *pipeline) Emit(ev canon.Event) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -167,7 +196,6 @@ func (p *pipeline) Emit(ev canon.Event) error {
 	if err := p.sink.Frame(ev); err != nil {
 		return err
 	}
-	p.flush()
 	return nil
 }
 func (p *pipeline) finish(res routing.TurnResult) {
@@ -184,9 +212,7 @@ func (p *pipeline) finish(res routing.TurnResult) {
 		_ = p.sink.Frame(t.Event)
 	}
 	_ = p.sink.Flush()
-	p.flush()
 }
-
 func (p *pipeline) watchStall(ctx context.Context, cancel context.CancelFunc, done <-chan struct{}) {
 	for {
 		select {
@@ -211,7 +237,6 @@ func (p *pipeline) watchStall(ctx context.Context, cancel context.CancelFunc, do
 			p.terminalWritten = true
 			_ = p.sink.Frame(ev)
 			_ = p.sink.Flush()
-			p.flush()
 		}
 		p.mu.Unlock()
 		cancel()
@@ -220,6 +245,14 @@ func (p *pipeline) watchStall(ctx context.Context, cancel context.CancelFunc, do
 }
 
 func (s *Server) writeParseError(w http.ResponseWriter, proto protocol, err error) {
+	var mbe *http.MaxBytesError
+	if errors.As(err, &mbe) {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errorEnvelope{Error: errorObject{
+			Code:    "request_too_large",
+			Message: "request body exceeds " + strconv.FormatInt(mbe.Limit, 10) + " bytes",
+		}})
+		return
+	}
 	switch proto {
 	case protocolResponses:
 		var pe *ingressresponses.ParseError

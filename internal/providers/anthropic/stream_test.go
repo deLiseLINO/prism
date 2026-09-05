@@ -244,3 +244,26 @@ func TestUpstreamSSEErrorEvent(t *testing.T) {
 		t.Fatalf("cause = %v", re.Cause)
 	}
 }
+
+func TestUpstreamSSERateLimitRetryable(t *testing.T) {
+	payload := sse(
+		ssePart("message_start", `{"type":"message_start","message":{}}`),
+		ssePart("error", `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`),
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(payload))
+	}))
+	defer server.Close()
+	runner := New(Options{BaseURL: server.URL})
+	err := runner.Run(t.Context(), provider.RunRequest{
+		Request: baseRequest(),
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+	}, &collectingSink{})
+	var re *provider.RunError
+	if !errors.As(err, &re) {
+		t.Fatalf("error = %T, want *provider.RunError", err)
+	}
+	if re.Class != provider.ClassRateLimited || re.Kind != provider.Retryable {
+		t.Fatalf("got kind=%d class=%d, want retryable rate limited", re.Kind, re.Class)
+	}
+}

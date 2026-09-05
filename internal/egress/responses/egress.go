@@ -131,7 +131,7 @@ func (e *Egress) livenessLoop() {
 func (e *Egress) sendHeartbeat() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.writeErr != nil {
+	if e.writeErr != nil || !e.begun || e.terminal != nil || e.flushed {
 		return
 	}
 	if e.client == execution.ClientGrok {
@@ -323,9 +323,10 @@ func (e *Egress) reasoningDeltaLocked(t canon.ReasoningDelta) error {
 	it.text += t.Text
 	e.commitOutputLocked()
 	return e.writeEventLocked("response.reasoning_text.delta", map[string]any{
-		"item_id":      t.ItemID,
-		"output_index": it.index,
-		"delta":        t.Text,
+		"item_id":       t.ItemID,
+		"output_index":  it.index,
+		"content_index": 0,
+		"delta":         t.Text,
 	})
 }
 
@@ -392,9 +393,10 @@ func (e *Egress) itemFinishedLocked(t canon.ItemFinished) error {
 	case "reasoning":
 		if it.text != "" {
 			if err := e.writeEventLocked("response.reasoning_text.done", map[string]any{
-				"item_id":      id,
-				"output_index": it.index,
-				"text":         it.text,
+				"item_id":       id,
+				"output_index":  it.index,
+				"content_index": 0,
+				"text":          it.text,
 			}); err != nil {
 				return err
 			}
@@ -478,6 +480,9 @@ func (e *Egress) writeRawLocked(s string) error {
 	if _, err := io.WriteString(e.w, s); err != nil {
 		e.writeErr = fmt.Errorf("egress/responses: write: %w", err)
 		return e.writeErr
+	}
+	if e.flusher != nil {
+		e.flusher.Flush()
 	}
 	e.lastWrite = e.clock.Now()
 	return nil

@@ -1,0 +1,21 @@
+{
+  "name": "prism-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/contracts",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspace @prism/contracts --workspace @prism/desktop",
+    "build": "npm run build --workspace @prism/desktop",
+    "dev": "npm run dev --workspace @prism/desktop",
+    "test:desktop": "npm run test --workspace @prism/desktop",
+    "verify": "bash verify/scripts/quality-gate.sh local",
+    "verify:live": "bash verify/scripts/quality-gate.sh live"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
+  }
+}

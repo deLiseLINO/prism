@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,9 +36,9 @@ func Register(r *provider.Registry, creds CredentialSource, client *http.Client)
 }
 
 func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
-	cred, err := r.Creds.Credential(req.Lease.Account)
+	cred, err := r.Creds.Credential(ctx, req.Lease)
 	if err != nil {
-		return provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, Cause: err}
+		return provider.CredentialRunError(err)
 	}
 	result, err := BuildRequestBody(req.Request)
 	if err != nil {
@@ -113,9 +114,9 @@ func applyHeaders(h http.Header, headers []Header) {
 }
 
 func (r *Runner) Compact(ctx context.Context, req provider.CompactRequest) (provider.CompactResult, error) {
-	cred, err := r.Creds.Credential(req.Lease.Account)
+	cred, err := r.Creds.Credential(ctx, req.Lease)
 	if err != nil {
-		return provider.CompactResult{}, provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, Cause: err}
+		return provider.CompactResult{}, provider.CredentialRunError(err)
 	}
 	body, err := compactBody(req)
 	if err != nil {
@@ -159,7 +160,7 @@ func compactBody(req provider.CompactRequest) ([]byte, error) {
 		Input  []wireItem    `json:"input"`
 		Stream bool          `json:"stream"`
 		Store  bool          `json:"store"`
-	}{Model: req.Target.Model, Input: input, Store: false}
+	}{Model: req.Target.Model, Input: input.items, Store: false}
 	return json.Marshal(body)
 }
 
@@ -248,15 +249,17 @@ func drainClose(resp *http.Response) {
 func classifyStatus(resp *http.Response) error {
 	retryAfter := retryAfterFrom(resp.Header)
 	class := classForStatus(resp.StatusCode)
+	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	log.Printf("prismd: codex upstream status %d body %q", resp.StatusCode, string(snippet))
 	if class == provider.ClassInvalidRequest {
 		return provider.RunError{
 			Kind: provider.TerminalOmitted, Class: class, Accepted: true,
-			Cause: fmt.Errorf("codex: upstream status %d", resp.StatusCode),
+			Cause: fmt.Errorf("codex: upstream status %d body %q", resp.StatusCode, string(snippet)),
 		}
 	}
 	return provider.RunError{
 		Kind: provider.Retryable, Class: class, Accepted: true, RetryAfter: retryAfter,
-		Cause: fmt.Errorf("codex: upstream status %d", resp.StatusCode),
+		Cause: fmt.Errorf("codex: upstream status %d body %q", resp.StatusCode, string(snippet)),
 	}
 }
 

@@ -66,7 +66,7 @@ func TestClassifyFallbackSemantics(t *testing.T) {
 
 func TestExpandFailureRulesSynthesisOrder(t *testing.T) {
 	a := &Authority{
-		FailureRuleSets: map[string][]Rule{"protocol-v1-default": testRuleSet().Rules},
+		FailureRuleSets:  map[string][]Rule{"protocol-v1-default": testRuleSet().Rules},
 		ManifestDefaults: ManifestDefaults{FailureRuleSet: "protocol-v1-default"},
 		ExpectedFailureTemplate: RuleTemplate{
 			ID: RuleExpectedFailureExactMatch, Match: []Symptom{SymptomExpectedFailureExactMatch}, Retry: "never", Expected: true,

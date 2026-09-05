@@ -22,7 +22,7 @@ type CredentialPair struct {
 }
 
 type CredentialSource interface {
-	Credential(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration) (CredentialPair, error)
+	Credential(ctx context.Context, lease account.Lease) (CredentialPair, error)
 }
 
 type Runner struct {
@@ -81,14 +81,9 @@ func (r *Runner) Register(reg *provider.Registry, id account.ProviderID) error {
 }
 
 func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
-	creds, err := r.creds.Credential(ctx, req.Lease.Provider, req.Lease.Account, req.Lease.CredGen)
+	creds, err := r.creds.Credential(ctx, req.Lease)
 	if err != nil {
-		return provider.RunError{
-			Kind:       provider.TerminalOmitted,
-			Class:      provider.ClassUnauthorized,
-			ReplaySafe: true,
-			Cause:      err,
-		}
+		return provider.CredentialRunError(err)
 	}
 	sessionID := SessionID(string(req.Facts.Thread), firstUserText(req.Request.Input))
 	body, err := BuildEnvelope(req.Request, creds.ProjectID, r.newID(), sessionID)

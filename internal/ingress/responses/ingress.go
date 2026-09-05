@@ -243,6 +243,8 @@ func (g *Ingress) reasoningFrom(root map[string]any) (canon.ReasoningConfig, err
 			g.warnOf(WarnUnmappedField, "reasoning.effort=none")
 		case "minimal":
 			rc.Effort = canon.EffortMinimal
+		case "off":
+			rc.Effort = canon.EffortOff
 		case "low":
 			rc.Effort = canon.EffortLow
 		case "medium":

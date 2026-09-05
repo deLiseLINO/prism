@@ -20,8 +20,8 @@ func TestDecodeQuotaFixture(t *testing.T) {
 	if windows.Gem == nil || windows.Cla == nil {
 		t.Fatalf("both family windows must be present: %+v", windows)
 	}
-	if windows.Gem.Used != 25 {
-		t.Fatalf("gem used = %d, want 25 (remainingFraction 0.75)", windows.Gem.Used)
+	if windows.Gem.Used != 2500 || windows.Gem.Limit == nil || *windows.Gem.Limit != 10000 {
+		t.Fatalf("gem used = %d limit = %+v, want 2500/10000 basis points (remainingFraction 0.75)", windows.Gem.Used, windows.Gem.Limit)
 	}
 	if windows.Gem.Source != quota.SourceEndpoint {
 		t.Fatalf("gem source = %v, want SourceEndpoint", windows.Gem.Source)
@@ -30,8 +30,8 @@ func TestDecodeQuotaFixture(t *testing.T) {
 	if !windows.Gem.WindowEnd.Equal(wantReset) {
 		t.Fatalf("gem window end = %v, want %v", windows.Gem.WindowEnd, wantReset)
 	}
-	if windows.Cla.Used != 60 {
-		t.Fatalf("cla used = %d, want 60 (remainingPercentage 40)", windows.Cla.Used)
+	if windows.Cla.Used != 6000 {
+		t.Fatalf("cla used = %d, want 6000 basis points (remainingPercentage 40)", windows.Cla.Used)
 	}
 	wantClaReset := time.UnixMilli(1_770_000_000_000)
 	if !windows.Cla.WindowEnd.Equal(wantClaReset) {
@@ -50,8 +50,8 @@ func TestDecodeQuotaFirstTierWins(t *testing.T) {
 	if windows.Gem == nil {
 		t.Fatal("gem window missing")
 	}
-	if windows.Gem.Used != 10 {
-		t.Fatalf("used = %d, want 10 from deterministic first tier", windows.Gem.Used)
+	if windows.Gem.Used != 1000 {
+		t.Fatalf("used = %d, want 1000 basis points from deterministic first tier", windows.Gem.Used)
 	}
 }
 
@@ -65,8 +65,8 @@ func TestDecodeQuotaClaudeFamilyAliases(t *testing.T) {
 	if windows.Gem != nil {
 		t.Fatalf("gpt-oss must classify as cla family; gem = %+v", windows.Gem)
 	}
-	if windows.Cla == nil || windows.Cla.Used != 100 {
-		t.Fatalf("cla window = %+v, want used 100 from the first cla entry", windows.Cla)
+	if windows.Cla == nil || windows.Cla.Used != 10000 {
+		t.Fatalf("cla window = %+v, want used 10000 basis points from the first cla entry", windows.Cla)
 	}
 }
 

@@ -119,8 +119,17 @@ func cloneDocument(d Document) Document {
 	}
 	for id, p := range d.Providers {
 		p.Models = append([]string(nil), p.Models...)
+		p.DisabledModels = append([]string(nil), p.DisabledModels...)
+		if p.Enabled != nil {
+			v := *p.Enabled
+			p.Enabled = &v
+		}
 		if p.Pool != nil {
 			pool := *p.Pool
+			if pool.AutoSwitch != nil {
+				v := *pool.AutoSwitch
+				pool.AutoSwitch = &v
+			}
 			p.Pool = &pool
 		}
 		out.Providers[id] = p

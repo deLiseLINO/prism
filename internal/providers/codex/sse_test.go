@@ -23,13 +23,13 @@ func decodeStream(t *testing.T, sse string) ([]canon.Event, *Decoder) {
 func TestSSEVocabularyToCanonEvents(t *testing.T) {
 	sse := joinFrames(
 		`{"type":"response.created","response":{"id":"r-1"}}`,
-		`{"type":"response.output_item.added","response":{"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"think"}]}}`,
+		`{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"think"}]}}`,
 		`{"type":"response.reasoning_summary_text.delta","item_id":"rs-1","delta":"think"}`,
-		`{"type":"response.output_item.done","response":{"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"think"}]}}`,
-		`{"type":"response.output_item.added","response":{"type":"message","id":"msg-1","role":"assistant","content":[{"type":"output_text","text":""}]}}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"think"}]}}`,
+		`{"type":"response.output_item.added","item":{"type":"message","id":"msg-1","role":"assistant","content":[{"type":"output_text","text":""}]}}`,
 		`{"type":"response.output_text.delta","item_id":"msg-1","delta":"Hello "}`,
 		`{"type":"response.output_text.delta","item_id":"msg-1","delta":"world"}`,
-		`{"type":"response.output_item.done","response":{"type":"message","id":"msg-1","role":"assistant","content":[{"type":"output_text","text":"Hello world"}]}}`,
+		`{"type":"response.output_item.done","item":{"type":"message","id":"msg-1","role":"assistant","content":[{"type":"output_text","text":"Hello world"}]}}`,
 		`{"type":"response.completed","response":{"id":"r-1","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7,"input_tokens_details":{"cached_tokens":1},"output_tokens_details":{"reasoning_tokens":3}}}}`,
 	)
 	events, dec := decodeStream(t, sse)
@@ -67,12 +67,12 @@ func TestSSEVocabularyToCanonEvents(t *testing.T) {
 
 func TestSSEFunctionCallAndCustomToolDeltas(t *testing.T) {
 	sse := joinFrames(
-		`{"type":"response.output_item.added","response":{"type":"function_call","id":"fc-1","call_id":"c1","name":"lookup","arguments":""}}`,
+		`{"type":"response.output_item.added","item":{"type":"function_call","id":"fc-1","call_id":"c1","name":"lookup","arguments":""}}`,
 		`{"type":"response.function_call_arguments.delta","item_id":"fc-1","delta":"{\"q\":"}`,
-		`{"type":"response.output_item.done","response":{"type":"function_call","id":"fc-1","call_id":"c1","name":"lookup","arguments":"{\"q\":1}"}}`,
-		`{"type":"response.output_item.added","response":{"type":"custom_tool_call","id":"ctc-1","call_id":"c2","name":"web","input":""}}`,
+		`{"type":"response.output_item.done","item":{"type":"function_call","id":"fc-1","call_id":"c1","name":"lookup","arguments":"{\"q\":1}"}}`,
+		`{"type":"response.output_item.added","item":{"type":"custom_tool_call","id":"ctc-1","call_id":"c2","name":"web","input":""}}`,
 		`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","delta":"query"}`,
-		`{"type":"response.output_item.done","response":{"type":"custom_tool_call","id":"ctc-1","call_id":"c2","name":"web","input":"query"}}`,
+		`{"type":"response.output_item.done","item":{"type":"custom_tool_call","id":"ctc-1","call_id":"c2","name":"web","input":"query"}}`,
 		`{"type":"response.completed","response":{"id":"r-1"}}`,
 	)
 	events, dec := decodeStream(t, sse)
@@ -128,8 +128,8 @@ func TestSSEFailedTerminal(t *testing.T) {
 func TestSSEPrismR1EnvelopeContinuation(t *testing.T) {
 	envelope := prismReasoningPrefix + "eyJzaWciOiJzaWctMSIsInR4dCI6ImhpZGRlbiJ9"
 	sse := joinFrames(
-		`{"type":"response.output_item.added","response":{"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"s"}]}}`,
-		`{"type":"response.output_item.done","response":{"type":"reasoning","id":"rs-1","encrypted_content":"`+envelope+`"}}`,
+		`{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"s"}]}}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs-1","encrypted_content":"`+envelope+`"}}`,
 		`{"type":"response.completed","response":{"id":"r-1"}}`,
 	)
 	events, dec := decodeStream(t, sse)
@@ -197,6 +197,24 @@ func TestSSECRLFFraming(t *testing.T) {
 	}
 	if len(events) != 2 {
 		t.Fatalf("events = %d", len(events))
+	}
+}
+
+func TestSSEBareErrorFrameKeepsMessage(t *testing.T) {
+	sse := joinFrames(`{"type":"error","code":"server_error","message":"upstream exploded"}`)
+	events, dec := decodeStream(t, sse)
+	if !dec.Done() {
+		t.Fatalf("decoder not done")
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	failed, ok := events[0].(canon.TurnFailed)
+	if !ok {
+		t.Fatalf("event = %T, want canon.TurnFailed", events[0])
+	}
+	if failed.Failure.Message != "upstream exploded" {
+		t.Fatalf("message = %q, want upstream text", failed.Failure.Message)
 	}
 }
 

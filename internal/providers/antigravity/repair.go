@@ -14,10 +14,13 @@ var declarationIndexPattern = regexp.MustCompile(`function[_]?declarations(?:\.|
 
 const emptyObjectSchema = `{"type":"object","properties":{}}`
 
+var signatureErrorPattern = regexp.MustCompile(`missing a thought_signature in functionCall parts`)
+
 func repairEnvelope(body []byte, errorPayload string) ([]byte, bool) {
 	schemaError := schemaErrorPattern.MatchString(errorPayload)
 	thinkingError := thinkingErrorPattern.MatchString(errorPayload)
-	if !schemaError && !thinkingError {
+	signatureError := signatureErrorPattern.MatchString(errorPayload)
+	if !schemaError && !thinkingError && !signatureError {
 		return nil, false
 	}
 	var env envelope
@@ -34,6 +37,9 @@ func repairEnvelope(body []byte, errorPayload string) ([]byte, bool) {
 	}
 	if schemaError {
 		changed = repairDeclarations(&env, errorPayload) || changed
+	}
+	if signatureError {
+		changed = repairSignatures(&env) || changed
 	}
 	if !changed {
 		return nil, false
@@ -71,4 +77,19 @@ func repairDeclarations(env *envelope, errorPayload string) bool {
 		decl.ParametersJSONSchema = nil
 	}
 	return true
+}
+
+func repairSignatures(env *envelope) bool {
+	changed := false
+	for ci := range env.Request.Contents {
+		for pi := range env.Request.Contents[ci].Parts {
+			part := &env.Request.Contents[ci].Parts[pi]
+			if part.FunctionCall == nil || part.ThoughtSignature != "" {
+				continue
+			}
+			part.ThoughtSignature = signatureSentinel
+			changed = true
+		}
+	}
+	return changed
 }

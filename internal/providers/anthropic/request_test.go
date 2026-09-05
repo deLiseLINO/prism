@@ -109,6 +109,112 @@ func TestRequestBuild(t *testing.T) {
 	}
 }
 
+func TestImageDataBase64Encoded(t *testing.T) {
+	runner := New(Options{})
+	request := baseRequest()
+	request.Input = []canon.Item{
+		canon.Message{ID: "m1", Role: canon.RoleUser, Content: []canon.Content{
+			canon.ImageContent{MIMEType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+		}},
+	}
+	out, err := runner.buildRequest(provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+	})
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	body := decodeBody(t, out.body)
+	messages, _ := body["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %v", body["messages"])
+	}
+	msg, _ := messages[0].(map[string]any)
+	content, _ := msg["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("content = %v", msg["content"])
+	}
+	block, _ := content[0].(map[string]any)
+	source, _ := block["source"].(map[string]any)
+	if source["data"] != "iVBORw==" {
+		t.Fatalf("image data = %v, want base64", source["data"])
+	}
+}
+
+func TestEmptyTextBlocksSkipped(t *testing.T) {
+	runner := New(Options{})
+	request := baseRequest()
+	request.Input = []canon.Item{
+		canon.Message{ID: "m1", Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: ""}}},
+		canon.Message{ID: "m2", Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+	}
+	out, err := runner.buildRequest(provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+	})
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	body := decodeBody(t, out.body)
+	messages, _ := body["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %v, want only the non-empty one", body["messages"])
+	}
+}
+
+func TestToolResultKeepsImageContent(t *testing.T) {
+	runner := New(Options{})
+	request := baseRequest()
+	request.Input = []canon.Item{
+		canon.Message{ID: "m1", Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "shot?"}}},
+		canon.FunctionCall{ID: "fc1", CallID: "toolu_1", Name: "camera", Arguments: []byte(`{}`)},
+		canon.FunctionOutput{ID: "fo1", CallID: "toolu_1", Output: []canon.Content{
+			canon.ImageContent{MIMEType: "image/png", Data: []byte{0x89, 0x50}},
+		}},
+	}
+	out, err := runner.buildRequest(provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+	})
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	body := decodeBody(t, out.body)
+	messages, _ := body["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("messages = %v", body["messages"])
+	}
+	msg, _ := messages[2].(map[string]any)
+	content, _ := msg["content"].([]any)
+	result, _ := content[0].(map[string]any)
+	inner, _ := result["content"].([]any)
+	block, _ := inner[0].(map[string]any)
+	if block["type"] != "image" {
+		t.Fatalf("tool result content = %v, want image block", inner)
+	}
+	source, _ := block["source"].(map[string]any)
+	if source["data"] != "iVA=" {
+		t.Fatalf("tool image data = %v, want base64", source["data"])
+	}
+}
+
+func TestEmptyToolResultFailsLoud(t *testing.T) {
+	runner := New(Options{})
+	request := baseRequest()
+	request.Input = []canon.Item{
+		canon.Message{ID: "m1", Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+		canon.FunctionCall{ID: "fc1", CallID: "toolu_1", Name: "noop", Arguments: []byte(`{}`)},
+		canon.FunctionOutput{ID: "fo1", CallID: "toolu_1", Output: []canon.Content{canon.TextContent{Text: ""}}},
+	}
+	_, err := runner.buildRequest(provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+	})
+	if err == nil {
+		t.Fatal("buildRequest with empty tool result: want error, got nil")
+	}
+}
+
 func TestRequestBuildTooling(t *testing.T) {
 	request := baseRequest()
 	request.Input = []canon.Item{

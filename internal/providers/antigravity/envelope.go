@@ -95,8 +95,9 @@ type wireCall struct {
 }
 
 type envelopeBuilder struct {
-	contents []geminiContent
-	claude   bool
+	contents   []geminiContent
+	claude     bool
+	pendingSig string
 }
 
 func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]byte, error) {
@@ -134,7 +135,7 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]b
 		body.Contents = append(body.Contents, geminiContent{Role: "user", Parts: []geminiPart{{Text: continueNudge}}})
 	}
 	env := envelope{
-		Model:       string(req.Model),
+		Model:       wireModel(string(req.Model)),
 		UserAgent:   EnvelopeUserAgent,
 		RequestType: RequestType,
 		Project:     project,
@@ -273,6 +274,7 @@ func (b *envelopeBuilder) reasoning(item canon.ReasoningItem) error {
 		for i := range parts {
 			parts[i].ThoughtSignature = item.Signature
 		}
+		b.pendingSig = item.Signature
 	}
 	if idx := b.lastModelIndex(); idx >= 0 {
 		b.contents[idx].Parts = append(b.contents[idx].Parts, parts...)
@@ -293,6 +295,8 @@ func (b *envelopeBuilder) functionCalls(items []canon.Item) (int, error) {
 		calls = append(calls, call)
 		n++
 	}
+	sig := b.pendingSig
+	b.pendingSig = ""
 	parts := make([]geminiPart, 0, len(calls))
 	wireCalls := make([]wireCall, 0, len(calls))
 	for _, call := range calls {
@@ -305,9 +309,14 @@ func (b *envelopeBuilder) functionCalls(items []canon.Item) (int, error) {
 			Args: json.RawMessage(call.Arguments),
 			ID:   string(call.CallID),
 		}}
+		callSig := sig
 		if call.State.Store == signatureStore && likelyRealSignature(call.State.Key) {
-			part.ThoughtSignature = call.State.Key
+			callSig = call.State.Key
 		}
+		if callSig == "" {
+			callSig = signatureSentinel
+		}
+		part.ThoughtSignature = callSig
 		parts = append(parts, part)
 		wireCalls = append(wireCalls, wireCall{name: name, id: string(call.CallID)})
 	}
@@ -423,7 +432,7 @@ func (b *envelopeBuilder) tools(tools []canon.Tool, choice canon.ToolChoice) ([]
 			decls = append(decls, geminiFunctionDeclaration{
 				Name:        string(v.Name),
 				Description: v.Description,
-				Parameters:  json.RawMessage(v.Parameters),
+				Parameters:  sanitizeToolParameters(v.Parameters),
 			})
 		default:
 			return nil, nil, invalidRequestf("tool definition %T is not representable on the antigravity wire", t)
@@ -462,7 +471,10 @@ func generationConfig(req canon.Request) *geminiGenerationConfig {
 	if req.MaxOutputTokens > 0 {
 		gc.MaxOutputTokens = req.MaxOutputTokens
 	}
-	if gc.MaxOutputTokens == 0 && gc.Temperature == nil && gc.TopP == nil && len(gc.StopSequences) == 0 {
+	if req.Reasoning.Effort != 0 {
+		gc.ThinkingConfig = json.RawMessage(`{"includeThoughts":true,"thinkingLevel":"high"}`)
+	}
+	if gc.MaxOutputTokens == 0 && gc.Temperature == nil && gc.TopP == nil && len(gc.StopSequences) == 0 && len(gc.ThinkingConfig) == 0 {
 		return nil
 	}
 	return gc
@@ -489,4 +501,15 @@ func sanitizeSignatures(contents []geminiContent) {
 
 func invalidRequestf(format string, args ...any) error {
 	return fmt.Errorf("antigravity: "+format, args...)
+}
+
+var wireModelRenames = map[string]string{
+	"gemini-3.7-flash": "gemini-3.7-flash-tiered",
+}
+
+func wireModel(model string) string {
+	if renamed, ok := wireModelRenames[model]; ok {
+		return renamed
+	}
+	return model
 }

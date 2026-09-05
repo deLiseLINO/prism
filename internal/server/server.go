@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"prism/internal/account"
@@ -29,26 +30,28 @@ func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 type Options struct {
-	Planner    routing.Planner
-	Registry   *provider.Registry
-	Pool       account.Pool
-	Config     *config.Manager
-	Management http.Handler
-	Clock      Clock
-	QuotaGroup account.QuotaGroup
-	OnWarning  func(responses.Warning)
+	Planner         routing.Planner
+	Registry        *provider.Registry
+	Pool            account.Pool
+	Config          *config.Manager
+	Management      http.Handler
+	ManagementToken string
+	Clock           Clock
+	QuotaGroup      account.QuotaGroup
+	OnWarning       func(responses.Warning)
 }
 
 type Server struct {
-	router   routing.Router
-	planner  routing.Planner
-	registry *provider.Registry
-	pool     account.Pool
-	cfg      *config.Manager
-	mgmt     http.Handler
-	clock    Clock
-	group    account.QuotaGroup
-	onWarn   func(responses.Warning)
+	router    routing.Router
+	planner   routing.Planner
+	registry  *provider.Registry
+	pool      account.Pool
+	cfg       *config.Manager
+	mgmt      http.Handler
+	mgmtToken string
+	clock     Clock
+	group     account.QuotaGroup
+	onWarn    func(responses.Warning)
 
 	ingressResponses *responses.Ingress
 	ingressChat      ingresschat.Ingress
@@ -73,14 +76,15 @@ func New(opts Options) *Server {
 		}
 	}
 	s := &Server{
-		planner:  opts.Planner,
-		registry: opts.Registry,
-		pool:     opts.Pool,
-		cfg:      opts.Config,
-		mgmt:     opts.Management,
-		clock:    clock,
-		group:    group,
-		onWarn:   onWarn,
+		planner:   opts.Planner,
+		registry:  opts.Registry,
+		pool:      opts.Pool,
+		cfg:       opts.Config,
+		mgmt:      opts.Management,
+		mgmtToken: opts.ManagementToken,
+		clock:     clock,
+		group:     group,
+		onWarn:    onWarn,
 	}
 	s.router = routing.NewRouter(opts.Pool, opts.Registry, opts.Planner, group)
 	s.ingressResponses = responses.New(func(warn responses.Warning) { s.onWarn(warn) })
@@ -96,14 +100,16 @@ var routeMethods = map[string]string{
 	"/v1/models":                http.MethodGet,
 }
 
+const maxRequestBodyBytes = 64 << 20
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/responses", s.admit(s.handleResponses))
-	mux.HandleFunc("POST /v1/chat/completions", s.admit(s.handleChat))
-	mux.HandleFunc("POST /v1/messages", s.admit(s.handleMessages))
-	mux.HandleFunc("POST /v1/messages/count_tokens", s.admit(s.handleCountTokens))
-	mux.HandleFunc("POST /v1/responses/compact", s.admit(s.handleCompact))
-	mux.HandleFunc("GET /v1/models", s.admit(s.handleModels))
+	mux.HandleFunc("POST /v1/responses", s.handleResponses)
+	mux.HandleFunc("POST /v1/chat/completions", s.handleChat)
+	mux.HandleFunc("POST /v1/messages", s.handleMessages)
+	mux.HandleFunc("POST /v1/messages/count_tokens", s.handleCountTokens)
+	mux.HandleFunc("POST /v1/responses/compact", s.handleCompact)
+	mux.HandleFunc("GET /v1/models", s.handleModels)
 	for path, method := range routeMethods {
 		mux.HandleFunc(path, methodNotAllowed(method))
 	}
@@ -111,19 +117,31 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("/api/v1/", s.mgmt)
 	}
 	mux.HandleFunc("/", notFound)
-	return mux
+	return s.admit(mux)
 }
 
-func (s *Server) admit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !loopback(r.RemoteAddr) && bearer(r) == "" {
-			writeJSON(w, http.StatusUnauthorized, errorEnvelope{
-				Error: errorObject{Code: "unauthorized", Message: "missing bearer token"},
-			})
-			return
+func (s *Server) admit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopback(r.RemoteAddr) {
+			token := bearer(r)
+			if token == "" {
+				writeJSON(w, http.StatusUnauthorized, errorEnvelope{
+					Error: errorObject{Code: "unauthorized", Message: "missing bearer token"},
+				})
+				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/api/v1/") && s.mgmtToken != "" && token != s.mgmtToken {
+				writeJSON(w, http.StatusForbidden, errorEnvelope{
+					Error: errorObject{Code: "forbidden", Message: "invalid bearer token"},
+				})
+				return
+			}
 		}
-		next(w, r)
-	}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func loopback(remoteAddr string) bool {

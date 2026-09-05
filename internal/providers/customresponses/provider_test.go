@@ -2,6 +2,7 @@ package customresponses
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -74,6 +75,39 @@ func TestBuildUpstreamRequest(t *testing.T) {
 	want := `{"model":"gpt-5.2","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true,"instructions":"be brief","max_output_tokens":128,"temperature":0.2,"reasoning":{"effort":"high"},"tools":[{"type":"function","name":"get_weather","description":"weather","parameters":{"type":"object"},"strict":true}],"tool_choice":"auto"}`
 	if string(up.Body) != want {
 		t.Fatalf("body =\n%s\nwant\n%s", up.Body, want)
+	}
+}
+
+func TestAssistantHistoryUsesOutputText(t *testing.T) {
+	r := New(staticKey, Options{})
+	req := testRequest(true)
+	req.Input = []canon.Item{
+		canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+		canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "on it"}}},
+		canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: ""}}},
+	}
+	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", req)
+	if err != nil {
+		t.Fatalf("buildUpstream: %v", err)
+	}
+	var raw struct {
+		Input []struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+			} `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(up.Body, &raw); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if len(raw.Input) != 2 {
+		t.Fatalf("input has %d items, want 2", len(raw.Input))
+	}
+	got := raw.Input[1].Content
+	if len(got) != 1 || got[0].Type != "output_text" {
+		t.Fatalf("assistant content = %+v, want single output_text", got)
 	}
 }
 
@@ -282,6 +316,23 @@ func TestNonStreamingAggregation(t *testing.T) {
 	}
 }
 
+func TestNonStreamingAggregationWithoutUsageDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_2","status":"completed","output":[{"type":"message","id":"msg_2","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}`)
+	}))
+	defer srv.Close()
+	events := &collector{}
+	r := New(staticKey, Options{})
+	if err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(false), Target: testTarget(srv.URL)}, events); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	finish := events.All()[2].(canon.TurnFinished)
+	if finish.Usage != (canon.Usage{InputTokens: 3, OutputTokens: 1, TotalTokens: 4}) {
+		t.Fatalf("usage = %+v", finish.Usage)
+	}
+}
+
 func TestUpstreamErrorMapping(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -435,12 +486,6 @@ func TestTargetValidation(t *testing.T) {
 	if !errors.As(err, &runErr) || runErr.Class != provider.ClassInvalidRequest {
 		t.Fatalf("err = %v", err)
 	}
-	noRef := testTarget("https://example.com")
-	noRef.APIKeyRef = ""
-	err = r.Run(context.Background(), provider.RunRequest{Request: testRequest(false), Target: noRef}, &collector{})
-	if !errors.As(err, &runErr) || runErr.Class != provider.ClassInvalidRequest {
-		t.Fatalf("err = %v", err)
-	}
 }
 
 func TestUnsupportedItemIsTypedError(t *testing.T) {
@@ -479,4 +524,65 @@ func eventKinds(c *collector) []string {
 
 func ioReadAll(r io.Reader) ([]byte, error) {
 	return io.ReadAll(r)
+}
+
+func TestEmptyAPIKeyRefSendsRequestWithoutAuthorization(t *testing.T) {
+	calls := 0
+	noKey := func(ctx context.Context, target provider.Target, lease account.Lease) (string, error) {
+		calls++
+		return "", nil
+	}
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotAuth = req.Header.Get("Authorization")
+		gotPath = req.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_noauth","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+	}))
+	defer srv.Close()
+	target := testTarget(srv.URL)
+	target.APIKeyRef = ""
+	r := New(noKey, Options{})
+	if err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(false), Target: target}, &collector{}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("resolver called %d times for empty api key ref", calls)
+	}
+	if gotAuth != "" {
+		t.Fatalf("authorization header sent: %q", gotAuth)
+	}
+	if gotPath != "/v1/responses" {
+		t.Fatalf("path = %q", gotPath)
+	}
+}
+
+func TestEmptyResolvedKeyWithRefFailsLoud(t *testing.T) {
+	calls := 0
+	emptyKey := func(ctx context.Context, target provider.Target, lease account.Lease) (string, error) {
+		calls++
+		return "", nil
+	}
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_empty","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+	}))
+	defer srv.Close()
+	r := New(emptyKey, Options{})
+	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(false), Target: testTarget(srv.URL)}, &collector{})
+	var runErr provider.RunError
+	if !errors.As(err, &runErr) {
+		t.Fatalf("want RunError, got %v", err)
+	}
+	if runErr.Class != provider.ClassInvalidRequest || runErr.Kind != provider.TerminalOmitted {
+		t.Fatalf("runErr = %+v", runErr)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver called %d times, want 1", calls)
+	}
+	if requests != 0 {
+		t.Fatalf("dispatched %d requests, want 0", requests)
+	}
 }

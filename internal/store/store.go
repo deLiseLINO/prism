@@ -110,6 +110,21 @@ func (s *FileCredentialStore) Get(ctx context.Context, p account.ProviderID, a a
 	return blob, true, nil
 }
 
+// RemoveGeneration deletes one credential generation blob. A crash between
+// the blob write and the repository update can leave a generation the
+// repository never references; the refresh-lock holder clears it here before
+// retrying the write.
+func (s *FileCredentialStore) RemoveGeneration(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration) error {
+	err := os.Remove(s.blobPath(p, a, g))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return syncDir(s.accountDir(p, a))
+}
+
 func (s *FileCredentialStore) Delete(ctx context.Context, p account.ProviderID, a account.AccountID) error {
 	if err := os.RemoveAll(s.accountDir(p, a)); err != nil {
 		return err

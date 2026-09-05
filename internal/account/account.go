@@ -71,12 +71,45 @@ type Lease struct {
 
 type QuotaGroup string
 
+type Strategy uint8
+
+const (
+	StrategyQuota Strategy = iota
+	StrategyRoundRobin
+	StrategyFillFirst
+)
+
+type AffinityMode uint8
+
+const (
+	AffinitySticky AffinityMode = iota
+	AffinityOff
+)
+
+type AutoSwitch uint8
+
+const (
+	AutoSwitchOn AutoSwitch = iota
+	AutoSwitchOff
+)
+
+type SelectionPolicy struct {
+	Strategy            Strategy
+	AutoSwitch          AutoSwitch
+	AutoSwitchThreshold float64
+	Affinity            AffinityMode
+	PinnedAccount       AccountID
+	CooldownDefault     time.Duration
+	CooldownMax         time.Duration
+}
+
 type AcquireRequest struct {
 	Provider   ProviderID
 	Model      canon.ModelID
 	QuotaGroup QuotaGroup
 	Session    execution.SessionKey
 	Thread     execution.ThreadKey
+	Policy     SelectionPolicy
 }
 
 type Outcome interface{ outcome() }
@@ -97,6 +130,8 @@ type ServerError struct{}
 
 type TransportFailure struct{}
 
+type RequestRejected struct{}
+
 type ProbeSucceeded struct{}
 
 type ProbeFailed struct{}
@@ -109,6 +144,7 @@ func (NotFound) outcome()         {}
 func (RequestTimeout) outcome()   {}
 func (ServerError) outcome()      {}
 func (TransportFailure) outcome() {}
+func (RequestRejected) outcome()  {}
 func (ProbeSucceeded) outcome()   {}
 func (ProbeFailed) outcome()      {}
 
@@ -131,6 +167,16 @@ var (
 	ErrNoAccount = errors.New("account: no usable account")
 )
 
+var (
+	// ErrNeedsReauth reports that the provider rejected the stored grant
+	// (revoked, expired, or invalidated). The account must re-login.
+	ErrNeedsReauth = errors.New("account: credential rejected by provider")
+	// ErrRefreshTransient reports a transient credential-refresh failure
+	// (network, timeout, or provider 5xx/429). The prior credential
+	// generation remains valid and untouched.
+	ErrRefreshTransient = errors.New("account: credential refresh failed transiently")
+)
+
 const (
 	affinityCapacity = 2048
 	affinityIdleTTL  = 24 * time.Hour
@@ -150,6 +196,7 @@ type pool struct {
 	accounts  map[AccountID]*Account
 	affinity  map[[32]byte]affinityEntry
 	lastProbe map[AccountID]time.Time
+	rr        map[ProviderID]uint64
 }
 
 func New(secret []byte, now func() time.Time) *pool {
@@ -162,6 +209,7 @@ func New(secret []byte, now func() time.Time) *pool {
 		accounts:  make(map[AccountID]*Account),
 		affinity:  make(map[[32]byte]affinityEntry),
 		lastProbe: make(map[AccountID]time.Time),
+		rr:        make(map[ProviderID]uint64),
 	}
 }
 
@@ -181,26 +229,38 @@ func (p *pool) Acquire(ctx context.Context, req AcquireRequest) (Lease, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
-	key := p.affinityKey(req)
-	if e, ok := p.affinity[key]; ok {
-		if now.Sub(e.LastAccess) >= affinityIdleTTL {
-			delete(p.affinity, key)
-		} else if a := p.accounts[e.Account]; a != nil && p.usable(a, now) {
-			e.LastAccess = now
-			p.affinity[key] = e
-			a.InFlight++
-			return p.lease(a, false), nil
-		} else {
-			delete(p.affinity, key)
+	if a := p.pinned(req, now); a != nil {
+		if req.Policy.Affinity == AffinitySticky {
+			p.sweepAffinity(now)
+			p.affinity[p.affinityKey(req)] = affinityEntry{Account: a.ID, LastAccess: now}
 		}
-	}
-	if a := p.selectBest(now); a != nil {
-		p.sweepAffinity(now)
-		p.affinity[key] = affinityEntry{Account: a.ID, LastAccess: now}
 		a.InFlight++
 		return p.lease(a, false), nil
 	}
-	if a := p.selectProbe(now); a != nil {
+	key := p.affinityKey(req)
+	if req.Policy.Affinity == AffinitySticky {
+		if e, ok := p.affinity[key]; ok {
+			if now.Sub(e.LastAccess) >= affinityIdleTTL {
+				delete(p.affinity, key)
+			} else if a := p.accounts[e.Account]; a != nil && a.Provider == req.Provider && p.eligible(a, req, now) {
+				e.LastAccess = now
+				p.affinity[key] = e
+				a.InFlight++
+				return p.lease(a, false), nil
+			} else {
+				delete(p.affinity, key)
+			}
+		}
+	}
+	if a := p.selectBest(req, now); a != nil {
+		if req.Policy.Affinity == AffinitySticky {
+			p.sweepAffinity(now)
+			p.affinity[key] = affinityEntry{Account: a.ID, LastAccess: now}
+		}
+		a.InFlight++
+		return p.lease(a, false), nil
+	}
+	if a := p.selectProbe(req, now); a != nil {
 		p.lastProbe[a.ID] = now
 		a.InFlight++
 		return p.lease(a, true), nil
@@ -208,10 +268,7 @@ func (p *pool) Acquire(ctx context.Context, req AcquireRequest) (Lease, error) {
 	return Lease{}, ErrNoAccount
 }
 
-func (p *pool) Record(ctx context.Context, l Lease, o Outcome) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+func (p *pool) Record(_ context.Context, l Lease, o Outcome) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a := p.accounts[l.Account]
@@ -251,6 +308,39 @@ func (p *pool) UpdatePriority(ctx context.Context, id AccountID, prio int, ifVer
 	})
 }
 
+// AdvanceGeneration moves the runtime credential generation forward to gen.
+// Accounts absent from the pool are ignored and a pool already at or beyond
+// gen is left alone, so a re-login that registered a newer generation never
+// regresses. A pool behind the repository-referenced generation (a crash
+// between the repository write and this update) is aligned to gen.
+func (p *pool) AdvanceGeneration(id AccountID, gen CredentialGeneration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.accounts[id]
+	if a == nil || a.CredGen >= gen {
+		return nil
+	}
+	a.CredGen = gen
+	return nil
+}
+
+// MarkNeedsReauth moves the account to NeedsReauth and drops its affinity
+// entries, mirroring the AuthRejected outcome without requiring a lease.
+func (p *pool) MarkNeedsReauth(id AccountID) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.accounts[id]
+	if a == nil {
+		return nil
+	}
+	a.State = NeedsReauth
+	a.CooldownUntil = time.Time{}
+	a.SoftAvoidUntil = time.Time{}
+	p.dropAffinity(a.ID)
+	a.Version++
+	return nil
+}
+
 func (p *pool) Snapshot() Snapshot {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -265,6 +355,41 @@ func (p *pool) Snapshot() Snapshot {
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
 	return Snapshot{Accounts: accounts}
+}
+
+// DeleteAccount removes the account and every pool-owned index entry that
+// points at it. A repeated deletion reports ErrNotFound.
+func (p *pool) DeleteAccount(ctx context.Context, id AccountID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.accounts[id] == nil {
+		return ErrNotFound
+	}
+	delete(p.accounts, id)
+	p.dropAffinity(id)
+	delete(p.lastProbe, id)
+	return nil
+}
+
+// UpdateQuota stores a quota snapshot for an account, deep-copying
+// pointer-backed limit data. It never bumps the state version.
+func (p *pool) UpdateQuota(id AccountID, snap quota.Snapshot) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.accounts[id]
+	if a == nil {
+		return ErrNotFound
+	}
+	stored := snap
+	if snap.Limit != nil {
+		v := *snap.Limit
+		stored.Limit = &v
+	}
+	a.Quota = stored
+	return nil
 }
 
 func (p *pool) mutate(ctx context.Context, id AccountID, ifVersion StateVersion, fn func(*Account)) error {
@@ -376,22 +501,84 @@ func (p *pool) usable(a *Account, now time.Time) bool {
 	return true
 }
 
-func (p *pool) selectBest(now time.Time) *Account {
-	var best *Account
-	for _, a := range p.accounts {
-		if !p.usable(a, now) {
-			continue
-		}
-		if best == nil || p.better(a, best) {
-			best = a
-		}
-	}
-	return best
+func (p *pool) eligible(a *Account, req AcquireRequest, now time.Time) bool {
+	return p.usable(a, now) && !p.overThreshold(a, req.Policy.AutoSwitchThreshold)
 }
 
-func (p *pool) selectProbe(now time.Time) *Account {
+func (p *pool) overThreshold(a *Account, threshold float64) bool {
+	if threshold <= 0 || a.Quota.Limit == nil || *a.Quota.Limit <= 0 {
+		return false
+	}
+	return float64(a.Quota.Used)/float64(*a.Quota.Limit) >= threshold
+}
+
+func (p *pool) pinned(req AcquireRequest, now time.Time) *Account {
+	if req.Policy.PinnedAccount == "" {
+		return nil
+	}
+	a := p.accounts[req.Policy.PinnedAccount]
+	if a == nil || a.Provider != req.Provider || !p.eligible(a, req, now) {
+		return nil
+	}
+	return a
+}
+
+func (p *pool) selectBest(req AcquireRequest, now time.Time) *Account {
+	var candidates []*Account
+	for _, a := range p.accounts {
+		if a.Provider != req.Provider || !p.eligible(a, req, now) {
+			continue
+		}
+		candidates = append(candidates, a)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	switch req.Policy.Strategy {
+	case StrategyRoundRobin:
+		return p.roundRobin(req.Provider, candidates)
+	case StrategyFillFirst:
+		best := candidates[0]
+		for _, a := range candidates[1:] {
+			if fillFirstBefore(a, best) {
+				best = a
+			}
+		}
+		return best
+	default:
+		best := candidates[0]
+		for _, a := range candidates[1:] {
+			if p.better(a, best) {
+				best = a
+			}
+		}
+		return best
+	}
+}
+
+func (p *pool) roundRobin(providerID ProviderID, candidates []*Account) *Account {
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Priority != candidates[j].Priority {
+			return candidates[i].Priority > candidates[j].Priority
+		}
+		return candidates[i].ID < candidates[j].ID
+	})
+	tier := candidates[0].Priority
+	n := 0
+	for n < len(candidates) && candidates[n].Priority == tier {
+		n++
+	}
+	i := p.rr[providerID] % uint64(n)
+	p.rr[providerID]++
+	return candidates[i]
+}
+
+func (p *pool) selectProbe(req AcquireRequest, now time.Time) *Account {
 	var best *Account
 	for _, a := range p.accounts {
+		if a.Provider != req.Provider {
+			continue
+		}
 		if a.State != CoolingDown && a.State != SoftAvoid {
 			continue
 		}
@@ -415,6 +602,13 @@ func (p *pool) better(a, b *Account) bool {
 	ah, bh := headroom(a), headroom(b)
 	if ah != bh {
 		return ah > bh
+	}
+	return a.ID < b.ID
+}
+
+func fillFirstBefore(a, b *Account) bool {
+	if a.Priority != b.Priority {
+		return a.Priority > b.Priority
 	}
 	return a.ID < b.ID
 }

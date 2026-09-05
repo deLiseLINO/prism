@@ -39,20 +39,20 @@ type digestVector struct {
 }
 
 type operatorVector struct {
-	Name        string                 `json:"name"`
-	Assertion   conformance.Assertion  `json:"assertion"`
-	Observation json.RawMessage        `json:"observation"`
-	Pass        bool                   `json:"pass"`
-	Reason      string                 `json:"reason"`
+	Name        string                `json:"name"`
+	Assertion   conformance.Assertion `json:"assertion"`
+	Observation json.RawMessage       `json:"observation"`
+	Pass        bool                  `json:"pass"`
+	Reason      string                `json:"reason"`
 }
 
 type ruleVector struct {
-	Name        string           `json:"name"`
-	Symptom     string           `json:"symptom"`
-	Synthesize  *syntheticEF     `json:"synthesize"`
-	ExpectRule  string           `json:"expectRule"`
-	ExpectClass string           `json:"expectClass"`
-	ExpectCode  string           `json:"expectCode"`
+	Name        string       `json:"name"`
+	Symptom     string       `json:"symptom"`
+	Synthesize  *syntheticEF `json:"synthesize"`
+	ExpectRule  string       `json:"expectRule"`
+	ExpectClass string       `json:"expectClass"`
+	ExpectCode  string       `json:"expectCode"`
 }
 
 type syntheticEF struct {

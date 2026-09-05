@@ -209,6 +209,13 @@ func TestConfigPlanner(t *testing.T) {
 	if !ok || len(plan.Targets) != 1 || plan.Targets[0].Model != "direct" {
 		t.Fatalf("direct plan = %+v ok=%t", plan, ok)
 	}
+	plan, ok = planner.Plan("claude-prism-p1--derived")
+	if !ok || len(plan.Targets) != 1 || plan.Targets[0].Provider != "p1" || plan.Targets[0].Model != "derived" {
+		t.Fatalf("derived alias plan = %+v ok=%t", plan, ok)
+	}
+	if _, ok := planner.Plan("claude-prism-p2--m2"); !ok {
+		t.Fatal("explicit alias should win over derived")
+	}
 	if _, ok := planner.Plan("missing"); ok {
 		t.Fatal("unknown model resolved")
 	}
