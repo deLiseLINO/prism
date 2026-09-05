@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const SchemaVersion = 1
@@ -17,11 +18,12 @@ const (
 	WireAntigravity       Wire = "antigravity"
 	WireOpenAIResponses   Wire = "responses"
 	WireAnthropicMessages Wire = "messages"
+	WireOpenAIChat        Wire = "chat"
 )
 
 func (w Wire) valid() bool {
 	switch w {
-	case WireCodex, WireAntigravity, WireOpenAIResponses, WireAnthropicMessages:
+	case WireCodex, WireAntigravity, WireOpenAIResponses, WireAnthropicMessages, WireOpenAIChat:
 		return true
 	}
 	return false
@@ -42,12 +44,20 @@ const (
 	PoolFillFirst  PoolStrategy = "fill_first"
 )
 
+type PoolAffinity string
+
+const (
+	AffinitySticky PoolAffinity = "sticky"
+	AffinityOff    PoolAffinity = "off"
+)
+
 var (
 	ErrStaleGeneration      = errors.New("config: stale generation")
 	ErrCorrupt              = errors.New("config: corrupt document")
 	ErrUnknownWire          = errors.New("config: unknown wire")
 	ErrUnknownComboStrategy = errors.New("config: unknown combo strategy")
 	ErrUnknownPoolStrategy  = errors.New("config: unknown pool strategy")
+	ErrUnknownAffinity      = errors.New("config: unknown affinity")
 	ErrMalformedAlias       = errors.New("config: malformed alias")
 	ErrInvalidTarget        = errors.New("config: invalid route target")
 	ErrInvalidValue         = errors.New("config: invalid value")
@@ -68,23 +78,32 @@ type Daemon struct {
 }
 
 type Provider struct {
-	Wire         Wire          `json:"wire"`
-	BaseURL      string        `json:"baseURL,omitempty"`
-	APIKeyRef    string        `json:"apiKeyRef,omitempty"`
-	DefaultModel string        `json:"defaultModel,omitempty"`
-	Models       []string      `json:"models,omitempty"`
-	Pool         *PoolSettings `json:"pool,omitempty"`
+	Wire           Wire          `json:"wire"`
+	BaseURL        string        `json:"baseURL,omitempty"`
+	APIKeyRef      string        `json:"apiKeyRef,omitempty"`
+	DefaultModel   string        `json:"defaultModel,omitempty"`
+	Models         []string      `json:"models,omitempty"`
+	DisabledModels []string      `json:"disabledModels,omitempty"`
+	Enabled        *bool         `json:"enabled,omitempty"`
+	Pool           *PoolSettings `json:"pool,omitempty"`
 }
+
+func (p Provider) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
 
 type PoolSettings struct {
 	Strategy            PoolStrategy  `json:"strategy"`
+	AutoSwitch          *bool         `json:"autoSwitch,omitempty"`
 	AutoSwitchThreshold float64       `json:"autoSwitchThreshold"`
+	Affinity            PoolAffinity  `json:"affinity,omitempty"`
+	PinnedAccount       string        `json:"pinnedAccount,omitempty"`
 	AccountsPath        string        `json:"accountsPath"`
 	MaxFailovers        int           `json:"maxFailovers"`
 	CooldownDefault     time.Duration `json:"cooldownDefault"`
 	CooldownMax         time.Duration `json:"cooldownMax"`
 	ProbeEvery          time.Duration `json:"probeEvery"`
 }
+
+func (p PoolSettings) AutoSwitchEnabled() bool { return p.AutoSwitch == nil || *p.AutoSwitch }
 
 type Target struct {
 	Provider string `json:"provider"`
@@ -118,8 +137,13 @@ func (d Document) validate() error {
 		if !p.Wire.valid() {
 			return fmt.Errorf("%w: providers.%s.wire %q", ErrUnknownWire, id, p.Wire)
 		}
-		if p.Wire == WireOpenAIResponses && p.BaseURL == "" {
+		if (p.Wire == WireOpenAIResponses || p.Wire == WireOpenAIChat) && p.BaseURL == "" {
 			return fmt.Errorf("%w: providers.%s.baseURL required for wire %q", ErrInvalidValue, id, p.Wire)
+		}
+		for _, m := range p.DisabledModels {
+			if !contains(p.Models, m) {
+				return fmt.Errorf("%w: providers.%s.disabledModels %q does not name a configured model", ErrInvalidValue, id, m)
+			}
 		}
 		if p.Pool != nil {
 			if err := p.Pool.validate(); err != nil {
@@ -230,6 +254,16 @@ func (p PoolSettings) validate() error {
 	}
 	if p.AutoSwitchThreshold < 0 || p.AutoSwitchThreshold > 1 {
 		return fmt.Errorf("%w: autoSwitchThreshold %f", ErrInvalidValue, p.AutoSwitchThreshold)
+	}
+	switch p.Affinity {
+	case "", AffinitySticky, AffinityOff:
+	default:
+		return fmt.Errorf("%w: affinity %q", ErrUnknownAffinity, p.Affinity)
+	}
+	if p.PinnedAccount != "" {
+		if strings.ContainsFunc(p.PinnedAccount, unicode.IsSpace) {
+			return fmt.Errorf("%w: pinnedAccount %q", ErrInvalidValue, p.PinnedAccount)
+		}
 	}
 	if p.MaxFailovers < 0 {
 		return fmt.Errorf("%w: maxFailovers %d", ErrInvalidValue, p.MaxFailovers)

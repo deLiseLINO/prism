@@ -32,11 +32,11 @@ func TestRequestUserAgentTokenOrder(t *testing.T) {
 }
 
 func TestStreamURL(t *testing.T) {
-	const want = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+	const want = "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
 	if got := StreamURL(DefaultBaseURL); got != want {
 		t.Fatalf("stream url = %q, want %q", got, want)
 	}
-	if got := StreamURL("https://daily-cloudcode-pa.googleapis.com/"); got != "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse" {
+	if got := StreamURL("https://cloudcode-pa.googleapis.com/"); got != "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse" {
 		t.Fatalf("trailing slash not trimmed: %q", got)
 	}
 }

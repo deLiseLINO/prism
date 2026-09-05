@@ -3,17 +3,22 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
+	"strings"
 
 	"prism/internal/account"
 	"prism/internal/canon"
+	"prism/internal/config"
 	"prism/internal/execution"
 	"prism/internal/provider"
 )
 
 type modelWire struct {
-	ID     string `json:"id"`
-	Object string `json:"object"`
+	Type        string `json:"type"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Object      string `json:"object"`
 }
 
 type modelsWire struct {
@@ -22,27 +27,87 @@ type modelsWire struct {
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
-	snap := s.cfg.Get()
+	d := s.cfg.Get().Config
 	ids := map[string]struct{}{}
-	for k := range snap.Config.Routes {
+	for k := range d.Routes {
 		ids[k] = struct{}{}
 	}
-	for k := range snap.Config.Aliases {
+	for k := range d.Aliases {
 		ids[k] = struct{}{}
 	}
-	for k := range snap.Config.Combos {
+	for k := range d.Combos {
 		ids[k] = struct{}{}
 	}
 	keys := make([]string, 0, len(ids))
 	for k := range ids {
+		if keyBlocked(d, k) {
+			continue
+		}
 		keys = append(keys, k)
+	}
+	// Claude Code discovers routed models through this endpoint when gateway
+	// model discovery is on: every enabled provider/model pair is listed under
+	// its claude-prism alias so the native model picker accepts them.
+	for providerName, p := range d.Providers {
+		if !p.IsEnabled() {
+			continue
+		}
+		for _, model := range p.Models {
+			if slices.Contains(p.DisabledModels, model) {
+				continue
+			}
+			alias := "claude-prism-" + providerName + "--" + model
+			if keyBlocked(d, alias) {
+				continue
+			}
+			if _, exists := ids[alias]; !exists {
+				keys = append(keys, alias)
+				ids[alias] = struct{}{}
+			}
+		}
 	}
 	sort.Strings(keys)
 	data := make([]modelWire, 0, len(keys))
 	for _, k := range keys {
-		data = append(data, modelWire{ID: k, Object: "model"})
+		data = append(data, modelWire{Type: "model", ID: k, DisplayName: k, Object: "model"})
 	}
 	writeJSON(w, http.StatusOK, modelsWire{Object: "list", Data: data})
+}
+
+func keyBlocked(d config.Document, key string) bool {
+	if v, ok := d.Routes[key]; ok {
+		return routeValueBlocked(d, v)
+	}
+	if v, ok := d.Aliases[key]; ok {
+		return routeValueBlocked(d, v)
+	}
+	if c, ok := d.Combos[key]; ok {
+		return comboBlocked(d, c)
+	}
+	return false
+}
+
+func routeValueBlocked(d config.Document, v string) bool {
+	if c, ok := d.Combos[v]; ok {
+		return comboBlocked(d, c)
+	}
+	providerID, model, ok := strings.Cut(v, "/")
+	if !ok {
+		return false
+	}
+	return targetDisabled(d, providerID, model)
+}
+
+func comboBlocked(d config.Document, c config.Combo) bool {
+	if len(c.Targets) == 0 {
+		return false
+	}
+	for _, t := range c.Targets {
+		if !targetDisabled(d, t.Provider, t.Model) {
+			return false
+		}
+	}
+	return true
 }
 
 type countTokensResponse struct {
@@ -209,6 +274,7 @@ func (s *Server) compactViaProvider(w http.ResponseWriter, r *http.Request, comp
 		QuotaGroup: s.group,
 		Session:    facts.Session,
 		Thread:     facts.Thread,
+		Policy:     target.Policy,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorEnvelope{Error: errorObject{

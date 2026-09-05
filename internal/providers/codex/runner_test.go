@@ -143,22 +143,22 @@ func TestRunErrorCredentialFetchFails(t *testing.T) {
 
 type errCreds struct{}
 
-func (errCreds) Credential(account.AccountID) (Credential, error) {
+func (errCreds) Credential(ctx context.Context, lease account.Lease) (Credential, error) {
 	return Credential{}, errors.New("nope")
 }
 
 func TestClassForStatus(t *testing.T) {
 	cases := map[int]provider.ErrorClass{
-		http.StatusUnauthorized:         provider.ClassUnauthorized,
-		http.StatusForbidden:            provider.ClassUnauthorized,
-		http.StatusTooManyRequests:      provider.ClassRateLimited,
-		http.StatusPaymentRequired:      provider.ClassQuotaExhausted,
-		http.StatusNotFound:             provider.ClassNotFound,
-		http.StatusRequestTimeout:       provider.ClassTimeout,
-		http.StatusInternalServerError:  provider.ClassServer,
-		http.StatusBadGateway:           provider.ClassServer,
-		http.StatusServiceUnavailable:   provider.ClassServer,
-		http.StatusBadRequest:           provider.ClassInvalidRequest,
+		http.StatusUnauthorized:        provider.ClassUnauthorized,
+		http.StatusForbidden:           provider.ClassUnauthorized,
+		http.StatusTooManyRequests:     provider.ClassRateLimited,
+		http.StatusPaymentRequired:     provider.ClassQuotaExhausted,
+		http.StatusNotFound:            provider.ClassNotFound,
+		http.StatusRequestTimeout:      provider.ClassTimeout,
+		http.StatusInternalServerError: provider.ClassServer,
+		http.StatusBadGateway:          provider.ClassServer,
+		http.StatusServiceUnavailable:  provider.ClassServer,
+		http.StatusBadRequest:          provider.ClassInvalidRequest,
 	}
 	for status, want := range cases {
 		if got := classForStatus(status); got != want {
@@ -233,4 +233,3 @@ func TestRunQuotaHeaders(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 }
-

@@ -70,10 +70,10 @@ var Registry = map[string]OpSpec{
 }
 
 var IDGrammars = map[string]*regexp.Regexp{
-	"responses_message":  regexp.MustCompile(`^msg_[A-Za-z0-9_-]{1,128}$`),
+	"responses_message":   regexp.MustCompile(`^msg_[A-Za-z0-9_-]{1,128}$`),
 	"responses_reasoning": regexp.MustCompile(`^rs_[A-Za-z0-9_-]{1,128}$`),
-	"responses_call":     regexp.MustCompile(`^call_[A-Za-z0-9_-]{1,128}$`),
-	"nonempty_128":       regexp.MustCompile(`^[^\s]{1,128}$`),
+	"responses_call":      regexp.MustCompile(`^call_[A-Za-z0-9_-]{1,128}$`),
+	"nonempty_128":        regexp.MustCompile(`^[^\s]{1,128}$`),
 }
 
 func failResult(a Assertion, reason FailReason) AssertionResult {

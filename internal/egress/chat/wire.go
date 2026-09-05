@@ -16,9 +16,10 @@ type chunkChoice struct {
 }
 
 type delta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	ToolCalls []toolCallDelta `json:"tool_calls,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Content          *string         `json:"content,omitempty"`
+	ReasoningContent *string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []toolCallDelta `json:"tool_calls,omitempty"`
 }
 
 type toolCallDelta struct {
@@ -34,11 +35,11 @@ type funcDelta struct {
 }
 
 type usage struct {
-	PromptTokens            int64                   `json:"prompt_tokens"`
-	CompletionTokens        int64                   `json:"completion_tokens"`
-	TotalTokens             int64                   `json:"total_tokens"`
-	PromptTokensDetails     promptTokenDetails      `json:"prompt_tokens_details"`
-	CompletionTokensDetails completionTokenDetails  `json:"completion_tokens_details"`
+	PromptTokens            int64                  `json:"prompt_tokens"`
+	CompletionTokens        int64                  `json:"completion_tokens"`
+	TotalTokens             int64                  `json:"total_tokens"`
+	PromptTokensDetails     promptTokenDetails     `json:"prompt_tokens_details"`
+	CompletionTokensDetails completionTokenDetails `json:"completion_tokens_details"`
 }
 
 type promptTokenDetails struct {

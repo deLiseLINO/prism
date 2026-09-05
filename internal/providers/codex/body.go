@@ -67,7 +67,7 @@ type wireContent struct {
 
 type wireTool struct {
 	Type        string          `json:"type"`
-	Name        string          `json:"name"`
+	Name        string          `json:"name,omitempty"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
@@ -105,9 +105,11 @@ func BuildRequestBody(req canon.Request) (BuildResult, error) {
 	}
 	reasoning := reasoningFrom(req.Reasoning, &warnings)
 	body := wireBody{
-		Model:     req.Model,
-		Input:     input,
-		Stream:    req.Stream,
+		Model: req.Model,
+		Input: input.items,
+		// The upstream requires streaming; the client's non-streaming choice is
+		// honored by the egress layer, which buffers the decoded stream.
+		Stream:    true,
 		Store:     false,
 		Reasoning: reasoning,
 	}
@@ -119,6 +121,10 @@ func BuildRequestBody(req canon.Request) (BuildResult, error) {
 		if t, ok := c.(canon.TextContent); ok {
 			systemParts = append(systemParts, t.Text)
 		}
+	}
+	if len(input.systemTexts) > 0 {
+		warnings = append(warnings, "merge_system_into_instructions")
+		systemParts = append(systemParts, input.systemTexts...)
 	}
 	body.Instructions = strings.Join(systemParts, "\n\n")
 	if len(req.Tools) > 0 {
@@ -199,8 +205,13 @@ func textFrom(out canon.TextOutput) *wireText {
 	return w
 }
 
-func inputFrom(items []canon.Item) ([]wireItem, error) {
-	out := make([]wireItem, 0, len(items))
+type inputItems struct {
+	items       []wireItem
+	systemTexts []string
+}
+
+func inputFrom(items []canon.Item) (inputItems, error) {
+	out := inputItems{items: make([]wireItem, 0, len(items))}
 	for _, item := range items {
 		switch m := item.(type) {
 		case canon.Message:
@@ -208,32 +219,47 @@ func inputFrom(items []canon.Item) ([]wireItem, error) {
 			for _, c := range m.Content {
 				switch p := c.(type) {
 				case canon.TextContent:
-					parts = append(parts, wireContent{Type: "input_text", Text: p.Text})
+					if m.Role == canon.RoleAssistant && p.Text == "" {
+						continue
+					}
+					parts = append(parts, wireContent{Type: textWireType(m.Role), Text: p.Text})
 				case canon.ImageContent:
 					url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
 					parts = append(parts, wireContent{Type: "input_image", ImageURL: url, Detail: p.Detail})
 				}
 			}
-			out = append(out, wireItem{Type: "message", ID: string(m.ID), Role: roleWire(m.Role), Content: parts})
+			switch m.Role {
+			case canon.RoleSystem, canon.RoleDeveloper:
+				for _, c := range m.Content {
+					if t, ok := c.(canon.TextContent); ok {
+						out.systemTexts = append(out.systemTexts, t.Text)
+					}
+				}
+				continue
+			}
+			if len(parts) == 0 && m.Role == canon.RoleAssistant {
+				continue
+			}
+			out.items = append(out.items, wireItem{Type: "message", ID: string(m.ID), Role: roleWire(m.Role), Content: parts})
 		case canon.ReasoningItem:
-			out = append(out, reasoningItemFrom(m))
+			out.items = append(out.items, reasoningItemFrom(m))
 		case canon.FunctionCall:
-			out = append(out, wireItem{
+			out.items = append(out.items, wireItem{
 				Type: "function_call", ID: string(m.ID), CallID: string(m.CallID),
 				Name: string(m.Name), Arguments: string(m.Arguments),
 			})
 		case canon.FunctionOutput:
-			out = append(out, wireItem{Type: "function_call_output", ID: string(m.ID), CallID: string(m.CallID), Output: functionCallOutputWire(m.Output)})
+			out.items = append(out.items, wireItem{Type: "function_call_output", ID: string(m.ID), CallID: string(m.CallID), Output: functionCallOutputWire(m.Output)})
 		case canon.CustomToolCall:
-			out = append(out, wireItem{Type: "custom_tool_call", ID: string(m.ID), CallID: string(m.CallID), Name: string(m.Name), Input: m.Input})
+			out.items = append(out.items, wireItem{Type: "custom_tool_call", ID: string(m.ID), CallID: string(m.CallID), Name: string(m.Name), Input: m.Input})
 		case canon.CustomToolOutput:
-			out = append(out, wireItem{Type: "custom_tool_call_output", ID: string(m.ID), CallID: string(m.CallID), Output: m.Output})
+			out.items = append(out.items, wireItem{Type: "custom_tool_call_output", ID: string(m.ID), CallID: string(m.CallID), Output: m.Output})
 		case canon.LocalShellCall:
-			out = append(out, wireItem{Type: "local_shell_call", ID: string(m.ID), CallID: string(m.CallID), Input: m.Command})
+			out.items = append(out.items, wireItem{Type: "local_shell_call", ID: string(m.ID), CallID: string(m.CallID), Input: m.Command})
 		case canon.LocalShellOutput:
-			out = append(out, wireItem{Type: "local_shell_output", ID: string(m.ID), CallID: string(m.CallID), Output: shellOutputWire(m)})
+			out.items = append(out.items, wireItem{Type: "local_shell_output", ID: string(m.ID), CallID: string(m.CallID), Output: shellOutputWire(m)})
 		default:
-			return nil, fmt.Errorf("unsupported canonical item %T", item)
+			return inputItems{}, fmt.Errorf("unsupported canonical item %T", item)
 		}
 	}
 	return out, nil
@@ -278,6 +304,13 @@ func functionCallOutputWire(content []canon.Content) any {
 		}
 	}
 	return parts
+}
+
+func textWireType(r canon.Role) string {
+	if r == canon.RoleAssistant {
+		return "output_text"
+	}
+	return "input_text"
 }
 
 func roleWire(r canon.Role) string {

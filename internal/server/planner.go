@@ -1,11 +1,13 @@
 package server
 
 import (
+	"slices"
 	"strings"
 
 	"prism/internal/account"
 	"prism/internal/canon"
 	"prism/internal/config"
+	ingressmessages "prism/internal/ingress/messages"
 	"prism/internal/provider"
 	"prism/internal/routing"
 )
@@ -29,6 +31,12 @@ func (p *ConfigPlanner) Plan(model canon.ModelID) (routing.Plan, bool) {
 	}
 	if c, ok := d.Combos[key]; ok {
 		return comboPlan(d, c), true
+	}
+	if providerID, modelName, err := ingressmessages.ParseModelAlias(key); err == nil {
+		if t, err := targetFor(d, providerID, modelName); err == nil {
+			return routing.Plan{Targets: []provider.Target{t}}, true
+		}
+		return routing.Plan{}, false
 	}
 	providerID, modelName, ok := strings.Cut(key, "/")
 	if !ok {
@@ -59,6 +67,9 @@ func (p *ConfigPlanner) planFor(d config.Document, v string) (routing.Plan, bool
 func comboPlan(d config.Document, c config.Combo) routing.Plan {
 	targets := make([]provider.Target, 0, len(c.Targets))
 	for _, t := range c.Targets {
+		if targetDisabled(d, t.Provider, t.Model) {
+			continue
+		}
 		pt, err := targetFor(d, t.Provider, t.Model)
 		if err != nil {
 			return routing.Plan{}
@@ -73,17 +84,59 @@ func targetFor(d config.Document, providerID, model string) (provider.Target, er
 	if !ok {
 		return provider.Target{}, config.ErrInvalidTarget
 	}
+	if !p.IsEnabled() || slices.Contains(p.DisabledModels, model) {
+		return provider.Target{}, config.ErrInvalidTarget
+	}
 	t := provider.Target{
 		Provider:  account.ProviderID(providerID),
 		Wire:      wireFor(p.Wire),
 		BaseURL:   p.BaseURL,
 		APIKeyRef: p.APIKeyRef,
 		Model:     canon.ModelID(model),
+		Policy:    selectionPolicy(p.Pool),
 	}
 	if p.Pool != nil {
 		t.MaxFailovers = p.Pool.MaxFailovers
 	}
 	return t, nil
+}
+
+func selectionPolicy(ps *config.PoolSettings) account.SelectionPolicy {
+	if ps == nil {
+		return account.SelectionPolicy{}
+	}
+	pol := account.SelectionPolicy{
+		Strategy:            account.StrategyQuota,
+		AutoSwitch:          account.AutoSwitchOn,
+		AutoSwitchThreshold: ps.AutoSwitchThreshold,
+		Affinity:            account.AffinitySticky,
+		CooldownDefault:     ps.CooldownDefault,
+		CooldownMax:         ps.CooldownMax,
+	}
+	switch ps.Strategy {
+	case config.PoolRoundRobin:
+		pol.Strategy = account.StrategyRoundRobin
+	case config.PoolFillFirst:
+		pol.Strategy = account.StrategyFillFirst
+	}
+	if !ps.AutoSwitchEnabled() {
+		pol.AutoSwitch = account.AutoSwitchOff
+	}
+	if ps.Affinity == config.AffinityOff {
+		pol.Affinity = account.AffinityOff
+	}
+	if ps.PinnedAccount != "" {
+		pol.PinnedAccount = account.AccountID(ps.PinnedAccount)
+	}
+	return pol
+}
+
+func targetDisabled(d config.Document, providerID, model string) bool {
+	p, ok := d.Providers[providerID]
+	if !ok {
+		return false
+	}
+	return !p.IsEnabled() || slices.Contains(p.DisabledModels, model)
 }
 
 func wireFor(w config.Wire) provider.Wire {
@@ -94,6 +147,8 @@ func wireFor(w config.Wire) provider.Wire {
 		return provider.WireAntigravity
 	case config.WireAnthropicMessages:
 		return provider.WireMessages
+	case config.WireOpenAIChat:
+		return provider.WireChat
 	default:
 		return provider.WireResponses
 	}

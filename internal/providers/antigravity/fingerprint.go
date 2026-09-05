@@ -13,7 +13,7 @@ const (
 	EnvelopeUserAgent = "antigravity"
 	RequestType       = "agent"
 
-	DefaultBaseURL = "https://cloudcode-pa.googleapis.com"
+	DefaultBaseURL = "https://daily-cloudcode-pa.googleapis.com"
 
 	streamMethod = "streamGenerateContent"
 	streamQuery  = "?alt=sse"

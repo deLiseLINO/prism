@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"prism/internal/account"
 	"prism/internal/canon"
@@ -122,6 +123,9 @@ func (r *router) Turn(ctx context.Context, req canon.Request, f execution.Facts,
 		if budget <= 0 {
 			budget = policy.MaxAccountFailovers
 		}
+		if target.Policy.AutoSwitch == account.AutoSwitchOff {
+			budget = 1
+		}
 		for attempt := 0; attempt < budget; attempt++ {
 			lease, err := r.pool.Acquire(ctx, account.AcquireRequest{
 				Provider:   target.Provider,
@@ -129,6 +133,7 @@ func (r *router) Turn(ctx context.Context, req canon.Request, f execution.Facts,
 				QuotaGroup: r.group,
 				Session:    f.Session,
 				Thread:     f.Thread,
+				Policy:     target.Policy,
 			})
 			if err != nil {
 				if errors.Is(err, account.ErrNoAccount) {
@@ -137,20 +142,29 @@ func (r *router) Turn(ctx context.Context, req canon.Request, f execution.Facts,
 				return turnFailed(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: acquire failed: %v", err)}, attempts)
 			}
 			attempts++
-			err = runner.Run(ctx, provider.RunRequest{Request: req, Target: target, Lease: lease, Facts: f}, capture)
+			wireReq := req
+			wireReq.Model = target.Model
+			err = runner.Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f}, capture)
 			if err == nil {
 				if !capture.hasFinished {
+					_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 					return turnFailed(canon.Failure{Reason: canon.FailUnknown, Message: "routing: runner returned without terminal event"}, attempts)
 				}
 				_ = r.pool.Record(ctx, lease, account.TurnSucceeded{Usage: capture.finished.Usage})
 				return TurnResult{Terminal: Finished{Event: capture.finished}, Attempts: attempts}
 			}
+			if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return turnFailed(canon.Failure{Reason: canon.FailClientClosed, Message: "routing: client closed the request"}, attempts)
+			}
 			re, typed := runErrorOf(err)
 			if !typed {
+				_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 				return turnFailed(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: untyped runner error: %v", err)}, attempts)
 			}
-			if o, mappable := outcomeFor(re); mappable {
+			if o, mappable := outcomeFor(re, target.Policy); mappable {
 				_ = r.pool.Record(ctx, lease, o)
+			} else {
+				_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 			}
 			if lifecycle.CommitState() >= provider.OutputCommitted || !re.Kind.FailoverAllowed() || !re.Class.FailoverAllowed() {
 				return runErrorTerminal(re, capture, attempts)
@@ -178,14 +192,24 @@ func runErrorOf(err error) (provider.RunError, bool) {
 	return provider.RunError{}, false
 }
 
-func outcomeFor(re provider.RunError) (account.Outcome, bool) {
+func outcomeFor(re provider.RunError, policy account.SelectionPolicy) (account.Outcome, bool) {
+	cooldown := func(retryAfter time.Duration) time.Duration {
+		d := policy.CooldownDefault
+		if retryAfter > 0 {
+			d = retryAfter
+		}
+		if policy.CooldownMax > 0 && d > policy.CooldownMax {
+			return policy.CooldownMax
+		}
+		return d
+	}
 	switch re.Class {
 	case provider.ClassUnauthorized:
 		return account.AuthRejected{}, true
 	case provider.ClassRateLimited:
-		return account.RateLimited{RetryAfter: re.RetryAfter}, true
+		return account.RateLimited{RetryAfter: cooldown(re.RetryAfter)}, true
 	case provider.ClassQuotaExhausted:
-		return account.QuotaExhausted{RetryAfter: re.RetryAfter}, true
+		return account.QuotaExhausted{RetryAfter: cooldown(re.RetryAfter)}, true
 	case provider.ClassNotFound:
 		return account.NotFound{}, true
 	case provider.ClassTimeout:

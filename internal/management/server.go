@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"prism/internal/account"
+	"prism/internal/auth"
 	"prism/internal/config"
+	"prism/internal/integrations"
 	"prism/internal/provider"
 	"prism/internal/quota"
 )
@@ -30,14 +32,10 @@ type CredentialStore interface {
 	Configured(ctx context.Context, id string) (bool, error)
 }
 
-type AuthStatus struct {
-	State string
-}
-
 type Auth interface {
-	Start(ctx context.Context, id string) (string, error)
-	Callback(ctx context.Context, id, code string) error
-	Status(ctx context.Context, id string) (AuthStatus, error)
+	Start(ctx context.Context, provider account.ProviderID) (auth.AuthStart, error)
+	Complete(ctx context.Context, provider account.ProviderID, cb auth.AuthCallback) error
+	Status(ctx context.Context, provider account.ProviderID, session auth.AuthSessionID) (auth.AuthStatus, error)
 }
 
 type AccountDeleter interface {
@@ -51,11 +49,12 @@ type Server struct {
 	quota   provider.QuotaSource
 	creds   CredentialStore
 	auth    Auth
+	ints    *integrations.Registry
 	routes  [][]string
 }
 
-func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth) *Server {
-	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, routes: [][]string{}}
+func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry) *Server {
+	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, routes: [][]string{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -82,6 +81,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/{provider}/start", s.authStart)
 	mux.HandleFunc("POST /api/v1/auth/{provider}/callback", s.authCallback)
 	mux.HandleFunc("GET /api/v1/auth/{provider}/status", s.authStatus)
+	mux.HandleFunc("GET /api/v1/integrations", s.integrationsList)
+	mux.HandleFunc("GET /api/v1/integrations/{client}", s.integrationGet)
+	mux.HandleFunc("POST /api/v1/integrations/{client}/apply", s.integrationApply)
+	mux.HandleFunc("POST /api/v1/integrations/{client}/rollback", s.integrationRollback)
 	for _, tpl := range routeTemplates {
 		s.routes = append(s.routes, splitPath(tpl))
 	}
@@ -114,6 +117,10 @@ var routeTemplates = []string{
 	"/api/v1/auth/{provider}/start",
 	"/api/v1/auth/{provider}/callback",
 	"/api/v1/auth/{provider}/status",
+	"/api/v1/integrations",
+	"/api/v1/integrations/{client}",
+	"/api/v1/integrations/{client}/apply",
+	"/api/v1/integrations/{client}/rollback",
 }
 
 func splitPath(p string) []string {
@@ -236,12 +243,32 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	if doc.Providers == nil {
 		doc.Providers = map[string]config.Provider{}
 	}
-	doc.Providers[id] = config.Provider{
-		Wire:         config.Wire(body.Wire),
-		BaseURL:      body.BaseURL,
-		DefaultModel: body.DefaultModel,
-		Models:       body.Models,
+	next := doc.Providers[id]
+	if body.Wire != "" {
+		next.Wire = config.Wire(body.Wire)
 	}
+	if body.BaseURL != nil {
+		next.BaseURL = *body.BaseURL
+	}
+	if body.APIKeyRef != nil {
+		next.APIKeyRef = *body.APIKeyRef
+	}
+	if body.DefaultModel != nil {
+		next.DefaultModel = *body.DefaultModel
+	}
+	if body.Models != nil {
+		next.Models = body.Models
+	}
+	if body.DisabledModels != nil {
+		next.DisabledModels = body.DisabledModels
+	}
+	if body.Enabled != nil {
+		next.Enabled = body.Enabled
+	}
+	if body.Pool != nil {
+		next.Pool = body.Pool
+	}
+	doc.Providers[id] = next
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
 		writeConfigError(w, err)
@@ -296,12 +323,15 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 		state = "set"
 	}
 	return Provider{
-		ID:           id,
-		Wire:         string(p.Wire),
-		BaseURL:      p.BaseURL,
-		DefaultModel: p.DefaultModel,
-		Models:       p.Models,
-		Credential:   ProviderCredential{State: state},
+		ID:             id,
+		Wire:           string(p.Wire),
+		BaseURL:        p.BaseURL,
+		DefaultModel:   p.DefaultModel,
+		Models:         p.Models,
+		DisabledModels: p.DisabledModels,
+		Enabled:        p.Enabled,
+		Pool:           p.Pool,
+		Credential:     ProviderCredential{State: state},
 	}, nil
 }
 
@@ -547,17 +577,43 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, UsageResponse{Accounts: out})
 }
 
+func (s *Server) resolveAuthProvider(raw string) account.ProviderID {
+	switch raw {
+	case "codex", "antigravity":
+	default:
+		return account.ProviderID(raw)
+	}
+	d := s.cfg.Get().Config
+	match := ""
+	for id, p := range d.Providers {
+		var wire string
+		switch p.Wire {
+		case config.WireCodex:
+			wire = "codex"
+		case config.WireAntigravity:
+			wire = "antigravity"
+		}
+		if wire == raw && match == "" {
+			match = id
+		}
+	}
+	if match == "" {
+		return account.ProviderID(raw)
+	}
+	return account.ProviderID(match)
+}
+
 func (s *Server) authStart(w http.ResponseWriter, r *http.Request) {
 	if s.auth == nil {
 		writeError(w, http.StatusNotImplemented, "unsupported", "auth not configured")
 		return
 	}
-	u, err := s.auth.Start(r.Context(), r.PathValue("provider"))
+	start, err := s.auth.Start(r.Context(), s.resolveAuthProvider(r.PathValue("provider")))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		writeAuthError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, AuthStartResponse{URL: u})
+	writeJSON(w, http.StatusOK, AuthStartResponse{Session: string(start.Session), URL: start.URL})
 }
 
 func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
@@ -569,8 +625,13 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.auth.Callback(r.Context(), r.PathValue("provider"), body.Code); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+	cb := auth.AuthCallback{
+		Session: auth.AuthSessionID(body.Session),
+		Code:    body.Code,
+		State:   body.State,
+	}
+	if err := s.auth.Complete(r.Context(), s.resolveAuthProvider(r.PathValue("provider")), cb); err != nil {
+		writeAuthError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -581,12 +642,34 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "unsupported", "auth not configured")
 		return
 	}
-	st, err := s.auth.Status(r.Context(), r.PathValue("provider"))
+	session := auth.AuthSessionID(r.URL.Query().Get("session"))
+	st, err := s.auth.Status(r.Context(), s.resolveAuthProvider(r.PathValue("provider")), session)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		writeAuthError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, AuthStatusResponse{Provider: r.PathValue("provider"), State: st.State})
+}
+
+func writeAuthError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrUnknownProvider):
+		writeError(w, http.StatusBadRequest, "unknown_provider", "unknown auth provider")
+	case errors.Is(err, auth.ErrUnknownSession):
+		writeError(w, http.StatusBadRequest, "unknown_session", "unknown or consumed auth session")
+	case errors.Is(err, auth.ErrStateMismatch):
+		writeError(w, http.StatusBadRequest, "state_mismatch", "callback state mismatch")
+	case errors.Is(err, auth.ErrSessionExpired):
+		writeError(w, http.StatusBadRequest, "session_expired", "auth session expired")
+	case errors.Is(err, auth.ErrInvalidCallback):
+		writeError(w, http.StatusBadRequest, "invalid_callback", "callback missing code")
+	case errors.Is(err, auth.ErrLoopbackBind):
+		writeError(w, http.StatusServiceUnavailable, "loopback_unavailable", "callback port is occupied or unavailable")
+	case errors.Is(err, auth.ErrAuthFailed):
+		writeError(w, http.StatusBadGateway, "auth_failed", "authentication failed")
+	default:
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+	}
 }
 
 func comboView(id string, c config.Combo) Combo {
@@ -693,6 +776,7 @@ func writeConfigError(w http.ResponseWriter, err error) {
 		errors.Is(err, config.ErrMalformedAlias),
 		errors.Is(err, config.ErrInvalidTarget),
 		errors.Is(err, config.ErrInvalidValue),
+		errors.Is(err, config.ErrUnknownAffinity),
 		errors.Is(err, config.ErrEmptyField):
 		writeError(w, http.StatusBadRequest, "invalid_document", err.Error())
 	default:
@@ -727,7 +811,13 @@ func generationFromQuery(w http.ResponseWriter, r *http.Request) (uint64, bool) 
 
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
-	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
+	err := json.NewDecoder(r.Body).Decode(&v)
+	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", err.Error())
+			return v, false
+		}
 		writeError(w, http.StatusBadRequest, "malformed_json", err.Error())
 		return v, false
 	}

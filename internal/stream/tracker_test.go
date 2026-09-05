@@ -154,6 +154,26 @@ func TestStallAfterThreshold(t *testing.T) {
 	}
 }
 
+func TestDeltasRefreshStallClock(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	tr := NewTrackerWithClock(clock)
+	if err := tr.Apply(canon.ItemStarted{Item: messageItem("m1")}); err != nil {
+		t.Fatalf("ItemStarted: %v", err)
+	}
+	clock.now = clock.now.Add(StallThreshold - time.Second)
+	if err := tr.Apply(canon.TextDelta{ItemID: "m1"}); err != nil {
+		t.Fatalf("TextDelta: %v", err)
+	}
+	clock.now = clock.now.Add(StallThreshold - time.Second)
+	if _, synthesized := tr.OnStall(); synthesized {
+		t.Fatal("OnStall after recent delta: want synthesized=false")
+	}
+	clock.now = clock.now.Add(time.Second)
+	if _, synthesized := tr.OnStall(); !synthesized {
+		t.Fatal("OnStall at threshold after delta: want synthesized terminal")
+	}
+}
+
 func TestSynthesisIdempotent(t *testing.T) {
 	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
 	if _, synthesized := tr.OnClientDisconnect(); !synthesized {

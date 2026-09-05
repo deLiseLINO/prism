@@ -11,6 +11,7 @@ import (
 	"prism/internal/account"
 	"prism/internal/canon"
 	"prism/internal/config"
+	"prism/internal/integrations"
 	"prism/internal/management"
 	"prism/internal/provider"
 	"prism/internal/quota"
@@ -141,9 +142,10 @@ func (c *fakeClock) Advance(d time.Duration) {
 }
 
 type harness struct {
-	handler http.Handler
-	pool    account.Pool
-	cfg     *config.Manager
+	handler   http.Handler
+	pool      account.Pool
+	cfg       *config.Manager
+	mgmtToken string
 }
 
 func (h *harness) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -179,14 +181,15 @@ func newTestServer(t *testing.T, clock Clock, plans map[canon.ModelID]routing.Pl
 	if err != nil {
 		t.Fatalf("config open: %v", err)
 	}
-	mgmt := management.New(pool, nil, nil, nil, nil, nil).Handler()
+	mgmt := management.New(pool, cfg, nil, nil, nil, nil, integrations.NewRegistry()).Handler()
 	srv := New(Options{
-		Planner:    &fakePlanner{plans: plans},
-		Registry:   reg,
-		Pool:       pool,
-		Config:     cfg,
-		Management: mgmt,
-		Clock:      clock,
+		Planner:         &fakePlanner{plans: plans},
+		Registry:        reg,
+		Pool:            pool,
+		Config:          cfg,
+		Management:      mgmt,
+		ManagementToken: "test-mgmt-token",
+		Clock:           clock,
 	})
-	return &harness{handler: srv.Handler(), pool: pool, cfg: cfg}
+	return &harness{handler: srv.Handler(), pool: pool, cfg: cfg, mgmtToken: "test-mgmt-token"}
 }

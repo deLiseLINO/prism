@@ -42,6 +42,20 @@ type usageWire struct {
 	TotalTokens float64 `json:"total_tokens"`
 }
 
+func (u usageWire) inputCached() int64 {
+	if u.InputTokensDetails == nil {
+		return 0
+	}
+	return int64(u.InputTokensDetails.CachedTokens)
+}
+
+func (u usageWire) outputReasoning() int64 {
+	if u.OutputTokensDetails == nil {
+		return 0
+	}
+	return int64(u.OutputTokensDetails.ReasoningTokens)
+}
+
 func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
 	if err != nil {
@@ -59,10 +73,10 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 	}
 	usage := canon.Usage{
 		InputTokens:       int64(payload.Usage.InputTokens),
-		CachedInputTokens: int64(payload.Usage.InputTokensDetails.CachedTokens),
 		OutputTokens:      int64(payload.Usage.OutputTokens),
-		ReasoningTokens:   int64(payload.Usage.OutputTokensDetails.ReasoningTokens),
 		TotalTokens:       int64(payload.Usage.TotalTokens),
+		CachedInputTokens: payload.Usage.inputCached(),
+		ReasoningTokens:   payload.Usage.outputReasoning(),
 	}
 	if payload.Error != nil || payload.Status == "failed" {
 		message := "upstream request failed"

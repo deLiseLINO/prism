@@ -227,6 +227,93 @@ func TestTurnSuccessRecordsUsageForwardsEventsAndAcquiresWithFacts(t *testing.T)
 	}
 }
 
+func TestTurnSendsTargetModelOnTheWire(t *testing.T) {
+	var got canon.Request
+	runner := runnerFunc(func(req provider.RunRequest, sink provider.Sink) error {
+		got = req.Request
+		if err := sink.Emit(canon.TextDelta{ItemID: "i1", Text: "hi"}); err != nil {
+			return err
+		}
+		return sink.Emit(canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 1, TotalTokens: 1}})
+	})
+	pool := poolWith("codex", 1)
+	runners := fakeRunners{"codex": runner}
+	planner := fakePlanner{"codex/gpt-5.6": Plan{Targets: []provider.Target{{Provider: "codex", Model: "gpt-5.6", MaxFailovers: 0}}}}
+	res := NewRouter(pool, runners, planner, "default").Turn(context.Background(), canon.Request{Model: "codex/gpt-5.6"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	if _, ok := res.Terminal.(Finished); !ok {
+		t.Fatalf("terminal is %T, want Finished", res.Terminal)
+	}
+	if got.Model != "gpt-5.6" {
+		t.Fatalf("wire model = %q, want target model gpt-5.6", got.Model)
+	}
+}
+
+func TestQuotaOutcomeWithoutRetryAfterAppliesPolicyCooldownDefault(t *testing.T) {
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassQuotaExhausted, ReplaySafe: true}
+	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}}}
+	runners := fakeRunners{"codex": runnerFunc(func(provider.RunRequest, provider.Sink) error { return runErr })}
+	target := provider.Target{Provider: "codex", Model: "gpt-5.2", Policy: account.SelectionPolicy{CooldownDefault: 90 * time.Second}}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}, Policy: TurnPolicy{MaxAccountFailovers: 1}}}
+	res := NewRouter(pool, runners, planner, "default").Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	if _, ok := res.Terminal.(Failed); !ok {
+		t.Fatalf("terminal is %T, want Failed", res.Terminal)
+	}
+	want := account.QuotaExhausted{RetryAfter: 90 * time.Second}
+	if len(pool.records) != 1 || pool.records[0].outcome != account.Outcome(want) {
+		t.Fatalf("recorded outcome = %+v, want %+v", pool.records, want)
+	}
+}
+
+func TestCooldownMaxCapsRetryAfterForRateLimitedAndQuotaExhausted(t *testing.T) {
+	cases := []struct {
+		name       string
+		class      provider.ErrorClass
+		retryAfter time.Duration
+		want       account.Outcome
+	}{
+		{
+			name:       "rateLimited capped",
+			class:      provider.ClassRateLimited,
+			retryAfter: 24 * time.Hour,
+			want:       account.Outcome(account.RateLimited{RetryAfter: 15 * time.Minute}),
+		},
+		{
+			name:       "quotaExhausted capped",
+			class:      provider.ClassQuotaExhausted,
+			retryAfter: 24 * time.Hour,
+			want:       account.Outcome(account.QuotaExhausted{RetryAfter: 15 * time.Minute}),
+		},
+		{
+			name:       "rateLimited below cap passes through",
+			class:      provider.ClassRateLimited,
+			retryAfter: 7 * time.Second,
+			want:       account.Outcome(account.RateLimited{RetryAfter: 7 * time.Second}),
+		},
+		{
+			name:       "quotaExhausted below cap passes through",
+			class:      provider.ClassQuotaExhausted,
+			retryAfter: 7 * time.Second,
+			want:       account.Outcome(account.QuotaExhausted{RetryAfter: 7 * time.Second}),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runErr := provider.RunError{Kind: provider.Retryable, Class: tc.class, ReplaySafe: true, RetryAfter: tc.retryAfter}
+			pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}}}
+			runners := fakeRunners{"codex": failRunner(runErr)}
+			target := provider.Target{Provider: "codex", Model: "gpt-5.2", Policy: account.SelectionPolicy{CooldownMax: 15 * time.Minute}}
+			planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}, Policy: TurnPolicy{MaxAccountFailovers: 1}}}
+			res := NewRouter(pool, runners, planner, "default").Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+			if _, ok := res.Terminal.(Failed); !ok {
+				t.Fatalf("terminal is %T, want Failed", res.Terminal)
+			}
+			if len(pool.records) != 1 || pool.records[0].outcome != tc.want {
+				t.Fatalf("recorded outcome = %+v, want %+v", pool.records, tc.want)
+			}
+		})
+	}
+}
+
 func TestTurnAccountFailoverPreservesRetryAfter(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second}
 	usage := canon.Usage{OutputTokens: 3}
@@ -334,20 +421,20 @@ func TestTurnCommitStateAndRunErrorGateFailover(t *testing.T) {
 			records:  1,
 		},
 		{
-			name:     "terminalOmitted invalidRequest records nothing",
+			name:     "terminalOmitted invalidRequest releases lease",
 			state:    provider.NotStarted,
 			runErr:   provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: errors.New("bad request")},
 			attempts: 1,
 			reason:   canon.FailInvalidRequest,
-			records:  0,
+			records:  1,
 		},
 		{
-			name:     "terminalOmitted contextLength records nothing",
+			name:     "terminalOmitted contextLength releases lease",
 			state:    provider.NotStarted,
 			runErr:   provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassContextLength},
 			attempts: 1,
 			reason:   canon.FailContextLength,
-			records:  0,
+			records:  1,
 		},
 		{
 			name:     "unsafeReplay never fails over",
@@ -503,7 +590,7 @@ func TestDefaultTargetBudgetReachesThirdTarget(t *testing.T) {
 	}
 }
 
-func TestUntypedRunnerErrorStopsTurnWithoutRecord(t *testing.T) {
+func TestUntypedRunnerErrorStopsTurnReleasingLease(t *testing.T) {
 	pool := poolWith("codex", 2)
 	runners := fakeRunners{"codex": failRunner(errors.New("boom"))}
 	planner := singlePlan("codex", 0, TurnPolicy{})
@@ -518,8 +605,8 @@ func TestUntypedRunnerErrorStopsTurnWithoutRecord(t *testing.T) {
 	if f.Event.Failure.Reason != canon.FailUnknown {
 		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailUnknown)
 	}
-	if len(pool.records) != 0 {
-		t.Fatalf("pool records = %d, want 0", len(pool.records))
+	if len(pool.records) != 1 {
+		t.Fatalf("pool records = %d, want 1 (lease release)", len(pool.records))
 	}
 }
 
@@ -545,7 +632,7 @@ func TestSinkErrorStopsTurn(t *testing.T) {
 	}
 }
 
-func TestSuccessWithoutTerminalStopsWithoutRecord(t *testing.T) {
+func TestSuccessWithoutTerminalReleasesLease(t *testing.T) {
 	pool := poolWith("codex", 2)
 	runners := fakeRunners{"codex": failRunner(nil)}
 	planner := singlePlan("codex", 0, TurnPolicy{})
@@ -560,8 +647,8 @@ func TestSuccessWithoutTerminalStopsWithoutRecord(t *testing.T) {
 	if f.Event.Failure.Reason != canon.FailUnknown {
 		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailUnknown)
 	}
-	if len(pool.records) != 0 {
-		t.Fatalf("pool records = %d, want 0", len(pool.records))
+	if len(pool.records) != 1 {
+		t.Fatalf("pool records = %d, want 1 (lease release)", len(pool.records))
 	}
 }
 
@@ -629,5 +716,34 @@ func TestMissingRunnerFails(t *testing.T) {
 	}
 	if res.Attempts != 0 {
 		t.Fatalf("attempts = %d, want 0", res.Attempts)
+	}
+}
+
+func TestTurnReleasesLeaseForNonMappableError(t *testing.T) {
+	pid := account.ProviderID("p1")
+	pool := poolWith(pid, 1)
+	err := provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest}
+	runTurn(t, pool, fakeRunners{pid: failRunner(err)}, singlePlan(pid, 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	if len(pool.records) != 1 {
+		t.Fatalf("records = %d, want lease release", len(pool.records))
+	}
+}
+
+func TestTurnReleasesLeaseForUntypedRunnerError(t *testing.T) {
+	pid := account.ProviderID("p1")
+	pool := poolWith(pid, 1)
+	runTurn(t, pool, fakeRunners{pid: failRunner(errors.New("boom"))}, singlePlan(pid, 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	if len(pool.records) != 1 {
+		t.Fatalf("records = %d, want lease release", len(pool.records))
+	}
+}
+
+func TestTurnReleasesLeaseWhenRunnerOmitsTerminal(t *testing.T) {
+	pid := account.ProviderID("p1")
+	pool := poolWith(pid, 1)
+	runner := runnerFunc(func(provider.RunRequest, provider.Sink) error { return nil })
+	runTurn(t, pool, fakeRunners{pid: runner}, singlePlan(pid, 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	if len(pool.records) != 1 {
+		t.Fatalf("records = %d, want lease release", len(pool.records))
 	}
 }

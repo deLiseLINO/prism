@@ -1,6 +1,10 @@
 package codex
 
-import "prism/internal/account"
+import (
+	"context"
+
+	"prism/internal/account"
+)
 
 const ProviderID = "codex"
 
@@ -53,5 +57,5 @@ type Credential struct {
 }
 
 type CredentialSource interface {
-	Credential(id account.AccountID) (Credential, error)
+	Credential(ctx context.Context, lease account.Lease) (Credential, error)
 }

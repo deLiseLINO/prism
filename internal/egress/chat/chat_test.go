@@ -146,21 +146,29 @@ func TestChunkFraming(t *testing.T) {
 	}
 }
 
-func TestReasoningOmittedAndFlagged(t *testing.T) {
+func TestReasoningStreamedAsReasoningContent(t *testing.T) {
 	var buf bytes.Buffer
 	c := New(&buf, true)
 	if err := c.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	if err := c.Frame(canon.ReasoningDelta{ItemID: "r1", Text: "thinking"}); err != nil {
+	if err := c.Frame(canon.ReasoningDelta{ItemID: "r1", Text: "think"}); err != nil {
+		t.Fatalf("frame reasoning: %v", err)
+	}
+	if err := c.Frame(canon.ReasoningDelta{ItemID: "r1", Text: "ing"}); err != nil {
 		t.Fatalf("frame reasoning: %v", err)
 	}
 	fs := frames(t, &buf)
-	if len(fs) != 1 {
-		t.Fatalf("frames = %d, want only the preamble; got %v", len(fs), fs)
+	if len(fs) != 3 {
+		t.Fatalf("frames = %d, want preamble + 2 reasoning deltas; got %v", len(fs), fs)
 	}
-	if !hasWarning(c, WarnReasoningOmitted) {
-		t.Fatalf("warnings = %+v, want %s", c.Warnings(), WarnReasoningOmitted)
+	second := firstChoice(t, decode(t, fs[1]))["delta"].(map[string]any)
+	third := firstChoice(t, decode(t, fs[2]))["delta"].(map[string]any)
+	if second["reasoning_content"] != "think" || third["reasoning_content"] != "ing" {
+		t.Fatalf("reasoning deltas = %v, %v", second["reasoning_content"], third["reasoning_content"])
+	}
+	if _, present := second["content"]; present {
+		t.Fatalf("reasoning delta must not carry content: %v", second)
 	}
 	if c.CommitState() != provider.OutputCommitted {
 		t.Fatalf("reasoning is provider-derived output; commit state = %d", c.CommitState())

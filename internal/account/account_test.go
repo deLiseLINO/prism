@@ -662,3 +662,148 @@ func TestAffinityKeyDistinguishesThreads(t *testing.T) {
 		t.Fatalf("threads should share provider selection but got %s vs %s", l1.Account, l2.Account)
 	}
 }
+
+func TestAdvanceGenerationMovesForwardOnly(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	p := New([]byte("secret"), clock.Now)
+	p.Register(acct("a", 1, Active, 200, 0))
+	if err := p.AdvanceGeneration("a", 2); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if got := p.Snapshot().Accounts[0].CredGen; got != 2 {
+		t.Fatalf("gen = %d, want 2", got)
+	}
+	// A re-login that registered a newer generation must never regress.
+	p.Register(func() Account { a := acct("a", 1, Active, 200, 0); a.CredGen = 5; return a }())
+	if err := p.AdvanceGeneration("a", 3); err != nil {
+		t.Fatalf("advance behind: %v", err)
+	}
+	if got := p.Snapshot().Accounts[0].CredGen; got != 5 {
+		t.Fatalf("gen = %d, want 5", got)
+	}
+	if err := p.AdvanceGeneration("missing", 9); err != nil {
+		t.Fatalf("advance unknown account: %v", err)
+	}
+}
+
+func TestMarkNeedsReauthDropsAffinityAndDispatch(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	p := New([]byte("secret"), clock.Now)
+	ctx := context.Background()
+	p.Register(acct("a", 2, Active, 200, 0))
+	p.Register(acct("b", 1, Active, 200, 0))
+
+	l1, err := p.Acquire(ctx, req("s1"))
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if l1.Account != "a" {
+		t.Fatalf("first acquire: got %s, want a", l1.Account)
+	}
+	if err := p.MarkNeedsReauth("a"); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	snap := p.Snapshot().Accounts[0]
+	if snap.ID == "a" {
+		if snap.State != NeedsReauth {
+			t.Fatalf("state = %v, want NeedsReauth", snap.State)
+		}
+		if snap.CredGen != 1 {
+			t.Fatalf("gen = %d, want unchanged 1", snap.CredGen)
+		}
+	}
+	// Reactivate through a fresh registration (as a re-login would) and make
+	// the other account strictly better: the pinned selection must be gone.
+	restored := p.Snapshot().Accounts[0]
+	restored.Priority = 0
+	restored.State = Active
+	p.Register(restored)
+	l2, err := p.Acquire(ctx, req("s1"))
+	if err != nil {
+		t.Fatalf("re-acquire: %v", err)
+	}
+	if l2.Account != "b" {
+		t.Fatalf("affinity entry survived needs_reauth: got %s, want b", l2.Account)
+	}
+}
+
+func TestRecordReleasesLeaseAfterContextCancellation(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	p := New([]byte("secret"), clock.Now)
+	p.Register(acct("a1", 1, Active, 200, 0))
+	lease, err := p.Acquire(context.Background(), req("cancelled"))
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = p.Record(ctx, lease, RequestRejected{})
+	if got := p.Snapshot().Accounts[0].InFlight; got != 0 {
+		t.Fatalf("in-flight = %d, want release after cancellation", got)
+	}
+}
+
+func TestDeleteAccountRemovesAccountAndDropsAffinity(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	p := New([]byte("secret"), clock.Now)
+	ctx := context.Background()
+	p.Register(acct("b1", 1, Active, 200, 0))
+	p.Register(acct("a1", 2, Active, 200, 0))
+
+	l, err := p.Acquire(ctx, req("s1"))
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if l.Account != "a1" {
+		t.Fatalf("first acquire: got %s, want a1", l.Account)
+	}
+	if err := p.Record(ctx, l, TurnSucceeded{}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := p.DeleteAccount(ctx, "a1"); err != nil {
+		t.Fatalf("delete a1: %v", err)
+	}
+	if err := p.DeleteAccount(ctx, "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete ghost: got %v, want ErrNotFound", err)
+	}
+	snap := p.Snapshot()
+	if len(snap.Accounts) != 1 || snap.Accounts[0].ID != "b1" {
+		t.Fatalf("after delete: got %+v, want only b1", snap.Accounts)
+	}
+	p.Register(acct("a1", 0, Active, 200, 0))
+	l2, err := p.Acquire(ctx, req("s1"))
+	if err != nil {
+		t.Fatalf("acquire after re-register: %v", err)
+	}
+	if l2.Account != "b1" {
+		t.Fatalf("sticky affinity survived delete: got %s, want b1", l2.Account)
+	}
+}
+
+func TestUpdateQuotaStoresDeepCopy(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	p := New([]byte("secret"), clock.Now)
+	p.Register(acct("a1", 1, Active, 200, 0))
+
+	limit := int64(500)
+	windowEnd := clock.Now().Add(time.Hour)
+	snap := quota.Snapshot{Used: 120, Limit: &limit, WindowEnd: windowEnd, Source: quota.SourceEndpoint}
+	if err := p.UpdateQuota("a1", snap); err != nil {
+		t.Fatalf("update quota: %v", err)
+	}
+	snap.Used = 999
+	limit = 1
+	snap.WindowEnd = time.Time{}
+	snap.Source = quota.SourceReport
+
+	stored := p.Snapshot().Accounts[0].Quota
+	if stored.Used != 120 || stored.Limit == nil || *stored.Limit != 500 {
+		t.Fatalf("pool quota not deep-copied: got %+v", stored)
+	}
+	if !stored.WindowEnd.Equal(windowEnd) || stored.Source != quota.SourceEndpoint {
+		t.Fatalf("quota fields not stored: got %+v", stored)
+	}
+	if err := p.UpdateQuota("ghost", snap); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update quota ghost: got %v, want ErrNotFound", err)
+	}
+}

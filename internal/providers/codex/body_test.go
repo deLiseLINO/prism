@@ -226,5 +226,145 @@ func TestInstructionsJoined(t *testing.T) {
 	}
 }
 
+func TestSystemMessageMergedIntoInstructions(t *testing.T) {
+	req := canon.Request{
+		Model:  "gpt-5.6-luna",
+		Stream: true,
+		Input: []canon.Item{
+			canon.Message{Role: canon.RoleSystem, Content: []canon.Content{canon.TextContent{Text: "You are terse."}}},
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+		},
+	}
+	result, err := BuildRequestBody(req)
+	if err != nil {
+		t.Fatalf("BuildRequestBody: %v", err)
+	}
+	var raw struct {
+		Instructions string `json:"instructions"`
+		Input        []struct {
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(result.Body, &raw); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if raw.Instructions != "You are terse." {
+		t.Fatalf("instructions = %q, want system text merged", raw.Instructions)
+	}
+	for _, item := range raw.Input {
+		if item.Role == "system" || item.Role == "developer" {
+			t.Fatalf("system role leaked into input: %+v", raw.Input)
+		}
+	}
+	if len(raw.Input) != 1 || raw.Input[0].Role != "user" {
+		t.Fatalf("input = %+v, want only the user message", raw.Input)
+	}
+}
+
+func TestAssistantMessageUsesOutputText(t *testing.T) {
+	req := canon.Request{
+		Model:  "gpt-5.6-luna",
+		Stream: true,
+		Input: []canon.Item{
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+			canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "on it"}}},
+			canon.FunctionCall{CallID: "call-1", Name: "read", Arguments: []byte("{}")},
+			canon.FunctionOutput{CallID: "call-1", Output: []canon.Content{canon.TextContent{Text: "data"}}},
+		},
+	}
+	result, err := BuildRequestBody(req)
+	if err != nil {
+		t.Fatalf("BuildRequestBody: %v", err)
+	}
+	var raw struct {
+		Input []struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(result.Body, &raw); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if len(raw.Input) != 4 {
+		t.Fatalf("input has %d items, want 4", len(raw.Input))
+	}
+	for _, part := range raw.Input[0].Content {
+		if part.Type != "input_text" {
+			t.Fatalf("user content type = %q, want input_text", part.Type)
+		}
+	}
+	if len(raw.Input[1].Content) != 1 || raw.Input[1].Content[0].Type != "output_text" {
+		t.Fatalf("assistant content = %+v, want single output_text", raw.Input[1].Content)
+	}
+}
+
+func TestEmptyAssistantMessageDropped(t *testing.T) {
+	req := canon.Request{
+		Model:  "gpt-5.6-luna",
+		Stream: true,
+		Input: []canon.Item{
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+			canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: ""}}},
+			canon.FunctionCall{CallID: "call-1", Name: "read", Arguments: []byte("{}")},
+			canon.FunctionOutput{CallID: "call-1", Output: []canon.Content{canon.TextContent{Text: "data"}}},
+		},
+	}
+	result, err := BuildRequestBody(req)
+	if err != nil {
+		t.Fatalf("BuildRequestBody: %v", err)
+	}
+	var raw struct {
+		Input []struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(result.Body, &raw); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	for _, item := range raw.Input {
+		if item.Type == "message" && item.Role == "assistant" {
+			t.Fatalf("empty assistant message leaked into input: %+v", raw.Input)
+		}
+	}
+	if len(raw.Input) != 3 {
+		t.Fatalf("input has %d items, want 3", len(raw.Input))
+	}
+}
+
+func TestLocalShellToolOmitsName(t *testing.T) {
+	req := canon.Request{
+		Model:  "gpt-5.6-luna",
+		Stream: true,
+		Input: []canon.Item{
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+		},
+		Tools: []canon.Tool{canon.LocalShellToolDef{}},
+	}
+	result, err := BuildRequestBody(req)
+	if err != nil {
+		t.Fatalf("BuildRequestBody: %v", err)
+	}
+	var raw struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(result.Body, &raw); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if len(raw.Tools) != 1 {
+		t.Fatalf("tools = %+v, want 1", raw.Tools)
+	}
+	if raw.Tools[0]["type"] != "local_shell" {
+		t.Fatalf("tool = %+v, want local_shell", raw.Tools[0])
+	}
+	if _, ok := raw.Tools[0]["name"]; ok {
+		t.Fatalf("local_shell tool carries name: %+v", raw.Tools[0])
+	}
+}
+
 func ptrFloat(v float64) *float64 { return &v }
 func ptrBool(v bool) *bool        { return &v }

@@ -81,6 +81,7 @@ type streamDecoder struct {
 	messageID        canon.ItemID
 	seq              int
 	messageOpen      bool
+	messageText      strings.Builder
 	pendingSig       string
 	usage            canon.Usage
 	sawFrame         bool
@@ -198,6 +199,7 @@ func (d *streamDecoder) textDelta(thought bool, text string) error {
 	if thought {
 		return d.emit(canon.ReasoningDelta{ItemID: d.messageID, Text: text})
 	}
+	d.messageText.WriteString(text)
 	return d.emit(canon.TextDelta{ItemID: d.messageID, Text: text})
 }
 
@@ -251,6 +253,15 @@ func (d *streamDecoder) finish() error {
 		return nil
 	}
 	d.finished = true
+	if d.messageOpen {
+		if err := d.emit(canon.ItemFinished{Item: canon.Message{
+			ID:      d.messageID,
+			Role:    canon.RoleAssistant,
+			Content: []canon.Content{canon.TextContent{Text: d.messageText.String()}},
+		}}); err != nil {
+			return err
+		}
+	}
 	if !d.sawFrame || !d.sawTerminal {
 		return d.fail(canon.FailUpstreamTransport, "antigravity: upstream stream ended without a terminal signal")
 	}

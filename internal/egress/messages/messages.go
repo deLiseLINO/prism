@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"prism/internal/canon"
@@ -24,8 +25,8 @@ type Egress interface {
 	Flush() error
 }
 
-func New(w io.Writer) Egress {
-	return &stream{w: w, blocks: map[canon.ItemID]*openBlock{}}
+func New(w io.Writer, stream bool) Egress {
+	return &streamEncoder{w: w, streaming: stream, blocks: map[canon.ItemID]*openBlock{}}
 }
 
 type blockKind uint8
@@ -41,23 +42,34 @@ type openBlock struct {
 	kind  blockKind
 }
 
-type stream struct {
-	w        io.Writer
-	begun    bool
-	flushed  bool
-	commit   provider.CommitState
-	blocks   map[canon.ItemID]*openBlock
-	next     int
-	toolUse  bool
-	terminal canon.Event
+type streamEncoder struct {
+	w         io.Writer
+	streaming bool
+	begun     bool
+	flushed   bool
+	commit    provider.CommitState
+	blocks    map[canon.ItemID]*openBlock
+	next      int
+	toolUse   bool
+	terminal  canon.Event
+
+	id      string
+	model   string
+	content []any
+	usage   usageWire
 }
 
-func (e *stream) Begin(h ResponseHeader) error {
+func (e *streamEncoder) Begin(h ResponseHeader) error {
 	if e.begun {
 		return &FrameError{Reason: ReasonAlreadyBegun, Event: "message_start"}
 	}
 	e.begun = true
+	e.id = h.ID
+	e.model = string(h.Model)
 	e.commit = provider.ResponseStarted
+	if !e.streaming {
+		return nil
+	}
 	return e.write("message_start", messageStartWire{
 		Type: "message_start",
 		Message: messageWire{
@@ -71,7 +83,7 @@ func (e *stream) Begin(h ResponseHeader) error {
 	})
 }
 
-func (e *stream) Frame(ev canon.Event) error {
+func (e *streamEncoder) Frame(ev canon.Event) error {
 	if !e.begun {
 		return &FrameError{Reason: ReasonNotBegun, Event: eventName(ev)}
 	}
@@ -137,11 +149,11 @@ func (e *stream) Frame(ev canon.Event) error {
 	}
 }
 
-func (e *stream) Lifecycle() routing.ResponseLifecycle { return e }
+func (e *streamEncoder) Lifecycle() routing.ResponseLifecycle { return e }
 
-func (e *stream) CommitState() provider.CommitState { return e.commit }
+func (e *streamEncoder) CommitState() provider.CommitState { return e.commit }
 
-func (e *stream) Flush() error {
+func (e *streamEncoder) Flush() error {
 	if !e.begun {
 		return &FrameError{Reason: ReasonNotBegun, Event: "message_delta"}
 	}
@@ -157,21 +169,43 @@ func (e *stream) Flush() error {
 	e.flushed = true
 	switch t := e.terminal.(type) {
 	case canon.TurnFinished:
+		e.usage = usageWire{
+			InputTokens:          t.Usage.InputTokens,
+			CacheReadInputTokens: t.Usage.CachedInputTokens,
+			OutputTokens:         t.Usage.OutputTokens,
+		}
+		if !e.streaming {
+			stop := stopReason(t.Status, e.toolUse)
+			return e.writeJSON(messageWire{
+				ID:         e.id,
+				Type:       "message",
+				Role:       "assistant",
+				Model:      e.model,
+				Content:    e.content,
+				StopReason: &stop,
+				Usage:      e.usage,
+			})
+		}
 		if err := e.write("message_delta", messageDeltaWire{
 			Type: "message_delta",
 			Delta: messageDeltaBody{
 				StopReason: stopReason(t.Status, e.toolUse),
 			},
-			Usage: usageWire{
-				InputTokens:          t.Usage.InputTokens,
-				CacheReadInputTokens: t.Usage.CachedInputTokens,
-				OutputTokens:         t.Usage.OutputTokens,
-			},
+			Usage: e.usage,
 		}); err != nil {
 			return err
 		}
 		return e.write("message_stop", terminalWire{Type: "message_stop"})
 	case canon.TurnFailed:
+		if !e.streaming {
+			return e.writeJSON(errorWire{
+				Type: "error",
+				Error: errorBody{
+					Type:    failureErrorType(t.Failure.Reason),
+					Message: t.Failure.Message,
+				},
+			})
+		}
 		return e.write("error", errorWire{
 			Type: "error",
 			Error: errorBody{
@@ -183,7 +217,7 @@ func (e *stream) Flush() error {
 	return &FrameError{Reason: ReasonNoTerminal, Event: "message_delta"}
 }
 
-func (e *stream) itemStarted(item canon.Item) error {
+func (e *streamEncoder) itemStarted(item canon.Item) error {
 	var (
 		id    canon.ItemID
 		kind  blockKind
@@ -218,11 +252,14 @@ func (e *stream) itemStarted(item canon.Item) error {
 	})
 }
 
-func (e *stream) itemFinished(item canon.Item) error {
+func (e *streamEncoder) itemFinished(item canon.Item) error {
 	id := itemIDOf(item)
 	b, ok := e.blocks[id]
 	if !ok {
 		return &FrameError{Reason: ReasonUnknownItem, Event: "content_block_stop", ItemID: id}
+	}
+	if !e.streaming {
+		e.content = append(e.content, finishedBlockWire(item))
 	}
 	if b.kind == blockThinking {
 		if r, isReasoning := item.(canon.ReasoningItem); isReasoning && r.Signature != "" {
@@ -239,21 +276,58 @@ func (e *stream) itemFinished(item canon.Item) error {
 	return e.write("content_block_stop", blockStopWire{Type: "content_block_stop", Index: b.index})
 }
 
-func (e *stream) blockFor(id canon.ItemID, event string) (*openBlock, error) {
+func finishedBlockWire(item canon.Item) any {
+	switch it := item.(type) {
+	case canon.Message:
+		var sb strings.Builder
+		for _, c := range it.Content {
+			if text, ok := c.(canon.TextContent); ok {
+				sb.WriteString(text.Text)
+			}
+		}
+		return textBlockWire{Type: "text", Text: sb.String()}
+	case canon.ReasoningItem:
+		return thinkingBlockWire{Type: "thinking", Thinking: it.Content, Signature: it.Signature}
+	case canon.FunctionCall:
+		input := map[string]any{}
+		if len(it.Arguments) > 0 {
+			if err := json.Unmarshal(it.Arguments, &input); err != nil {
+				input = map[string]any{}
+			}
+		}
+		return toolUseBlockWire{Type: "tool_use", ID: string(it.CallID), Name: string(it.Name), Input: input}
+	}
+	return textBlockWire{Type: "text", Text: ""}
+}
+
+func (e *streamEncoder) blockFor(id canon.ItemID, event string) (*openBlock, error) {
 	b, ok := e.blocks[id]
 	if !ok {
 		return nil, &FrameError{Reason: ReasonUnknownItem, Event: event, ItemID: id}
 	}
 	return b, nil
 }
-
-func (e *stream) write(name string, payload any) error {
+func (e *streamEncoder) write(name string, payload any) error {
+	if !e.streaming {
+		return nil
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("messages egress: encode %s: %w", name, err)
 	}
 	if _, err := fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", name, data); err != nil {
 		return fmt.Errorf("messages egress: write %s: %w", name, err)
+	}
+	return nil
+}
+
+func (e *streamEncoder) writeJSON(payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("messages egress: encode message: %w", err)
+	}
+	if _, err := fmt.Fprintf(e.w, "%s\n", data); err != nil {
+		return fmt.Errorf("messages egress: write message: %w", err)
 	}
 	return nil
 }

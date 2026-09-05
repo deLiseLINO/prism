@@ -402,7 +402,15 @@ func (s *streamState) upstreamErrorEvent(payload map[string]any) error {
 	if message == "" {
 		message = "anthropic: upstream stream error"
 	}
-	return &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Cause: errors.New(message)}
+	kind := provider.TerminalOmitted
+	class := provider.ClassServer
+	if typ, _ := errObj["type"].(string); typ == "rate_limit_error" {
+		kind = provider.Retryable
+		class = provider.ClassRateLimited
+	} else if typ == "overloaded_error" {
+		kind = provider.Retryable
+	}
+	return &provider.RunError{Kind: kind, Class: class, Cause: errors.New(message)}
 }
 
 func (r *Runner) CountTokens(ctx context.Context, req provider.CountTokensRequest) (provider.TokenCount, error) {

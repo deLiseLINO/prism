@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -30,7 +31,7 @@ type wireBlock struct {
 	Name      string           `json:"name,omitempty"`
 	Input     json.RawMessage  `json:"input,omitempty"`
 	ToolUseID string           `json:"tool_use_id,omitempty"`
-	Content   []wireTextBlock  `json:"content,omitempty"`
+	Content   []wireBlock      `json:"content,omitempty"`
 }
 
 type wireMessage struct {
@@ -179,6 +180,9 @@ func systemBlocks(contents []canon.Content) ([]wireTextBlock, error) {
 		if !ok {
 			return nil, fmt.Errorf("anthropic: unsupported system content %T", c)
 		}
+		if text.Text == "" {
+			continue
+		}
 		blocks = append(blocks, wireTextBlock{Type: "text", Text: text.Text})
 	}
 	return blocks, nil
@@ -200,12 +204,15 @@ func contentBlocks(contents []canon.Content) ([]wireBlock, error) {
 	for _, c := range contents {
 		switch v := c.(type) {
 		case canon.TextContent:
+			if v.Text == "" {
+				continue
+			}
 			blocks = append(blocks, wireBlock{Type: "text", Text: v.Text})
 		case canon.ImageContent:
 			blocks = append(blocks, wireBlock{Type: "image", Source: &wireImageSource{
 				Type:      "base64",
 				MediaType: v.MIMEType,
-				Data:      string(v.Data),
+				Data:      base64.StdEncoding.EncodeToString(v.Data),
 			}})
 		default:
 			return nil, fmt.Errorf("anthropic: unsupported content %T", c)
@@ -234,6 +241,9 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, error) {
 			if err != nil {
 				return nil, err
 			}
+			if len(blocks) == 0 {
+				continue
+			}
 			for _, b := range blocks {
 				appendBlock(role, b)
 			}
@@ -257,11 +267,10 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, error) {
 			if err != nil {
 				return nil, err
 			}
-			texts := make([]wireTextBlock, 0, len(blocks))
-			for _, b := range blocks {
-				texts = append(texts, wireTextBlock{Type: "text", Text: b.Text})
+			if len(blocks) == 0 {
+				return nil, fmt.Errorf("anthropic: tool result %q has no representable content", v.CallID)
 			}
-			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: texts})
+			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks})
 		default:
 			return nil, fmt.Errorf("anthropic: unsupported input item %T", item)
 		}

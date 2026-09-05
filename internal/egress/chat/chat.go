@@ -21,10 +21,9 @@ const (
 )
 
 const (
-	WarnReasoningOmitted    = "reasoning_content_unmapped"
-	WarnCustomToolOmitted   = "custom_tool_unrepresentable"
-	WarnItemUnrepresentable = "item_unrepresentable"
-	WarnFinishUnmapped      = "finish_reason_unmapped"
+	WarnCustomToolOmitted    = "custom_tool_unrepresentable"
+	WarnItemUnrepresentable  = "item_unrepresentable"
+	WarnFinishUnmapped       = "finish_reason_unmapped"
 	WarnEventUnrepresentable = "event_unrepresentable"
 )
 
@@ -124,9 +123,8 @@ func (c *Chat) Frame(ev canon.Event) error {
 		c.commit()
 		return c.writeChunk(c.deltaChunk(delta{Content: &e.Text}))
 	case canon.ReasoningDelta:
-		c.warnOnce(WarnReasoningOmitted, "reasoning delta has no fixed chat wire shape; omitted")
 		c.commit()
-		return nil
+		return c.writeChunk(c.deltaChunk(delta{ReasoningContent: &e.Text}))
 	case canon.ToolArgumentsDelta:
 		return c.toolArguments(e)
 	case canon.CustomToolInputDelta:
@@ -243,9 +241,6 @@ func (c *Chat) itemFinished(item canon.Item) error {
 		}
 		return nil
 	case canon.ReasoningItem:
-		if len(it.Content) > 0 || len(it.Summary) > 0 {
-			c.warnOnce(WarnReasoningOmitted, "reasoning content has no fixed chat wire shape; omitted")
-		}
 		return nil
 	case canon.CustomToolCall:
 		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool call %q has no chat wire shape", it.ID))

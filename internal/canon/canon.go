@@ -229,6 +229,7 @@ const (
 	EffortMedium
 	EffortHigh
 	EffortXHigh
+	EffortOff
 )
 
 type ReasoningSummary uint8
@@ -381,6 +382,7 @@ const (
 	FailNotFound
 	FailTimeout
 	FailUnknown
+	FailClientClosed
 )
 
 type Usage struct {

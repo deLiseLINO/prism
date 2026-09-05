@@ -54,7 +54,7 @@ func frameNames(frames []sseFrame) []string {
 func runStream(t *testing.T, h ResponseHeader, evs []canon.Event) (string, Egress) {
 	t.Helper()
 	var buf bytes.Buffer
-	eg := New(&buf)
+	eg := New(&buf, true)
 	if err := eg.Begin(h); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestFailureReasonErrorTypes(t *testing.T) {
 	}
 	for reason, want := range cases {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -351,7 +351,7 @@ func TestUsageCarriesValues(t *testing.T) {
 
 func TestCommitGating(t *testing.T) {
 	var buf bytes.Buffer
-	eg := New(&buf)
+	eg := New(&buf, true)
 	if got := eg.Lifecycle().CommitState(); got != provider.NotStarted {
 		t.Fatalf("commit state before Begin = %v, want NotStarted", got)
 	}
@@ -380,7 +380,7 @@ func TestCommitGating(t *testing.T) {
 
 func TestItemStateAvailableEmitsNothing(t *testing.T) {
 	var buf bytes.Buffer
-	eg := New(&buf)
+	eg := New(&buf, true)
 	if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "m"}); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -395,14 +395,14 @@ func TestItemStateAvailableEmitsNothing(t *testing.T) {
 
 func TestFrameContractErrors(t *testing.T) {
 	t.Run("frame before begin", func(t *testing.T) {
-		eg := New(&bytes.Buffer{})
+		eg := New(&bytes.Buffer{}, true)
 		err := mustFrameErr(t, eg.Frame(canon.TextDelta{ItemID: "t1", Text: "x"}))
 		if err.Reason != ReasonNotBegun {
 			t.Fatalf("reason = %v, want not_begun", err.Reason)
 		}
 	})
 	t.Run("flush before begin", func(t *testing.T) {
-		eg := New(&bytes.Buffer{})
+		eg := New(&bytes.Buffer{}, true)
 		err := mustFrameErr(t, eg.Flush())
 		if err.Reason != ReasonNotBegun {
 			t.Fatalf("reason = %v, want not_begun", err.Reason)
@@ -410,7 +410,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("double begin", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -421,7 +421,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("delta without block", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -432,7 +432,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("delta kind mismatch", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -446,7 +446,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("custom tool input unsupported", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -457,7 +457,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("unsupported item started", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -468,7 +468,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("finish for unknown item", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -479,7 +479,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("flush without terminal", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -490,7 +490,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("flush with open block", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -507,7 +507,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("frame after terminal", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -525,7 +525,7 @@ func TestFrameContractErrors(t *testing.T) {
 	})
 	t.Run("double flush", func(t *testing.T) {
 		var buf bytes.Buffer
-		eg := New(&buf)
+		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
@@ -549,4 +549,94 @@ func mustFrameErr(t *testing.T, err error) *FrameError {
 		t.Fatalf("error = %v (%T), want *FrameError", err, err)
 	}
 	return fe
+}
+
+func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
+	var buf bytes.Buffer
+	eg := New(&buf, false)
+	if err := eg.Begin(ResponseHeader{ID: "msg_9", Model: "claude-prism-codex--gpt-5"}); err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	evs := []canon.Event{
+		canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1", Content: ""}},
+		canon.ReasoningDelta{ItemID: "r1", Text: "thinking"},
+		canon.ItemFinished{Item: canon.ReasoningItem{ID: "r1", Content: "thinking", Signature: "sig1"}},
+		canon.ItemStarted{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant, Content: []canon.Content{}}},
+		canon.TextDelta{ItemID: "t1", Text: "Hello"},
+		canon.TextDelta{ItemID: "t1", Text: " world"},
+		canon.ItemFinished{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "Hello world"}}}},
+		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 3, OutputTokens: 5}},
+	}
+	for i, ev := range evs {
+		if err := eg.Frame(ev); err != nil {
+			t.Fatalf("Frame %d: %v", i, err)
+		}
+	}
+	if err := eg.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	var msg struct {
+		ID         string `json:"id"`
+		Type       string `json:"type"`
+		Role       string `json:"role"`
+		Content    []struct {
+			Type      string `json:"type"`
+			Text      string `json:"text"`
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature"`
+		} `json:"content"`
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
+			InputTokens  int64 `json:"input_tokens"`
+			OutputTokens int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &msg); err != nil {
+		t.Fatalf("non-streaming output is not one JSON message: %v\n%s", err, buf.String())
+	}
+	if msg.ID != "msg_9" || msg.Type != "message" || msg.Role != "assistant" {
+		t.Fatalf("envelope wrong: %+v", msg)
+	}
+	if len(msg.Content) != 2 {
+		t.Fatalf("content blocks: %+v", msg.Content)
+	}
+	if msg.Content[0].Type != "thinking" || msg.Content[0].Thinking != "thinking" || msg.Content[0].Signature != "sig1" {
+		t.Fatalf("thinking block: %+v", msg.Content[0])
+	}
+	if msg.Content[1].Type != "text" || msg.Content[1].Text != "Hello world" {
+		t.Fatalf("text block: %+v", msg.Content[1])
+	}
+	if msg.StopReason != "end_turn" {
+		t.Fatalf("stop reason: %q", msg.StopReason)
+	}
+	if msg.Usage.InputTokens != 3 || msg.Usage.OutputTokens != 5 {
+		t.Fatalf("usage: %+v", msg.Usage)
+	}
+}
+
+func TestNonStreamingFailedEmitsErrorJSON(t *testing.T) {
+	var buf bytes.Buffer
+	eg := New(&buf, false)
+	if err := eg.Begin(ResponseHeader{ID: "msg_e", Model: "claude-prism-codex--gpt-5"}); err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if err := eg.Frame(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: "upstream down"}}); err != nil {
+		t.Fatalf("Frame: %v", err)
+	}
+	if err := eg.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	var e struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &e); err != nil {
+		t.Fatalf("failed output is not one JSON error: %v\n%s", err, buf.String())
+	}
+	if e.Type != "error" || e.Error.Message != "upstream down" {
+		t.Fatalf("error envelope: %+v", e)
+	}
 }

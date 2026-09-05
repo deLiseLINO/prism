@@ -1,0 +1,396 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ManagementCall, ManagementReply } from '@prism/contracts'
+import { formatWindowEnd, quotaCell } from '../renderer/src/views/AccountsView'
+
+interface RecordedCall extends ManagementCall {
+  readonly timestamp: number
+}
+
+const recorded: RecordedCall[] = []
+
+let nextReply: ManagementReply = { ok: true, status: 200, body: {} }
+
+function setReply(reply: ManagementReply): void {
+  nextReply = reply
+}
+
+const fakeBridge = {
+  daemon: {
+    status: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    onStatus: vi.fn(),
+  },
+  management: {
+    call: vi.fn(async (request: ManagementCall): Promise<ManagementReply> => {
+      recorded.push({ ...request, timestamp: Date.now() })
+      return nextReply
+    }),
+  },
+  integrations: {
+    apply: vi.fn(),
+    rollback: vi.fn(),
+    status: vi.fn(),
+  },
+  shell: {
+    openExternal: vi.fn(),
+  },
+}
+
+describe('renderer api wrapper', () => {
+  beforeEach(() => {
+    recorded.length = 0
+    nextReply = { ok: true, status: 200, body: {} }
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { prism: fakeBridge },
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  async function loadApi(): Promise<typeof import('../renderer/src/api')> {
+    return import('../renderer/src/api')
+  }
+
+  it('uses the management bridge seam for providers', async () => {
+    const { api } = await loadApi()
+    setReply({
+      ok: true,
+      status: 200,
+      body: {
+        generation: 7,
+        providers: [
+          {
+            id: 'codex-main',
+            wire: 'codex',
+            baseURL: '',
+            defaultModel: 'gpt-5.2-codex',
+            models: ['gpt-5.2-codex'],
+            disabledModels: [],
+            enabled: true,
+            credential: { state: 'unset' },
+          },
+        ],
+      },
+    })
+    const out = await api.providers()
+    expect(out.generation).toBe(7)
+    expect(out.providers).toHaveLength(1)
+    expect(recorded[0]).toMatchObject({ method: 'GET', path: '/api/v1/providers' })
+  })
+
+  it('maps create vs replace to POST vs PUT under the right paths', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { generation: 1, providers: [] } })
+    await api.createProvider({
+      id: 'newprov',
+      wire: 'chat',
+      models: [],
+      disabledModels: [],
+      expectedGeneration: 0,
+    })
+    setReply({ ok: true, status: 200, body: { generation: 2, providers: [] } })
+    await api.replaceProvider('newprov', {
+      id: 'newprov',
+      wire: 'chat',
+      models: [],
+      disabledModels: [],
+      expectedGeneration: 1,
+    })
+    expect(recorded[0]).toMatchObject({ method: 'POST', path: '/api/v1/providers' })
+    expect(recorded[1]).toMatchObject({ method: 'PUT', path: '/api/v1/providers/newprov' })
+  })
+
+  it('writes a credential through the same bridge seam without echoing it', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { generation: 5, providers: [] } })
+    await api.replaceProvider('codex-main', {
+      id: 'codex-main',
+      wire: 'codex',
+      models: [],
+      disabledModels: [],
+      pool: null,
+      credential: 'topsecret-key-9f4e',
+      expectedGeneration: 4,
+    })
+    expect(recorded[0]?.body).toMatchObject({ credential: 'topsecret-key-9f4e' })
+    // The bridge was invoked with the secret; the test never echoes it back. The renderer code
+    // clears its own local state after the call returns. We just assert the call here.
+    expect(recorded).toHaveLength(1)
+  })
+
+  it('raises ApiError with the daemon code on conflict', async () => {
+    const { api, ApiError } = await loadApi()
+    setReply({
+      ok: false,
+      status: 409,
+      body: { error: { code: 'stale_generation', message: 'config moved on' } },
+    })
+    await expect(api.deleteProvider('codex-main', 3)).rejects.toBeInstanceOf(ApiError)
+    await expect(api.deleteProvider('codex-main', 3)).rejects.toMatchObject({
+      status: 409,
+      code: 'stale_generation',
+    })
+  })
+
+  it('sends versioned account mutations under their dedicated routes', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { id: 'codex:abc', provider: 'codex', state: 'paused' } })
+    await api.pauseAccount('codex:abc', 12)
+    setReply({ ok: true, status: 200, body: { id: 'codex:abc', provider: 'codex', state: 'active' } })
+    await api.resumeAccount('codex:abc', 12)
+    setReply({ ok: true, status: 200, body: { id: 'codex:abc', provider: 'codex', state: 'active' } })
+    await api.setPriority('codex:abc', 12, 4)
+    expect(recorded[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/accounts/codex%3Aabc/pause',
+      body: { version: 12 },
+    })
+    expect(recorded[1]).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/accounts/codex%3Aabc/resume',
+      body: { version: 12 },
+    })
+    expect(recorded[2]).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/accounts/codex%3Aabc/priority',
+      body: { version: 12, priority: 4 },
+    })
+  })
+
+  it('sends DELETE CAS in query parameters and accepts account 204', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { generation: 4 } })
+    await api.deleteProvider('custom/provider', 3)
+    setReply({ ok: true, status: 200, body: { generation: 4, combos: [] } })
+    await api.deleteCombo('primary', 3)
+    setReply({ ok: true, status: 200, body: { generation: 4, routes: {} } })
+    await api.deleteRoute('codex/main', 3)
+    setReply({ ok: true, status: 204 })
+    await api.deleteAccount('codex:abc')
+    expect(recorded).toEqual([
+      expect.objectContaining({ method: 'DELETE', path: '/api/v1/providers/custom%2Fprovider?expectedGeneration=3' }),
+      expect.objectContaining({ method: 'DELETE', path: '/api/v1/combos/primary?expectedGeneration=3' }),
+      expect.objectContaining({ method: 'DELETE', path: '/api/v1/routes/codex%2Fmain?expectedGeneration=3' }),
+      expect.objectContaining({ method: 'DELETE', path: '/api/v1/accounts/codex%3Aabc' }),
+    ])
+    expect(recorded.every((request) => request.body === undefined)).toBe(true)
+  })
+
+  it('drives auth start/status through management without echoing state or codes', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { session: 'sess-42', url: 'https://example.com/oauth' } })
+    const start = await api.authStart('codex')
+    expect(start.session).toBe('sess-42')
+    expect(start.url).toBe('https://example.com/oauth')
+    setReply({ ok: true, status: 200, body: { provider: 'codex', state: 'pending' } })
+    const pending = await api.authStatus('codex', 'sess-42')
+    expect(pending.state).toBe('pending')
+    setReply({ ok: true, status: 200, body: { provider: 'codex', state: 'authorized' } })
+    const ready = await api.authStatus('codex', '')
+    expect(ready.state).toBe('authorized')
+    expect(recorded[0]).toMatchObject({ method: 'POST', path: '/api/v1/auth/codex/start' })
+    expect(recorded[1]).toMatchObject({
+      method: 'GET',
+      path: '/api/v1/auth/codex/status?session=sess-42',
+    })
+    expect(recorded[2]).toMatchObject({ method: 'GET', path: '/api/v1/auth/codex/status' })
+  })
+
+  it('writes combos and routes under CAS', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { generation: 9, combos: [] } })
+    await api.putCombo('primary', {
+      targets: [{ provider: 'codex-main', model: 'gpt-5.2-codex', weight: 1 }],
+      strategy: 'failover',
+      stickyLimit: 5,
+      expectedGeneration: 8,
+    })
+    setReply({ ok: true, status: 200, body: { generation: 9, routes: {} } })
+    await api.putRoute('codex-main/gpt-5.2-codex', { value: 'primary', expectedGeneration: 8 })
+    expect(recorded[0]).toMatchObject({ method: 'PUT', path: '/api/v1/combos/primary' })
+    expect(recorded[0]?.body).toMatchObject({ expectedGeneration: 8 })
+    expect(recorded[1]).toMatchObject({
+      method: 'PUT',
+      path: '/api/v1/routes/codex-main%2Fgpt-5.2-codex',
+    })
+  })
+
+  it('unwraps provider mutation responses with their hidden pool durations intact', async () => {
+    const { api } = await loadApi()
+    const pool = {
+      strategy: 'quota',
+      autoSwitchThreshold: 0.8,
+      accountsPath: '',
+      maxFailovers: 3,
+      cooldownDefault: 300000000000,
+      cooldownMax: 900000000000,
+      probeEvery: 60000000000,
+    }
+    setReply({
+      ok: true,
+      status: 200,
+      body: {
+        generation: 11,
+        provider: {
+          id: 'codex-main',
+          wire: 'codex',
+          defaultModel: 'gpt-5.2-codex',
+          models: ['gpt-5.2-codex'],
+          disabledModels: [],
+          enabled: true,
+          pool,
+          credential: { state: 'set' },
+        },
+      },
+    })
+    const created = await api.createProvider({
+      id: 'codex-main',
+      wire: 'codex',
+      models: [],
+      disabledModels: [],
+      expectedGeneration: 10,
+    })
+    expect(created.generation).toBe(11)
+    expect(created.provider.id).toBe('codex-main')
+    expect(created.provider.pool).toEqual(pool)
+    setReply({ ok: true, status: 200, body: { generation: 12, provider: { id: 'codex-main', wire: 'codex', models: [], disabledModels: [], enabled: true, pool } } })
+    const replaced = await api.replaceProvider('codex-main', {
+      id: 'codex-main',
+      wire: 'codex',
+      models: [],
+      disabledModels: [],
+      expectedGeneration: 11,
+    })
+    expect(replaced.generation).toBe(12)
+    expect(replaced.provider.pool).toEqual(pool)
+    expect(recorded[0]).toMatchObject({ method: 'POST', path: '/api/v1/providers' })
+    expect(recorded[1]).toMatchObject({ method: 'PUT', path: '/api/v1/providers/codex-main' })
+  })
+
+  it('unwraps the quota response shape for a single account', async () => {
+    const { api } = await loadApi()
+    setReply({
+      ok: true,
+      status: 200,
+      body: {
+        account: 'codex:abc',
+        quota: { used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint' },
+      },
+    })
+    const out = await api.quota('codex:abc')
+    expect(out).toEqual({
+      account: 'codex:abc',
+      quota: { used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint' },
+    })
+    expect(recorded[0]).toMatchObject({ method: 'GET', path: '/api/v1/accounts/codex%3Aabc/quota' })
+  })
+
+  it('preserves hidden apiKeyRef and pool durations when editing through the fetch-write seam', async () => {
+    const { api } = await loadApi()
+    const existingPool = {
+      strategy: 'quota',
+      autoSwitchThreshold: 0.8,
+      accountsPath: '',
+      maxFailovers: 3,
+      cooldownDefault: 300000000000,
+      cooldownMax: 900000000000,
+      probeEvery: 60000000000,
+    }
+    setReply({
+      ok: true,
+      status: 200,
+      body: {
+        generation: 10,
+        providers: [
+          {
+            id: 'codex-main',
+            wire: 'codex',
+            baseURL: 'https://api.example.com',
+            defaultModel: 'gpt-5.2-codex',
+            models: ['gpt-5.2-codex', 'gpt-5.2'],
+            disabledModels: ['gpt-5.2-mini'],
+            enabled: true,
+            pool: existingPool,
+            credential: { state: 'set' },
+          },
+        ],
+      },
+    })
+    const view = await api.providers()
+    const provider = view.providers[0]
+    if (provider === undefined) throw new Error('fixture provider missing')
+    setReply({ ok: true, status: 200, body: { generation: 11, providers: [] } })
+    await api.replaceProvider('codex-main', {
+      id: 'codex-main',
+      wire: provider.wire,
+      baseURL: provider.baseURL ?? null,
+      apiKeyRef: null,
+      defaultModel: provider.defaultModel ?? null,
+      models: provider.models ?? [],
+      disabledModels: provider.disabledModels ?? [],
+      enabled: provider.enabled ?? true,
+      pool: provider.pool ?? null,
+      credential: null,
+      expectedGeneration: view.generation,
+    })
+    expect(recorded[1]?.body).toEqual({
+      id: 'codex-main',
+      wire: 'codex',
+      baseURL: 'https://api.example.com',
+      apiKeyRef: null,
+      defaultModel: 'gpt-5.2-codex',
+      models: ['gpt-5.2-codex', 'gpt-5.2'],
+      disabledModels: ['gpt-5.2-mini'],
+      enabled: true,
+      pool: existingPool,
+      credential: null,
+      expectedGeneration: 10,
+    })
+  })
+
+  it('treats an unexpected 200 reply to account delete as an error, not empty success', async () => {
+    const { api, ApiError } = await loadApi()
+    setReply({ ok: true, status: 200, body: { account: 'codex:abc' } })
+    await expect(api.deleteAccount('codex:abc')).rejects.toBeInstanceOf(ApiError)
+  })
+})
+
+describe('live quota rendering helpers', () => {
+  it('marks a source-unknown snapshot as unavailable', () => {
+    expect(
+      quotaCell({
+        account: 'codex:abc',
+        quota: { used: 0, windowEnd: '0001-01-01T00:00:00Z', source: 'unknown' },
+      }),
+    ).toEqual({ kind: 'unavailable' })
+  })
+
+  it('renders a ready quota with used, limit, window end, and source', () => {
+    expect(
+      quotaCell({
+        account: 'codex:abc',
+        quota: { used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint' },
+      }),
+    ).toEqual({ kind: 'ready', used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint' })
+  })
+
+  it('omits an absent limit instead of coercing it', () => {
+    const cell = quotaCell({
+      account: 'codex:abc',
+      quota: { used: 7, windowEnd: '2026-08-31T05:00:00Z', source: 'header' },
+    })
+    expect(cell).toEqual({ kind: 'ready', used: 7, windowEnd: '2026-08-31T05:00:00Z', source: 'header' })
+    expect('limit' in cell).toBe(false)
+  })
+
+  it('formats the quota window end and blanks the daemon zero time', () => {
+    expect(formatWindowEnd('2026-08-31T05:07:00Z')).toBe('2026-08-31 05:07')
+    expect(formatWindowEnd('0001-01-01T00:00:00Z')).toBe('—')
+    expect(formatWindowEnd('not-a-time')).toBe('—')
+  })
+})

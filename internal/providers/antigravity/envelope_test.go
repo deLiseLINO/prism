@@ -29,7 +29,7 @@ func TestEnvelopeKeyOrderAndValues(t *testing.T) {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
 	got := string(body)
-	const want = `{"model":"gemini-3.7-flash","userAgent":"antigravity","requestType":"agent","project":"proj-1","requestId":"agent-abc",` +
+	const want = `{"model":"gemini-3.7-flash-tiered","userAgent":"antigravity","requestType":"agent","project":"proj-1","requestId":"agent-abc",` +
 		`"request":{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],` +
 		`"systemInstruction":{"parts":[{"text":"You are helpful."}]},"generationConfig":{"maxOutputTokens":512,"temperature":0.7},"sessionId":"-123"}}`
 	if got != want {
@@ -146,7 +146,7 @@ func TestEnvelopeToolsAndToolChoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
-	want := `"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get weather","parameters":{"type":"object"}}]}],` +
+	want := `"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get weather","parameters":{"type":"object","properties":{}}}]}],` +
 		`"toolConfig":{"functionCallingConfig":{"mode":"ANY","allowedFunctionNames":["get_weather"]}}`
 	if !strings.Contains(string(body), want) {
 		t.Fatalf("tools mapping mismatch: %s", body)

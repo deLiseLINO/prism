@@ -1,6 +1,10 @@
 package management
 
-import "time"
+import (
+	"time"
+
+	"prism/internal/config"
+)
 
 type ErrorDetail struct {
 	Code    string `json:"code"`
@@ -40,12 +44,15 @@ type ProviderCredential struct {
 }
 
 type Provider struct {
-	ID           string             `json:"id"`
-	Wire         string             `json:"wire"`
-	BaseURL      string             `json:"baseURL,omitempty"`
-	DefaultModel string             `json:"defaultModel,omitempty"`
-	Models       []string           `json:"models,omitempty"`
-	Credential   ProviderCredential `json:"credential"`
+	ID             string               `json:"id"`
+	Wire           string               `json:"wire"`
+	BaseURL        string               `json:"baseURL,omitempty"`
+	DefaultModel   string               `json:"defaultModel,omitempty"`
+	Models         []string             `json:"models,omitempty"`
+	DisabledModels []string             `json:"disabledModels,omitempty"`
+	Enabled        *bool                `json:"enabled,omitempty"`
+	Pool           *config.PoolSettings `json:"pool,omitempty"`
+	Credential     ProviderCredential   `json:"credential"`
 }
 
 type ProvidersResponse struct {
@@ -63,13 +70,17 @@ type GenerationResponse struct {
 }
 
 type ProviderWrite struct {
-	ID                 string   `json:"id"`
-	Wire               string   `json:"wire"`
-	BaseURL            string   `json:"baseURL,omitempty"`
-	DefaultModel       string   `json:"defaultModel,omitempty"`
-	Models             []string `json:"models,omitempty"`
-	Credential         string   `json:"credential,omitempty"`
-	ExpectedGeneration uint64   `json:"expectedGeneration"`
+	ID                 string               `json:"id"`
+	Wire               string               `json:"wire"`
+	BaseURL            *string              `json:"baseURL,omitempty"`
+	APIKeyRef          *string              `json:"apiKeyRef,omitempty"`
+	DefaultModel       *string              `json:"defaultModel,omitempty"`
+	Models             []string             `json:"models"`
+	DisabledModels     []string             `json:"disabledModels"`
+	Enabled            *bool                `json:"enabled,omitempty"`
+	Pool               *config.PoolSettings `json:"pool,omitempty"`
+	Credential         string               `json:"credential,omitempty"`
+	ExpectedGeneration uint64               `json:"expectedGeneration"`
 }
 
 type QuotaView struct {
@@ -168,11 +179,14 @@ type UsageResponse struct {
 }
 
 type AuthStartResponse struct {
-	URL string `json:"url"`
+	Session string `json:"session"`
+	URL     string `json:"url"`
 }
 
 type AuthCallbackWrite struct {
-	Code string `json:"code"`
+	Session string `json:"session"`
+	Code    string `json:"code"`
+	State   string `json:"state"`
 }
 
 type AuthStatusResponse struct {

@@ -165,8 +165,10 @@ func snapshotFromEntry(entry quotaInfoEntry) (quota.Snapshot, bool) {
 		return quota.Snapshot{}, false
 	}
 	used := normalizePercent(100 - normalizePercent(*remaining))
+	limit := int64(10000)
 	snapshot := quota.Snapshot{
-		Used:   int64(math.Round(used)),
+		Used:   int64(math.Round(used * 100)),
+		Limit:  &limit,
 		Source: quota.SourceEndpoint,
 	}
 	if reset, ok := parseResetTime(entry.ResetTime); ok {

@@ -312,3 +312,20 @@ func releaseForeignProcess(t *testing.T, f *os.File) {
 		t.Fatalf("foreign close: %v", err)
 	}
 }
+
+func TestRemoveGeneration(t *testing.T) {
+	s := NewFileCredentialStore(t.TempDir())
+	ctx := context.Background()
+	if err := s.PutIdempotent(ctx, "codex", "a", 1, []byte(`{"version":1}`)); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if err := s.RemoveGeneration(ctx, "codex", "a", 2); err != nil {
+		t.Fatalf("remove missing generation must be a no-op: %v", err)
+	}
+	if err := s.RemoveGeneration(ctx, "codex", "a", 1); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, ok, _ := s.Get(ctx, "codex", "a", 1); ok {
+		t.Fatal("generation still present after removal")
+	}
+}

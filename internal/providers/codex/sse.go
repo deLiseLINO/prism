@@ -15,6 +15,9 @@ import (
 type sseEnvelope struct {
 	Type     string          `json:"type"`
 	Response json.RawMessage `json:"response"`
+	Item     json.RawMessage `json:"item"`
+	Message  string          `json:"message"`
+	Code     string          `json:"code"`
 }
 
 type Decoder struct {
@@ -147,7 +150,7 @@ func (d *Decoder) frame(data []byte) error {
 }
 
 func (d *Decoder) outputItem(raw sseEnvelope, added bool) error {
-	item, err := decodeItem(raw.Response)
+	item, err := decodeItem(raw.Item)
 	if err != nil {
 		d.warn("malformed_output_item")
 		return nil
@@ -239,6 +242,9 @@ func (d *Decoder) failed(raw sseEnvelope) error {
 				message = m
 			}
 		}
+	}
+	if message == "upstream stream failed" && raw.Message != "" {
+		message = raw.Message
 	}
 	return d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}})
 }

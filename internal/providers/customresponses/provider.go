@@ -3,18 +3,16 @@ package customresponses
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"prism/internal/account"
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/providers/openaierr"
 )
 
 type Header struct {
@@ -57,7 +55,9 @@ func (r *Runner) buildUpstream(target provider.Target, key string, req canon.Req
 	}
 	headers := []Header{
 		{Name: "Content-Type", Value: "application/json"},
-		{Name: "Authorization", Value: "Bearer " + key},
+	}
+	if key != "" {
+		headers = append(headers, Header{Name: "Authorization", Value: "Bearer " + key})
 	}
 	headers = append(headers, r.extra...)
 	return &upstreamRequest{
@@ -71,9 +71,17 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if err := validateTarget(req.Target); err != nil {
 		return runError(provider.TerminalOmitted, provider.ClassInvalidRequest, false, false, 0, err)
 	}
-	key, err := r.resolve(ctx, req.Target, req.Lease)
-	if err != nil {
-		return runError(provider.TerminalOmitted, provider.ClassTransport, false, false, 0, err)
+	var key string
+	if req.Target.APIKeyRef != "" {
+		var err error
+		key, err = r.resolve(ctx, req.Target, req.Lease)
+		if err != nil {
+			return runError(provider.TerminalOmitted, provider.ClassTransport, false, false, 0, err)
+		}
+		if strings.TrimSpace(key) == "" {
+			return runError(provider.TerminalOmitted, provider.ClassInvalidRequest, false, false, 0,
+				fmt.Errorf("apiKeyRef %q on provider %s resolved to an empty credential", req.Target.APIKeyRef, req.Target.Provider))
+		}
 	}
 	up, err := r.buildUpstream(req.Target, key, req.Request)
 	if err != nil {
@@ -119,73 +127,11 @@ func validateTarget(target provider.Target) error {
 	if target.BaseURL == "" {
 		return errors.New("customresponses: target base url is required")
 	}
-	if target.APIKeyRef == "" {
-		return errors.New("customresponses: target api key ref is required")
-	}
 	return nil
 }
 
 func (r *Runner) httpError(resp *http.Response) error {
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		payload = nil
-	}
-	var parsed struct {
-		Error *struct {
-			Message string `json:"message"`
-			Code    string `json:"code"`
-		} `json:"error"`
-	}
-	msg := fmt.Sprintf("upstream http %d", resp.StatusCode)
-	code := ""
-	accepted := resp.StatusCode >= 500
-	if json.Unmarshal(payload, &parsed) == nil && parsed.Error != nil {
-		if parsed.Error.Message != "" {
-			msg = parsed.Error.Message
-		}
-		code = parsed.Error.Code
-	}
-	return runError(provider.Retryable, classForStatus(resp.StatusCode, code), accepted, true, retryAfterFrom(resp.Header.Get("Retry-After")), errors.New(msg))
-}
-
-func classForStatus(status int, code string) provider.ErrorClass {
-	switch {
-	case status == 401 || status == 403:
-		return provider.ClassUnauthorized
-	case status == 404:
-		return provider.ClassNotFound
-	case status == 408:
-		return provider.ClassTimeout
-	case status == 429:
-		return provider.ClassRateLimited
-	case status == 400 && code == "context_length_exceeded":
-		return provider.ClassContextLength
-	case status >= 500:
-		return provider.ClassServer
-	default:
-		return provider.ClassInvalidRequest
-	}
-}
-
-func retryAfterFrom(raw string) time.Duration {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0
-	}
-	if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
-		if seconds < 0 {
-			return 0
-		}
-		return time.Duration(seconds * float64(time.Second))
-	}
-	if when, err := http.ParseTime(raw); err == nil {
-		d := time.Until(when)
-		if d < 0 {
-			return 0
-		}
-		return d
-	}
-	return 0
+	return openaierr.HTTPError(resp, "customresponses")
 }
 
 func runError(kind provider.RunErrorKind, class provider.ErrorClass, accepted, replaySafe bool, retryAfter time.Duration, cause error) error {

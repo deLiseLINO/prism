@@ -82,19 +82,19 @@ type RuleSet struct {
 type FailReason string
 
 const (
-	ReasonSelectorMissing              FailReason = "selector_missing"
-	ReasonSelectorTypeMismatch         FailReason = "selector_type_mismatch"
-	ReasonSelectorPresent              FailReason = "selector_present"
-	ReasonValueMismatch                FailReason = "value_mismatch"
-	ReasonEventSequenceMismatch        FailReason = "event_sequence_mismatch"
-	ReasonEventCountMismatch           FailReason = "event_count_mismatch"
-	ReasonIDGrammarMismatch            FailReason = "id_grammar_mismatch"
-	ReasonIDNotStable                  FailReason = "id_not_stable"
-	ReasonIDCorrelationMismatch        FailReason = "id_correlation_mismatch"
+	ReasonSelectorMissing               FailReason = "selector_missing"
+	ReasonSelectorTypeMismatch          FailReason = "selector_type_mismatch"
+	ReasonSelectorPresent               FailReason = "selector_present"
+	ReasonValueMismatch                 FailReason = "value_mismatch"
+	ReasonEventSequenceMismatch         FailReason = "event_sequence_mismatch"
+	ReasonEventCountMismatch            FailReason = "event_count_mismatch"
+	ReasonIDGrammarMismatch             FailReason = "id_grammar_mismatch"
+	ReasonIDNotStable                   FailReason = "id_not_stable"
+	ReasonIDCorrelationMismatch         FailReason = "id_correlation_mismatch"
 	ReasonToolResultCorrelationMismatch FailReason = "tool_result_correlation_mismatch"
-	ReasonInvalidExpected              FailReason = "invalid_expected"
-	ReasonEvaluationError              FailReason = "evaluation_error"
-	ReasonUnknownOperator              FailReason = "unknown_operator"
+	ReasonInvalidExpected               FailReason = "invalid_expected"
+	ReasonEvaluationError               FailReason = "evaluation_error"
+	ReasonUnknownOperator               FailReason = "unknown_operator"
 )
 
 func (rs RuleSet) Classify(s Symptom) *Rule {

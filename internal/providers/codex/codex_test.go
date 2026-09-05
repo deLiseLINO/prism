@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
@@ -13,7 +14,9 @@ import (
 
 type fixedCreds struct{ cred Credential }
 
-func (f fixedCreds) Credential(id account.AccountID) (Credential, error) { return f.cred, nil }
+func (f fixedCreds) Credential(ctx context.Context, lease account.Lease) (Credential, error) {
+	return f.cred, nil
+}
 
 type goldenFingerprint struct {
 	Fingerprint struct {

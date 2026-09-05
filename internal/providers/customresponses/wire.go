@@ -122,11 +122,17 @@ func inputFrom(items []canon.Item) ([]inputItem, error) {
 			for _, c := range m.Content {
 				switch p := c.(type) {
 				case canon.TextContent:
-					parts = append(parts, contentPart{Type: "input_text", Text: p.Text})
+					if m.Role == canon.RoleAssistant && p.Text == "" {
+						continue
+					}
+					parts = append(parts, contentPart{Type: textWireType(m.Role), Text: p.Text})
 				case canon.ImageContent:
 					url := "data:" + p.MIMEType + ";base64," + base64.StdEncoding.EncodeToString(p.Data)
 					parts = append(parts, contentPart{Type: "input_image", ImageURL: url, Detail: p.Detail})
 				}
+			}
+			if len(parts) == 0 && m.Role == canon.RoleAssistant {
+				continue
 			}
 			out = append(out, inputItem{Type: "message", Role: roleWire(m.Role), Content: parts})
 		case canon.ReasoningItem:
@@ -174,6 +180,13 @@ func functionCallOutputWire(content []canon.Content) any {
 		}
 	}
 	return parts
+}
+
+func textWireType(r canon.Role) string {
+	if r == canon.RoleAssistant {
+		return "output_text"
+	}
+	return "input_text"
 }
 
 func roleWire(r canon.Role) string {
