@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type {
   AccountView,
   AccountsView,
@@ -7,43 +7,37 @@ import type {
   ProvidersView,
   QuotaResponse,
 } from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Card, Confirm, Empty, Field, Row, SearchInput, Select, Stack, TextInput, Toggle } from '../components/Ui'
+import {
+  AsyncBoundary,
+  Banner,
+  Button,
+  Confirm,
+  Empty,
+  Field,
+  Row,
+  Select,
+  TextInput,
+  Toggle,
+} from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
 
-// Wires whose accounts expose a live per-account quota probe in the daemon.
-const LIVE_QUOTA_WIRES: Record<string, true> = { codex: true, antigravity: true }
+const LIVE_QUOTA_WIRES: Record<string, true> = {
+  codex: true,
+  antigravity: true,
+}
 
 const DEFAULT_AUTO_SWITCH_THRESHOLD = 0.85
 
-interface Grouped {
-  readonly provider: string
-  readonly accounts: readonly AccountView[]
-  readonly pool: PoolSettingsView | null
-  readonly poolProvider: ProviderView | null
-  readonly poolGeneration: number
-}
+const FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'cooling_down', label: 'Cooling' },
+  { value: 'needs_reauth', label: 'Reauth' },
+  { value: 'paused', label: 'Paused' },
+] as const
 
-function groupByProvider(accounts: AccountsView, providers: ProvidersView): readonly Grouped[] {
-  const byProvider = new Map<string, AccountView[]>()
-  for (const account of accounts.accounts) {
-    const existing = byProvider.get(account.provider) ?? []
-    existing.push(account)
-    byProvider.set(account.provider, existing)
-  }
-  const groups: Grouped[] = []
-  for (const [provider, list] of byProvider.entries()) {
-    const match = providers.providers.find((entry) => entry.id === provider)
-    groups.push({
-      provider,
-      accounts: list.slice().sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id)),
-      pool: match?.pool ?? null,
-      poolProvider: match ?? null,
-      poolGeneration: providers.generation,
-    })
-  }
-  return groups.sort((a, b) => a.provider.localeCompare(b.provider))
-}
+type AccountFilter = (typeof FILTERS)[number]['value']
 
 const STRATEGY_OPTIONS = [
   { value: 'quota', label: 'quota' },
@@ -56,124 +50,41 @@ const AFFINITY_OPTIONS = [
   { value: 'off', label: 'off' },
 ] as const
 
-interface AccountRowProps {
-  readonly account: AccountView
-  readonly wire: string | null
-  readonly onRefresh: () => void
+interface WireIndex {
+  readonly wires: Readonly<Record<string, string>>
+  readonly pools: Readonly<Record<string, PoolSettingsView | null>>
+  readonly providers: Readonly<Record<string, ProviderView | null>>
+  readonly generation: number
 }
 
-function AccountRow({ account, wire, onRefresh }: AccountRowProps): JSX.Element {
-  const [priorityDraft, setPriorityDraft] = useState<string>(String(account.priority))
-  const [confirming, setConfirming] = useState(false)
-  const task = useTask()
-  const paused = account.state === 'paused'
-  const priorityValid = priorityDraft.trim() !== '' && Number.isInteger(Number(priorityDraft))
-
-  useEffect(() => {
-    setPriorityDraft(String(account.priority))
-  }, [account.priority])
-
-  async function pause(): Promise<void> {
-    const result = await task.run(() => api.pauseAccount(account.id, account.version))
-    if (result === undefined) return
-    onRefresh()
+function indexProviders(list: ProvidersView): WireIndex {
+  const wires: Record<string, string> = {}
+  const pools: Record<string, PoolSettingsView | null> = {}
+  const providers: Record<string, ProviderView | null> = {}
+  for (const provider of list.providers) {
+    wires[provider.id] = provider.wire
+    pools[provider.id] = provider.pool ?? null
+    providers[provider.id] = provider
   }
-  async function resume(): Promise<void> {
-    const result = await task.run(() => api.resumeAccount(account.id, account.version))
-    if (result === undefined) return
-    onRefresh()
-  }
-  async function setPriority(): Promise<void> {
-    if (!priorityValid) return
-    const next = Number(priorityDraft)
-    const result = await task.run(() => api.setPriority(account.id, account.version, next))
-    if (result === undefined) return
-    onRefresh()
-  }
-  async function remove(): Promise<void> {
-    const result = await task.run(async (): Promise<true> => {
-      await api.deleteAccount(account.id)
-      return true
-    })
-    if (result === undefined) return
-    setConfirming(false)
-    onRefresh()
-  }
-  return (
-    <tr>
-      <td className="cell-mono">{account.id}</td>
-      <td>
-        <span className={`badge badge--${badgeTone(account.state)}`}>{account.state}</span>
-      </td>
-      <td>
-        <div className="row row--start row--tight">
-          <TextInput
-            id={`prio-${account.id}`}
-            type="number"
-            value={priorityDraft}
-            onChange={setPriorityDraft}
-            ariaLabel={`Priority for ${account.id}`}
-          />
-          <Button tone="ghost" size="sm" onClick={() => void setPriority()} disabled={task.running || !priorityValid} busy={task.running}>
-            Save
-          </Button>
-        </div>
-        {!priorityValid ? (
-          <div className="inline-error">
-            <span>Priority must be an integer</span>
-          </div>
-        ) : null}
-      </td>
-      <td>
-        {wire !== null && LIVE_QUOTA_WIRES[wire] === true ? (
-          <LiveQuotaCell accountId={account.id} />
-        ) : account.quota.limit == null ? (
-          <span className="meta">no quota</span>
-        ) : (
-          <QuotaBar account={account} />
-        )}
-      </td>
-      <td title={account.cooldownUntil}>{formatCooldownUntil(account.cooldownUntil)}</td>
-      <td>
-        <Row gap="tight" align="end">
-          {paused ? (
-            <Button tone="primary" size="sm" onClick={() => void resume()} disabled={task.running} busy={task.running}>
-              Resume
-            </Button>
-          ) : (
-            <Button tone="ghost" size="sm" onClick={() => void pause()} disabled={task.running} busy={task.running}>
-              Pause
-            </Button>
-          )}
-          {confirming ? (
-            <Confirm
-              title={`Remove ${account.id}?`}
-              detail="The account leaves the pool immediately."
-              confirmLabel="Remove"
-              busy={task.running}
-              onCancel={() => setConfirming(false)}
-              onConfirm={() => void remove()}
-            />
-          ) : (
-            <Button tone="danger" size="sm" onClick={() => setConfirming(true)} disabled={task.running}>
-              Remove
-            </Button>
-          )}
-        </Row>
-        {task.error !== null ? (
-          <div className="inline-error">
-            <span>{describeError(task.error)}</span>
-            {task.error instanceof ApiError && task.error.code === 'stale_version' ? (
-              <Button tone="ghost" size="sm" onClick={onRefresh}>Re-fetch account</Button>
-            ) : null}
-          </div>
-        ) : null}
-      </td>
-    </tr>
-  )
+  return { wires, pools, providers, generation: list.generation }
 }
 
-function badgeTone(state: AccountView['state']): 'ok' | 'warn' | 'error' | 'muted' {
+function sortAccounts(list: readonly AccountView[]): readonly AccountView[] {
+  return list
+    .slice()
+    .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))
+}
+
+function stateLabel(state: AccountView['state']): string {
+  if (state === 'cooling_down') return 'cooling down'
+  if (state === 'needs_reauth') return 'needs reauth'
+  if (state === 'soft_avoid') return 'soft avoid'
+  return state
+}
+
+function badgeTone(
+  state: AccountView['state'],
+): 'ok' | 'warn' | 'error' | 'muted' {
   switch (state) {
     case 'active':
       return 'ok'
@@ -189,22 +100,198 @@ function badgeTone(state: AccountView['state']): 'ok' | 'warn' | 'error' | 'mute
   }
 }
 
-function QuotaBar({ account }: { readonly account: AccountView }): JSX.Element {
-  const limit = account.quota.limit ?? 0
-  const pct = limit === 0 ? 0 : Math.max(0, Math.min(100, Math.round((account.quota.used / limit) * 100)))
+interface AccountRowProps {
+  readonly account: AccountView
+  readonly wire: string | null
+  readonly onRefresh: () => void
+}
+
+function AccountRow({
+  account,
+  wire,
+  onRefresh,
+}: AccountRowProps): JSX.Element {
+  const [priorityDraft, setPriorityDraft] = useState<string>(
+    String(account.priority),
+  )
+  const [confirming, setConfirming] = useState(false)
+  const task = useTask()
+  const paused = account.state === 'paused'
+  const priorityValid =
+    priorityDraft.trim() !== '' && Number.isInteger(Number(priorityDraft))
+
+  useEffect(() => {
+    setPriorityDraft(String(account.priority))
+  }, [account.priority])
+
+  async function pause(): Promise<void> {
+    const result = await task.run(() =>
+      api.pauseAccount(account.id, account.version),
+    )
+    if (result === undefined) return
+    onRefresh()
+  }
+  async function resume(): Promise<void> {
+    const result = await task.run(() =>
+      api.resumeAccount(account.id, account.version),
+    )
+    if (result === undefined) return
+    onRefresh()
+  }
+  async function setPriority(): Promise<void> {
+    if (!priorityValid) return
+    const next = Number(priorityDraft)
+    const result = await task.run(() =>
+      api.setPriority(account.id, account.version, next),
+    )
+    if (result === undefined) return
+    onRefresh()
+  }
+  async function remove(): Promise<void> {
+    const result = await task.run(async (): Promise<true> => {
+      await api.deleteAccount(account.id)
+      return true
+    })
+    if (result === undefined) return
+    setConfirming(false)
+    onRefresh()
+  }
   return (
-    <div className={`quota ${pct >= 85 ? 'quota--hot' : ''}`}>
-      <div className="quota__track">
-        <div className="quota__fill" style={{ width: `${pct}%` }} />
-      </div>
-      <p className="meta">
-        {account.quota.used} / {limit === 0 ? '?' : limit}
-      </p>
-    </div>
+    <tr>
+      <td className="td-strong">{account.id}</td>
+      <td>
+        <span className={`badge badge--${badgeTone(account.state)}`}>
+          {stateLabel(account.state)}
+        </span>
+      </td>
+      <td>
+        <span className="row row--start row--tight">
+          <span className="num">{account.priority}</span>
+          <TextInput
+            id={`prio-${account.id}`}
+            type="number"
+            value={priorityDraft}
+            onChange={setPriorityDraft}
+            ariaLabel={`Priority for ${account.id}`}
+          />
+          <Button
+            tone="ghost"
+            size="sm"
+            onClick={() => void setPriority()}
+            disabled={task.running || !priorityValid}
+            busy={task.running}
+          >
+            Save
+          </Button>
+        </span>
+        {!priorityValid ? (
+          <span className="meta">Priority must be an integer</span>
+        ) : null}
+      </td>
+      <td>
+        {wire !== null && LIVE_QUOTA_WIRES[wire] === true ? (
+          <LiveQuotaCell accountId={account.id} />
+        ) : account.quota.limit == null ? (
+          <div className="quota-cell">
+            <span className="num" style={{ color: 'var(--fg-subtle)' }}>
+              {account.quota.used}, no limit exposed
+            </span>
+          </div>
+        ) : (
+          <QuotaBar account={account} />
+        )}
+      </td>
+      <td>
+        <span className="num" title={account.cooldownUntil}>
+          {formatCooldownUntil(account.cooldownUntil)}
+        </span>
+      </td>
+      <td>
+        <span className="num">
+          v{account.version} · gen {account.credentialGeneration}
+        </span>
+      </td>
+      <td>
+        <span className="num">{account.inFlight}</span>
+      </td>
+      <td>
+        <Row gap="tight" align="end">
+          {paused ? (
+            <Button
+              tone="primary"
+              size="sm"
+              onClick={() => void resume()}
+              disabled={task.running}
+              busy={task.running}
+            >
+              Resume
+            </Button>
+          ) : (
+            <Button
+              tone="ghost"
+              size="sm"
+              onClick={() => void pause()}
+              disabled={task.running}
+              busy={task.running}
+            >
+              Pause
+            </Button>
+          )}
+          {confirming ? (
+            <Confirm
+              title={`Remove ${account.id}?`}
+              detail="The account leaves the pool immediately."
+              confirmLabel="Remove"
+              busy={task.running}
+              onCancel={() => setConfirming(false)}
+              onConfirm={() => void remove()}
+            />
+          ) : (
+            <Button
+              tone="danger"
+              size="sm"
+              onClick={() => setConfirming(true)}
+              disabled={task.running}
+            >
+              Remove
+            </Button>
+          )}
+        </Row>
+        {task.error !== null ? (
+          <div className="alert" role="alert">
+            <span>{describeError(task.error)}</span>
+            {task.error instanceof ApiError &&
+            task.error.code === 'stale_version' ? (
+              <Button tone="ghost" size="sm" onClick={onRefresh}>
+                Re-fetch account
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </td>
+    </tr>
   )
 }
 
-// Pure helpers below drive the live quota cell and are the test seam for quota rendering.
+function QuotaBar({ account }: { readonly account: AccountView }): JSX.Element {
+  const limit = account.quota.limit ?? 0
+  const ratio = limit === 0 ? 0 : account.quota.used / limit
+  const pct = Math.max(0, Math.min(1, ratio))
+  const fill = ratio > 0.9 ? 'f-danger' : ratio > 0.7 ? 'f-warn' : ''
+  return (
+    <div className="quota-cell">
+      <span className="num">
+        {account.quota.used}/{limit === 0 ? '?' : limit}
+      </span>
+      <span className="bar">
+        <span
+          className={`bar-fill ${fill}`.trim()}
+          style={{ '--w': pct } as CSSProperties}
+        />
+      </span>
+    </div>
+  )
+}
 
 export type QuotaCellState =
   | { readonly kind: 'unavailable' }
@@ -221,7 +308,13 @@ export function quotaCell(response: QuotaResponse): QuotaCellState {
     return { kind: 'unavailable' }
   }
   const { used, limit, windowEnd, source } = response.quota
-  return { kind: 'ready', used, ...(limit === undefined ? {} : { limit }), windowEnd, source }
+  return {
+    kind: 'ready',
+    used,
+    ...(limit === undefined ? {} : { limit }),
+    windowEnd,
+    source,
+  }
 }
 
 const ZERO_WINDOW_END = '0001-01-01T00:00:00Z'
@@ -249,28 +342,36 @@ function formatCooldownUntil(iso: string | undefined): string {
   if (minutes < 60) return `in ${minutes} min`
   const hours = Math.floor(minutes / 60)
   const rest = minutes % 60
-  if (hours < 24) return rest === 0 ? `in ${hours} h` : `in ${hours} h ${rest} min`
+  if (hours < 24)
+    return rest === 0 ? `in ${hours} h` : `in ${hours} h ${rest} min`
   const days = Math.round(hours / 24)
   return `in ${days} d`
 }
 
-function LiveQuotaCell({ accountId }: { readonly accountId: string }): JSX.Element {
+function LiveQuotaCell({
+  accountId,
+}: {
+  readonly accountId: string
+}): JSX.Element {
   const quota = useAsync<QuotaResponse>(() => api.quota(accountId), [accountId])
-  const cell = quota.state.kind === 'ready' ? quotaCell(quota.state.value) : null
+  const cell =
+    quota.state.kind === 'ready' ? quotaCell(quota.state.value) : null
 
   return (
-    <div className="quota-live" role="group" aria-label={`Quota for ${accountId}`}>
+    <div
+      className="quota-cell"
+      role="group"
+      aria-label={`Quota for ${accountId}`}
+    >
       {quota.state.kind === 'loading' || quota.state.kind === 'idle' ? (
-        <p className="quota-live__state" role="status">
-          Loading quota…
-        </p>
+        <span className="skel skel-num" aria-hidden="true" />
       ) : null}
       {quota.state.kind === 'error' ? (
-        <div className="quota-live__state quota-live__state--error" role="alert">
+        <div className="alert" role="alert">
           <span>{describeError(quota.state.error)}</span>
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn btn--ghost btn--sm"
             aria-label={`Refresh quota for ${accountId}`}
             onClick={() => quota.refresh()}
           >
@@ -279,29 +380,27 @@ function LiveQuotaCell({ accountId }: { readonly accountId: string }): JSX.Eleme
         </div>
       ) : null}
       {cell !== null && cell.kind === 'unavailable' ? (
-        <p className="quota-live__state" role="status">
+        <span className="num" style={{ color: 'var(--fg-subtle)' }}>
           quota unavailable
-        </p>
+        </span>
       ) : null}
       {cell !== null && cell.kind === 'ready' ? (
         <>
-          <div className="quota">
-            <div className="quota__track">
-              <div
-                className="quota__fill"
-                style={{ width: `${quotaFillPercent(cell)}%` }}
-              />
-            </div>
-            <p className="meta">
-              {cell.used} / {cell.limit === undefined ? '?' : cell.limit}
-            </p>
-          </div>
-          <p className="meta quota-live__window">
-            window ends {formatWindowEnd(cell.windowEnd)} · source {cell.source}
-          </p>
+          <span
+            className="num"
+            title={`window ends ${formatWindowEnd(cell.windowEnd)} · source ${cell.source}`}
+          >
+            {cell.used}/{cell.limit === undefined ? '?' : cell.limit}
+          </span>
+          <span className="bar">
+            <span
+              className={`bar-fill ${quotaFillRatio(cell) > 0.9 ? 'f-danger' : quotaFillRatio(cell) > 0.7 ? 'f-warn' : ''}`.trim()}
+              style={{ '--w': quotaFillRatio(cell) } as CSSProperties}
+            />
+          </span>
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn btn--ghost btn--sm"
             aria-label={`Refresh quota for ${accountId}`}
             onClick={() => quota.refresh()}
           >
@@ -313,26 +412,32 @@ function LiveQuotaCell({ accountId }: { readonly accountId: string }): JSX.Eleme
   )
 }
 
-function quotaFillPercent(cell: Extract<QuotaCellState, { kind: 'ready' }>): number {
+function quotaFillRatio(
+  cell: Extract<QuotaCellState, { kind: 'ready' }>,
+): number {
   const limit = cell.limit
   if (limit === undefined || limit === 0) return 0
-  return Math.max(0, Math.min(100, Math.round((cell.used / limit) * 100)))
+  return Math.max(0, Math.min(1, cell.used / limit))
 }
 
-interface PolicyCardProps {
-  readonly group: Grouped
+interface PolicyEditorProps {
+  readonly provider: string
+  readonly pool: PoolSettingsView | null
+  readonly poolProvider: ProviderView | null
+  readonly generation: number
   readonly onSaved: () => void
 }
 
-interface GroupProps {
-  readonly group: Grouped
-  readonly onRefresh: () => void
-}
-
-function PolicyCard({ group, onSaved }: PolicyCardProps): JSX.Element {
+function PolicyEditor({
+  provider,
+  pool,
+  poolProvider,
+  generation,
+  onSaved,
+}: PolicyEditorProps): JSX.Element {
   const initial = useMemo<PoolSettingsView>(
     () =>
-      group.pool ?? {
+      pool ?? {
         strategy: 'quota',
         autoSwitchThreshold: DEFAULT_AUTO_SWITCH_THRESHOLD,
         affinity: 'sticky',
@@ -343,40 +448,53 @@ function PolicyCard({ group, onSaved }: PolicyCardProps): JSX.Element {
         cooldownMax: 900000000000,
         probeEvery: 60000000000,
       },
-    [group.pool],
+    [pool],
   )
-  const [strategy, setStrategy] = useState<PoolSettingsView['strategy']>(initial.strategy)
-  const [autoSwitch, setAutoSwitch] = useState<boolean>(initial.autoSwitch ?? true)
-  const [threshold, setThreshold] = useState<string>(String(initial.autoSwitchThreshold ?? DEFAULT_AUTO_SWITCH_THRESHOLD))
-  const [affinity, setAffinity] = useState<'sticky' | 'off'>(initial.affinity ?? 'sticky')
+  const [strategy, setStrategy] = useState<PoolSettingsView['strategy']>(
+    initial.strategy,
+  )
+  const [autoSwitch, setAutoSwitch] = useState<boolean>(
+    initial.autoSwitch ?? true,
+  )
+  const [threshold, setThreshold] = useState<string>(
+    String(initial.autoSwitchThreshold ?? DEFAULT_AUTO_SWITCH_THRESHOLD),
+  )
+  const [affinity, setAffinity] = useState<'sticky' | 'off'>(
+    initial.affinity ?? 'sticky',
+  )
   const [pinned, setPinned] = useState<string>(initial.pinnedAccount ?? '')
   const task = useTask()
   const [open, setOpen] = useState(false)
-  const policyBodyId = `policy-${group.provider}`
+  const policyBodyId = `policy-${provider}`
 
-  const thresholdNumber = threshold.trim() === '' ? Number.NaN : Number(threshold)
-  const thresholdValid = Number.isFinite(thresholdNumber) && thresholdNumber >= 0 && thresholdNumber <= 1
+  const thresholdNumber =
+    threshold.trim() === '' ? Number.NaN : Number(threshold)
+  const thresholdValid =
+    Number.isFinite(thresholdNumber) &&
+    thresholdNumber >= 0 &&
+    thresholdNumber <= 1
 
   useEffect(() => {
     setStrategy(initial.strategy)
     setAutoSwitch(initial.autoSwitch ?? true)
-    setThreshold(String(initial.autoSwitchThreshold ?? DEFAULT_AUTO_SWITCH_THRESHOLD))
+    setThreshold(
+      String(initial.autoSwitchThreshold ?? DEFAULT_AUTO_SWITCH_THRESHOLD),
+    )
     setAffinity(initial.affinity ?? 'sticky')
     setPinned(initial.pinnedAccount ?? '')
   }, [initial])
 
   async function save(): Promise<void> {
-    if (group.poolProvider === null) return
+    if (poolProvider === null) return
     if (!thresholdValid) return
-    const provider = group.poolProvider
     const next: ProviderWrite = {
-      id: provider.id,
-      wire: provider.wire,
-      baseURL: provider.baseURL,
-      defaultModel: provider.defaultModel,
-      models: [...(provider.models ?? [])],
-      disabledModels: [...(provider.disabledModels ?? [])],
-      enabled: provider.enabled,
+      id: poolProvider.id,
+      wire: poolProvider.wire,
+      baseURL: poolProvider.baseURL,
+      defaultModel: poolProvider.defaultModel,
+      models: [...(poolProvider.models ?? [])],
+      disabledModels: [...(poolProvider.disabledModels ?? [])],
+      enabled: poolProvider.enabled,
       pool: {
         ...initial,
         strategy,
@@ -385,51 +503,54 @@ function PolicyCard({ group, onSaved }: PolicyCardProps): JSX.Element {
         affinity,
         pinnedAccount: pinned,
       },
-      expectedGeneration: group.poolGeneration,
+      expectedGeneration: generation,
     }
-    const result = await task.run(() => api.replaceProvider(provider.id, next))
+    const result = await task.run(() =>
+      api.replaceProvider(poolProvider.id, next),
+    )
     if (result === undefined) return
     onSaved()
   }
 
-  const canEdit = group.poolProvider !== null
+  const canEdit = poolProvider !== null
 
   return (
-    <div className="accordion">
-      <button
-        type="button"
-        className="accordion__toggle"
-        aria-expanded={open}
-        aria-controls={policyBodyId}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className={`accordion__chevron ${open ? 'accordion__chevron--open' : ''}`.trim()} aria-hidden="true">▶</span>
-        Selection policy
-      </button>
+    <div className="policy">
+      <div className="policy-head">
+        <button
+          type="button"
+          className={`btn btn--ghost btn--sm ${open ? 'policy-open' : ''}`.trim()}
+          aria-expanded={open}
+          aria-controls={policyBodyId}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'Hide' : 'Show'} selection policy for {provider}
+        </button>
+      </div>
       {open ? (
-        <div className="accordion__body" id={policyBodyId}>
+        <div id={policyBodyId} className="policy-body">
           <div className="field-grid">
-            <Field label="Strategy" htmlFor={`strat-${group.provider}`}>
+            <Field label="Strategy" htmlFor={`strat-${provider}`}>
               <Select<'quota' | 'round_robin' | 'fill_first'>
-                id={`strat-${group.provider}`}
+                id={`strat-${provider}`}
                 value={strategy}
                 onChange={setStrategy}
                 options={STRATEGY_OPTIONS}
                 disabled={!canEdit || task.running}
               />
             </Field>
-            <Field label="Affinity" htmlFor={`aff-${group.provider}`}>
+            <Field label="Affinity" htmlFor={`aff-${provider}`}>
               <Select<'sticky' | 'off'>
-                id={`aff-${group.provider}`}
+                id={`aff-${provider}`}
                 value={affinity}
                 onChange={setAffinity}
                 options={AFFINITY_OPTIONS}
                 disabled={!canEdit || task.running}
               />
             </Field>
-            <Field label="Threshold (0–1)" htmlFor={`thr-${group.provider}`}>
+            <Field label="Threshold (0–1)" htmlFor={`thr-${provider}`}>
               <TextInput
-                id={`thr-${group.provider}`}
+                id={`thr-${provider}`}
                 type="number"
                 value={threshold}
                 onChange={setThreshold}
@@ -439,9 +560,9 @@ function PolicyCard({ group, onSaved }: PolicyCardProps): JSX.Element {
                 disabled={!canEdit || task.running}
               />
             </Field>
-            <Field label="Pinned account" htmlFor={`pin-${group.provider}`}>
+            <Field label="Pinned account" htmlFor={`pin-${provider}`}>
               <TextInput
-                id={`pin-${group.provider}`}
+                id={`pin-${provider}`}
                 value={pinned}
                 onChange={setPinned}
                 disabled={!canEdit || task.running}
@@ -449,9 +570,7 @@ function PolicyCard({ group, onSaved }: PolicyCardProps): JSX.Element {
             </Field>
           </div>
           {!thresholdValid ? (
-            <div className="inline-error">
-              <span>Threshold must be between 0 and 1</span>
-            </div>
+            <span className="meta">Threshold must be between 0 and 1</span>
           ) : null}
           <Row gap="loose" align="start">
             <Toggle
@@ -478,10 +597,13 @@ function PolicyCard({ group, onSaved }: PolicyCardProps): JSX.Element {
           {task.error !== null ? (
             <Banner tone="error" title="Policy write failed">
               {describeError(task.error)}
-              {task.error instanceof ApiError && task.error.code === 'stale_generation' ? (
+              {task.error instanceof ApiError &&
+              task.error.code === 'stale_generation' ? (
                 <>
                   : someone else updated the config.
-                  <Button tone="ghost" size="sm" onClick={onSaved}>Re-fetch configuration</Button>
+                  <Button tone="ghost" size="sm" onClick={onSaved}>
+                    Re-fetch configuration
+                  </Button>
                 </>
               ) : null}
             </Banner>
@@ -492,51 +614,10 @@ function PolicyCard({ group, onSaved }: PolicyCardProps): JSX.Element {
   )
 }
 
-function Group({ group, onRefresh }: GroupProps): JSX.Element {
-  const active = group.accounts.filter((account) => account.state === 'active').length
-  return (
-    <Card
-      title={`${group.provider}`}
-      description={`${group.accounts.length} account(s), ${active} active`}
-      action={
-        <Button tone="ghost" size="sm" onClick={onRefresh}>
-          Refresh
-        </Button>
-      }
-    >
-      <PolicyCard group={group} onSaved={onRefresh} />
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th scope="col">Account</th>
-              <th scope="col">State</th>
-              <th scope="col">Priority</th>
-              <th scope="col">Quota</th>
-              <th scope="col">Cooldown</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {group.accounts.map((account) => (
-              <AccountRow
-                key={account.id}
-                account={account}
-                wire={group.poolProvider?.wire ?? null}
-                onRefresh={onRefresh}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  )
-}
-
 export function AccountsView(): JSX.Element {
   const accounts = useAsync<AccountsView>(() => api.accounts(), [])
   const providers = useAsync<ProvidersView>(() => api.providers(), [])
-  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<AccountFilter>('all')
 
   async function refresh(): Promise<void> {
     accounts.refresh()
@@ -544,7 +625,52 @@ export function AccountsView(): JSX.Element {
   }
 
   return (
-    <Stack gap="normal">
+    <section className="screen" aria-labelledby="h-accounts">
+      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
+        <div>
+          <h1 id="h-accounts">
+            <svg width="19" height="19" className="h-ic">
+              <use href="#i-heart" />
+            </svg>
+            Accounts
+          </h1>
+          <p className="sub">
+            selection pool ordered by priority, live quota per account
+            {accounts.state.kind === 'ready' ? (
+              <>
+                {' '}
+                ·{' '}
+                <span className="num">
+                  {accounts.state.value.accounts.length}
+                </span>{' '}
+                total
+              </>
+            ) : null}
+          </p>
+        </div>
+        <div className="head-actions">
+          <div
+            className="seg"
+            role="group"
+            aria-label="Filter accounts by state"
+          >
+            {FILTERS.map((entry) => (
+              <button
+                key={entry.value}
+                type="button"
+                className="seg-btn"
+                aria-pressed={filter === entry.value}
+                onClick={() => setFilter(entry.value)}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+          <Button tone="ghost" size="sm" onClick={() => void refresh()}>
+            Refresh
+          </Button>
+        </div>
+      </div>
       <AsyncBoundary<AccountsView>
         state={accounts.state}
         loadingLabel="Loading accounts…"
@@ -559,52 +685,99 @@ export function AccountsView(): JSX.Element {
             onRetry={() => providers.refresh()}
           >
             {(plist) => {
-              const needle = query.trim().toLowerCase()
-              const grouped = groupByProvider(list, plist)
-              if (grouped.length === 0) {
-                return <Empty title="No accounts configured." />
-              }
-              const groups = grouped
-                .map((group) => ({
-                  ...group,
-                  accounts: group.accounts.filter(
-                    (account) =>
-                      needle === '' ||
-                      account.id.toLowerCase().includes(needle) ||
-                      account.state.toLowerCase().includes(needle),
-                  ),
-                }))
-                .filter((group) => group.accounts.length > 0)
+              const index = indexProviders(plist)
+              const visible = sortAccounts(
+                filter === 'all'
+                  ? list.accounts
+                  : list.accounts.filter((account) => account.state === filter),
+              )
               return (
                 <>
-                  <div className="toolbar">
-                    <div className="toolbar__filters">
-                      <SearchInput
-                        id="account-search"
-                        value={query}
-                        onChange={setQuery}
-                        placeholder="Filter by account or state"
-                      />
+                  <section
+                    className="panel card"
+                    style={{ '--i': 1 } as CSSProperties}
+                  >
+                    <div className="tbl-wrap">
+                      <table className="tbl table">
+                        <thead>
+                          <tr>
+                            <th scope="col">Account</th>
+                            <th scope="col">State</th>
+                            <th scope="col">Priority</th>
+                            <th scope="col">Quota</th>
+                            <th scope="col">Window ends</th>
+                            <th scope="col">Version</th>
+                            <th scope="col">In-flight</th>
+                            <th scope="col">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visible.length === 0 ? (
+                            <tr>
+                              <td colSpan={8}>
+                                <Empty title="No accounts in this state">
+                                  Switch the filter back to all to see the full
+                                  pool.
+                                </Empty>
+                              </td>
+                            </tr>
+                          ) : (
+                            visible.map((account) => (
+                              <AccountRow
+                                key={account.id}
+                                account={account}
+                                wire={index.wires[account.provider] ?? null}
+                                onRefresh={() => void refresh()}
+                              />
+                            ))
+                          )}
+                        </tbody>
+                      </table>
                     </div>
-                    <div className="toolbar__actions">
-                      <p className="meta">
-                        {groups.reduce((total, group) => total + group.accounts.length, 0)} shown
-                      </p>
-                    </div>
-                  </div>
-                  {groups.length === 0 ? (
-                    <Empty title="No accounts match the current filter." />
-                  ) : (
-                    groups.map((group) => (
-                      <Group key={group.provider} group={group} onRefresh={() => void refresh()} />
-                    ))
-                  )}
+                  </section>
+                  <PolicyList index={index} onSaved={() => void refresh()} />
                 </>
               )
             }}
           </AsyncBoundary>
         )}
       </AsyncBoundary>
-    </Stack>
+    </section>
+  )
+}
+
+function PolicyList({
+  index,
+  onSaved,
+}: {
+  readonly index: WireIndex
+  readonly onSaved: () => void
+}): JSX.Element | null {
+  const providers = Object.keys(index.pools).sort((left, right) =>
+    left.localeCompare(right),
+  )
+  if (providers.length === 0) return null
+  return (
+    <section
+      className="panel card panel-pad"
+      style={{ '--i': 2 } as CSSProperties}
+    >
+      <div className="panel-title">Selection policy</div>
+      <p className="panel-sub">
+        strategy, affinity and auto-switch per provider
+      </p>
+      <div className="divide" style={{ marginTop: 10 }}>
+        {providers.map((provider) => (
+          <PolicyEditor
+            key={provider}
+            provider={provider}
+            pool={index.pools[provider] ?? null}
+            poolProvider={index.providers[provider] ?? null}
+            generation={index.generation}
+            onSaved={onSaved}
+          />
+        ))}
+      </div>
+    </section>
   )
 }

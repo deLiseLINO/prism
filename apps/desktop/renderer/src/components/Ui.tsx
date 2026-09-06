@@ -1,4 +1,3 @@
-import type { Skin } from '../useSkin'
 import type { ThemeMode } from '../useTheme'
 import { cloneElement, isValidElement, useEffect, useId, type ReactElement, type ReactNode } from 'react'
 
@@ -405,29 +404,11 @@ export function ThemeToggle({ mode, onCycle }: ThemeToggleProps): JSX.Element {
       title={`Theme: ${mode} (cycles auto, dark, light)`}
     >
       <span className="theme-toggle__icon" aria-hidden="true">
-        {mode === 'auto' ? '◐' : mode === 'dark' ? '☾' : '☀'}
+        <svg width="15" height="15" className="icon-sun"><use href="#i-sun" /></svg>
+        <svg width="15" height="15" className="icon-moon"><use href="#i-moon" /></svg>
+        {mode === 'auto' ? <svg width="15" height="15"><use href="#i-prism" /></svg> : null}
       </span>
       <span className="theme-toggle__mode">{mode}</span>
-    </button>
-  )
-}
-
-export interface SkinToggleProps {
-  readonly skin: Skin
-  readonly onCycle: () => void
-}
-
-export function SkinToggle({ skin, onCycle }: SkinToggleProps): JSX.Element {
-  return (
-    <button
-      type="button"
-      className="skin-toggle"
-      onClick={onCycle}
-      aria-label={`Skin: ${skin}. Switch skin.`}
-      title={`Skin: ${skin} (switches obsidian, graphite)`}
-    >
-      <span className="skin-toggle__icon" aria-hidden="true">◈</span>
-      <span className="skin-toggle__name">{skin}</span>
     </button>
   )
 }

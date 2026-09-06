@@ -11,12 +11,4 @@
     (mode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
 
-  var skin = 'obsidian'
-  try {
-    var storedSkin = localStorage.getItem('prism-skin')
-    if (storedSkin === 'obsidian' || storedSkin === 'graphite') skin = storedSkin
-  } catch (err) {
-    skin = 'obsidian'
-  }
-  document.documentElement.dataset.skin = skin
 })()

@@ -1,14 +1,15 @@
 import { useState } from 'react'
+import type { CSSProperties } from 'react'
 import type { IntegrationId, IntegrationStatus } from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Card, Empty, Row, Stack } from '../components/Ui'
+import { AsyncBoundary, Banner, Button, Empty } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
 
-interface IntegrationCardProps {
+interface IntegrationRowProps {
   readonly status: IntegrationStatus
   readonly onChanged: () => void
 }
 
-function IntegrationCard({ status, onChanged }: IntegrationCardProps): JSX.Element {
+function IntegrationRow({ status, onChanged }: IntegrationRowProps): JSX.Element {
   const applyTask = useTask()
   const rollbackTask = useTask()
   const busy = applyTask.running || rollbackTask.running
@@ -39,25 +40,28 @@ function IntegrationCard({ status, onChanged }: IntegrationCardProps): JSX.Eleme
   }
 
   return (
-    <Card
-      title={status.id}
-      description={status.targetPath ?? '—'}
-      tone={status.drift ? 'warn' : status.managed ? 'ok' : 'default'}
-      action={
-        <p className="meta">{status.endpoint ?? ''}</p>
-      }
-    >
-      <Row gap="tight" align="start">
-        <span className={`badge badge--${status.installed ? 'ok' : 'muted'}`}>
-          {status.installed ? 'installed' : 'not installed'}
-        </span>
-        <span className={`badge badge--${status.managed ? 'ok' : 'muted'}`}>
-          {status.managed ? 'managed' : 'unmanaged'}
-        </span>
-        {status.drift ? <span className="badge badge--warn">drift</span> : null}
-      </Row>
-      <p className="meta">{status.detail}</p>
-      <Row gap="tight" align="start">
+    <section className="panel card int">
+      <div>
+        <h3 className="int-name">{status.id}</h3>
+        <div className="int-chips">
+          <span className={`badge badge--${status.installed ? 'ok' : 'muted'}`}>
+            {status.installed ? 'installed' : 'not installed'}
+          </span>
+          <span className={`badge badge--${status.managed ? 'ok' : 'muted'}`}>
+            {status.managed ? 'managed' : 'unmanaged'}
+          </span>
+          {status.drift ? <span className="badge badge--warn">drift</span> : null}
+        </div>
+      </div>
+      <div>
+        {status.targetPath !== null && status.targetPath !== '' ? (
+          <div className="int-path">{status.targetPath}</div>
+        ) : (
+          <div className="int-path" style={{ color: 'var(--fg-subtle)' }}>no config path</div>
+        )}
+        <div className="int-detail">{status.detail}</div>
+      </div>
+      <div className="int-actions">
         <Button
           tone={status.managed ? 'ghost' : 'primary'}
           size="sm"
@@ -76,29 +80,46 @@ function IntegrationCard({ status, onChanged }: IntegrationCardProps): JSX.Eleme
         >
           Rollback
         </Button>
-      </Row>
-      <p className="meta">Rollback rewrites the {status.id} client configuration on disk.</p>
-      {taskError !== null ? (
-        <Banner tone="error" title="Integration action failed">
-          {describeError(taskError)}
-        </Banner>
-      ) : null}
-      {taskError === null && actionError !== null ? (
-        <Banner tone="error" title="Integration action failed">
-          {actionError}
-        </Banner>
-      ) : null}
-    </Card>
+        <span className="note">
+          Rollback rewrites the {status.id} client configuration on disk
+          {status.endpoint === null || status.endpoint === '' ? null : (
+            <>
+              {' '}
+              via <span className="num">{status.endpoint}</span>
+            </>
+          )}
+          .
+        </span>
+        {taskError !== null ? (
+          <Banner tone="error" title="Integration action failed">
+            {describeError(taskError)}
+          </Banner>
+        ) : null}
+        {taskError === null && actionError !== null ? (
+          <Banner tone="error" title="Integration action failed">
+            {actionError}
+          </Banner>
+        ) : null}
+      </div>
+    </section>
   )
 }
 
 export function IntegrationsView(): JSX.Element {
   const statuses = useAsync<readonly IntegrationStatus[]>(() => window.prism.integrations.status(), [])
   return (
-    <Stack gap="normal">
-      <Banner tone="info" title="Integrations">
-        Apply writes the managed config block; rollback strips it. Disabled when the client is not installed on disk.
-      </Banner>
+    <section className="screen" aria-labelledby="h-integrations">
+      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
+        <div>
+          <h1 id="h-integrations">
+            <svg width="19" height="19" className="h-ic">
+              <use href="#i-puzzle" />
+            </svg>
+            Integrations
+          </h1>
+          <p className="sub">config apply and rollback for each CLI Prism manages</p>
+        </div>
+      </div>
       <AsyncBoundary<readonly IntegrationStatus[]>
         state={statuses.state}
         loadingLabel="Loading integrations…"
@@ -106,13 +127,13 @@ export function IntegrationsView(): JSX.Element {
         onRetry={() => statuses.refresh()}
       >
         {(list) => (
-          <Stack gap="normal">
+          <div className="stack" style={{ '--i': 1 } as CSSProperties}>
             {list.map((status) => (
-              <IntegrationCard key={status.id} status={status} onChanged={statuses.refresh} />
+              <IntegrationRow key={status.id} status={status} onChanged={statuses.refresh} />
             ))}
-          </Stack>
+          </div>
         )}
       </AsyncBoundary>
-    </Stack>
+    </section>
   )
 }

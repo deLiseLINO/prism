@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import type { ProviderView, ProvidersView } from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Card, Confirm, Empty, Field, Row, SearchInput, Select, Stack, TextInput, Toggle } from '../components/Ui'
+import { AsyncBoundary, Banner, Button, Confirm, Empty, Field, Row, SearchInput, Select, Stack, TextInput, Toggle } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
+
 const WIRE_OPTIONS: readonly { readonly value: string; readonly label: string }[] = [
   { value: 'codex', label: 'codex' },
   { value: 'antigravity', label: 'antigravity' },
@@ -64,9 +65,6 @@ function ProviderEditor({ existing, generation, onSaved, onCancelled }: EditorPr
     const trimmedBase = baseURL.trim()
     const trimmedKeyRef = apiKeyRef.trim()
     const trimmedDefault = defaultModel.trim()
-    // Absent keys (not nulls) mean "leave the daemon value alone": the daemon's merge skips
-    // nil pointers, and the transport drops undefined keys before the daemon ever sees them.
-    // Hidden values the UI cannot see — apiKeyRef, pool cooldowns — survive every save.
     const write: ProviderWrite = {
       id: id.trim(),
       wire,
@@ -90,113 +88,114 @@ function ProviderEditor({ existing, generation, onSaved, onCancelled }: EditorPr
   }
 
   return (
-    <Card title={existing === null ? 'New provider' : `Edit ${existing.id}`}>
-      <div className="field-grid field-grid--wide">
-        <Field label="ID" htmlFor="prov-id" hint="Unique key. Required.">
-          <TextInput id="prov-id" value={id} onChange={setId} disabled={existing !== null} />
-          {idMissing ? (
-            <div className="inline-error">
-              <span>ID is required.</span>
-            </div>
-          ) : null}
-        </Field>
-        <Field label="Wire" htmlFor="prov-wire">
-          <Select<string>
-            id="prov-wire"
-            value={wire}
-            onChange={setWire}
-            options={[...WIRE_OPTIONS]}
-            disabled={existing !== null}
-          />
-        </Field>
-        <Field
-          label="Base URL"
-          htmlFor="prov-base"
-          hint={
-            existing === null
-              ? 'Required for responses, messages, and chat wires.'
-              : 'Empty keeps the current value.'
-          }
-        >
-          <TextInput id="prov-base" value={baseURL} onChange={setBaseURL} />
-          {baseURLMissing ? (
-            <div className="inline-error">
-              <span>Base URL is required for responses, messages, and chat wires.</span>
-            </div>
-          ) : null}
-        </Field>
-        <Field
-          label="Default model"
-          htmlFor="prov-default"
-          hint={existing === null ? undefined : 'Empty keeps the current value.'}
-        >
-          <TextInput id="prov-default" value={defaultModel} onChange={setDefaultModel} />
-        </Field>
-        <Field
-          label="Models"
-          htmlFor="prov-models"
-          hint="Comma-separated. Outbound routing keys; inbound alias targets use these."
-        >
-          <TextInput id="prov-models" value={models} onChange={setModels} />
-        </Field>
-        <Field label="Disabled models" htmlFor="prov-disabled" hint="Subset of Models that this provider will skip.">
-          <TextInput id="prov-disabled" value={disabledModels} onChange={setDisabledModels} />
-        </Field>
-        <Field
-          label="Credential"
-          htmlFor="prov-cred"
-          hint={`Paste once; the field is cleared after submit. Currently ${credentialSet ? 'set' : 'unset'}.`}
-        >
-          <TextInput
-            id="prov-cred"
-            type="password"
-            value={credential}
-            onChange={setCredential}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={credentialSet ? '•••••••• (set)' : 'paste credential'}
-          />
-        </Field>
-        <Field label="Credential reference" htmlFor="prov-keyref" hint="Optional keyring identifier.">
-          <TextInput id="prov-keyref" value={apiKeyRef} onChange={setApiKeyRef} autoComplete="off" />
-        </Field>
+    <section className="panel card panel-pad" style={{ '--i': 2 } as CSSProperties}>
+      <h3 className="panel-title">{existing === null ? 'New provider' : `Edit ${existing.id}`}</h3>
+      <div className="stack stack--normal">
+        <div className="grid-2">
+          <Field label="ID" htmlFor="prov-id" hint="Unique key. Required.">
+            <TextInput id="prov-id" value={id} onChange={setId} disabled={existing !== null} />
+            {idMissing ? (
+              <p className="meta">ID is required.</p>
+            ) : null}
+          </Field>
+          <Field label="Wire" htmlFor="prov-wire">
+            <Select<string>
+              id="prov-wire"
+              value={wire}
+              onChange={setWire}
+              options={[...WIRE_OPTIONS]}
+              disabled={existing !== null}
+            />
+          </Field>
+          <Field
+            label="Base URL"
+            htmlFor="prov-base"
+            hint={
+              existing === null
+                ? 'Required for responses, messages, and chat wires.'
+                : 'Empty keeps the current value.'
+            }
+          >
+            <TextInput id="prov-base" value={baseURL} onChange={setBaseURL} />
+            {baseURLMissing ? (
+              <p className="meta">Base URL is required for responses, messages, and chat wires.</p>
+            ) : null}
+          </Field>
+          <Field
+            label="Default model"
+            htmlFor="prov-default"
+            hint={existing === null ? undefined : 'Empty keeps the current value.'}
+          >
+            <TextInput id="prov-default" value={defaultModel} onChange={setDefaultModel} />
+          </Field>
+          <Field
+            label="Models"
+            htmlFor="prov-models"
+            hint="Comma-separated. Outbound routing keys; inbound alias targets use these."
+          >
+            <TextInput id="prov-models" value={models} onChange={setModels} />
+          </Field>
+          <Field label="Disabled models" htmlFor="prov-disabled" hint="Subset of Models that this provider will skip.">
+            <TextInput id="prov-disabled" value={disabledModels} onChange={setDisabledModels} />
+          </Field>
+          <Field
+            label="Credential"
+            htmlFor="prov-cred"
+            hint={`Paste once; the field is cleared after submit. Currently ${credentialSet ? 'set' : 'unset'}.`}
+          >
+            <TextInput
+              id="prov-cred"
+              type="password"
+              value={credential}
+              onChange={setCredential}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={credentialSet ? '•••••••• (set)' : 'paste credential'}
+            />
+          </Field>
+          <Field label="Credential reference" htmlFor="prov-keyref" hint="Optional keyring identifier.">
+            <TextInput id="prov-keyref" value={apiKeyRef} onChange={setApiKeyRef} autoComplete="off" />
+          </Field>
+        </div>
+        <Row gap="loose" align="start">
+          <Toggle checked={enabled} onChange={setEnabled} label="Provider enabled" />
+        </Row>
+        <Row gap="tight" align="start">
+          <Button tone="primary" size="sm" onClick={() => void save()} disabled={task.running || invalid} busy={task.running}>
+            {existing === null ? 'Create provider' : 'Save changes'}
+          </Button>
+          <Button tone="ghost" size="sm" onClick={onCancelled} disabled={task.running}>
+            Cancel
+          </Button>
+        </Row>
+        {task.error !== null ? (
+          <Banner tone="error" title="Save failed">
+            {describeError(task.error)}
+            {task.error instanceof ApiError && task.error.code === 'stale_generation' ? (
+              <>
+                : config changed underneath.
+                <Button tone="ghost" size="sm" onClick={onSaved}>Re-fetch configuration</Button>
+              </>
+            ) : null}
+          </Banner>
+        ) : null}
       </div>
-      <Row gap="loose" align="start">
-        <Toggle checked={enabled} onChange={setEnabled} label="Provider enabled" />
-      </Row>
-      <Row gap="tight" align="start">
-        <Button tone="primary" size="sm" onClick={() => void save()} disabled={task.running || invalid} busy={task.running}>
-          {existing === null ? 'Create provider' : 'Save changes'}
-        </Button>
-        <Button tone="ghost" size="sm" onClick={onCancelled} disabled={task.running}>
-          Cancel
-        </Button>
-      </Row>
-      {task.error !== null ? (
-        <Banner tone="error" title="Save failed">
-          {describeError(task.error)}
-          {task.error instanceof ApiError && task.error.code === 'stale_generation' ? (
-            <>
-              : config changed underneath.
-              <Button tone="ghost" size="sm" onClick={onSaved}>Re-fetch configuration</Button>
-            </>
-          ) : null}
-        </Banner>
-      ) : null}
-    </Card>
+    </section>
   )
 }
 
 interface ProviderRowProps {
   readonly provider: ProviderView
   readonly generation: number
+  readonly index: number
   readonly onChanged: () => void
 }
 
-function ProviderRow({ provider, generation, onChanged }: ProviderRowProps): JSX.Element {
+function ProviderRow({ provider, generation, index, onChanged }: ProviderRowProps): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const task = useTask()
+
   async function toggle(): Promise<void> {
     const ok = await task.run(() =>
       api.replaceProvider(provider.id, buildWrite(provider, generation, { enabled: !(provider.enabled ?? true) })),
@@ -222,6 +221,7 @@ function ProviderRow({ provider, generation, onChanged }: ProviderRowProps): JSX
     setConfirming(false)
     onChanged()
   }
+
   if (editing) {
     return (
       <ProviderEditor
@@ -236,81 +236,94 @@ function ProviderRow({ provider, generation, onChanged }: ProviderRowProps): JSX
     )
   }
 
+  const disabledModels = provider.disabledModels ?? []
+  const models = provider.models ?? []
+  const credentialTone = provider.credential.state === 'set' ? 'ok' : 'muted'
+
   return (
-    <Card
-      title={provider.id}
-      description={`wire ${provider.wire} · ${(provider.models ?? []).length} models`}
-      tone={provider.enabled === false ? 'warn' : 'default'}
-      action={
-        <span className={`badge badge--${provider.credential.state === 'set' ? 'ok' : 'muted'}`}>
-          credential {provider.credential.state}
-        </span>
-      }
-    >
-      <dl className="kv">
+    <section className="panel card divide" style={{ '--i': index % 3 } as CSSProperties}>
+      <div className="prov">
         <div>
-          <dt>Base URL</dt>
-          <dd className="cell-mono">{provider.baseURL || '—'}</dd>
+          <h3 className="prov-name">{provider.id}</h3>
+          <p className="prov-wire">
+            {provider.wire}
+            {provider.baseURL ? ` · ${provider.baseURL}` : ''}
+          </p>
         </div>
         <div>
-          <dt>Default model</dt>
-          <dd className="cell-mono">{provider.defaultModel || '—'}</dd>
+          {models.length > 0 ? (
+            <div className="prov-models">
+              {models.map((model) => {
+                const off = disabledModels.includes(model)
+                const isDefault = model === provider.defaultModel
+                const classes = ['m-chip']
+                if (isDefault) classes.push('m-chip-default')
+                if (off) classes.push('m-chip-off')
+                return (
+                  <span key={model} className={classes.join(' ')}>{model}</span>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="meta">No models listed.</p>
+          )}
         </div>
-      </dl>
-      {(provider.disabledModels ?? []).length > 0 ? (
-        <p className="meta">
-          {(provider.disabledModels ?? []).length} disabled
-        </p>
-      ) : null}
-      {(provider.models ?? []).length > 0 ? (
-        <div className="model-toggles" aria-label={`Models for ${provider.id}`}>
-          {(provider.models ?? []).map((model) => (
-            <Toggle
-              key={model}
-              checked={!(provider.disabledModels ?? []).includes(model)}
-              onChange={() => void toggleModel(model)}
-              label={model}
-              disabled={task.running}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="meta">No models listed.</p>
-      )}
-      <Row gap="tight" align="start">
-        <Toggle
-          checked={provider.enabled ?? true}
-          onChange={() => void toggle()}
-          label={(provider.enabled ?? true) ? 'Enabled' : 'Disabled'}
-          disabled={task.running}
-        />
-        <Button tone="ghost" size="sm" onClick={() => setEditing(true)} disabled={task.running}>
-          Edit
-        </Button>
-        {confirming ? (
-          <Confirm
-            title={`Delete ${provider.id}?`}
-            detail="The provider leaves the config immediately."
-            confirmLabel="Delete"
-            busy={task.running}
-            onCancel={() => setConfirming(false)}
-            onConfirm={() => void remove()}
+        <div className="prov-side">
+          <span className={`badge badge--${credentialTone}`}>credential {provider.credential.state}</span>
+          <Toggle
+            checked={provider.enabled ?? true}
+            onChange={() => void toggle()}
+            label={(provider.enabled ?? true) ? 'Enabled' : 'Disabled'}
+            disabled={task.running}
           />
-        ) : (
-          <Button tone="danger" size="sm" onClick={() => setConfirming(true)} disabled={task.running}>
-            Delete
+        </div>
+      </div>
+      <div className="panel-pad" style={{ paddingTop: 0 }}>
+        {disabledModels.length > 0 ? (
+          <p className="meta">{disabledModels.length} disabled</p>
+        ) : null}
+        {models.length > 0 ? (
+          <div className="model-toggles" aria-label={`Models for ${provider.id}`}>
+            {models.map((model) => (
+              <Toggle
+                key={model}
+                checked={!disabledModels.includes(model)}
+                onChange={() => void toggleModel(model)}
+                label={model}
+                disabled={task.running}
+              />
+            ))}
+          </div>
+        ) : null}
+        <Row gap="tight" align="start">
+          <Button tone="ghost" size="sm" onClick={() => setEditing(true)} disabled={task.running}>
+            Edit
           </Button>
-        )}
-      </Row>
-      {task.error !== null ? (
-        <Banner tone="error" title="Mutation failed">
-          {describeError(task.error)}
-          {task.error instanceof ApiError && task.error.code === 'stale_generation' ? (
-            <Button tone="ghost" size="sm" onClick={onChanged}>Re-fetch configuration</Button>
-          ) : null}
-        </Banner>
-      ) : null}
-    </Card>
+          {confirming ? (
+            <Confirm
+              title={`Delete ${provider.id}?`}
+              detail="The provider leaves the config immediately."
+              confirmLabel="Delete"
+              busy={task.running}
+              onCancel={() => setConfirming(false)}
+              onConfirm={() => void remove()}
+            />
+          ) : (
+            <Button tone="danger" size="sm" onClick={() => setConfirming(true)} disabled={task.running}>
+              Delete
+            </Button>
+          )}
+        </Row>
+        {task.error !== null ? (
+          <Banner tone="error" title="Mutation failed">
+            {describeError(task.error)}
+            {task.error instanceof ApiError && task.error.code === 'stale_generation' ? (
+              <Button tone="ghost" size="sm" onClick={onChanged}>Re-fetch configuration</Button>
+            ) : null}
+          </Banner>
+        ) : null}
+      </div>
+    </section>
   )
 }
 
@@ -320,17 +333,22 @@ export function ProvidersView(): JSX.Element {
   const [query, setQuery] = useState('')
 
   return (
-    <Stack gap="normal">
-      <div className="toolbar">
-        <div className="toolbar__filters">
+    <section className="screen" aria-labelledby="h-providers">
+      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
+        <div>
+          <h1 id="h-providers">
+            <svg width="19" height="19" className="h-ic"><use href="#i-plug" /></svg>
+            Providers
+          </h1>
+          <p className="sub">wires, models and credential state for every outbound connection</p>
+        </div>
+        <div className="head-actions">
           <SearchInput
             id="provider-search"
             value={query}
             onChange={setQuery}
             placeholder="Filter by id, wire, or model"
           />
-        </div>
-        <div className="toolbar__actions">
           <Button tone="primary" size="sm" onClick={() => setCreating(true)}>
             New provider
           </Button>
@@ -374,19 +392,20 @@ export function ProvidersView(): JSX.Element {
             return <Empty title={list.providers.length === 0 ? 'No providers configured.' : 'No providers match the current filter.'} />
           }
           return (
-            <>
-              {filtered.map((provider) => (
+            <Stack gap="normal">
+              {filtered.map((provider, index) => (
                 <ProviderRow
                   key={provider.id}
                   provider={provider}
                   generation={list.generation}
+                  index={index}
                   onChanged={() => providers.refresh()}
                 />
               ))}
-            </>
+            </Stack>
           )
         }}
       </AsyncBoundary>
-    </Stack>
+    </section>
   )
 }

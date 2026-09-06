@@ -1,18 +1,48 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { DaemonStatus } from '@prism/contracts'
-import { SkinToggle, ThemeToggle } from './components/Ui'
-import { useSkin } from './useSkin'
+import { ThemeToggle } from './components/Ui'
 import { useTheme } from './useTheme'
 import { SECTIONS, VIEWS, hashFor, navigateTo, readCurrentView, type View } from './routing'
 import { AccountsView } from './views/AccountsView'
 import { AuthView } from './views/AuthView'
-import { CombosRoutesView } from './views/CombosRoutesView'
 import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
 import { ModelsView } from './views/ModelsView'
 import { OverviewView } from './views/OverviewView'
 import { ProvidersView } from './views/ProvidersView'
 import { UsagePanel } from './views/UsageView'
+
+const VIEW_ICONS: Record<View, string> = {
+  overview: '#i-gauge',
+  accounts: '#i-heart',
+  usage: '#i-usage',
+  auth: '#i-key',
+  providers: '#i-plug',
+  models: '#i-cube',
+  daemon: '#i-daemon',
+  integrations: '#i-puzzle',
+}
+
+function IconSprite(): JSX.Element {
+  return (
+    <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
+      <defs>
+        <symbol id="i-prism" viewBox="0 0 20 20"><path d="M10 2 18.5 17H1.5L10 2Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="M10 2v15M6.3 12.4 10 17l3.7-4.6" fill="none" stroke="currentColor" strokeWidth="1.2" opacity="0.55"/></symbol>
+        <symbol id="i-gauge" viewBox="0 0 20 20"><path d="M3 15a7.5 7.5 0 1 1 14 0" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/><path d="M10 15 13.8 8.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></symbol>
+        <symbol id="i-heart" viewBox="0 0 20 20"><path d="M10 16.5S3 12.4 3 7.9C3 5.2 5.2 3.5 7.4 3.5c1 0 2 .4 2.6 1.2C10.6 3.9 11.6 3.5 12.6 3.5 14.8 3.5 17 5.2 17 7.9c0 4.5-7 8.6-7 8.6Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
+        <symbol id="i-usage" viewBox="0 0 20 20"><path d="M3 17V10m4.7 7V4m4.6 13v-6M17 17V7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></symbol>
+        <symbol id="i-key" viewBox="0 0 20 20"><circle cx="7.5" cy="12.5" r="3.3" fill="none" stroke="currentColor" strokeWidth="1.6"/><path d="m10 10 6.5-6.5M13.6 6.4l1.8 1.8M15.4 4.6l1.8 1.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
+        <symbol id="i-plug" viewBox="0 0 20 20"><path d="M6.5 2.5v4M13.5 2.5v4M4.5 6.5h11v3.2c0 3-2.5 5.3-5.5 5.3s-5.5-2.3-5.5-5.3V6.5ZM10 15v2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></symbol>
+        <symbol id="i-cube" viewBox="0 0 20 20"><path d="M10 2 17 6v8l-7 4-7-4V6l7-4Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="m3.2 6.2 6.8 3.8 6.8-3.8M10 18v-8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
+        <symbol id="i-daemon" viewBox="0 0 20 20"><path d="M4.5 8.2a5.5 5.5 0 0 1 10.4-1.6A4.3 4.3 0 0 1 15.5 15h-11a4 4 0 0 1 0-8.1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 12.5v3M10 15.5l2.2-2.2M10 15.5l-2.2-2.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></symbol>
+        <symbol id="i-puzzle" viewBox="0 0 20 20"><path d="M7.3 3.5a1.7 1.7 0 1 1 3.4 0V5h2.8a1 1 0 0 1 1 1v2.8h1.5a1.7 1.7 0 1 1 0 3.4H14.5v2.8a1 1 0 0 1-1 1h-3v-1.6a1.7 1.7 0 1 0-3.4 0v1.6h-3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.2V3.5Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
+        <symbol id="i-sun" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.6"/><path d="M10 1.8V4M10 16v2.2M18.2 10H16M4 10H1.8M15.7 4.3l-1.6 1.6M5.9 14.1l-1.6 1.6M15.7 15.7l-1.6-1.6M5.9 5.9 4.3 4.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
+        <symbol id="i-moon" viewBox="0 0 20 20"><path d="M15.5 12.6A6.8 6.8 0 0 1 7.4 4.5a6.8 6.8 0 1 0 8.1 8.1Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
+        <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M16 8.5A6.5 6.5 0 1 0 15.4 13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/><path d="M16.2 3.6v5h-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></symbol>
+      </defs>
+    </svg>
+  )
+}
 
 function renderView(view: View): JSX.Element {
   switch (view) {
@@ -28,8 +58,6 @@ function renderView(view: View): JSX.Element {
       return <ProvidersView />
     case 'models':
       return <ModelsView />
-    case 'combos':
-      return <CombosRoutesView />
     case 'usage':
       return <UsagePanel />
     case 'integrations':
@@ -44,7 +72,6 @@ export function App(): JSX.Element {
   const mainRef = useRef<HTMLElement | null>(null)
   const viewRef = useRef(view)
   const { mode, cycle } = useTheme()
-  const { skin, cycle: cycleSkin } = useSkin()
 
   useEffect(() => {
     const onChange = (): void => {
@@ -83,85 +110,79 @@ export function App(): JSX.Element {
     }
   }, [])
 
-  const active = VIEWS.find((entry) => entry.view === view) ?? VIEWS[0]!
-
   return (
-    <div className="app">
-      <header className="app__topbar">
-        <div className="app__brand">
-          <p className="app__mark">Prism</p>
-          <span className="app__brand-sep" aria-hidden="true" />
-          <p className="app__tagline">Local control plane</p>
+    <>
+      <IconSprite />
+      <aside className="rail" aria-label="Primary">
+        <div className="brand">
+          <span className="brand-mark"><svg width="22" height="22"><use href="#i-prism" /></svg></span>
+          <span className="brand-name">Prism</span>
         </div>
-        <div className="app__topbar-actions">
-          <ThemeToggle mode={mode} onCycle={cycle} />
-          <SkinToggle skin={skin} onCycle={cycleSkin} />
-          <DaemonPill status={daemon} unreachable={daemonUnreachable} />
-        </div>
-      </header>
-      <nav className="app__navbar" aria-label="Workflows">
-        {SECTIONS.map((section) => (
-          <div className="nav-section" key={section}>
-            <p className="nav-section__title">{section}</p>
-            <div className="nav">
-              {VIEWS.filter((entry) => entry.section === section).map((entry) => {
-                const isActive = entry.view === view
-                return (
-                  <button
-                    key={entry.view}
-                    type="button"
-                    className={`nav__item ${isActive ? 'nav__item--active' : ''}`.trim()}
-                    aria-current={isActive ? 'page' : undefined}
-                    onClick={() => navigateTo(entry.view)}
-                  >
-                    <span className="nav__label">{entry.label}</span>
-                  </button>
-                )
-              })}
+        <div className="brand-sub">model router control</div>
+        <nav className="nav" aria-label="Workflows">
+          {SECTIONS.map((section) => (
+            <div className="nav-section" key={section}>
+              <p className="nav-section__title">{section}</p>
+              <div className="nav">
+                {VIEWS.filter((entry) => entry.section === section).map((entry) => {
+                  const isActive = entry.view === view
+                  return (
+                    <button
+                      key={entry.view}
+                      type="button"
+                      className="nav-btn"
+                      aria-current={isActive ? 'page' : undefined}
+                      onClick={() => navigateTo(entry.view)}
+                    >
+                      <svg width="16" height="16" style={{ marginRight: 9, flex: 'none' } as CSSProperties}><use href={VIEW_ICONS[entry.view]} /></svg>
+                      <span className="nav__label">{entry.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
+          ))}
+        </nav>
+        <div className="rail-foot">
+          <DaemonMini status={daemon} unreachable={daemonUnreachable} />
+          <div className="rail-toggles">
+            <ThemeToggle mode={mode} onCycle={cycle} />
           </div>
-        ))}
-      </nav>
-      <main className="app__main" id="main" ref={mainRef} tabIndex={-1}>
-        <header className="app__main-header">
-          <p className="app__crumb">{active.section}</p>
-          <h1 className="app__title">{active.label}</h1>
-          <p className="app__subtitle">{active.tagline}</p>
-        </header>
-        <section className="app__content">{renderView(view)}</section>
+        </div>
+      </aside>
+      <main className="app" id="main" ref={mainRef} tabIndex={-1}>
+        <div className="wrap">{renderView(view)}</div>
       </main>
-    </div>
+    </>
   )
 }
 
-function DaemonPill({
+function DaemonMini({
   status,
   unreachable,
 }: {
   readonly status: DaemonStatus | null
   readonly unreachable: boolean
 }): JSX.Element {
-  const tone = unreachable
-    ? 'error'
+  const dotClass = unreachable
+    ? 'dot dot-danger'
     : status === null
-      ? 'muted'
+      ? 'dot dot-muted'
       : status.state === 'ready'
-        ? 'ok'
+        ? 'dot dot-ok dot-pulse'
         : status.state === 'failed'
-          ? 'error'
-          : 'warn'
+          ? 'dot dot-danger'
+          : 'dot dot-warn'
   const label = unreachable
-    ? 'Daemon unreachable'
+    ? 'daemon unreachable'
     : status === null
-      ? 'Daemon …'
-      : `Daemon ${status.state}`
+      ? 'daemon …'
+      : `daemon ${status.state}`
   return (
-    <div className="daemon-pill">
-      <span className={`daemon-pill__dot daemon-pill__dot--${tone}`} aria-hidden="true" />
-      <span className="daemon-pill__label">{label}</span>
-      {status?.endpoint !== null && status?.endpoint !== undefined ? (
-        <span className="daemon-pill__endpoint">{status.endpoint}</span>
-      ) : null}
+    <div className="daemon-mini">
+      <span className={dotClass} aria-hidden="true" />
+      <span>{label}</span>
+      {status?.pid !== null && status?.pid !== undefined ? <span className="num" style={{ marginLeft: 'auto' }}>pid {status.pid}</span> : null}
     </div>
   )
 }

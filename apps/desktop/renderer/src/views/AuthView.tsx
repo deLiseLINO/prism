@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { AccountsView, AuthSessionState, AuthStartView, ProvidersView } from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Card, Row, Stack, Toggle } from '../components/Ui'
+import { AsyncBoundary, Banner, Button, Toggle } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
 import { api, ApiError } from '../api'
 
@@ -23,6 +23,7 @@ interface AuthSession {
 
 interface AuthCardProps {
   readonly entry: AuthProviderEntry
+  readonly index: number
 }
 
 const POLL_INTERVAL_MS = 1_500
@@ -35,7 +36,7 @@ const TERMINAL: Record<AuthSessionState, boolean> = {
   unknown: false,
 }
 
-function AuthCard({ entry }: AuthCardProps): JSX.Element {
+function AuthCard({ entry, index }: AuthCardProps): JSX.Element {
   const [session, setSession] = useState<AuthSession | null>(null)
   const [poll, setPoll] = useState(true)
   const [pollFailure, setPollFailure] = useState<'expired' | 'interrupted' | null>(null)
@@ -131,21 +132,71 @@ function AuthCard({ entry }: AuthCardProps): JSX.Element {
     return 'warn'
   })()
 
+  const stateTone = ((): 'ok' | 'warn' | 'error' | 'info' | 'muted' => {
+    if (session === null) return 'muted'
+    if (pollFailure === 'expired') return 'error'
+    if (session.state === 'complete' || session.state === 'authorized') return 'ok'
+    if (session.state === 'failed' || session.state === 'unauthorized') return 'error'
+    if (session.state === 'pending' || session.state === 'unknown') return 'info'
+    return 'muted'
+  })()
+
+  const stateLabel = session === null ? 'idle' : session.state
+
+  const approved = session !== null && (session.state === 'complete' || session.state === 'authorized')
+  const failedFlow =
+    pollFailure === 'expired' || (session !== null && (session.state === 'failed' || session.state === 'unauthorized'))
+
+  const stepClass = (n: number): string => {
+    if (session === null) return n === 1 ? 'active' : ''
+    if (n === 1) return 'done'
+    if (n === 2) return failedFlow ? 'failed' : approved ? 'done' : 'active'
+    return approved ? 'done' : ''
+  }
+
+  const step = (n: number, label: string): JSX.Element => (
+    <div className={`step ${stepClass(n)}`.trim()}>
+      <span className="idx">{n}</span>
+      <span className="step-label">{label}</span>
+      {n < 3 ? <span className="step-line" aria-hidden="true" /> : null}
+    </div>
+  )
+
   return (
-    <Card title={`${entry.pretty} login`} description={`OAuth handoff for ${entry.provider} provider.`} tone={tone}>
-      <div className="auth-steps" aria-hidden="true">
-        <span className={`auth-steps__step ${session !== null ? 'auth-steps__step--done' : 'auth-steps__step--now'}`}>
-          <span className="auth-steps__n">1</span> Start
-        </span>
-        <span className="auth-steps__line" />
-        <span className={`auth-steps__step ${session !== null && session.state !== 'pending' ? 'auth-steps__step--done' : session !== null ? 'auth-steps__step--now' : ''}`}>
-          <span className="auth-steps__n">2</span> Approve
-        </span>
-        <span className="auth-steps__line" />
-        <span className={`auth-steps__step ${session !== null && TERMINAL[session.state] ? 'auth-steps__step--done' : ''}`}>
-          <span className="auth-steps__n">3</span> Done
-        </span>
+    <section className="panel card auth-p" style={{ '--i': index + 1 } as CSSProperties}>
+      <div className="auth-head">
+        <div>
+          <h3 className="auth-name">{entry.pretty} login</h3>
+          <p className="sub">OAuth handoff for {entry.provider} provider.</p>
+        </div>
+        <span className={`badge badge--${stateTone}`}>{stateLabel}</span>
       </div>
+      <div className="steps" aria-hidden="true">
+        {step(1, 'Start')}
+        {step(2, 'Poll')}
+        {step(3, 'Complete')}
+      </div>
+      <p className="flow-status">
+        {session === null ? (
+          'no active session, start a login to authorize a new account'
+        ) : (
+          <>
+            session <span className="num">{session.session}</span>, status {stateLabel}
+          </>
+        )}
+      </p>
+      {session !== null ? (
+        <div className="urls">
+          <div className="url">
+            <div className="k">Authorize</div>
+            <div className="v">{session.url}</div>
+          </div>
+          <div className="url">
+            <div className="k">Started</div>
+            <div className="v">{session.startedAt}</div>
+          </div>
+        </div>
+      ) : null}
       <Banner tone={tone} title={headline}>
         {session === null
           ? 'Start a new session to authorize a new account.'
@@ -157,7 +208,15 @@ function AuthCard({ entry }: AuthCardProps): JSX.Element {
           ? 'Complete the flow in your browser. Polling stops automatically on completion.'
           : null}
       </Banner>
-      <Row gap="loose" align="start">
+      {task.error !== null ? (
+        <div className="alert" role="alert">
+          {describeError(task.error)}
+          {task.error instanceof ApiError && task.error.code === 'loopback_unavailable' ? (
+            <>: the loopback callback port is busy. Free it and retry.</>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="auth-actions">
         {session === null ? (
           <Button
             tone="primary"
@@ -210,31 +269,15 @@ function AuthCard({ entry }: AuthCardProps): JSX.Element {
             </Button>
           </>
         )}
-      </Row>
-      {task.error !== null ? (
-        <Banner tone="error" title="Could not start the login">
-          {describeError(task.error)}
-          {task.error instanceof ApiError && task.error.code === 'loopback_unavailable' ? (
-            <>: the loopback callback port is busy. Free it and retry.</>
-          ) : null}
-        </Banner>
-      ) : null}
-      {session !== null ? (
-        <div className="session-box">
-          <Row gap="tight" align="center">
-            <Toggle
-              checked={poll}
-              onChange={setPoll}
-              label={`Poll ${entry.pretty}`}
-              disabled={TERMINAL[session.state]}
-            />
-            {!TERMINAL[session.state] && poll ? <span className="badge badge--info">Polling</span> : null}
-          </Row>
-          <p className="meta">
-            Session started {session.startedAt}. Codes, tokens, and state values are not shown here.
-          </p>
-        </div>
-      ) : null}
+        <Toggle
+          checked={poll}
+          onChange={setPoll}
+          label={`Poll ${entry.pretty}`}
+          disabled={session === null || TERMINAL[session.state]}
+        />
+        {session !== null && !TERMINAL[session.state] && poll ? <span className="badge badge--info">Polling</span> : null}
+        <span className="note">flows open a localhost callback and poll the device endpoint</span>
+      </div>
       <AsyncBoundary<ProvidersView>
         state={providers.state}
         loadingLabel={`Loading ${entry.provider} providers…`}
@@ -259,35 +302,42 @@ function AuthCard({ entry }: AuthCardProps): JSX.Element {
                 return <p className="meta">No accounts for {entry.provider} yet.</p>
               }
               return (
-                <ul className="bare-list">
+                <p className="note">
+                  <span className="num">{filtered.length}</span> bound account{filtered.length === 1 ? '' : 's'}:{' '}
                   {filtered.map((account) => (
-                    <li key={account.id}>
-                      <span className="bare-list__primary">{account.id}</span>
-                      <span className="badge">{account.state}</span>
-                    </li>
+                    <span key={account.id}>
+                      <span className="num">{account.id}</span> <span className="badge">{account.state}</span>{' '}
+                    </span>
                   ))}
-                </ul>
+                </p>
               )
             }}
           </AsyncBoundary>
         )}
       </AsyncBoundary>
-    </Card>
+    </section>
   )
 }
 
 export function AuthView(): JSX.Element {
   return (
-    <Stack gap="normal">
-      <Banner tone="info" title="Auth handoff">
-        Prism opens the provider URL in your default browser. Approval lands here via the daemon’s loopback callback.
-        Tokens and codes never appear in this UI.
-      </Banner>
-      <div className="auth-grid">
-        {PROVIDERS.map((entry) => (
-          <AuthCard key={entry.provider} entry={entry} />
+    <section className="screen" aria-labelledby="h-auth">
+      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
+        <div>
+          <h1 id="h-auth">
+            <svg width="19" height="19" className="h-ic">
+              <use href="#i-key" />
+            </svg>
+            Auth
+          </h1>
+          <p className="sub">OAuth device flows per provider, start to completion</p>
+        </div>
+      </div>
+      <div className="divide" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {PROVIDERS.map((entry, index) => (
+          <AuthCard key={entry.provider} entry={entry} index={index} />
         ))}
       </div>
-    </Stack>
+    </section>
   )
 }

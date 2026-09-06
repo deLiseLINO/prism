@@ -166,16 +166,10 @@ describe('renderer api wrapper', () => {
     const { api } = await loadApi()
     setReply({ ok: true, status: 200, body: { generation: 4 } })
     await api.deleteProvider('custom/provider', 3)
-    setReply({ ok: true, status: 200, body: { generation: 4, combos: [] } })
-    await api.deleteCombo('primary', 3)
-    setReply({ ok: true, status: 200, body: { generation: 4, routes: {} } })
-    await api.deleteRoute('codex/main', 3)
     setReply({ ok: true, status: 204 })
     await api.deleteAccount('codex:abc')
     expect(recorded).toEqual([
       expect.objectContaining({ method: 'DELETE', path: '/api/v1/providers/custom%2Fprovider?expectedGeneration=3' }),
-      expect.objectContaining({ method: 'DELETE', path: '/api/v1/combos/primary?expectedGeneration=3' }),
-      expect.objectContaining({ method: 'DELETE', path: '/api/v1/routes/codex%2Fmain?expectedGeneration=3' }),
       expect.objectContaining({ method: 'DELETE', path: '/api/v1/accounts/codex%3Aabc' }),
     ])
     expect(recorded.every((request) => request.body === undefined)).toBe(true)
@@ -199,25 +193,6 @@ describe('renderer api wrapper', () => {
       path: '/api/v1/auth/codex/status?session=sess-42',
     })
     expect(recorded[2]).toMatchObject({ method: 'GET', path: '/api/v1/auth/codex/status' })
-  })
-
-  it('writes combos and routes under CAS', async () => {
-    const { api } = await loadApi()
-    setReply({ ok: true, status: 200, body: { generation: 9, combos: [] } })
-    await api.putCombo('primary', {
-      targets: [{ provider: 'codex-main', model: 'gpt-5.2-codex', weight: 1 }],
-      strategy: 'failover',
-      stickyLimit: 5,
-      expectedGeneration: 8,
-    })
-    setReply({ ok: true, status: 200, body: { generation: 9, routes: {} } })
-    await api.putRoute('codex-main/gpt-5.2-codex', { value: 'primary', expectedGeneration: 8 })
-    expect(recorded[0]).toMatchObject({ method: 'PUT', path: '/api/v1/combos/primary' })
-    expect(recorded[0]?.body).toMatchObject({ expectedGeneration: 8 })
-    expect(recorded[1]).toMatchObject({
-      method: 'PUT',
-      path: '/api/v1/routes/codex-main%2Fgpt-5.2-codex',
-    })
   })
 
   it('unwraps provider mutation responses with their hidden pool durations intact', async () => {
