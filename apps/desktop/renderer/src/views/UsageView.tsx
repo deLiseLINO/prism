@@ -1,107 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, type CSSProperties } from 'react'
 import type { UsageAccountView, UsageView } from '@prism/contracts'
-import { AsyncBoundary, Card, Empty, SearchInput, Stack } from '../components/Ui'
+import { AsyncBoundary, Empty } from '../components/Ui'
 import { useAsync } from '../useAsync'
 import { api } from '../api'
 import { formatWindowEnd } from './AccountsView'
-
-function pct(used: number, limit: number | null): number {
-  if (limit === null || limit === 0) return 0
-  return Math.max(0, Math.min(100, Math.round((used / limit) * 100)))
-}
-
-export function UsagePanel(): JSX.Element {
-  const usage = useAsync<UsageView>(() => api.usage(), [])
-  const [query, setQuery] = useState('')
-
-  return (
-    <Stack gap="normal">
-      <AsyncBoundary<UsageView>
-        state={usage.state}
-        loadingLabel="Loading usage…"
-        empty={<Empty title="No usage reported." />}
-        onRetry={() => usage.refresh()}
-      >
-        {(list) => <UsageTable list={list.accounts} query={query} onQuery={setQuery} />}
-      </AsyncBoundary>
-    </Stack>
-  )
-}
-
-function UsageTable({ list, query, onQuery }: { readonly list: readonly UsageAccountView[]; readonly query: string; readonly onQuery: (next: string) => void }): JSX.Element {
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (needle === '') return list
-    return list.filter(
-      (account) =>
-        account.account.toLowerCase().includes(needle) ||
-        account.provider.toLowerCase().includes(needle) ||
-        account.state.toLowerCase().includes(needle),
-    )
-  }, [list, query])
-  if (list.length === 0) {
-    return <Empty title="No usage reported." />
-  }
-  return (
-    <Card
-      title="Account usage"
-      description="Real per-account quotas decoded by Prism."
-      action={
-        <p className="meta">{filtered.length} of {list.length} shown</p>
-      }
-    >
-      <div className="toolbar">
-        <div className="toolbar__filters">
-          <SearchInput id="usage-search" value={query} onChange={onQuery} placeholder="Filter by account, provider, or state" />
-        </div>
-      </div>
-      {filtered.length === 0 ? (
-        <Empty title="No usage matches the current filter." />
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-          <tr>
-            <th scope="col">Account</th>
-            <th scope="col">Provider</th>
-            <th scope="col">State</th>
-            <th scope="col">Used / limit</th>
-            <th scope="col">Window ends</th>
-            <th scope="col">Source</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((account) => {
-            const ratio = pct(account.used, account.limit ?? null)
-            return (
-              <tr key={account.account}>
-                <td className="cell-mono">{account.account}</td>
-                <td>{account.provider}</td>
-                <td>
-                  <span className={`badge badge--${badgeTone(account.state)}`}>{account.state}</span>
-                </td>
-                <td>
-                  <div className={`quota ${ratio >= 85 ? 'quota--hot' : ''}`}>
-                    <div className="quota__track">
-                      <div className="quota__fill" style={{ width: `${ratio}%` }} />
-                    </div>
-                    <p className="meta">
-                      {account.used} / {account.limit == null || account.limit === 0 ? '?' : account.limit}
-                    </p>
-                  </div>
-                </td>
-                <td>{formatWindowEnd(account.windowEnd)}</td>
-                <td>{account.source}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  )
-}
 
 function badgeTone(state: string): 'ok' | 'warn' | 'error' | 'muted' {
   switch (state) {
@@ -117,4 +19,116 @@ function badgeTone(state: string): 'ok' | 'warn' | 'error' | 'muted' {
     default:
       return 'muted'
   }
+}
+
+function stateLabel(state: string): string {
+  if (state === 'cooling_down') return 'cooling down'
+  if (state === 'needs_reauth') return 'needs reauth'
+  if (state === 'soft_avoid') return 'soft avoid'
+  return state
+}
+
+export function UsagePanel(): JSX.Element {
+  const usage = useAsync<UsageView>(() => api.usage(), [])
+
+  return (
+    <section className="screen" aria-labelledby="h-usage">
+      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
+        <div>
+          <h1 id="h-usage">
+            <svg width="19" height="19" className="h-ic">
+              <use href="#i-usage" />
+            </svg>
+            Usage
+          </h1>
+          <p className="sub">
+            per-account used vs limit inside the current quota window
+          </p>
+        </div>
+      </div>
+      <AsyncBoundary<UsageView>
+        state={usage.state}
+        loadingLabel="Loading usage…"
+        empty={<Empty title="No usage reported." />}
+        onRetry={() => usage.refresh()}
+      >
+        {(list) => <UsageTable list={list.accounts} />}
+      </AsyncBoundary>
+    </section>
+  )
+}
+
+function UsageTable({
+  list,
+}: {
+  readonly list: readonly UsageAccountView[]
+}): JSX.Element {
+  const rows = useMemo(() => {
+    if (list.length === 0) return []
+    const total = list.reduce((sum, row) => sum + row.used, 0)
+    return list.map((row) => {
+      const share = total === 0 ? 0 : Math.max(0, Math.min(1, row.used / total))
+      const ratio =
+        row.limit == null || row.limit === 0
+          ? 0
+          : Math.max(0, Math.min(1, row.used / row.limit))
+      const fill = ratio > 0.9 ? 'f-danger' : ratio > 0.7 ? 'f-warn' : ''
+      return { row, share, fill }
+    })
+  }, [list])
+  if (list.length === 0) {
+    return <Empty title="No usage reported." />
+  }
+  return (
+    <section className="panel card" style={{ '--i': 1 } as CSSProperties}>
+      <div className="tbl-wrap">
+        <table className="tbl table">
+          <thead>
+            <tr>
+              <th scope="col">Account</th>
+              <th scope="col">Provider</th>
+              <th scope="col">State</th>
+              <th scope="col">Used / limit</th>
+              <th scope="col">Share</th>
+              <th scope="col">Window ends</th>
+              <th scope="col">Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ row, share, fill }) => (
+              <tr key={row.account}>
+                <td className="td-strong">{row.account}</td>
+                <td>{row.provider}</td>
+                <td>
+                  <span className={`badge badge--${badgeTone(row.state)}`}>
+                    {stateLabel(row.state)}
+                  </span>
+                </td>
+                <td>
+                  <span className="num">
+                    {row.used} /{' '}
+                    {row.limit == null || row.limit === 0
+                      ? 'no limit'
+                      : row.limit}
+                  </span>
+                </td>
+                <td style={{ minWidth: 130 }}>
+                  <span className="bar">
+                    <span
+                      className={`bar-fill ${fill}`.trim()}
+                      style={{ '--w': share } as CSSProperties}
+                    />
+                  </span>
+                </td>
+                <td>
+                  <span className="num">{formatWindowEnd(row.windowEnd)}</span>
+                </td>
+                <td>{row.source}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
 }

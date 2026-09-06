@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import type { ModelView } from '@prism/contracts'
-import { AsyncBoundary, Card, Empty, Field, SearchInput, Select, Stack } from '../components/Ui'
+import { AsyncBoundary, Empty, Field, SearchInput, Select } from '../components/Ui'
 import { useAsync } from '../useAsync'
 import { api } from '../api'
+
 interface ModelsResponse {
   readonly models: readonly ModelView[]
 }
@@ -45,7 +46,29 @@ export function ModelsView(): JSX.Element {
   }, [capability, models.state, query])
 
   return (
-    <Stack gap="normal">
+    <section className="screen" aria-labelledby="h-models">
+      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
+        <div>
+          <h1 id="h-models">
+            <svg width="19" height="19" className="h-ic"><use href="#i-cube" /></svg>
+            Models
+          </h1>
+          <p className="sub">inbound catalog with capability flags</p>
+        </div>
+        <div className="head-actions">
+          <Field label="Search" htmlFor="model-search">
+            <SearchInput id="model-search" value={query} onChange={setQuery} placeholder="ID or alias" />
+          </Field>
+          <Field label="Capability" htmlFor="model-capability">
+            <Select<CapabilityFilter>
+              id="model-capability"
+              value={capability}
+              onChange={setCapability}
+              options={CAPABILITY_OPTIONS}
+            />
+          </Field>
+        </div>
+      </div>
       <AsyncBoundary<ModelsResponse>
         state={models.state}
         loadingLabel="Loading catalog…"
@@ -53,68 +76,50 @@ export function ModelsView(): JSX.Element {
         onRetry={() => models.refresh()}
       >
         {(list) => (
-          <Card
-            title="Inbound catalog"
-            description="Models served by /v1/models."
-            action={
-              <p className="meta">{filtered.length} of {list.models.length} model(s)</p>
-            }
-          >
-            <div className="toolbar">
-              <div className="toolbar__filters">
-                <Field label="Search" htmlFor="model-search">
-                  <SearchInput id="model-search" value={query} onChange={setQuery} placeholder="ID or alias" />
-                </Field>
-                <Field label="Capability" htmlFor="model-capability">
-                  <Select<CapabilityFilter>
-                    id="model-capability"
-                    value={capability}
-                    onChange={setCapability}
-                    options={CAPABILITY_OPTIONS}
-                  />
-                </Field>
-              </div>
-            </div>
+          <>
+            <p className="meta">
+              {filtered.length} of {list.models.length} model(s)
+            </p>
             {filtered.length === 0 ? (
               <Empty title="No models match the current filters." />
             ) : (
-              <div className="table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th scope="col">ID</th>
-                      <th scope="col">Alias</th>
-                      <th scope="col">Capabilities</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((model) => {
-                      const capabilities = activeCapabilities(model)
-                      return (
-                        <tr key={model.id}>
-                          <td className="cell-mono">{model.id}</td>
-                          <td>{model.alias ?? '—'}</td>
-                          <td>
-                            <div className="caps-list">
-                              {capabilities.length === 0 ? (
-                                <span className="meta">Standard</span>
-                              ) : (
-                                capabilities.map((label) => (
-                                  <span className="badge badge--muted" key={label}>{label}</span>
-                                ))
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <section className="panel card" style={{ '--i': 1 } as CSSProperties}>
+                <div className="tbl-wrap">
+                  <table className="tbl table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Model</th>
+                        <th scope="col">Alias</th>
+                        <th scope="col">Capabilities</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map((model) => {
+                        const capabilities = activeCapabilities(model)
+                        return (
+                          <tr key={model.id}>
+                            <td className="td-strong"><span className="num">{model.id}</span></td>
+                            <td>{model.alias ?? '—'}</td>
+                            <td>
+                              <div className="caps">
+                                {capabilities.map((label) => (
+                                  <span className="cap" key={label}>{label}</span>
+                                ))}
+                                <span className="caps-n">{capabilities.length}/{CAPABILITIES.length}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             )}
-          </Card>
+          </>
         )}
       </AsyncBoundary>
-    </Stack>
+    </section>
   )
 }
+

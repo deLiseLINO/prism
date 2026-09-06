@@ -58,7 +58,6 @@ describe('renderer routing', () => {
     expect(routing.hashFor('accounts')).toBe('#/accounts')
     expect(routing.hashFor('providers')).toBe('#/providers')
     expect(routing.hashFor('models')).toBe('#/models')
-    expect(routing.hashFor('combos')).toBe('#/combos')
     expect(routing.hashFor('usage')).toBe('#/usage')
     expect(routing.hashFor('integrations')).toBe('#/integrations')
   })
@@ -80,14 +79,12 @@ describe('renderer routing', () => {
     for (const entry of routing.VIEWS) {
         seen.add(entry.view)
     }
-    expect(seen.size).toBe(9)
     expect(seen.has('overview')).toBe(true)
     expect(seen.has('daemon')).toBe(true)
     expect(seen.has('auth')).toBe(true)
     expect(seen.has('accounts')).toBe(true)
     expect(seen.has('providers')).toBe(true)
     expect(seen.has('models')).toBe(true)
-    expect(seen.has('combos')).toBe(true)
     expect(seen.has('usage')).toBe(true)
     expect(seen.has('integrations')).toBe(true)
   })

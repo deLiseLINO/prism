@@ -1,7 +1,9 @@
-import { useEffect } from 'react'
-import type { DaemonStatus } from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Card, Row, Stack, Stat } from '../components/Ui'
+import { useEffect, type CSSProperties } from 'react'
+import type { DaemonState, DaemonStatus } from '@prism/contracts'
+import { AsyncBoundary, Banner, Button } from '../components/Ui'
 import { useAsync, useTask } from '../useAsync'
+
+const STATE_ORDER: readonly DaemonState[] = ['idle', 'starting', 'ready', 'backoff', 'stopped', 'failed', 'stopping', 'quitting']
 
 function formatTimestamp(iso: string): string {
   const date = new Date(iso)
@@ -74,6 +76,28 @@ const STOPPABLE: Record<DaemonStatus['state'], boolean> = {
   quitting: false,
 }
 
+function stateTone(state: DaemonStatus['state']): 'ok' | 'warn' | 'error' | 'muted' {
+  if (state === 'ready') return 'ok'
+  if (state === 'failed') return 'error'
+  if (state === 'idle' || state === 'stopped') return 'muted'
+  return 'warn'
+}
+
+function renderMachine(current: DaemonState): JSX.Element {
+  const currentIdx = STATE_ORDER.indexOf(current)
+  const nodes = STATE_ORDER.slice(0, Math.max(2, currentIdx + 1))
+  return (
+    <div className="machine">
+      {nodes.map((state, i) => (
+        <span key={state} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className={`node ${i < nodes.length - 1 ? 'visited' : 'current'}`.trim()}>{state}</span>
+          {i < nodes.length - 1 ? <span className="m-arrow" aria-hidden="true">→</span> : null}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 export function DaemonView(): JSX.Element {
   const status = useAsync<DaemonStatus>(
     () => window.prism.daemon.status(),
@@ -89,10 +113,43 @@ export function DaemonView(): JSX.Element {
 
   const startTask = useTask()
   const stopTask = useTask()
-  const actionError = startTask.error ?? stopTask.error
+  const restartTask = useTask()
+  const actionError = startTask.error ?? stopTask.error ?? restartTask.error
+
+  async function restart(): Promise<void> {
+    await stopTask.run(() => window.prism.daemon.stop())
+    await startTask.run(() => window.prism.daemon.start())
+    status.refresh()
+  }
 
   return (
-    <Stack gap="normal">
+    <section className="screen" aria-labelledby="h-daemon">
+      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
+        <div>
+          <h1 id="h-daemon">
+            <svg width="19" height="19" className="h-ic">
+              <use href="#i-daemon" />
+            </svg>
+            Daemon
+          </h1>
+          <p className="sub">supervisor process backing the local router</p>
+        </div>
+        <div className="head-actions">
+          <Button
+            tone="primary"
+            onClick={() => {
+              void restart()
+            }}
+            disabled={startTask.running || stopTask.running || restartTask.running}
+            busy={restartTask.running}
+          >
+            <svg width="14" height="14">
+              <use href="#i-refresh" />
+            </svg>
+            Restart daemon
+          </Button>
+        </div>
+      </div>
       <AsyncBoundary<DaemonStatus>
         state={status.state}
         loadingLabel="Reading daemon status…"
@@ -105,12 +162,12 @@ export function DaemonView(): JSX.Element {
           const canStop = STOPPABLE[current.state]
           return (
             <>
-              <Card
-                title={tone.headline}
-                description={tone.detail ?? 'Local daemon supervised by Prism.'}
-                tone={tone.tone}
-                action={
-                  <Row gap="tight" align="end">
+              <div className="daemon-grid">
+                <section className="panel card panel-pad" style={{ '--i': 1 } as CSSProperties}>
+                  <div className="panel-title">Supervisor state machine</div>
+                  <p className="panel-sub">boot attempts tracked with exponential backoff</p>
+                  <div style={{ marginTop: 16 }}>{renderMachine(current.state)}</div>
+                  <div className="auth-actions" style={{ marginTop: 20 }}>
                     <Button
                       tone="primary"
                       onClick={() => {
@@ -126,7 +183,7 @@ export function DaemonView(): JSX.Element {
                       onClick={() => {
                         void stopTask.run(() => window.prism.daemon.stop())
                       }}
-                      disabled={!canStop || stopTask.running}
+                      disabled={!canStop || startTask.running || stopTask.running}
                       busy={stopTask.running}
                     >
                       Stop
@@ -138,63 +195,75 @@ export function DaemonView(): JSX.Element {
                     >
                       Refresh
                     </Button>
-                  </Row>
-                }
-              >
-                {actionError !== null ? (
-                  <Banner tone="error" title="Action failed">
-                    {actionError.message}
-                  </Banner>
-                ) : null}
-                <div className="stats">
-                  <Stat label="State" value={current.state} tone={tone.tone} />
-                  <Stat label="Endpoint" value={current.endpoint ?? '—'} />
-                  <Stat label="PID" value={current.pid === null ? '—' : String(current.pid)} />
-                  <Stat label="Attempt" value={String(current.attempt)} />
+                  </div>
+                  {actionError !== null ? (
+                    <Banner tone="error" title="Action failed">
+                      {actionError.message}
+                    </Banner>
+                  ) : null}
+                  {tone.detail !== null ? <p className="note">{tone.detail}</p> : null}
+                </section>
+                <section className="panel card panel-pad" style={{ '--i': 2 } as CSSProperties}>
+                  <div className="panel-title">Process</div>
+                  <div className="kv" style={{ marginTop: 8 }}>
+                    <div className="kv-row">
+                      <span className="kv-k">State</span>
+                      <span className={`kv-v badge badge--${stateTone(current.state)}`}>{current.state}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-k">PID</span>
+                      <span className="kv-v num">{current.pid === null ? '—' : current.pid}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-k">Endpoint</span>
+                      <span className="kv-v num">{current.endpoint ?? '—'}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-k">Started</span>
+                      <span className="kv-v num">{current.startedAt === null ? '—' : formatTimestamp(current.startedAt)}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-k">Attempt</span>
+                      <span className="kv-v num">{current.attempt}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-k">Last exit</span>
+                      <span className="kv-v num">{describeExit(current.lastExit)}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-k">Last error</span>
+                      <span className="kv-v num">{current.lastError ?? '—'}</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+              <section className="panel card log-box" style={{ '--i': 3 } as CSSProperties}>
+                <div className="panel-title" style={{ padding: '18px 22px 8px' }}>Recent logs</div>
+                <div style={{ padding: '0 22px 18px' }}>
+                  <div className="log-line ok">
+                    <span className="t num">{current.startedAt === null ? '—' : formatTimestamp(current.startedAt)}</span>
+                    supervisor state <span className="num">{current.state}</span>, attempt{' '}
+                    <span className="num">{current.attempt}</span>
+                    {current.pid === null ? '' : <>, pid <span className="num">{current.pid}</span></>}
+                  </div>
+                  {current.lastError !== null ? (
+                    <div className="log-line warn">
+                      <span className="t num">last</span>
+                      {current.lastError}
+                    </div>
+                  ) : null}
+                  {current.lastExit !== null ? (
+                    <div className="log-line warn">
+                      <span className="t num">exit</span>
+                      {describeExit(current.lastExit)}
+                    </div>
+                  ) : null}
                 </div>
-              </Card>
-              <Card title="Details" description="Process facts for debugging restarts.">
-                <DaemonDetails status={current} />
-              </Card>
+              </section>
             </>
           )
         }}
       </AsyncBoundary>
-    </Stack>
-  )
-}
-
-function DaemonDetails({ status }: { readonly status: DaemonStatus }): JSX.Element {
-  return (
-    <dl className="kv">
-      <div>
-        <dt>State</dt>
-        <dd>{status.state}</dd>
-      </div>
-      <div>
-        <dt>Endpoint</dt>
-        <dd>{status.endpoint ?? '—'}</dd>
-      </div>
-      <div>
-        <dt>PID</dt>
-        <dd>{status.pid ?? '—'}</dd>
-      </div>
-      <div>
-        <dt>Attempt</dt>
-        <dd>{status.attempt}</dd>
-      </div>
-      <div>
-        <dt>Started at</dt>
-        <dd>{status.startedAt === null ? '—' : formatTimestamp(status.startedAt)}</dd>
-      </div>
-      <div>
-        <dt>Last exit</dt>
-        <dd>{describeExit(status.lastExit)}</dd>
-      </div>
-      <div>
-        <dt>Last error</dt>
-        <dd>{status.lastError ?? '—'}</dd>
-      </div>
-    </dl>
+    </section>
   )
 }

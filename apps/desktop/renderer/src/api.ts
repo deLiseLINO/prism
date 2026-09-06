@@ -3,16 +3,12 @@ import type {
   AccountsView,
   AuthStartView,
   AuthStatusView,
-  ComboView,
-  CombosView,
   ManagementReply,
   ModelView,
   PoolSettingsView,
   ProviderMutationResponse,
   ProvidersView,
   QuotaResponse,
-  RouteWrite,
-  RoutesView,
   UsageAccountView,
   UsageView,
 } from '@prism/contracts'
@@ -112,30 +108,6 @@ export const api = {
   quota(id: string): Promise<QuotaResponse> {
     return call('GET', `/api/v1/accounts/${encodeURIComponent(id)}/quota`)
   },
-  combos(): Promise<CombosView> {
-    return call('GET', '/api/v1/combos')
-  },
-  putCombo(id: string, body: ComboWrite): Promise<CombosView> {
-    return call('PUT', `/api/v1/combos/${encodeURIComponent(id)}`, body)
-  },
-  deleteCombo(id: string, expectedGeneration: number): Promise<CombosView> {
-    return call(
-      'DELETE',
-      `/api/v1/combos/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`,
-    )
-  },
-  routes(): Promise<RoutesView> {
-    return call('GET', '/api/v1/routes')
-  },
-  putRoute(key: string, body: RouteWrite): Promise<RoutesView> {
-    return call('PUT', `/api/v1/routes/${encodeURIComponent(key)}`, body)
-  },
-  deleteRoute(key: string, expectedGeneration: number): Promise<RoutesView> {
-    return call(
-      'DELETE',
-      `/api/v1/routes/${encodeURIComponent(key)}?expectedGeneration=${expectedGeneration}`,
-    )
-  },
   usage(): Promise<UsageView> {
     return call('GET', '/api/v1/usage')
   },
@@ -166,20 +138,5 @@ export interface ProviderWrite {
   readonly expectedGeneration: number
 }
 
-export interface ComboWrite {
-  readonly targets: readonly { readonly provider: string; readonly model: string; readonly weight: number }[]
-  readonly strategy: 'failover' | 'round_robin'
-  readonly stickyLimit: number
-  readonly alias?: string
-  readonly nativeAlias?: string
-  readonly displayName?: string
-  readonly imageInput?: boolean | null
-  readonly expectedGeneration: number
-}
-
-// Re-export for renderer convenience; the canonical type lives in the contracts package.
-export type { RouteWrite }
-
 // Internal narrowings consumed by the views.
 export interface UsageAccountOut extends UsageAccountView {}
-export interface ComboOut extends ComboView {}
