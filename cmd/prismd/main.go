@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"maps"
@@ -16,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -43,6 +46,57 @@ type options struct {
 }
 
 type credentialStore struct{ file *store.FileCredentialStore }
+
+type modelSyncer struct {
+	creds  credentialStore
+	client *http.Client
+}
+
+func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]string, error) {
+	if p.BaseURL == "" {
+		return nil, fmt.Errorf("provider %s has no baseURL to list models from", id)
+	}
+	blob, err := m.creds.blob(ctx, account.ProviderID(id), account.AccountID(id+":default"), 1)
+	if err != nil {
+		return nil, err
+	}
+	base := strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
+	base = strings.TrimSuffix(base, "/responses")
+	base = strings.TrimSuffix(base, "/v1")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+string(blob))
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("upstream %s: %s", p.BaseURL, strings.TrimSpace(string(body)))
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, fmt.Errorf("malformed models response from %s: %w", p.BaseURL, err)
+	}
+	out := make([]string, 0, len(envelope.Data))
+	for _, row := range envelope.Data {
+		if row.ID != "" {
+			out = append(out, row.ID)
+		}
+	}
+	return out, nil
+}
 
 func (s credentialStore) blob(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration) ([]byte, error) {
 	b, ok, err := s.file.Get(ctx, p, a, g)
@@ -112,7 +166,8 @@ func (c catalog) Models(ctx context.Context) ([]provider.Model, error) {
 func integrationModels(m *config.Manager) func() []integrations.Model {
 	return func() []integrations.Model {
 		out := make([]integrations.Model, 0)
-		for id, p := range m.Get().Config.Providers {
+		snap := m.Get()
+		for id, p := range snap.Config.Providers {
 			if !p.IsEnabled() {
 				continue
 			}
@@ -120,7 +175,13 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 				if slices.Contains(p.DisabledModels, model) {
 					continue
 				}
-				out = append(out, integrations.Model{ID: id + "/" + model, Name: id + "/" + model})
+				settings := p.ModelSettings[model]
+				out = append(out, integrations.Model{
+					ID:            id + "/" + model,
+					Name:          id + "/" + model,
+					ContextWindow: snap.Config.ResolveContextWindow(id, model),
+					ImageInput:    settings.ImageInput,
+				})
 			}
 		}
 		return out
@@ -416,7 +477,7 @@ func run(opts options) error {
 		return err
 	}
 	planner := server.NewConfigPlanner(cfg)
-	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg)
+	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, client: client})
 	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)

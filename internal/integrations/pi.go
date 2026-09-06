@@ -37,9 +37,16 @@ func RenderPiLeaf(port int, models []Model, leafIndent int) string {
 				field+`"id": `+jsonString(model.ID)+`,`,
 				field+`"name": `+jsonString(model.Name)+`,`,
 				field+`"input": [`,
-				field+`  "text"`,
-				field+`]`,
 			)
+			inputs := []string{field + `  "text"`}
+			if model.ImageInput {
+				inputs = append(inputs, field+`  "image"`)
+			}
+			for _, entry := range inputs {
+				lines = append(lines, entry+`,`)
+			}
+			lines[len(lines)-1] = strings.TrimSuffix(lines[len(lines)-1], ",")
+			lines = append(lines, field+`]`)
 			if model.ContextWindow > 0 {
 				lines[len(lines)-1] += ","
 				lines = append(lines, field+`"contextWindow": `+strconv.Itoa(model.ContextWindow))

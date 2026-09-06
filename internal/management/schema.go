@@ -44,20 +44,28 @@ type ProviderCredential struct {
 }
 
 type Provider struct {
-	ID             string               `json:"id"`
-	Wire           string               `json:"wire"`
-	BaseURL        string               `json:"baseURL,omitempty"`
-	DefaultModel   string               `json:"defaultModel,omitempty"`
-	Models         []string             `json:"models,omitempty"`
-	DisabledModels []string             `json:"disabledModels,omitempty"`
-	Enabled        *bool                `json:"enabled,omitempty"`
-	Pool           *config.PoolSettings `json:"pool,omitempty"`
-	Credential     ProviderCredential   `json:"credential"`
+	ID             string                          `json:"id"`
+	Wire           string                          `json:"wire"`
+	BaseURL        string                          `json:"baseURL,omitempty"`
+	DefaultModel   string                          `json:"defaultModel,omitempty"`
+	Models         []string                        `json:"models,omitempty"`
+	DisabledModels []string                        `json:"disabledModels,omitempty"`
+	SyncedModels   []string                        `json:"syncedModels,omitempty"`
+	ModelSettings  map[string]config.ModelSettings `json:"modelSettings,omitempty"`
+	Enabled        *bool                           `json:"enabled,omitempty"`
+	Pool           *config.PoolSettings            `json:"pool,omitempty"`
+	Credential     ProviderCredential              `json:"credential"`
 }
 
 type ProvidersResponse struct {
-	Generation uint64     `json:"generation"`
-	Providers  []Provider `json:"providers"`
+	Generation    uint64     `json:"generation"`
+	ContextWindow int        `json:"contextWindow"`
+	Providers     []Provider `json:"providers"`
+}
+
+type ContextWindowWrite struct {
+	ContextWindow      int    `json:"contextWindow"`
+	ExpectedGeneration uint64 `json:"expectedGeneration"`
 }
 
 type ProviderMutationResponse struct {
@@ -70,17 +78,19 @@ type GenerationResponse struct {
 }
 
 type ProviderWrite struct {
-	ID                 string               `json:"id"`
-	Wire               string               `json:"wire"`
-	BaseURL            *string              `json:"baseURL,omitempty"`
-	APIKeyRef          *string              `json:"apiKeyRef,omitempty"`
-	DefaultModel       *string              `json:"defaultModel,omitempty"`
-	Models             []string             `json:"models"`
-	DisabledModels     []string             `json:"disabledModels"`
-	Enabled            *bool                `json:"enabled,omitempty"`
-	Pool               *config.PoolSettings `json:"pool,omitempty"`
-	Credential         string               `json:"credential,omitempty"`
-	ExpectedGeneration uint64               `json:"expectedGeneration"`
+	ID                 string                           `json:"id"`
+	Wire               string                           `json:"wire"`
+	BaseURL            *string                          `json:"baseURL,omitempty"`
+	APIKeyRef          *string                          `json:"apiKeyRef,omitempty"`
+	DefaultModel       *string                          `json:"defaultModel,omitempty"`
+	Models             []string                         `json:"models"`
+	DisabledModels     []string                         `json:"disabledModels"`
+	SyncedModels       *[]string                        `json:"syncedModels,omitempty"`
+	ModelSettings      *map[string]config.ModelSettings `json:"modelSettings,omitempty"`
+	Enabled            *bool                            `json:"enabled,omitempty"`
+	Pool               *config.PoolSettings             `json:"pool,omitempty"`
+	Credential         string                           `json:"credential,omitempty"`
+	ExpectedGeneration uint64                           `json:"expectedGeneration"`
 }
 
 type QuotaView struct {

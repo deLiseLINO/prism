@@ -28,6 +28,7 @@ type Model struct {
 	ID            string
 	Name          string
 	ContextWindow int
+	ImageInput    bool
 }
 
 // DefaultPrismModels mirrors the daemon's default combo targets

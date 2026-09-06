@@ -26,6 +26,10 @@ type Catalog interface {
 	Models(ctx context.Context) ([]provider.Model, error)
 }
 
+type ModelSyncer interface {
+	RemoteModels(ctx context.Context, id string, p config.Provider) ([]string, error)
+}
+
 type CredentialStore interface {
 	Put(ctx context.Context, id string, secret []byte) error
 	Delete(ctx context.Context, id string) error
@@ -51,10 +55,11 @@ type Server struct {
 	auth    Auth
 	ints    *integrations.Registry
 	routes  [][]string
+	syncer  ModelSyncer
 }
 
-func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry) *Server {
-	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, routes: [][]string{}}
+func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer) *Server {
+	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, routes: [][]string{}, syncer: syncer}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -64,7 +69,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/providers", s.providersList)
 	mux.HandleFunc("POST /api/v1/providers", s.providersCreate)
 	mux.HandleFunc("PUT /api/v1/providers/{id}", s.providersReplace)
+	mux.HandleFunc("POST /api/v1/providers/{id}/sync-models", s.providersSyncModels)
 	mux.HandleFunc("DELETE /api/v1/providers/{id}", s.providersDelete)
+	mux.HandleFunc("PUT /api/v1/context-window", s.contextWindowPut)
 	mux.HandleFunc("GET /api/v1/accounts", s.accountsList)
 	mux.HandleFunc("DELETE /api/v1/accounts/{id}", s.accountsDelete)
 	mux.HandleFunc("POST /api/v1/accounts/{id}/pause", s.accountPause)
@@ -121,6 +128,7 @@ var routeTemplates = []string{
 	"/api/v1/integrations/{client}",
 	"/api/v1/integrations/{client}/apply",
 	"/api/v1/integrations/{client}/rollback",
+	"/api/v1/context-window",
 }
 
 func splitPath(p string) []string {
@@ -203,7 +211,7 @@ func (s *Server) providersList(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, v)
 	}
-	writeJSON(w, http.StatusOK, ProvidersResponse{Generation: snap.Generation, Providers: out})
+	writeJSON(w, http.StatusOK, ProvidersResponse{Generation: snap.Generation, ContextWindow: snap.Config.ContextWindow, Providers: out})
 }
 
 func (s *Server) providersCreate(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +229,26 @@ func (s *Server) providersCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applyProvider(w, r, body.ID, body, body.ExpectedGeneration)
+}
+
+func (s *Server) contextWindowPut(w http.ResponseWriter, r *http.Request) {
+	body, ok := decodeJSON[ContextWindowWrite](w, r)
+	if !ok {
+		return
+	}
+	if body.ContextWindow < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_value", "contextWindow must be >= 0")
+		return
+	}
+	snap := s.cfg.Get()
+	doc := snap.Config
+	doc.ContextWindow = body.ContextWindow
+	updated, err := s.cfg.Update(doc, body.ExpectedGeneration)
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ContextWindowWrite{ContextWindow: updated.Config.ContextWindow, ExpectedGeneration: updated.Generation})
 }
 
 func (s *Server) providersReplace(w http.ResponseWriter, r *http.Request) {
@@ -261,6 +289,12 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	}
 	if body.DisabledModels != nil {
 		next.DisabledModels = body.DisabledModels
+	}
+	if body.SyncedModels != nil {
+		next.SyncedModels = *body.SyncedModels
+	}
+	if body.ModelSettings != nil {
+		next.ModelSettings = *body.ModelSettings
 	}
 	if body.Enabled != nil {
 		next.Enabled = body.Enabled
@@ -313,6 +347,53 @@ func (s *Server) providersDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, GenerationResponse{Generation: updated.Generation})
 }
 
+func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	expected, ok := generationFromQuery(w, r)
+	if !ok {
+		return
+	}
+	if s.syncer == nil {
+		writeError(w, http.StatusNotImplemented, "unsupported", "model sync is not wired")
+		return
+	}
+	snap := s.cfg.Get()
+	p, exists := snap.Config.Providers[id]
+	if !exists {
+		writeError(w, http.StatusNotFound, "not_found", "provider "+id+" not found")
+		return
+	}
+	remote, err := s.syncer.RemoteModels(r.Context(), id, p)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "upstream", err.Error())
+		return
+	}
+	doc := snap.Config
+	next := doc.Providers[id]
+	merged := make([]string, 0, len(next.Models)+len(remote))
+	merged = append(merged, next.Models...)
+	for _, m := range remote {
+		if !slices.Contains(merged, m) {
+			merged = append(merged, m)
+		}
+	}
+	slices.Sort(merged)
+	next.Models = merged
+	next.SyncedModels = remote
+	doc.Providers[id] = next
+	updated, err := s.cfg.Update(doc, expected)
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	v, err := s.providerView(r.Context(), id, updated.Config.Providers[id])
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+}
+
 func (s *Server) providerView(ctx context.Context, id string, p config.Provider) (Provider, error) {
 	state := "unset"
 	set, err := s.creds.Configured(ctx, id)
@@ -329,6 +410,8 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 		DefaultModel:   p.DefaultModel,
 		Models:         p.Models,
 		DisabledModels: p.DisabledModels,
+		SyncedModels:   p.SyncedModels,
+		ModelSettings:  p.ModelSettings,
 		Enabled:        p.Enabled,
 		Pool:           p.Pool,
 		Credential:     ProviderCredential{State: state},

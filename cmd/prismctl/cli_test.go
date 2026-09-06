@@ -200,7 +200,7 @@ func newDaemonEnv(t *testing.T, extra func(env *daemonEnv)) *daemonEnv {
 	srv := management.New(pool, cfg, &fakeCatalog{models: []provider.Model{
 		{ID: "codex/gpt-5.3", Alias: "gpt-5.3-codex", Caps: provider.ModelCaps{Reasoning: true}},
 		{ID: "codex/gpt-5.2"},
-	}}, quotaSrc, &fakeCreds{store: map[string][]byte{}}, fake, registry)
+	}}, quotaSrc, &fakeCreds{store: map[string][]byte{}}, fake, registry, nil)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	env := &daemonEnv{

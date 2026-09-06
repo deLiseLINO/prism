@@ -198,7 +198,7 @@ func newEnv(t *testing.T) *testEnv {
 	}}
 	srv := New(pool, m, catalog, &fakeQuotaSource{snapshots: map[account.AccountID]quota.Snapshot{
 		"a1": {Used: 42, Limit: int64Ptr(100), Source: quota.SourceEndpoint},
-	}}, creds, fake, integrations.NewRegistry())
+	}}, creds, fake, integrations.NewRegistry(), nil)
 	return &testEnv{srv: srv, handler: srv.Handler(), pool: pool, creds: creds, auth: fake, cfg: m}
 }
 
@@ -462,7 +462,7 @@ func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
 	assertErrorBody(t, env.do(t, http.MethodDelete, "/api/v1/accounts/a1", ""), http.StatusNotFound, "not_found")
 
 	plainPool := &noDeletePool{}
-	srv := New(plainPool, env.cfg, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, nil, integrations.NewRegistry())
+	srv := New(plainPool, env.cfg, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, nil, integrations.NewRegistry(), nil)
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/a1", strings.NewReader(""))
 	rec2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec2, req)
@@ -703,4 +703,53 @@ func TestAuthRoutesWithoutSeam(t *testing.T) {
 	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/auth/codex/start", ""), http.StatusNotImplemented, "unsupported")
 	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/auth/codex/callback", `{"code":"x"}`), http.StatusNotImplemented, "unsupported")
 	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/auth/codex/status", ""), http.StatusNotImplemented, "unsupported")
+}
+
+func TestContextWindowHierarchyAndGlobalEndpoint(t *testing.T) {
+	env := newEnv(t)
+	doc := config.Document{
+		Version:       config.SchemaVersion,
+		ContextWindow: 400000,
+		Providers: map[string]config.Provider{
+			"codex": {
+				Wire:   config.WireCodex,
+				Models: []string{"gpt-5.2", "gpt-5.2-codex"},
+				ModelSettings: map[string]config.ModelSettings{
+					"gpt-5.2": {ContextWindow: 200000, ImageInput: true, ReasoningEfforts: []string{"low", "high"}},
+				},
+			},
+		},
+	}
+	if _, err := env.cfg.Update(doc, 0); err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do(t, http.MethodGet, "/api/v1/providers", "")
+	got := decodeBody[ProvidersResponse](t, rec)
+	if got.ContextWindow != 400000 {
+		t.Fatalf("global contextWindow = %d, want 400000", got.ContextWindow)
+	}
+	p := got.Providers[0]
+	s := p.ModelSettings["gpt-5.2"]
+	if s.ContextWindow != 200000 || !s.ImageInput || len(s.ReasoningEfforts) != 2 {
+		t.Fatalf("model settings = %+v", s)
+	}
+
+	bad := env.do(t, http.MethodPut, "/api/v1/context-window", `{"contextWindow":-1,"expectedGeneration":1}`)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("negative window status = %d, want 400", bad.Code)
+	}
+	ok := env.do(t, http.MethodPut, "/api/v1/context-window", `{"contextWindow":96000,"expectedGeneration":1}`)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("put status = %d, want 200", ok.Code)
+	}
+	updated := decodeBody[ContextWindowWrite](t, ok)
+	if updated.ContextWindow != 96000 || updated.ExpectedGeneration != 2 {
+		t.Fatalf("updated = %d/%d, want 96000/2", updated.ContextWindow, updated.ExpectedGeneration)
+	}
+	if env.cfg.Get().Config.ResolveContextWindow("codex", "gpt-5.2-codex") != 96000 {
+		t.Fatal("model without override did not fall back to the global window")
+	}
+	if env.cfg.Get().Config.ResolveContextWindow("codex", "gpt-5.2") != 200000 {
+		t.Fatal("model override lost after global update")
+	}
 }

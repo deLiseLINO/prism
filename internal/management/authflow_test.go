@@ -119,7 +119,7 @@ func newAuthFlowEnv(t *testing.T, accessSecret string) *authFlowEnv {
 
 	credsAdapter := &fakeCreds{store: map[string][]byte{}}
 	srv := New(pool, cfg, &fakeCatalog{models: []provider.Model{{ID: "gpt-5.3"}}},
-		&fakeQuotaSource{snapshots: map[account.AccountID]quota.Snapshot{}}, credsAdapter, svc, integrations.NewRegistry())
+		&fakeQuotaSource{snapshots: map[account.AccountID]quota.Snapshot{}}, credsAdapter, svc, integrations.NewRegistry(), nil)
 
 	return &authFlowEnv{
 		srv:      srv,
@@ -309,7 +309,7 @@ func TestAuthFlowWireAliasResolvesConfiguredProvider(t *testing.T) {
 	t.Cleanup(func() { svc.Close(context.Background()) })
 
 	srv := New(pool, cfg, &fakeCatalog{models: []provider.Model{{ID: "gpt-5.2"}}},
-		&fakeQuotaSource{snapshots: map[account.AccountID]quota.Snapshot{}}, &fakeCreds{store: map[string][]byte{}}, svc, integrations.NewRegistry())
+		&fakeQuotaSource{snapshots: map[account.AccountID]quota.Snapshot{}}, &fakeCreds{store: map[string][]byte{}}, svc, integrations.NewRegistry(), nil)
 	h := srv.Handler()
 
 	for _, route := range []string{"codex", "codex-main"} {

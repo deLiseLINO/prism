@@ -15,15 +15,17 @@ export interface UseAsyncResult<T> {
 export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[]): UseAsyncResult<T> {
   const [state, setState] = useState<AsyncState<T>>({ kind: 'idle' })
   const [tick, setTick] = useState(0)
+  const hasValueRef = useRef(false)
   const loadRef = useRef(load)
   loadRef.current = load
 
   useEffect(() => {
     let active = true
-    setState({ kind: 'loading' })
+    setState((prev) => (hasValueRef.current || prev.kind === 'error' ? prev : { kind: 'loading' }))
     loadRef.current().then(
       (value) => {
         if (!active) return
+        hasValueRef.current = true
         setState({ kind: 'ready', value })
       },
       (error: unknown) => {

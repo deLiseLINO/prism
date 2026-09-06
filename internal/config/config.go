@@ -65,12 +65,13 @@ var (
 )
 
 type Document struct {
-	Version   int                 `json:"version"`
-	Daemon    Daemon              `json:"daemon"`
-	Providers map[string]Provider `json:"providers"`
-	Combos    map[string]Combo    `json:"combos"`
-	Routes    map[string]string   `json:"routes"`
-	Aliases   map[string]string   `json:"aliases"`
+	Version       int                 `json:"version"`
+	Daemon        Daemon              `json:"daemon"`
+	ContextWindow int                 `json:"contextWindow,omitempty"`
+	Providers     map[string]Provider `json:"providers"`
+	Combos        map[string]Combo    `json:"combos"`
+	Routes        map[string]string   `json:"routes"`
+	Aliases       map[string]string   `json:"aliases"`
 }
 
 type Daemon struct {
@@ -78,17 +79,39 @@ type Daemon struct {
 }
 
 type Provider struct {
-	Wire           Wire          `json:"wire"`
-	BaseURL        string        `json:"baseURL,omitempty"`
-	APIKeyRef      string        `json:"apiKeyRef,omitempty"`
-	DefaultModel   string        `json:"defaultModel,omitempty"`
-	Models         []string      `json:"models,omitempty"`
-	DisabledModels []string      `json:"disabledModels,omitempty"`
-	Enabled        *bool         `json:"enabled,omitempty"`
-	Pool           *PoolSettings `json:"pool,omitempty"`
+	Wire           Wire                     `json:"wire"`
+	BaseURL        string                   `json:"baseURL,omitempty"`
+	APIKeyRef      string                   `json:"apiKeyRef,omitempty"`
+	DefaultModel   string                   `json:"defaultModel,omitempty"`
+	Models         []string                 `json:"models,omitempty"`
+	DisabledModels []string                 `json:"disabledModels,omitempty"`
+	SyncedModels   []string                 `json:"syncedModels,omitempty"`
+	ModelSettings  map[string]ModelSettings `json:"modelSettings,omitempty"`
+	Enabled        *bool                    `json:"enabled,omitempty"`
+	Pool           *PoolSettings            `json:"pool,omitempty"`
 }
 
 func (p Provider) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
+
+const DefaultContextWindow = 256000
+
+type ModelSettings struct {
+	ContextWindow    int      `json:"contextWindow,omitempty"`
+	ImageInput       bool     `json:"imageInput,omitempty"`
+	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
+}
+
+func (d Document) ResolveContextWindow(providerID, model string) int {
+	if p, ok := d.Providers[providerID]; ok {
+		if s, ok := p.ModelSettings[model]; ok && s.ContextWindow > 0 {
+			return s.ContextWindow
+		}
+	}
+	if d.ContextWindow > 0 {
+		return d.ContextWindow
+	}
+	return DefaultContextWindow
+}
 
 type PoolSettings struct {
 	Strategy            PoolStrategy  `json:"strategy"`
@@ -130,6 +153,9 @@ func (d Document) validate() error {
 			return fmt.Errorf("%w: daemon.listen %q", ErrInvalidValue, d.Daemon.Listen)
 		}
 	}
+	if d.ContextWindow < 0 {
+		return fmt.Errorf("%w: contextWindow %d", ErrInvalidValue, d.ContextWindow)
+	}
 	for id, p := range d.Providers {
 		if id == "" {
 			return fmt.Errorf("%w: provider id", ErrEmptyField)
@@ -144,6 +170,9 @@ func (d Document) validate() error {
 			if !contains(p.Models, m) {
 				return fmt.Errorf("%w: providers.%s.disabledModels %q does not name a configured model", ErrInvalidValue, id, m)
 			}
+		}
+		if err := p.validateModelSettings(id); err != nil {
+			return err
 		}
 		if p.Pool != nil {
 			if err := p.Pool.validate(); err != nil {
@@ -192,6 +221,34 @@ func (d Document) validate() error {
 		}
 	}
 	return nil
+}
+
+func (p Provider) validateModelSettings(providerID string) error {
+	for model, s := range p.ModelSettings {
+		if model == "" {
+			return fmt.Errorf("%w: providers.%s.modelSettings model key", ErrEmptyField, providerID)
+		}
+		if s.ContextWindow < 0 {
+			return fmt.Errorf("%w: providers.%s.modelSettings[%s].contextWindow %d", ErrInvalidValue, providerID, model, s.ContextWindow)
+		}
+		if len(p.Models) > 0 && !contains(p.Models, model) {
+			return fmt.Errorf("%w: providers.%s.modelSettings[%s] does not name a configured model", ErrInvalidValue, providerID, model)
+		}
+		for _, e := range s.ReasoningEfforts {
+			if !validReasoningEffort(e) {
+				return fmt.Errorf("%w: providers.%s.modelSettings[%s].reasoningEfforts %q", ErrInvalidValue, providerID, model, e)
+			}
+		}
+	}
+	return nil
+}
+
+func validReasoningEffort(e string) bool {
+	switch e {
+	case "minimal", "low", "medium", "high", "xhigh":
+		return true
+	}
+	return false
 }
 
 func (d Document) validateAliasKey(k string) error {

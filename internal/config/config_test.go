@@ -154,3 +154,74 @@ func collectKeys(v any, out *[]string) {
 		}
 	}
 }
+
+func TestResolveContextWindowFallbackChain(t *testing.T) {
+	doc := Document{
+		Providers: map[string]Provider{
+			"codex": {
+				Models:        []string{"gpt-5.2", "gpt-5.2-codex"},
+				ModelSettings: map[string]ModelSettings{"gpt-5.2": {ContextWindow: 200000}},
+			},
+			"ag": {Models: []string{"gemini-3-pro"}},
+		},
+	}
+	cases := []struct {
+		provider, model string
+		want            int
+	}{
+		{"codex", "gpt-5.2", 200000},
+		{"codex", "gpt-5.2-codex", DefaultContextWindow},
+		{"ag", "gemini-3-pro", DefaultContextWindow},
+	}
+	for _, c := range cases {
+		if got := doc.ResolveContextWindow(c.provider, c.model); got != c.want {
+			t.Fatalf("ResolveContextWindow(%s, %s) = %d, want %d", c.provider, c.model, got, c.want)
+		}
+	}
+	doc.ContextWindow = 400000
+	if got := doc.ResolveContextWindow("ag", "gemini-3-pro"); got != 400000 {
+		t.Fatalf("global fallback = %d, want 400000", got)
+	}
+}
+
+func TestValidateRejectsBadContextWindows(t *testing.T) {
+	base := func() Document {
+		return Document{
+			Version:   SchemaVersion,
+			Providers: map[string]Provider{"codex": {Wire: WireCodex, Models: []string{"gpt-5.2"}}},
+		}
+	}
+	doc := base()
+	p := doc.Providers["codex"]
+	p.ModelSettings = map[string]ModelSettings{"gpt-5.2": {ContextWindow: -1}}
+	doc.Providers["codex"] = p
+	if err := doc.validate(); err == nil {
+		t.Fatal("negative model contextWindow accepted")
+	}
+	doc = base()
+	p = doc.Providers["codex"]
+	p.ModelSettings = map[string]ModelSettings{"nope": {ContextWindow: 100}}
+	doc.Providers["codex"] = p
+	if err := doc.validate(); err == nil {
+		t.Fatal("model contextWindow for unknown model accepted")
+	}
+	doc = base()
+	doc.ContextWindow = -5
+	if err := doc.validate(); err == nil {
+		t.Fatal("negative global contextWindow accepted")
+	}
+	doc = base()
+	p = doc.Providers["codex"]
+	p.ModelSettings = map[string]ModelSettings{"gpt-5.2": {ReasoningEfforts: []string{"turbo"}}}
+	doc.Providers["codex"] = p
+	if err := doc.validate(); err == nil {
+		t.Fatal("invalid reasoning effort accepted")
+	}
+	doc = base()
+	p = doc.Providers["codex"]
+	p.ModelSettings = map[string]ModelSettings{"gpt-5.2": {ContextWindow: 96000, ReasoningEfforts: []string{"high"}}}
+	doc.Providers["codex"] = p
+	if err := doc.validate(); err != nil {
+		t.Fatalf("valid model override rejected: %v", err)
+	}
+}

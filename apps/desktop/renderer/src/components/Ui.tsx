@@ -151,11 +151,12 @@ export interface ToggleProps {
   readonly onChange: (next: boolean) => void
   readonly label: string
   readonly disabled?: boolean
+  readonly visuallyHidden?: boolean
 }
 
-export function Toggle({ checked, onChange, label, disabled }: ToggleProps): JSX.Element {
+export function Toggle({ checked, onChange, label, disabled, visuallyHidden }: ToggleProps): JSX.Element {
   return (
-    <label className={`toggle ${disabled === true ? 'toggle--disabled' : ''}`.trim()}>
+    <label className={`toggle ${disabled === true ? 'toggle--disabled' : ''} ${visuallyHidden === true ? 'toggle--icon-only' : ''}`.trim()}>
       <input
         type="checkbox"
         checked={checked}
@@ -165,7 +166,7 @@ export function Toggle({ checked, onChange, label, disabled }: ToggleProps): JSX
       <span className="toggle__track" aria-hidden="true">
         <span className="toggle__thumb" />
       </span>
-      <span className="toggle__label">{label}</span>
+      <span className={visuallyHidden === true ? 'sr-only' : 'toggle__label'}>{label}</span>
     </label>
   )
 }
@@ -404,9 +405,13 @@ export function ThemeToggle({ mode, onCycle }: ThemeToggleProps): JSX.Element {
       title={`Theme: ${mode} (cycles auto, dark, light)`}
     >
       <span className="theme-toggle__icon" aria-hidden="true">
-        <svg width="15" height="15" className="icon-sun"><use href="#i-sun" /></svg>
-        <svg width="15" height="15" className="icon-moon"><use href="#i-moon" /></svg>
-        {mode === 'auto' ? <svg width="15" height="15"><use href="#i-prism" /></svg> : null}
+        {mode === 'auto' ? (
+          <svg width="15" height="15"><use href="#i-prism" /></svg>
+        ) : (
+          <svg width="15" height="15" className={mode === 'dark' ? 'icon-moon' : 'icon-sun'}>
+            <use href={mode === 'dark' ? '#i-moon' : '#i-sun'} />
+          </svg>
+        )}
       </span>
       <span className="theme-toggle__mode">{mode}</span>
     </button>
