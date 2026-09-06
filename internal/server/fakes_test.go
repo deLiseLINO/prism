@@ -181,7 +181,7 @@ func newTestServer(t *testing.T, clock Clock, plans map[canon.ModelID]routing.Pl
 	if err != nil {
 		t.Fatalf("config open: %v", err)
 	}
-	mgmt := management.New(pool, cfg, nil, nil, nil, nil, integrations.NewRegistry()).Handler()
+	mgmt := management.New(pool, cfg, nil, nil, nil, nil, integrations.NewRegistry(), nil).Handler()
 	srv := New(Options{
 		Planner:         &fakePlanner{plans: plans},
 		Registry:        reg,

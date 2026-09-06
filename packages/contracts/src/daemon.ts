@@ -1,4 +1,4 @@
-export const DAEMON_DEFAULT_PORT = 8787
+export const DAEMON_DEFAULT_PORT = 10200
 export const DAEMON_HOST = '127.0.0.1'
 export const DAEMON_HEALTH_PATH = '/api/v1/health'
 

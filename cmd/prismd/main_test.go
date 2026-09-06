@@ -193,3 +193,45 @@ func TestQuotaTableProbeFailureKeepsStoredSnapshot(t *testing.T) {
 		t.Fatalf("failed probe must keep the stored snapshot: %+v", snap)
 	}
 }
+
+func TestIntegrationModelsResolveContextWindows(t *testing.T) {
+	dir := t.TempDir()
+	m, err := config.Open(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Update(config.Document{
+		Version:       config.SchemaVersion,
+		ContextWindow: 400000,
+		Providers: map[string]config.Provider{
+			"codex": {
+				Wire:   config.WireCodex,
+				Models: []string{"gpt-5.2", "gpt-5.2-codex"},
+				ModelSettings: map[string]config.ModelSettings{
+					"gpt-5.2": {ContextWindow: 200000, ImageInput: true},
+				},
+			},
+			"ag": {Wire: config.WireAntigravity, Models: []string{"gemini-3-pro"}},
+		},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := integrationModels(m)()
+	want := map[string]int{
+		"codex/gpt-5.2":       200000,
+		"codex/gpt-5.2-codex": 400000,
+		"ag/gemini-3-pro":     400000,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("models = %d, want %d", len(got), len(want))
+	}
+	imageWant := map[string]bool{"codex/gpt-5.2": true}
+	for _, m := range got {
+		if want[m.ID] != m.ContextWindow {
+			t.Fatalf("%s contextWindow = %d, want %d", m.ID, m.ContextWindow, want[m.ID])
+		}
+		if m.ImageInput != imageWant[m.ID] {
+			t.Fatalf("%s imageInput = %v", m.ID, m.ImageInput)
+		}
+	}
+}

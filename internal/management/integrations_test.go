@@ -23,7 +23,7 @@ func integrationEnv(t *testing.T) (*httptest.Server, *integrations.Registry) {
 		t.Fatal(err)
 	}
 	registry := integrations.NewRegistry()
-	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, registry)
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, registry, nil)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, registry

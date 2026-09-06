@@ -110,16 +110,18 @@ func cloneSnapshot(s Snapshot) Snapshot {
 
 func cloneDocument(d Document) Document {
 	out := Document{
-		Version:   d.Version,
-		Daemon:    d.Daemon,
-		Providers: cloneMap(d.Providers),
-		Combos:    cloneMap(d.Combos),
-		Routes:    cloneMap(d.Routes),
-		Aliases:   cloneMap(d.Aliases),
+		Version:       d.Version,
+		Daemon:        d.Daemon,
+		ContextWindow: d.ContextWindow,
+		Providers:     cloneMap(d.Providers),
+		Combos:        cloneMap(d.Combos),
+		Routes:        cloneMap(d.Routes),
+		Aliases:       cloneMap(d.Aliases),
 	}
 	for id, p := range d.Providers {
 		p.Models = append([]string(nil), p.Models...)
 		p.DisabledModels = append([]string(nil), p.DisabledModels...)
+		p.ModelSettings = cloneModelSettings(p.ModelSettings)
 		if p.Enabled != nil {
 			v := *p.Enabled
 			p.Enabled = &v
@@ -144,6 +146,17 @@ func cloneDocument(d Document) Document {
 func cloneMap[V any](m map[string]V) map[string]V {
 	out := make(map[string]V, len(m))
 	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneModelSettings(m map[string]ModelSettings) map[string]ModelSettings {
+	out := make(map[string]ModelSettings, len(m))
+	for k, v := range m {
+		if v.ReasoningEfforts != nil {
+			v.ReasoningEfforts = append([]string(nil), v.ReasoningEfforts...)
+		}
 		out[k] = v
 	}
 	return out

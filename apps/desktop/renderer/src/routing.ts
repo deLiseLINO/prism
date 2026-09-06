@@ -6,7 +6,6 @@ export type View =
   | 'auth'
   | 'accounts'
   | 'providers'
-  | 'models'
   | 'usage'
   | 'integrations'
 
@@ -23,7 +22,6 @@ const VIEW_HASHES: Record<View, string> = {
   auth: '#/auth',
   accounts: '#/accounts',
   providers: '#/providers',
-  models: '#/models',
   usage: '#/usage',
   integrations: '#/integrations',
 }
@@ -34,7 +32,6 @@ const VIEW_BY_HASH: Record<string, View> = {
   '#/auth': 'auth',
   '#/accounts': 'accounts',
   '#/providers': 'providers',
-  '#/models': 'models',
   '#/usage': 'usage',
   '#/integrations': 'integrations',
 }
@@ -46,7 +43,6 @@ export const VIEWS: readonly ViewEntry[] = [
   { view: 'accounts', label: 'Accounts', tagline: 'Accounts and selection policy', section: 'Operate' },
   { view: 'usage', label: 'Usage', tagline: 'Real per-account usage', section: 'Operate' },
   { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials', section: 'Configure' },
-  { view: 'models', label: 'Models', tagline: 'Inbound catalog', section: 'Configure' },
   { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback', section: 'System' },
 ]
 

@@ -155,6 +155,9 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 			// omp validates model entries strictly and requires input modalities.
 			lines = append(lines, fields+"input:")
 			lines = append(lines, fields+pad+"- text")
+			if model.ImageInput {
+				lines = append(lines, fields+pad+"- image")
+			}
 			if model.ContextWindow > 0 {
 				lines = append(lines, fields+"contextWindow: "+fmt.Sprintf("%d", model.ContextWindow))
 			}

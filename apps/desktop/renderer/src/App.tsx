@@ -7,7 +7,6 @@ import { AccountsView } from './views/AccountsView'
 import { AuthView } from './views/AuthView'
 import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
-import { ModelsView } from './views/ModelsView'
 import { OverviewView } from './views/OverviewView'
 import { ProvidersView } from './views/ProvidersView'
 import { UsagePanel } from './views/UsageView'
@@ -18,7 +17,6 @@ const VIEW_ICONS: Record<View, string> = {
   usage: '#i-usage',
   auth: '#i-key',
   providers: '#i-plug',
-  models: '#i-cube',
   daemon: '#i-daemon',
   integrations: '#i-puzzle',
 }
@@ -56,8 +54,6 @@ function renderView(view: View): JSX.Element {
       return <AccountsView />
     case 'providers':
       return <ProvidersView />
-    case 'models':
-      return <ModelsView />
     case 'usage':
       return <UsagePanel />
     case 'integrations':
@@ -79,7 +75,7 @@ export function App(): JSX.Element {
       if (next === viewRef.current) return
       viewRef.current = next
       setView(next)
-      mainRef.current?.focus()
+      mainRef.current?.focus({ preventScroll: true })
     }
     window.addEventListener('hashchange', onChange)
     return () => window.removeEventListener('hashchange', onChange)

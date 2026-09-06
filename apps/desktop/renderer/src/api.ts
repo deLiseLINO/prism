@@ -81,6 +81,12 @@ export const api = {
   replaceProvider(id: string, body: ProviderWrite): Promise<ProviderMutationResponse> {
     return call('PUT', `/api/v1/providers/${encodeURIComponent(id)}`, body)
   },
+  syncProviderModels(id: string, expectedGeneration: number): Promise<ProviderMutationResponse> {
+    return call(
+      'POST',
+      `/api/v1/providers/${encodeURIComponent(id)}/sync-models?expectedGeneration=${expectedGeneration}`,
+    )
+  },
   deleteProvider(id: string, expectedGeneration: number): Promise<{ generation: number }> {
     return call(
       'DELETE',
@@ -132,10 +138,18 @@ export interface ProviderWrite {
   readonly defaultModel?: string | null
   readonly models: readonly string[]
   readonly disabledModels: readonly string[]
+  readonly syncedModels?: readonly string[] | null
+  readonly modelSettings?: Readonly<Record<string, ModelSettingsView>> | null
   readonly enabled?: boolean | null
   readonly pool?: PoolSettingsView | null
   readonly credential?: string | null
   readonly expectedGeneration: number
+}
+
+export interface ModelSettingsView {
+  readonly contextWindow?: number
+  readonly imageInput?: boolean
+  readonly reasoningEfforts?: readonly string[]
 }
 
 // Internal narrowings consumed by the views.

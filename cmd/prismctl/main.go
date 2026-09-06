@@ -39,7 +39,7 @@ type cliRuntime struct {
 }
 
 func newRuntime() *cliRuntime {
-	baseURL := "http://127.0.0.1:8787"
+	baseURL := "http://127.0.0.1:10200"
 	if v, ok := os.LookupEnv("PRISM_URL"); ok && v != "" {
 		baseURL = v
 	}

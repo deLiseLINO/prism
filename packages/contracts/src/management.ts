@@ -38,6 +38,8 @@ export interface ProviderView {
   readonly defaultModel?: string
   readonly models?: readonly string[]
   readonly disabledModels?: readonly string[]
+  readonly syncedModels?: readonly string[]
+  readonly modelSettings?: Readonly<Record<string, ModelSettingsView>>
   readonly enabled?: boolean
   readonly pool?: PoolSettingsView
   readonly credential: { readonly state: 'set' | 'unset' | 'unknown' }
@@ -45,7 +47,14 @@ export interface ProviderView {
 
 export interface ProvidersView {
   readonly generation: number
+  readonly contextWindow: number
   readonly providers: readonly ProviderView[]
+}
+
+export interface ModelSettingsView {
+  readonly contextWindow?: number
+  readonly imageInput?: boolean
+  readonly reasoningEfforts?: readonly string[]
 }
 
 // Response of POST /api/v1/providers and PUT /api/v1/providers/{id}: the new generation plus
