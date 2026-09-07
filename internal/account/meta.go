@@ -328,6 +328,7 @@ func (rec metaRecord) account(providerID ProviderID) (Account, error) {
 		Provider: providerID,
 		Priority: rec.Priority,
 		State:    state,
+		Email:    rec.Email,
 		CredGen:  CredentialGeneration(rec.CredGen),
 		Quota:    q,
 	}, nil

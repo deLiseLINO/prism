@@ -788,6 +788,7 @@ func accountView(a account.Account) Account {
 		ID:                   string(a.ID),
 		Provider:             string(a.Provider),
 		State:                stateName(a.State),
+		Email:                a.Email,
 		Priority:             a.Priority,
 		Version:              uint64(a.Version),
 		CredentialGeneration: uint64(a.CredGen),
@@ -806,7 +807,11 @@ func accountView(a account.Account) Account {
 }
 
 func quotaView(q quota.Snapshot) QuotaView {
-	return QuotaView{Used: q.Used, Limit: q.Limit, WindowEnd: q.WindowEnd, Source: sourceName(q.Source)}
+	out := QuotaView{Used: q.Used, Limit: q.Limit, WindowEnd: q.WindowEnd, Source: sourceName(q.Source)}
+	for _, w := range q.Windows {
+		out.Windows = append(out.Windows, QuotaWindowView{Label: w.Label, Used: w.Used, Limit: w.Limit, WindowEnd: w.WindowEnd})
+	}
+	return out
 }
 
 func stateName(s account.State) string {

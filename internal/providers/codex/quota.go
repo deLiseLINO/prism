@@ -71,14 +71,8 @@ func ParseQuotaHeaders(h http.Header) QuotaResult {
 	if !ok {
 		return QuotaResult{Warnings: warnings}
 	}
-	snapshot := quota.Snapshot{
-		Used:   int64(math.Round(governing.percent * 100)),
-		Limit:  newInt64(10000),
-		Source: quota.SourceHeader,
-	}
-	if governing.resetPresent {
-		snapshot.WindowEnd = resetTime(governing.resetAt)
-	}
+	snapshot := snapshotFromReading(governing, quota.SourceHeader)
+	snapshot.Windows = windowsFromReadings(windows)
 	return QuotaResult{Snapshot: snapshot, OK: true, Warnings: warnings}
 }
 

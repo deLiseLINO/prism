@@ -78,6 +78,38 @@ func TestFetchUsageMonthlyPrimaryGoverns(t *testing.T) {
 	}
 }
 
+func TestFetchUsageKeepsAllWindows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"plan_type": "pro",
+			"rate_limit": {
+				"primary_window": {"used_percent": 71, "reset_at": 1800000000, "limit_window_seconds": 18000},
+				"secondary_window": {"used_percent": 12.5, "reset_at": 1800100000, "limit_window_seconds": 604800}
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	setUsagePath(t, server.URL+"/wham/usage")
+
+	result, err := FetchUsage(context.Background(), server.Client(), Credential{AccessToken: "tok"})
+	if err != nil {
+		t.Fatalf("FetchUsage: %v", err)
+	}
+	if len(result.Snapshot.Windows) != 2 {
+		t.Fatalf("windows = %+v, want 2", result.Snapshot.Windows)
+	}
+	weekly, fiveHour := result.Snapshot.Windows[0], result.Snapshot.Windows[1]
+	if fiveHour.Label != "5 hour usage limit" || fiveHour.Used != 7100 {
+		t.Fatalf("5h window = %+v", fiveHour)
+	}
+	if weekly.Label != "Weekly usage limit" || weekly.Used != 1250 {
+		t.Fatalf("weekly window = %+v", weekly)
+	}
+	if !weekly.WindowEnd.Equal(time.Unix(1800100000, 0).UTC()) {
+		t.Fatalf("weekly windowEnd = %v", weekly.WindowEnd)
+	}
+}
+
 func TestFetchUsageRejectsEmptyAndBroken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"plan_type":"free","rate_limit":{}}`))

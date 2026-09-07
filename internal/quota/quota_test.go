@@ -143,7 +143,7 @@ func TestPackageExportsClosed(t *testing.T) {
 		"SourceReport":   3,
 		"SourceProbe":    4,
 	}
-	wantTypes := map[string]bool{"Snapshot": true, "Source": true}
+	wantTypes := map[string]bool{"Snapshot": true, "Source": true, "Window": true}
 
 	seen := map[string]bool{}
 	for _, name := range pkg.Scope().Names() {
@@ -183,6 +183,6 @@ func TestPackageExportsClosed(t *testing.T) {
 		}
 	}
 	if len(seen) != len(wantConsts)+len(wantTypes) {
-		t.Fatalf("exported identifiers %v, want only Snapshot, Source, and the four members", seen)
+		t.Fatalf("exported identifiers %v, want only Snapshot, Window, Source, and the four members", seen)
 	}
 }

@@ -63,6 +63,7 @@ func (s *FileSink) Persist(ctx context.Context, provider account.ProviderID, cre
 		ID:       id,
 		Provider: provider,
 		State:    account.Active,
+		Email:    cred.Email,
 		CredGen:  gen,
 		Version:  1,
 	}, nil
