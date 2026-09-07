@@ -72,6 +72,7 @@ type wireTool struct {
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
 	Format      *wireToolFormat `json:"format,omitempty"`
+	MaxResults  *int            `json:"max_results,omitempty"`
 }
 
 type wireToolFormat struct {
@@ -362,12 +363,16 @@ func toolsFrom(tools []canon.Tool) ([]wireTool, error) {
 			switch {
 			case tt.Grammar != nil:
 				w.Format = &wireToolFormat{Type: "grammar", Syntax: tt.Grammar.Syntax, Definition: tt.Grammar.Definition}
+			case tt.Format == canon.FormatJSON:
+				w.Format = &wireToolFormat{Type: "json"}
 			default:
-				return nil, fmt.Errorf("unsupported custom tool format %d", tt.Format)
+				w.Format = &wireToolFormat{Type: "text"}
 			}
 			out = append(out, w)
 		case canon.LocalShellToolDef:
 			out = append(out, wireTool{Type: "local_shell"})
+		case canon.ToolSearchToolDef:
+			continue
 		default:
 			return nil, fmt.Errorf("unsupported canonical tool %T", t)
 		}

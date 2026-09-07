@@ -1,17 +1,10 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderView } from '@prism/contracts'
-import { Banner, Button, Field, Select, TextInput, Toggle } from './Ui'
+import { Banner, Button, Field, TextInput } from './Ui'
 import { useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
-
-const WIRE_OPTIONS: readonly { readonly value: string; readonly label: string }[] = [
-  { value: 'codex', label: 'codex' },
-  { value: 'antigravity', label: 'antigravity' },
-  { value: 'responses', label: 'responses' },
-  { value: 'messages', label: 'messages' },
-  { value: 'chat', label: 'chat' },
-]
+import { WIRE_OPTIONS, wireLabel } from '../wires'
 
 const BASE_URL_WIRES: readonly string[] = ['responses', 'messages', 'chat']
 
@@ -24,13 +17,10 @@ export interface ProviderModalProps {
 
 export function ProviderModal({ existing, generation, onCancel, onSaved }: ProviderModalProps): JSX.Element {
   const [id, setId] = useState(existing?.id ?? '')
-  const [wire, setWire] = useState<string>(existing?.wire ?? 'codex')
+  const [wire, setWire] = useState<string>(existing?.wire ?? 'responses')
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? '')
-  const [models, setModels] = useState((existing?.models ?? []).join(', '))
-  const [enabled, setEnabled] = useState<boolean>(existing?.enabled ?? true)
-  const [credential, setCredential] = useState('')
-  const [credentialSet, setCredentialSet] = useState<boolean>(existing?.credential.state === 'set')
-  const [apiKeyRef, setApiKeyRef] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeySet, setApiKeySet] = useState<boolean>(existing?.credential.state === 'set')
   const task = useTask()
 
   useEffect(() => {
@@ -48,35 +38,28 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
     (existing === null || (existing.baseURL ?? '') === '')
   const invalid = idMissing || baseURLMissing
 
-  function splitList(value: string): string[] {
-    return value
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0)
-  }
-
   async function save(): Promise<void> {
     if (invalid) return
     const trimmedBase = baseURL.trim()
-    const trimmedKeyRef = apiKeyRef.trim()
+    const trimmedKey = apiKey.trim()
     const write: ProviderWrite = {
       id: id.trim(),
       wire,
       ...(trimmedBase === '' ? {} : { baseURL: trimmedBase }),
-      ...(trimmedKeyRef === '' ? {} : { apiKeyRef: trimmedKeyRef }),
-      models: splitList(models),
+      models: existing?.models ?? [],
       disabledModels: existing?.disabledModels ?? [],
       ...(existing?.syncedModels === undefined || existing.syncedModels === null ? {} : { syncedModels: [...existing.syncedModels] }),
-      enabled,
       ...(existing?.pool === undefined || existing.pool === null ? {} : { pool: existing.pool }),
       ...(existing?.modelSettings === undefined ? {} : { modelSettings: { ...existing.modelSettings } }),
-      ...(credential === '' ? {} : { credential }),
+      ...(trimmedKey === '' ? {} : { credential: trimmedKey }),
       expectedGeneration: generation,
     }
     const ok = await task.run(() =>
       existing === null ? api.createProvider(write) : api.replaceProvider(existing.id, write),
     )
     if (ok === undefined) return
+    setApiKeySet(trimmedKey !== '' || apiKeySet)
+    setApiKey('')
     onSaved(id.trim())
   }
 
@@ -101,7 +84,7 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
           <div>
             <div className="msm-title num">{existing === null ? 'New provider' : existing.id}</div>
             <div className="msm-sub">
-              <span className="badge badge--muted">{existing === null ? wire : existing.wire}</span>
+              <span className="badge badge--muted num">{wireLabel(existing === null ? wire : existing.wire)}</span>
               <span className="msm-hint">{existing === null ? 'Create' : 'Edit provider'}</span>
             </div>
           </div>
@@ -112,74 +95,60 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
         <div className="msm-body">
           <section className="msm-sec">
             <div className="msm-sec-label">Identity</div>
-            <div className="pmod-grid">
-              <Field label="ID" htmlFor="prov-id" hint="Unique key. Required.">
-                <TextInput id="prov-id" value={id} onChange={setId} disabled={existing !== null} />
-                {idMissing ? <p className="meta">ID is required.</p> : null}
-              </Field>
-              <Field label="Wire" htmlFor="prov-wire">
-                <Select<string>
-                  id="prov-wire"
-                  value={wire}
-                  onChange={setWire}
-                  options={[...WIRE_OPTIONS]}
-                  disabled={existing !== null}
-                />
-              </Field>
+            <Field label="ID" htmlFor="prov-id">
+              <TextInput id="prov-id" value={id} onChange={setId} disabled={existing !== null} />
+            </Field>
+            <div className="pmod-wire">
+              <span className="pmod-wire-label">Wire</span>
+              {existing !== null && WIRE_OPTIONS.every((w) => w.value !== wire) ? (
+                <span className="badge badge--muted num">{wireLabel(existing.wire)}</span>
+              ) : (
+                <div className="msm-seg" role="group" aria-label="Provider wire">
+                  {WIRE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className="msm-seg-btn"
+                      aria-pressed={wire === option.value}
+                      onClick={() => setWire(option.value)}
+                      disabled={existing !== null}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <select id="prov-wire" className="sr-only" value={wire} onChange={(e) => setWire(e.target.value)} tabIndex={-1} aria-hidden="true">
+                {WIRE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
             </div>
             <Field
               label="Base URL"
               htmlFor="prov-base"
-              hint={existing === null ? 'Required for responses, messages, and chat wires.' : 'Empty keeps the current value.'}
+              hint={existing === null ? undefined : 'Empty keeps the current value.'}
             >
               <TextInput id="prov-base" value={baseURL} onChange={setBaseURL} />
-              {baseURLMissing ? <p className="meta">Base URL is required for responses, messages, and chat wires.</p> : null}
-            </Field>
-          </section>
-          <section className="msm-sec">
-            <div className="msm-sec-label">
-              Models
-              <span className="msm-sec-meta">
-                <span className="msm-k">Count</span>
-                <span className="msm-v num">{splitList(models).length}</span>
-              </span>
-            </div>
-            <Field label="Model list" htmlFor="prov-models" hint="Comma-separated. Outbound routing keys; inbound alias targets use these.">
-              <TextInput id="prov-models" value={models} onChange={setModels} />
             </Field>
           </section>
           <section className="msm-sec">
             <div className="msm-sec-label">Credential</div>
             <Field
-              label="Credential"
+              label="API key"
               htmlFor="prov-cred"
-              hint={`Paste once; the field is cleared after submit. Currently ${credentialSet ? 'set' : 'unset'}.`}
+              hint={apiKeySet ? 'Already set. Empty keeps it.' : undefined}
             >
               <TextInput
                 id="prov-cred"
                 type="password"
-                value={credential}
-                onChange={setCredential}
+                value={apiKey}
+                onChange={setApiKey}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder={credentialSet ? '••••••• (set)' : 'paste credential'}
+                placeholder={apiKeySet ? 'paste new key' : 'paste key'}
               />
             </Field>
-            <Field label="Credential reference" htmlFor="prov-keyref" hint="Optional keyring identifier.">
-              <TextInput id="prov-keyref" value={apiKeyRef} onChange={setApiKeyRef} autoComplete="off" />
-            </Field>
-          </section>
-          <section className="msm-sec">
-            <div className="msm-sec-label">State</div>
-            <div className="msm-row">
-              <span>
-                <span className="msm-row-name">Provider enabled</span>
-                <span className="msm-row-desc">Disabled providers are skipped by routing</span>
-              </span>
-              <span className="msm-row-right">
-                <Toggle checked={enabled} onChange={setEnabled} label="Provider enabled" />
-              </span>
-            </div>
           </section>
         </div>
         <footer className="msm-foot">
@@ -206,4 +175,3 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
     document.body,
   )
 }
-

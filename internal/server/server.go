@@ -1,9 +1,11 @@
 package server
 
 import (
+	"compress/gzip"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -17,6 +19,7 @@ import (
 	"prism/internal/ingress/responses"
 	"prism/internal/provider"
 	"prism/internal/routing"
+	"github.com/klauspost/compress/zstd"
 )
 
 type Clock interface {
@@ -138,11 +141,62 @@ func (s *Server) admit(next http.Handler) http.Handler {
 			}
 		}
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+			decoded, err := decodeBody(w, r)
+			if err != nil {
+				return
+			}
+			r.Body = decoded
 		}
 		next.ServeHTTP(w, r)
 	})
 }
+
+// decodeBody unwraps Content-Encoding (codex CLI ships zstd-compressed
+// request bodies) and applies the size cap to the decoded stream, so a
+// compressed bomb cannot bypass the limit.
+func decodeBody(w http.ResponseWriter, r *http.Request) (io.ReadCloser, error) {
+	capped := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))) {
+	case "", "identity":
+		return capped, nil
+	case "zstd":
+		decoder, err := zstd.NewReader(capped)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorEnvelope{
+				Error: errorObject{Code: "invalid_json", Message: "zstd body: " + err.Error()},
+			})
+			return nil, err
+		}
+		return &decodedBody{Reader: http.MaxBytesReader(w, decoder.IOReadCloser(), maxRequestBodyBytes), closer: decoder.Close}, nil
+	case "gzip":
+		reader, err := gzip.NewReader(capped)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorEnvelope{
+				Error: errorObject{Code: "invalid_json", Message: "gzip body: " + err.Error()},
+			})
+			return nil, err
+		}
+		return &decodedBody{Reader: http.MaxBytesReader(w, reader, maxRequestBodyBytes), closer: func() { _ = reader.Close() }}, nil
+	default:
+		writeJSON(w, http.StatusUnsupportedMediaType, errorEnvelope{
+			Error: errorObject{Code: "unsupported_media_type", Message: "unsupported Content-Encoding: " + r.Header.Get("Content-Encoding")},
+		})
+		return nil, fmt.Errorf("unsupported content encoding")
+	}
+}
+
+type decodedBody struct {
+	io.Reader
+	closer func()
+}
+
+func (b *decodedBody) Close() error {
+	if b.closer != nil {
+		b.closer()
+	}
+	return nil
+}
+
 
 func loopback(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)

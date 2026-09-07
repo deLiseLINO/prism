@@ -209,19 +209,11 @@ func TestUnsupportedCanonicalContentFailsPreDispatch(t *testing.T) {
 		name string
 		req  canon.Request
 	}{
-		{"reasoning item", canon.Request{Model: "m", Input: []canon.Item{canon.ReasoningItem{ID: "rs", Content: "thought"}}}},
-		{"custom tool call", canon.Request{Model: "m", Input: []canon.Item{canon.CustomToolCall{ID: "c", CallID: "call", Name: "t", Input: "x"}}}},
-		{"custom tool output", canon.Request{Model: "m", Input: []canon.Item{canon.CustomToolOutput{CallID: "call", Output: "x"}}}},
-		{"local shell call", canon.Request{Model: "m", Input: []canon.Item{canon.LocalShellCall{ID: "l", CallID: "call", Command: "ls"}}}},
-		{"tool search call", canon.Request{Model: "m", Input: []canon.Item{canon.ToolSearchCall{ID: "s", CallID: "call", Query: "q"}}}},
-		{"compaction marker", canon.Request{Model: "m", Input: []canon.Item{canon.CompactionMarker{ID: "c", Kind: canon.CompactionAuto}}}},
 		{"image in assistant message", canon.Request{Model: "m", Input: []canon.Item{canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.ImageContent{MIMEType: "image/png", Data: []byte{1}}}}}}},
 		{"image in instructions", canon.Request{Model: "m", Instructions: []canon.Content{canon.ImageContent{MIMEType: "image/png", Data: []byte{1}}}}},
 		{"image in tool result", canon.Request{Model: "m", Input: []canon.Item{canon.FunctionOutput{CallID: "call", Output: []canon.Content{canon.ImageContent{MIMEType: "image/png", Data: []byte{1}}}}}}},
 		{"function call without call id", canon.Request{Model: "m", Input: []canon.Item{canon.FunctionCall{Name: "f"}}}},
 		{"tool result without call id", canon.Request{Model: "m", Input: []canon.Item{canon.FunctionOutput{Output: []canon.Content{canon.TextContent{Text: "x"}}}}}},
-		{"custom tool definition", canon.Request{Model: "m", Tools: []canon.Tool{canon.CustomToolDef{Name: "c", Format: canon.FormatText}}}},
-		{"local shell tool definition", canon.Request{Model: "m", Tools: []canon.Tool{canon.LocalShellToolDef{}}}},
 		{"allowed tool choice", canon.Request{Model: "m", ToolChoice: canon.ToolAllowed{Mode: canon.AllowedAuto, Tools: []canon.ToolName{"f"}}}},
 		{"unknown text format", canon.Request{Model: "m", Text: canon.TextOutput{Format: &canon.TextFormat{Type: "pterodactyl"}}}},
 	}
@@ -254,6 +246,127 @@ func TestUnsupportedCanonicalContentFailsPreDispatch(t *testing.T) {
 	if requests != 0 {
 		t.Fatalf("unsupported content dispatched %d upstream requests", requests)
 	}
+}
+
+func TestChatWireDegradesNonFunctionTools(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		raw, _ := io.ReadAll(req.Body)
+		body = string(raw)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	req := canon.Request{
+		Model:  "m",
+		Stream: true,
+		Input:  []canon.Item{canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}}},
+		Tools: []canon.Tool{
+			canon.FunctionTool{Name: "get_weather", Description: "weather"},
+			canon.CustomToolDef{Name: "apply_patch", Description: "patch"},
+			canon.LocalShellToolDef{},
+			canon.ToolSearchToolDef{Limit: 5},
+		},
+	}
+	r := New(staticKey, Options{})
+	if err := r.Run(context.Background(), provider.RunRequest{Request: req, Target: testTarget(srv.URL)}, &collector{}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var decoded struct {
+		Tools []struct {
+			Type     string `json:"type"`
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("decode body: %v\n%s", err, body)
+	}
+	names := make([]string, 0, len(decoded.Tools))
+	for _, tool := range decoded.Tools {
+		if tool.Type != "function" {
+			t.Fatalf("tool type = %q, want function:\n%s", tool.Type, body)
+		}
+		names = append(names, tool.Function.Name)
+	}
+	want := []string{"get_weather", "apply_patch"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("tool names = %v, want %v:\n%s", names, want, body)
+	}
+}
+
+func TestChatWireToleratesSessionHistoryItems(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		raw, _ := io.ReadAll(req.Body)
+		body = string(raw)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	req := canon.Request{
+		Model:  "m",
+		Stream: true,
+		Input: []canon.Item{
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+			canon.ReasoningItem{ID: "rs", Content: "thinking about it"},
+			canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "let me patch"}}},
+			canon.CustomToolCall{ID: "c1", CallID: "call_1", Name: "apply_patch", Input: "*** Begin Patch"},
+			canon.CustomToolOutput{CallID: "call_1", Output: "done"},
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "thanks"}}},
+		},
+	}
+	r := New(staticKey, Options{})
+	if err := r.Run(context.Background(), provider.RunRequest{Request: req, Target: testTarget(srv.URL)}, &collector{}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var decoded struct {
+		Messages []struct {
+			Role       string         `json:"role"`
+			Content    string         `json:"content"`
+			ToolCallID string         `json:"tool_call_id"`
+			ToolCalls  []wireToolCall `json:"tool_calls"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("decode body: %v\n%s", err, body)
+	}
+	if strings.Contains(body, "thinking about it") {
+		t.Fatalf("reasoning text leaked into chat history:\n%s", body)
+	}
+	var callNames []string
+	for _, m := range decoded.Messages {
+		for _, c := range m.ToolCalls {
+			callNames = append(callNames, c.Function.Name)
+		}
+	}
+	if strings.Join(callNames, ",") != "apply_patch" {
+		t.Fatalf("tool calls = %v, want apply_patch:\n%s", callNames, body)
+	}
+	toolMsgs := 0
+	for _, m := range decoded.Messages {
+		if m.Role == "tool" {
+			toolMsgs++
+			if m.ToolCallID != "call_1" || m.Content != "done" {
+				t.Fatalf("tool message = %+v", m)
+			}
+		}
+	}
+	if toolMsgs != 1 {
+		t.Fatalf("tool messages = %d", toolMsgs)
+	}
+}
+
+type wireToolCall struct {
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 func TestStreamToCanonEvents(t *testing.T) {
@@ -375,6 +488,39 @@ func TestStreamUsageInFinishChunk(t *testing.T) {
 	}
 	finish := events.All()[len(events.All())-1].(canon.TurnFinished)
 	if finish.Usage.TotalTokens != 3 {
+		t.Fatalf("usage = %+v", finish.Usage)
+	}
+}
+
+func TestStreamDuplicateFinishFramesTolerated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{"reasoning_content":null},"finish_reason":"stop","logprobs":null,"matched_stop":154827}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":7514,"completion_tokens":37,"total_tokens":7551}}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":7514,"completion_tokens":37,"total_tokens":7551}}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	events := &collector{}
+	r := New(staticKey, Options{})
+	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events)
+	if err != nil {
+		t.Fatalf("run = %v", err)
+	}
+	if events.TerminalCount() != 1 {
+		t.Fatalf("terminals = %d", events.TerminalCount())
+	}
+	var finish canon.TurnFinished
+	for _, ev := range events.All() {
+		if f, ok := ev.(canon.TurnFinished); ok {
+			finish = f
+		}
+	}
+	if finish.Status != canon.Completed() {
+		t.Fatalf("terminal = %#v", finish)
+	}
+	if finish.Usage.TotalTokens != 7551 {
 		t.Fatalf("usage = %+v", finish.Usage)
 	}
 }

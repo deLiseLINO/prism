@@ -366,5 +366,43 @@ func TestLocalShellToolOmitsName(t *testing.T) {
 	}
 }
 
+func TestCustomToolFormatsAndToolSearchRender(t *testing.T) {
+	req := canon.Request{
+		Model:  "gpt-5.6-luna",
+		Stream: true,
+		Input: []canon.Item{
+			canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+		},
+		Tools: []canon.Tool{
+			canon.CustomToolDef{Name: "apply_patch", Grammar: &canon.ToolGrammar{Syntax: "lark", Definition: "start: A"}},
+			canon.CustomToolDef{Name: "freeform", Format: canon.FormatText},
+			canon.ToolSearchToolDef{Limit: 5},
+		},
+	}
+	result, err := BuildRequestBody(req)
+	if err != nil {
+		t.Fatalf("BuildRequestBody: %v", err)
+	}
+	var raw struct {
+		Tools []struct {
+			Type   string         `json:"type"`
+			Name   string         `json:"name"`
+			Format map[string]any `json:"format"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(result.Body, &raw); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if len(raw.Tools) != 2 {
+		t.Fatalf("tools = %d, want 2 (tool_search dropped: upstream rejects it without deferred tools)", len(raw.Tools))
+	}
+	if raw.Tools[0].Format["type"] != "grammar" || raw.Tools[0].Format["syntax"] != "lark" {
+		t.Fatalf("grammar tool = %+v", raw.Tools[0])
+	}
+	if raw.Tools[1].Format["type"] != "text" {
+		t.Fatalf("text tool = %+v", raw.Tools[1])
+	}
+}
+
 func ptrFloat(v float64) *float64 { return &v }
 func ptrBool(v bool) *bool        { return &v }

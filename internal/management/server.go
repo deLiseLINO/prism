@@ -211,7 +211,11 @@ func (s *Server) providersList(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, v)
 	}
-	writeJSON(w, http.StatusOK, ProvidersResponse{Generation: snap.Generation, ContextWindow: snap.Config.ContextWindow, Providers: out})
+	globalCtx := snap.Config.ContextWindow
+	if globalCtx <= 0 {
+		globalCtx = config.DefaultContextWindow
+	}
+	writeJSON(w, http.StatusOK, ProvidersResponse{Generation: snap.Generation, ContextWindow: globalCtx, Providers: out})
 }
 
 func (s *Server) providersCreate(w http.ResponseWriter, r *http.Request) {
