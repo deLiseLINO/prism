@@ -157,12 +157,13 @@ type QuotaSource interface {
 }
 
 type CompactRequest struct {
-	Target Target
-	Lease  account.Lease
-	Facts  execution.Facts
-	Input  []canon.Item
-	Kept   []canon.ItemID
-	Budget int
+	Target       Target
+	Lease        account.Lease
+	Facts        execution.Facts
+	Instructions []canon.Content
+	Input        []canon.Item
+	Kept         []canon.ItemID
+	Budget       int
 }
 
 type CompactResult struct {

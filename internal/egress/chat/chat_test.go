@@ -285,6 +285,7 @@ func TestFinishReasonMapping(t *testing.T) {
 	}{
 		{"completed", canon.TurnFinished{Status: canon.Completed()}, "stop"},
 		{"max_tokens", canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens)}, "length"},
+		{"content_filter", canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteContentFilter)}, "content_filter"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -306,18 +307,38 @@ func TestFinishReasonMapping(t *testing.T) {
 			}
 		})
 	}
-	t.Run("unmapped_incomplete", func(t *testing.T) {
+	t.Run("unmapped_incomplete_fails_stream", func(t *testing.T) {
 		var buf bytes.Buffer
 		c := New(&buf, true)
 		if err := c.Begin(header()); err != nil {
 			t.Fatalf("begin: %v", err)
 		}
-		if err := c.Frame(canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteContentFilter)}); err != nil {
+		if err := c.Frame(canon.TextDelta{ItemID: "m1", Text: "partial"}); err != nil {
+			t.Fatalf("frame text: %v", err)
+		}
+		if err := c.Frame(canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteUpstreamStall)}); err != nil {
 			t.Fatalf("frame terminal: %v", err)
 		}
+		if err := c.Flush(); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
 		fs := frames(t, &buf)
-		if got := firstChoice(t, decode(t, fs[1]))["finish_reason"]; got != "stop" {
-			t.Fatalf("finish_reason = %v, want stop", got)
+		if fs[len(fs)-1] == "[DONE]" {
+			t.Fatalf("failed stream must not end with [DONE], got %v", fs)
+		}
+		for _, raw := range fs {
+			if ch, ok := decode(t, raw)["choices"]; ok {
+				if firstChoice(t, map[string]any{"choices": ch})["finish_reason"] != nil {
+					t.Fatalf("failed stream must not carry a finish chunk: %s", raw)
+				}
+			}
+		}
+		last := decode(t, fs[len(fs)-1])["error"].(map[string]any)
+		if last["code"] != "upstream_transport" || last["type"] != "api_error" {
+			t.Fatalf("error envelope = %+v", last)
+		}
+		if msg, _ := last["message"].(string); !strings.Contains(msg, "upstream_stall") {
+			t.Fatalf("error message = %v, want upstream_stall named", last["message"])
 		}
 		if !hasWarning(c, WarnFinishUnmapped) {
 			t.Fatalf("warnings = %+v, want %s", c.Warnings(), WarnFinishUnmapped)
@@ -338,12 +359,18 @@ func TestTurnFailedErrorEnvelope(t *testing.T) {
 		t.Fatalf("flush: %v", err)
 	}
 	fs := frames(t, &buf)
-	if len(fs) < 2 || fs[len(fs)-1] != "[DONE]" {
-		t.Fatalf("stream must end with an error frame and [DONE], got %v", fs)
+	if fs[len(fs)-1] == "[DONE]" || fs[len(fs)-1] == "[DONE]\n" {
+		t.Fatalf("failed stream must end with the error frame, not [DONE], got %v", fs)
 	}
-	body := decode(t, fs[1])["error"].(map[string]any)
+	if strings.Contains(buf.String(), "[DONE]") {
+		t.Fatalf("failed stream must not emit [DONE]: %q", buf.String())
+	}
+	body := decode(t, fs[len(fs)-1])["error"].(map[string]any)
 	if body["message"] != "boom" || body["type"] != "rate_limit_error" || body["code"] != "rate_limited" {
 		t.Fatalf("error envelope = %+v", body)
+	}
+	if _, ok := body["param"]; !ok {
+		t.Fatalf("error envelope must carry param: %+v", body)
 	}
 }
 
@@ -505,4 +532,74 @@ func TestUnrepresentableItemsWarn(t *testing.T) {
 	if len(frames(t, &buf)) != 1 {
 		t.Fatal("unrepresentable item must not emit a frame")
 	}
+}
+
+type flushRecorder struct {
+	bytes.Buffer
+	flushes int
+}
+
+func (f *flushRecorder) Flush() { f.flushes++ }
+
+func TestPerFrameFlush(t *testing.T) {
+	w := &flushRecorder{}
+	c := New(w, true)
+	if err := c.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := c.Frame(canon.TextDelta{ItemID: "m1", Text: "Hello"}); err != nil {
+		t.Fatalf("frame text: %v", err)
+	}
+	if err := c.Frame(canon.TurnFinished{Status: canon.Completed()}); err != nil {
+		t.Fatalf("frame terminal: %v", err)
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	fs := frames(t, &w.Buffer)
+	if len(fs) != 4 {
+		t.Fatalf("frames = %d, want 4", len(fs))
+	}
+	if w.flushes != len(fs) {
+		t.Fatalf("flushes = %d, want one per frame (%d)", w.flushes, len(fs))
+	}
+}
+
+func TestToolCallWithoutCallIDMintsWireID(t *testing.T) {
+	t.Run("stream", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := New(&buf, true)
+		if err := c.Begin(header()); err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		if err := c.Frame(canon.ItemStarted{Item: canon.FunctionCall{ID: "i1", Name: "get_weather"}}); err != nil {
+			t.Fatalf("frame start: %v", err)
+		}
+		fs := frames(t, &buf)
+		tc := firstChoice(t, decode(t, fs[1]))["delta"].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+		if id, _ := tc["id"].(string); id == "" {
+			t.Fatalf("wire tool_calls.id must not be empty: %+v", tc)
+		}
+	})
+	t.Run("non_stream", func(t *testing.T) {
+		var buf bytes.Buffer
+		c := New(&buf, false)
+		if err := c.Begin(header()); err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		if err := c.Frame(canon.ItemStarted{Item: canon.FunctionCall{ID: "i1", Name: "get_weather"}}); err != nil {
+			t.Fatalf("frame start: %v", err)
+		}
+		if err := c.Frame(canon.ItemFinished{Item: canon.FunctionCall{ID: "i1", Name: "get_weather", Arguments: []byte(`{}`)}}); err != nil {
+			t.Fatalf("frame finish: %v", err)
+		}
+		if err := c.Frame(canon.TurnFinished{Status: canon.Completed()}); err != nil {
+			t.Fatalf("frame terminal: %v", err)
+		}
+		msg := firstChoice(t, decode(t, buf.String()))["message"].(map[string]any)
+		tc := msg["tool_calls"].([]any)[0].(map[string]any)
+		if id, _ := tc["id"].(string); id == "" {
+			t.Fatalf("wire tool_calls.id must not be empty: %+v", tc)
+		}
+	})
 }

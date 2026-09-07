@@ -240,6 +240,29 @@ func TestSamplingAndToolsMapping(t *testing.T) {
 	}
 }
 
+func TestMaxCompletionTokensPrecedence(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"completion only", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"max_completion_tokens":4096}`, 4096},
+		{"completion wins over max_tokens", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"max_completion_tokens":4096,"max_tokens":512}`, 4096},
+		{"max_tokens fallback", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"max_tokens":512}`, 512},
+		{"non-numeric completion falls back", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"max_completion_tokens":"4096","max_tokens":256}`, 256},
+		{"non-numeric both skipped", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"max_completion_tokens":true,"max_tokens":null}`, 0},
+		{"absent", `{"model":"a/b","messages":[{"role":"user","content":"x"}]}`, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := mustParse(t, tt.body)
+			if req.MaxOutputTokens != tt.want {
+				t.Fatalf("MaxOutputTokens = %d, want %d", req.MaxOutputTokens, tt.want)
+			}
+		})
+	}
+}
+
 func TestToolChoiceMapping(t *testing.T) {
 	tests := []struct {
 		name       string

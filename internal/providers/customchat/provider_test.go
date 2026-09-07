@@ -1,6 +1,7 @@
 package customchat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,12 +9,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"prism/internal/account"
 	"prism/internal/canon"
+	egresschat "prism/internal/egress/chat"
+	ingresschat "prism/internal/ingress/chat"
 	"prism/internal/provider"
 	"prism/internal/stream"
 )
@@ -1017,5 +1021,168 @@ func TestCatalog(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].ID != "gpt-5.2" {
 		t.Fatalf("models = %+v", models)
+	}
+}
+
+func TestStreamToolCallWithoutIDMintsCallID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"id":"chatcmpl-mint","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"chatcmpl-mint","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"sf\"}"}}]}}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"chatcmpl-mint","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	events := &collector{}
+	r := New(staticKey, Options{})
+	if err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	started := canon.FunctionCall{}
+	finished := canon.FunctionCall{}
+	for _, ev := range events.All() {
+		switch e := ev.(type) {
+		case canon.ItemStarted:
+			if fc, ok := e.Item.(canon.FunctionCall); ok {
+				started = fc
+			}
+		case canon.ItemFinished:
+			if fc, ok := e.Item.(canon.FunctionCall); ok {
+				finished = fc
+			}
+		}
+	}
+	if started.CallID == "" || finished.CallID == "" {
+		t.Fatalf("id-less upstream tool call must mint a call id: started=%+v finished=%+v", started, finished)
+	}
+	if started.CallID != finished.CallID {
+		t.Fatalf("call id changed mid-turn: %q vs %q", started.CallID, finished.CallID)
+	}
+	if finished.Name != "get_weather" || string(finished.Arguments) != `{"city":"sf"}` {
+		t.Fatalf("minted tool call = %+v", finished)
+	}
+}
+
+func TestAggregateToolCallWithoutIDMintsCallID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		fmt.Fprint(w, `{"id":"c","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"type":"function","function":{"name":"get_weather","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+	}))
+	defer srv.Close()
+	events := &collector{}
+	r := New(staticKey, Options{})
+	if err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(false), Target: testTarget(srv.URL)}, events); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, ev := range events.All() {
+		if fin, ok := ev.(canon.ItemFinished); ok {
+			if fc, ok := fin.Item.(canon.FunctionCall); ok {
+				if fc.CallID == "" {
+					t.Fatalf("id-less aggregate tool call must mint a call id: %+v", fc)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("no FunctionCall item in events")
+}
+
+func TestToolCallIDRoundTrip(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"id":"chatcmpl-rt","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"chatcmpl-rt","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	events := &collector{}
+	r := New(staticKey, Options{})
+	if err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var buf bytes.Buffer
+	eg := egresschat.New(&buf, true)
+	if err := eg.Begin(egresschat.ResponseHeader{ID: "resp_rt", Model: "gpt-5.2", CreatedAt: time.Unix(1700000000, 0)}); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	for _, ev := range events.All() {
+		if err := eg.Frame(ev); err != nil {
+			t.Fatalf("frame %T: %v", ev, ev)
+		}
+	}
+	if err := eg.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	wireID := ""
+	for _, part := range strings.Split(buf.String(), "\n\n") {
+		if !strings.HasPrefix(strings.TrimSpace(part), "data: ") {
+			continue
+		}
+		if strings.TrimSpace(part) == "data: [DONE]" {
+			continue
+		}
+		var frame struct {
+			Choices []struct {
+				Delta struct {
+					ToolCalls []struct {
+						ID string `json:"id"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(part), "data: ")), &frame); err != nil {
+			t.Fatalf("decode frame %q: %v", part, err)
+		}
+		if len(frame.Choices) > 0 && len(frame.Choices[0].Delta.ToolCalls) > 0 && frame.Choices[0].Delta.ToolCalls[0].ID != "" {
+			wireID = frame.Choices[0].Delta.ToolCalls[0].ID
+		}
+	}
+	if wireID == "" {
+		t.Fatalf("wire tool_calls.id must not be empty: %q", buf.String())
+	}
+
+	args, err := json.Marshal(map[string]string{"city": "sf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	argsString, err := json.Marshal(string(args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextBody := fmt.Sprintf(`{"model":"a/b","messages":[`+
+		`{"role":"user","content":"weather?"},`+
+		`{"role":"assistant","content":null,"tool_calls":[{"id":%q,"type":"function","function":{"name":"get_weather","arguments":%s}}]},`+
+		`{"role":"tool","tool_call_id":%q,"content":"sunny"}]}`, wireID, argsString, wireID)
+	hr, err := http.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(nextBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _, err := ingresschat.Ingress{}.Parse(context.Background(), hr)
+	if err != nil {
+		t.Fatalf("next turn parse: %v", err)
+	}
+	var call canon.FunctionCall
+	var output canon.FunctionOutput
+	for _, item := range parsed.Input {
+		switch it := item.(type) {
+		case canon.FunctionCall:
+			call = it
+		case canon.FunctionOutput:
+			output = it
+		}
+	}
+	if call.CallID == "" || call.CallID != canon.CallID(wireID) {
+		t.Fatalf("next-turn call id = %q, want wire id %q", call.CallID, wireID)
+	}
+	if output.CallID == "" || output.CallID != canon.CallID(wireID) {
+		t.Fatalf("next-turn tool_call_id = %q, want wire id %q", output.CallID, wireID)
+	}
+
+	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", parsed)
+	if err != nil {
+		t.Fatalf("buildUpstream: %v", err)
+	}
+	if !strings.Contains(string(up.Body), `"id":`+strconv.Quote(wireID)) || !strings.Contains(string(up.Body), `"tool_call_id":`+strconv.Quote(wireID)) {
+		t.Fatalf("upstream next-turn body lost the pairing id %q: %s", wireID, up.Body)
 	}
 }

@@ -11,7 +11,8 @@ const piPrismApi = "openai-completions"
 
 // RenderPiLeaf renders the `providers.prism` member of pi's models.json:
 // baseUrl/api/apiKey plus the model list with the input modalities pi's
-// validator requires.
+// validator requires, the thinking-level map its effort picker reads, and
+// token budgets clamped to a known context window.
 func RenderPiLeaf(port int, models []Model, leafIndent int) string {
 	pad := strings.Repeat(" ", leafIndent)
 	inner := strings.Repeat(" ", leafIndent+2)
@@ -47,9 +48,32 @@ func RenderPiLeaf(port int, models []Model, leafIndent int) string {
 			}
 			lines[len(lines)-1] = strings.TrimSuffix(lines[len(lines)-1], ",")
 			lines = append(lines, field+`]`)
+			efforts := effortsFor(model, chatEffortVocabulary)
+			if len(efforts) > 0 {
+				lines[len(lines)-1] += ","
+				lines = append(lines,
+					field+`"reasoning": true,`,
+					field+`"thinkingLevelMap": {`,
+				)
+				for _, level := range piThinkingLevels {
+					value := "null"
+					if containsString(efforts, level) {
+						value = jsonString(level)
+					}
+					sep := ","
+					if level == piThinkingLevels[len(piThinkingLevels)-1] {
+						sep = ""
+					}
+					lines = append(lines, field+`  "`+level+`": `+value+sep)
+				}
+				lines = append(lines, field+`}`)
+			}
 			if model.ContextWindow > 0 {
 				lines[len(lines)-1] += ","
-				lines = append(lines, field+`"contextWindow": `+strconv.Itoa(model.ContextWindow))
+				lines = append(lines,
+					field+`"contextWindow": `+strconv.Itoa(model.ContextWindow)+`,`,
+					field+`"maxTokens": `+strconv.Itoa(maxTokensFor(model.ContextWindow)),
+				)
 			}
 			lines = append(lines, item+`}`+comma)
 		}
@@ -106,15 +130,6 @@ type PiIntegration struct {
 	home       string
 }
 
-func (p *PiIntegration) currentModels() []Model {
-	if p.modelsSrc != nil {
-		if models := p.modelsSrc(); len(models) > 0 {
-			return models
-		}
-	}
-	return p.models
-}
-
 func (p *PiIntegration) paths() (agentDir string, configPath string, err error) {
 	agentDir = p.home
 	if p.configPath != "" {
@@ -142,7 +157,11 @@ func (p *PiIntegration) Apply() ApplyResult {
 	if err != nil {
 		return ApplyResult{OK: false, ID: p.id, Reason: failureReason("pi apply", err)}
 	}
-	outcome, err := ApplyConfigTransform(configPath, piTransform(p.port, p.currentModels()), false)
+	models, refusal := resolveModels(p.models, p.modelsSrc, p.id)
+	if refusal != "" {
+		return ApplyResult{OK: false, ID: p.id, Reason: refusal}
+	}
+	outcome, err := ApplyConfigTransform(configPath, piTransform(p.port, models), false)
 	if err != nil {
 		return ToApplyResult(p.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi apply", err)})
 	}

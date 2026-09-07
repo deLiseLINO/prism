@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +49,7 @@ func TestResponsesRouteHappyPath(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"hi"}`)
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":true,"input":"hi"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -93,7 +94,7 @@ func TestResponsesRouteToolCallRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"weather?"}`)
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":true,"input":"weather?"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -309,7 +310,7 @@ func TestPreCommitFailoverInvisible(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"hi"}`)
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":true,"input":"hi"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -344,7 +345,7 @@ func TestPostCommitFailureSurfacesTerminal(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"hi"}`)
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":true,"input":"hi"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -382,7 +383,7 @@ func TestStallWatchdogWithFakeClock(t *testing.T) {
 	})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
-	resp, err := http.Post(ts.URL+"/v1/responses", "application/json", strings.NewReader(`{"model":"test-model","input":"hi"}`))
+	resp, err := http.Post(ts.URL+"/v1/responses", "application/json", strings.NewReader(`{"model":"test-model","stream":true,"input":"hi"}`))
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -445,7 +446,7 @@ func TestIncompleteEOF(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"hi"}`)
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":true,"input":"hi"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -455,5 +456,121 @@ func TestIncompleteEOF(t *testing.T) {
 	}
 	if !strings.Contains(body, "data: [DONE]") {
 		t.Fatalf("[DONE] missing:\n%s", body)
+	}
+}
+
+func TestResponsesRouteNonStreamJSON(t *testing.T) {
+	runner := &fakeRunner{scripts: []fakeScript{{
+		events: []canon.Event{
+			canon.ItemStarted{Item: messageAssistant("m1", "Hello world")},
+			canon.TextDelta{ItemID: "m1", Text: "Hello world"},
+			canon.ItemFinished{Item: messageAssistant("m1", "Hello world")},
+			canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}},
+		},
+	}}}
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
+		if err := reg.Register("p1", runner); err != nil {
+			t.Fatal(err)
+		}
+	})
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":false,"input":"hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("content type = %q", ct)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("body is not one JSON response object: %v\n%s", err, rec.Body.String())
+	}
+	if resp["object"] != "response" || resp["status"] != "completed" || resp["model"] != "test-model" {
+		t.Fatalf("response envelope = %v", resp)
+	}
+	if id, _ := resp["id"].(string); id == "" {
+		t.Fatalf("response id missing: %v", resp["id"])
+	}
+	output, ok := resp["output"].([]any)
+	if !ok || len(output) != 1 {
+		t.Fatalf("output = %v", resp["output"])
+	}
+	item := output[0].(map[string]any)
+	if item["type"] != "message" {
+		t.Fatalf("output item = %v", item)
+	}
+	if text := item["content"].([]any)[0].(map[string]any)["text"]; text != "Hello world" {
+		t.Fatalf("output text = %v", text)
+	}
+	usage := resp["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(2) || usage["total_tokens"] != float64(5) {
+		t.Fatalf("usage = %v", usage)
+	}
+	if strings.Contains(rec.Body.String(), "data: [DONE]") {
+		t.Fatalf("non-stream response must not carry SSE framing:\n%s", rec.Body.String())
+	}
+}
+
+func TestResponsesRouteNonStreamDefaultJSON(t *testing.T) {
+	runner := &fakeRunner{scripts: []fakeScript{{
+		events: []canon.Event{
+			canon.ItemStarted{Item: messageAssistant("m1", "Hi")},
+			canon.TextDelta{ItemID: "m1", Text: "Hi"},
+			canon.ItemFinished{Item: messageAssistant("m1", "Hi")},
+			canon.TurnFinished{Status: canon.Completed()},
+		},
+	}}}
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
+		if err := reg.Register("p1", runner); err != nil {
+			t.Fatal(err)
+		}
+	})
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"hi"}`)
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("content type = %q, want application/json for absent stream field", ct)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("body is not one JSON response object: %v\n%s", err, rec.Body.String())
+	}
+	if resp["status"] != "completed" {
+		t.Fatalf("status = %v", resp["status"])
+	}
+}
+
+func TestWrongMethodWebSocketUpgrade(t *testing.T) {
+	h := newTestServer(t, nil, nil, nil)
+	for _, tc := range []struct {
+		name    string
+		upgrade string
+		want    int
+	}{
+		{"websocket upgrade", "websocket", http.StatusUpgradeRequired},
+		{"plain get", "", http.StatusMethodNotAllowed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+			req.RemoteAddr = "127.0.0.1:1234"
+			if tc.upgrade != "" {
+				req.Header.Set("Upgrade", tc.upgrade)
+				req.Header.Set("Connection", "Upgrade")
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
+			}
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+				t.Fatalf("error body is not JSON: %v\n%s", err, rec.Body.String())
+			}
+			if tc.want == http.StatusUpgradeRequired && env.Error.Code != "upgrade_required" {
+				t.Fatalf("code = %q, want upgrade_required", env.Error.Code)
+			}
+		})
 	}
 }

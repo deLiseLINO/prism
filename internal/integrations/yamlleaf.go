@@ -159,7 +159,25 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 				lines = append(lines, fields+pad+"- image")
 			}
 			if model.ContextWindow > 0 {
-				lines = append(lines, fields+"contextWindow: "+fmt.Sprintf("%d", model.ContextWindow))
+				lines = append(lines,
+					fields+"contextWindow: "+fmt.Sprintf("%d", model.ContextWindow),
+					fields+"maxTokens: "+fmt.Sprintf("%d", maxTokensFor(model.ContextWindow)),
+				)
+			}
+			efforts := effortsFor(model, ompThinkingEfforts)
+			if rung := defaultEffort(efforts, model.DefaultReasoningEffort); rung != "" {
+				// omp's schema wants effort steering as a thinking block; the
+				// daemon forwards every chat-honored rung, so the ladder is honest.
+				lines = append(lines,
+					fields+"reasoning: true",
+					fields+"thinking:",
+					fields+pad+"mode: effort",
+					fields+pad+"efforts:",
+				)
+				for _, effort := range efforts {
+					lines = append(lines, fields+pad+pad+"- "+effort)
+				}
+				lines = append(lines, fields+pad+"defaultLevel: "+rung)
 			}
 		}
 	}

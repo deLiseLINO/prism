@@ -134,6 +134,8 @@ func TestParseExoticItems(t *testing.T) {
 			{"type": "tool_search_output", "call_id": "call_ts", "tools": [{"name": "deploy", "description": "deploys"}]},
 			{"type": "compaction_trigger"},
 			{"type": "context_compaction", "encrypted_content": "enc-blob"},
+			{"type": "compaction_summary", "encrypted_content": "enc-blob-2"},
+			{"type": "compaction"},
 			{"type": "additional_tools", "tools": [{"type": "image_generation"}]},
 			{"type": "brand_new_future_item", "x": 1}
 		]
@@ -154,20 +156,25 @@ func TestParseExoticItems(t *testing.T) {
 	if !ok || len(searchOut.Results) != 1 || searchOut.Results[0].ToolName != "deploy" || searchOut.Results[0].Summary != "deploys" {
 		t.Fatalf("input[2]: %#v", req.Input[2])
 	}
-	markerAuto, ok := req.Input[3].(canon.CompactionMarker)
-	if !ok || markerAuto.Kind != canon.CompactionAuto {
-		t.Fatalf("input[3]: %#v", req.Input[3])
-	}
-	markerExplicit, ok := req.Input[4].(canon.CompactionMarker)
-	if !ok || markerExplicit.Kind != canon.CompactionExplicit {
-		t.Fatalf("input[4]: %#v", req.Input[4])
+	for i, item := range req.Input[3:] {
+		msg, ok := item.(canon.Message)
+		if !ok || msg.Role != canon.RoleUser || len(msg.Content) != 1 {
+			t.Fatalf("input[%d]: %#v", i+3, item)
+		}
+		text, ok := msg.Content[0].(canon.TextContent)
+		if !ok || text.Text != opaqueCompactionNote {
+			t.Fatalf("input[%d] content: %#v", i+3, msg.Content[0])
+		}
+		if msg.ID != "" {
+			t.Fatalf("input[%d] synthesized id %q", i+3, msg.ID)
+		}
 	}
 	kinds := map[string]int{}
 	for _, w := range sink.warnings {
 		kinds[w.Kind]++
 	}
-	if kinds[WarnOpaquePayload] != 1 {
-		t.Fatalf("opaque payload warning missing: %+v", sink.warnings)
+	if kinds[WarnOpaquePayload] != 2 {
+		t.Fatalf("opaque payload warnings: %+v", sink.warnings)
 	}
 	if kinds[WarnExoticItem] != 1 {
 		t.Fatalf("exotic item warning missing: %+v", sink.warnings)

@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"prism/internal/canon"
@@ -60,6 +63,7 @@ type Chat struct {
 
 	begun    bool
 	terminal bool
+	failed   bool
 	flushed  bool
 
 	id      string
@@ -158,14 +162,17 @@ func (c *Chat) Flush() error {
 		return nil
 	}
 	c.flushed = true
-	if !c.stream {
+	if !c.stream || c.failed {
 		return nil
 	}
 	if !c.terminal {
 		return errors.New("egress/chat: flush before terminal event")
 	}
-	_, err := io.WriteString(c.w, "data: [DONE]\n\n")
-	return err
+	if _, err := io.WriteString(c.w, "data: [DONE]\n\n"); err != nil {
+		return err
+	}
+	c.flushFrame()
+	return nil
 }
 
 func (c *Chat) Warnings() []Warning {
@@ -186,10 +193,14 @@ func (c *Chat) itemStarted(item canon.Item) error {
 		if _, ok := c.tools[it.ID]; ok {
 			return fmt.Errorf("egress/chat: duplicate tool call item %q", it.ID)
 		}
-		st := &toolState{index: len(c.tools), callID: string(it.CallID), name: string(it.Name)}
+		callID := string(it.CallID)
+		if callID == "" {
+			callID = mintCallID()
+		}
+		st := &toolState{index: len(c.tools), callID: callID, name: string(it.Name)}
 		c.tools[it.ID] = st
 		c.order = append(c.order, it.ID)
-		id := string(it.CallID)
+		id := callID
 		ftyp := functionType
 		name := string(it.Name)
 		c.commit()
@@ -260,11 +271,9 @@ func (c *Chat) turnFinished(e canon.TurnFinished) error {
 	c.usage = e.Usage
 	fr, mapped := c.finishReason(e.Status)
 	if !mapped {
-		reason := "unknown"
-		if r, ok := e.Status.Reason(); ok {
-			reason = incompleteName(r)
-		}
-		c.warnOnce(WarnFinishUnmapped, fmt.Sprintf("terminal status %s has no chat finish_reason; mapped to %q", reason, fr))
+		fail := incompleteFailure(e.Status, e.Usage)
+		c.warnOnce(WarnFinishUnmapped, fail.Failure.Message)
+		return c.turnFailed(fail)
 	}
 	if c.stream {
 		u := usageWire(c.usage)
@@ -298,11 +307,26 @@ func (c *Chat) turnFinished(e canon.TurnFinished) error {
 
 func (c *Chat) turnFailed(e canon.TurnFailed) error {
 	c.terminal = true
+	c.failed = true
 	return c.writeJSON(errorEnvelope{Error: errorBody{
 		Message: e.Failure.Message,
 		Type:    errorType(e.Failure.Reason),
 		Code:    failureCode(e.Failure.Reason),
 	}})
+}
+
+func incompleteFailure(st canon.Status, usage canon.Usage) canon.TurnFailed {
+	reason := "unknown"
+	if r, ok := st.Reason(); ok {
+		reason = incompleteName(r)
+	}
+	return canon.TurnFailed{
+		Failure: canon.Failure{
+			Reason:  canon.FailUpstreamTransport,
+			Message: fmt.Sprintf("upstream stream ended early (%s)", reason),
+		},
+		Usage: usage,
+	}
 }
 
 func (c *Chat) messageWire() message {
@@ -325,10 +349,15 @@ func (c *Chat) finishReason(st canon.Status) (string, bool) {
 		}
 		return "stop", true
 	}
-	if r, ok := st.Reason(); ok && r == canon.IncompleteMaxOutputTokens {
-		return "length", true
+	if r, ok := st.Reason(); ok {
+		switch r {
+		case canon.IncompleteMaxOutputTokens:
+			return "length", true
+		case canon.IncompleteContentFilter:
+			return "content_filter", true
+		}
 	}
-	return "stop", false
+	return "", false
 }
 
 func (c *Chat) deltaChunk(d delta) chunk {
@@ -357,8 +386,25 @@ func (c *Chat) writeJSON(v any) error {
 		_, err = c.w.Write(raw)
 		return err
 	}
-	_, err = fmt.Fprintf(c.w, "data: %s\n\n", raw)
-	return err
+	if _, err := fmt.Fprintf(c.w, "data: %s\n\n", raw); err != nil {
+		return err
+	}
+	c.flushFrame()
+	return nil
+}
+
+func (c *Chat) flushFrame() {
+	if f, ok := c.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+var mintedCalls atomic.Uint64
+
+// Clients echo tool_calls.id back as tool_call_id; an empty id bricks the next
+// turn, so a call first observed without one keeps a single minted value.
+func mintCallID() string {
+	return "call_prism_" + strconv.FormatUint(mintedCalls.Add(1), 10)
 }
 
 func (c *Chat) warnOnce(code, detail string) {

@@ -154,13 +154,13 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 			return runError(provider.Retryable, provider.ClassTransport, true, true, 0,
 				fmt.Errorf("customchat: upstream tool call %d is missing a function name", i))
 		}
-		itemID := tc.ID
-		if itemID == "" {
-			itemID = fmt.Sprintf("tool-call-%d", i)
+		callID := tc.ID
+		if callID == "" {
+			callID = mintCallID()
 		}
 		fc := canon.FunctionCall{
-			ID:     canon.ItemID(itemID),
-			CallID: canon.CallID(tc.ID),
+			ID:     canon.ItemID(callID),
+			CallID: canon.CallID(callID),
 			Name:   canon.ToolName(tc.Function.Name),
 		}
 		if tc.Function.Arguments != "" {

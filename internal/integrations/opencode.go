@@ -1,5 +1,7 @@
 package integrations
 
+import "strconv"
+
 const opencodeProviderNPM = "@ai-sdk/openai-compatible"
 
 // RenderOpencodeModels renders the shared `models` map both opencode
@@ -17,8 +19,18 @@ func RenderOpencodeModels(models []Model, inner string, item string, field strin
 		lines = append(lines,
 			item+jsonString(model.ID)+`: {`,
 			field+`"name": `+jsonString(model.Name),
-			item+`}`+comma,
 		)
+		if model.ContextWindow > 0 {
+			// opencode's schema takes the limit pair together or not at all;
+			// an unknown window keeps the client's own defaults.
+			lines = append(lines,
+				field+`"limit": {`,
+				field+`  "context": `+strconv.Itoa(model.ContextWindow)+`,`,
+				field+`  "output": `+strconv.Itoa(maxTokensFor(model.ContextWindow)),
+				field+`}`,
+			)
+		}
+		lines = append(lines, item+`}`+comma)
 	}
 	lines = append(lines, inner+`}`)
 	return lines
@@ -92,15 +104,6 @@ type OpencodeIntegration struct {
 	home       string
 }
 
-func (o *OpencodeIntegration) currentModels() []Model {
-	if o.modelsSrc != nil {
-		if models := o.modelsSrc(); len(models) > 0 {
-			return models
-		}
-	}
-	return o.models
-}
-
 func (o *OpencodeIntegration) paths() string {
 	if o.configPath != "" {
 		return o.configPath
@@ -115,7 +118,11 @@ func NewOpencode(options OpencodeOptions) *OpencodeIntegration {
 func (o *OpencodeIntegration) ID() ID { return o.id }
 
 func (o *OpencodeIntegration) Apply() ApplyResult {
-	outcome, err := ApplyConfigTransform(o.paths(), opencodeTransform(o.port, o.currentModels()), false)
+	models, refusal := resolveModels(o.models, o.modelsSrc, o.id)
+	if refusal != "" {
+		return ApplyResult{OK: false, ID: o.id, Reason: refusal}
+	}
+	outcome, err := ApplyConfigTransform(o.paths(), opencodeTransform(o.port, models), false)
 	if err != nil {
 		return ToApplyResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode apply", err)})
 	}

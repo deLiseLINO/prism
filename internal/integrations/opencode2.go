@@ -70,15 +70,6 @@ type Opencode2Integration struct {
 	home       string
 }
 
-func (o *Opencode2Integration) currentModels() []Model {
-	if o.modelsSrc != nil {
-		if models := o.modelsSrc(); len(models) > 0 {
-			return models
-		}
-	}
-	return o.models
-}
-
 func (o *Opencode2Integration) paths() string {
 	if o.configPath != "" {
 		return o.configPath
@@ -93,7 +84,11 @@ func NewOpencode2(options Opencode2Options) *Opencode2Integration {
 func (o *Opencode2Integration) ID() ID { return o.id }
 
 func (o *Opencode2Integration) Apply() ApplyResult {
-	outcome, err := ApplyConfigTransform(o.paths(), opencode2Transform(o.port, o.currentModels()), false)
+	models, refusal := resolveModels(o.models, o.modelsSrc, o.id)
+	if refusal != "" {
+		return ApplyResult{OK: false, ID: o.id, Reason: refusal}
+	}
+	outcome, err := ApplyConfigTransform(o.paths(), opencode2Transform(o.port, models), false)
 	if err != nil {
 		return ToApplyResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode2 apply", err)})
 	}

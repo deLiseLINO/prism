@@ -67,6 +67,11 @@ type Warning struct {
 	Detail string
 }
 
+// opaqueCompactionNote stands in for a replayed compact-family item whose
+// encrypted summary no wire can carry: the codex wire rejects the raw item,
+// so the model at least sees that earlier context existed.
+const opaqueCompactionNote = "[earlier conversation was compacted; the summary is stored in a format this model cannot read]"
+
 type Ingress struct {
 	warn func(Warning)
 }
@@ -293,7 +298,7 @@ func (g *Ingress) toolsFrom(root map[string]any, req *canon.Request) error {
 		desc, _ := tm["description"].(string)
 		path := fmt.Sprintf("tools[%d]", i)
 		switch tm["type"] {
-	case "custom":
+		case "custom":
 			format := canon.FormatText
 			var grammar *canon.ToolGrammar
 			if f, ok := tm["format"].(map[string]any); ok {
@@ -643,13 +648,21 @@ func (g *Ingress) itemFrom(m map[string]any, i int) (canon.Item, error) {
 			}
 		}
 		return out, nil
-	case "context_compaction":
-		if enc, ok := m["encrypted_content"].(string); ok && enc != "" {
-			g.warnOf(WarnOpaquePayload, path+".encrypted_content")
+	case "compaction", "compaction_summary", "context_compaction":
+		enc, _ := m["encrypted_content"].(string)
+		if enc == "" {
+			// A bare marker carries no readable summary; when it has no
+			// payload the summary (if any) follows as its own user message,
+			// so the marker itself is dropped.
+			return nil, nil
 		}
-		return canon.CompactionMarker{Kind: canon.CompactionExplicit}, nil
+		g.warnOf(WarnOpaquePayload, path+".encrypted_content")
+		return canon.Message{
+			Role:    canon.RoleUser,
+			Content: []canon.Content{canon.TextContent{Text: opaqueCompactionNote}},
+		}, nil
 	case "compaction_trigger":
-		return canon.CompactionMarker{Kind: canon.CompactionAuto}, nil
+		return nil, nil
 	case "additional_tools":
 		g.warnOf(WarnExoticItem, path+" additional_tools")
 		return nil, nil

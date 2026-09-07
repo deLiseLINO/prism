@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"prism/internal/canon"
+	"prism/internal/reasonenv"
 )
 
 type wireTextBlock struct {
@@ -26,6 +27,7 @@ type wireBlock struct {
 	Text      string           `json:"text,omitempty"`
 	Source    *wireImageSource `json:"source,omitempty"`
 	Thinking  string           `json:"thinking,omitempty"`
+	Data      string           `json:"data,omitempty"`
 	Signature string           `json:"signature,omitempty"`
 	ID        string           `json:"id,omitempty"`
 	Name      string           `json:"name,omitempty"`
@@ -251,6 +253,12 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, error) {
 			signature, ok := r.replaySignature(v)
 			if !ok {
 				return nil, fmt.Errorf("anthropic: thinking item %q has no signature for replay", v.ID)
+			}
+			if env, isEnv := reasonenv.Decode(signature); isEnv && len(env.Red) > 0 {
+				for _, data := range env.Red {
+					appendBlock("assistant", wireBlock{Type: "redacted_thinking", Data: data})
+				}
+				continue
 			}
 			appendBlock("assistant", wireBlock{Type: "thinking", Thinking: v.Content, Signature: signature})
 		case canon.FunctionCall:

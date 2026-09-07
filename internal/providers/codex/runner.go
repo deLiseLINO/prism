@@ -156,11 +156,17 @@ func compactBody(req provider.CompactRequest) ([]byte, error) {
 		return nil, fmt.Errorf("codex compact: %w", err)
 	}
 	body := struct {
-		Model  canon.ModelID `json:"model"`
-		Input  []wireItem    `json:"input"`
-		Stream bool          `json:"stream"`
-		Store  bool          `json:"store"`
+		Model        canon.ModelID `json:"model"`
+		Instructions string        `json:"instructions,omitempty"`
+		Input        []wireItem    `json:"input"`
+		Stream       bool          `json:"stream"`
+		Store        bool          `json:"store"`
 	}{Model: req.Target.Model, Input: input.items, Store: false}
+	for _, c := range req.Instructions {
+		if t, ok := c.(canon.TextContent); ok {
+			body.Instructions += t.Text
+		}
+	}
 	return json.Marshal(body)
 }
 

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"prism/internal/account"
@@ -149,4 +151,12 @@ func runError(kind provider.RunErrorKind, class provider.ErrorClass, accepted, r
 		RetryAfter: retryAfter,
 		Cause:      cause,
 	}
+}
+
+var mintedCalls atomic.Uint64
+
+// Clients echo tool_calls.id back as tool_call_id on the next turn; a call
+// observed without an upstream id keeps one minted value everywhere it travels.
+func mintCallID() string {
+	return "call_prism_" + strconv.FormatUint(mintedCalls.Add(1), 10)
 }

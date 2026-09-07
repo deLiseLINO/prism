@@ -262,7 +262,7 @@ func TestCodexApplyTakesOverPrismRouting(t *testing.T) {
 
 func TestCodexApplyRefusesUserOwnedRootBaseUrl(t *testing.T) {
 	for name, seed := range map[string]string{
-		"bare": "# user configuration\nopenai_base_url = \"http://127.0.0.1:9999/v1\"\n\n[features]\nfast_mode = false\n",
+		"bare":            "# user configuration\nopenai_base_url = \"http://127.0.0.1:9999/v1\"\n\n[features]\nfast_mode = false\n",
 		"foreign comment": "# user configuration\n# my own proxy\nopenai_base_url = \"http://127.0.0.1:9999/v1\"\n\n[features]\nfast_mode = false\n",
 	} {
 		dir := t.TempDir()

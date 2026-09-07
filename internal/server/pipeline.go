@@ -159,9 +159,14 @@ func (s *Server) newSink(w http.ResponseWriter, proto protocol, req canon.Reques
 	now := s.clock.Now()
 	switch proto {
 	case protocolResponses:
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		e := egressresponses.NewWithClock(w, facts, s.clock)
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			e := egressresponses.NewWithClock(w, facts, s.clock)
+			return &responsesSink{e: e, header: egress.ResponseHeader{ID: id, Model: req.Model, CreatedAt: now}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		e := egressresponses.NewBufferedWithClock(w, facts, s.clock)
 		return &responsesSink{e: e, header: egress.ResponseHeader{ID: id, Model: req.Model, CreatedAt: now}}
 	case protocolChat:
 		if req.Stream {

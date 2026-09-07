@@ -11,6 +11,7 @@ import (
 
 	"prism/internal/canon"
 	"prism/internal/execution"
+	"prism/internal/reasonenv"
 )
 
 const aliasPrefix = "claude-prism-"
@@ -239,6 +240,7 @@ type contentBlock struct {
 	Title     string          `json:"title"`
 	Thinking  string          `json:"thinking"`
 	Signature string          `json:"signature"`
+	URL       string          `json:"url"`
 }
 
 func userItems(raw json.RawMessage) ([]canon.Item, error) {
@@ -281,6 +283,19 @@ func userItems(raw json.RawMessage) ([]canon.Item, error) {
 				continue
 			}
 			items = append(items, canon.FunctionOutput{CallID: canon.CallID(b.ToolUseID), Output: toolResultContent(b)})
+		case "web_search_tool_result":
+			var results []string
+			if len(b.Content) > 0 {
+				var parts []contentBlock
+				if err := json.Unmarshal(b.Content, &parts); err == nil {
+					for _, p := range parts {
+						if p.Type == "web_search_result" {
+							results = append(results, p.URL)
+						}
+					}
+				}
+			}
+			pending = append(pending, canon.TextContent{Text: "[web search results: " + strings.Join(results, " ") + "]"})
 		default:
 			continue
 		}
@@ -382,8 +397,31 @@ func assistantItems(raw json.RawMessage) ([]canon.Item, error) {
 		case "text":
 			pendingText = append(pendingText, canon.TextContent{Text: b.Text})
 		case "thinking":
+			if b.Thinking == "" && b.Signature == "" {
+				continue
+			}
+			if strings.HasPrefix(b.Signature, reasonenv.Prefix) {
+				if _, ok := reasonenv.Decode(b.Signature); !ok {
+					return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content", Err: fmt.Errorf("malformed prism thinking signature")}
+				}
+			}
 			flush()
 			items = append(items, canon.ReasoningItem{ID: canon.ItemID(b.ID), Content: b.Thinking, Signature: b.Signature})
+		case "redacted_thinking":
+			flush()
+			items = append(items, canon.ReasoningItem{ID: canon.ItemID(b.ID), Signature: reasonenv.EncodeRedacted([]string{b.Data})})
+		case "server_tool_use":
+			flush()
+			query := ""
+			if len(b.Input) > 0 {
+				var input map[string]any
+				if err := json.Unmarshal(b.Input, &input); err == nil {
+					if q, ok := input["query"].(string); ok {
+						query = q
+					}
+				}
+			}
+			pendingText = append(pendingText, canon.TextContent{Text: "[server tool " + b.Name + ": " + query + "]"})
 		case "tool_use":
 			flush()
 			if b.ID == "" || b.Name == "" {

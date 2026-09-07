@@ -197,7 +197,6 @@ func (b *decodedBody) Close() error {
 	return nil
 }
 
-
 func loopback(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -219,6 +218,15 @@ func bearer(r *http.Request) string {
 func methodNotAllowed(allow string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", allow)
+		if strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
+			// 426 rather than 405: codex-rs maps a connect-time
+			// UPGRADE_REQUIRED to a clean session-scoped HTTP fallback
+			// instead of treating the WebSocket transport as broken.
+			writeJSON(w, http.StatusUpgradeRequired, errorEnvelope{
+				Error: errorObject{Code: "upgrade_required", Message: "websocket upgrade is not supported; use HTTP"},
+			})
+			return
+		}
 		writeJSON(w, http.StatusMethodNotAllowed, errorEnvelope{
 			Error: errorObject{Code: "method_not_allowed", Message: "method " + r.Method + " not allowed"},
 		})

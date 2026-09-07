@@ -733,3 +733,85 @@ func TestUnsupportedOutputItemFails(t *testing.T) {
 		t.Fatal("unsupported output item must fail")
 	}
 }
+
+func TestBufferedFoldsTurnIntoResponseJSON(t *testing.T) {
+	b := &lockBuffer{}
+	e := NewBufferedWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	defer e.Close()
+	if err := e.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	msgID := canon.ItemID("msg_1")
+	for _, ev := range []canon.Event{
+		canon.ItemStarted{Item: canon.Message{ID: msgID, Role: canon.RoleAssistant}},
+		canon.TextDelta{ItemID: msgID, Text: "hello "},
+		canon.TextDelta{ItemID: msgID, Text: "world"},
+		canon.ItemFinished{Item: canon.Message{ID: msgID, Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "hello world"}}}},
+		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}},
+	} {
+		if err := e.Frame(ev); err != nil {
+			t.Fatalf("frame %T: %v", ev, err)
+		}
+	}
+	if got := b.String(); got != "" {
+		t.Fatalf("buffered mode wrote before flush: %q", got)
+	}
+	if err := e.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(b.String()), &resp); err != nil {
+		t.Fatalf("flush output is not one JSON object: %v\n%s", err, b.String())
+	}
+	if resp["object"] != "response" || resp["id"] != "resp_1" || resp["status"] != "completed" {
+		t.Fatalf("response envelope = %v", resp)
+	}
+	output, ok := resp["output"].([]any)
+	if !ok || len(output) != 1 {
+		t.Fatalf("output = %v", resp["output"])
+	}
+	item := output[0].(map[string]any)
+	if item["type"] != "message" || item["status"] != "completed" {
+		t.Fatalf("output item = %v", item)
+	}
+	part := item["content"].([]any)[0].(map[string]any)
+	if part["text"] != "hello world" {
+		t.Fatalf("text = %v", part["text"])
+	}
+	usage := resp["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(3) || usage["total_tokens"] != float64(5) {
+		t.Fatalf("usage = %v", usage)
+	}
+	if strings.Contains(b.String(), "data: [DONE]") || strings.Contains(b.String(), "event: ") {
+		t.Fatalf("buffered output must not contain SSE framing:\n%s", b.String())
+	}
+}
+
+func TestBufferedFailedTerminalKeepsErrorInBody(t *testing.T) {
+	b := &lockBuffer{}
+	e := NewBufferedWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	defer e.Close()
+	if err := e.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := e.Frame(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailRateLimited, Message: "slow down"}}); err != nil {
+		t.Fatalf("terminal: %v", err)
+	}
+	if err := e.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(b.String()), &resp); err != nil {
+		t.Fatalf("flush output is not one JSON object: %v\n%s", err, b.String())
+	}
+	if resp["status"] != "failed" {
+		t.Fatalf("status = %v", resp["status"])
+	}
+	failure := resp["error"].(map[string]any)
+	if failure["code"] != "rate_limited" || failure["message"] != "slow down" {
+		t.Fatalf("error = %v", failure)
+	}
+	if _, ok := resp["output"].([]any); !ok {
+		t.Fatalf("output missing: %v", resp["output"])
+	}
+}
