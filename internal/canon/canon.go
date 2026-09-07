@@ -392,3 +392,28 @@ type Usage struct {
 	ReasoningTokens   int64
 	TotalTokens       int64
 }
+
+func HasImage(req Request) bool {
+	return len(CollectImages(req)) > 0
+}
+
+func CollectImages(req Request) []ImageContent {
+	var images []ImageContent
+	appendImages := func(content []Content) {
+		for _, c := range content {
+			if img, ok := c.(ImageContent); ok {
+				images = append(images, img)
+			}
+		}
+	}
+	appendImages(req.Instructions)
+	for _, item := range req.Input {
+		if m, ok := item.(Message); ok {
+			appendImages(m.Content)
+		}
+		if o, ok := item.(FunctionOutput); ok {
+			appendImages(o.Output)
+		}
+	}
+	return images
+}

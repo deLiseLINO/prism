@@ -117,6 +117,7 @@ func cloneDocument(d Document) Document {
 		Combos:        cloneMap(d.Combos),
 		Routes:        cloneMap(d.Routes),
 		Aliases:       cloneMap(d.Aliases),
+		VisionSidecar: d.VisionSidecar,
 	}
 	for id, p := range d.Providers {
 		p.Models = append([]string(nil), p.Models...)

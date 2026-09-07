@@ -29,6 +29,7 @@ type Target struct {
 	BaseURL      string
 	APIKeyRef    string
 	Model        canon.ModelID
+	ImageInput   bool
 	Timeout      time.Duration
 	MaxFailovers int
 	Policy       account.SelectionPolicy
@@ -213,19 +214,6 @@ func (r *Registry) Register(id account.ProviderID, runner Runner) error {
 	if _, ok := r.runners[id]; ok {
 		return ErrDuplicateProvider
 	}
-	r.runners[id] = runner
-	return nil
-}
-
-func (r *Registry) Replace(id account.ProviderID, runner Runner) error {
-	if id == "" {
-		return errors.New("provider: empty provider id")
-	}
-	if runner == nil {
-		return errors.New("provider: nil runner")
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.runners[id] = runner
 	return nil
 }

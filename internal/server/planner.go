@@ -88,12 +88,13 @@ func targetFor(d config.Document, providerID, model string) (provider.Target, er
 		return provider.Target{}, config.ErrInvalidTarget
 	}
 	t := provider.Target{
-		Provider:  account.ProviderID(providerID),
-		Wire:      wireFor(p.Wire),
-		BaseURL:   p.BaseURL,
-		APIKeyRef: p.APIKeyRef,
-		Model:     canon.ModelID(model),
-		Policy:    selectionPolicy(p.Pool),
+		Provider:   account.ProviderID(providerID),
+		Wire:       wireFor(p.Wire),
+		BaseURL:    p.BaseURL,
+		APIKeyRef:  p.APIKeyRef,
+		Model:      canon.ModelID(model),
+		ImageInput: modelImageInput(p, model),
+		Policy:     selectionPolicy(p.Pool),
 	}
 	if p.Pool != nil {
 		t.MaxFailovers = p.Pool.MaxFailovers
@@ -152,4 +153,11 @@ func wireFor(w config.Wire) provider.Wire {
 	default:
 		return provider.WireResponses
 	}
+}
+
+func modelImageInput(p config.Provider, model string) bool {
+	if s, ok := p.ModelSettings[model]; ok && s.ImageInput {
+		return true
+	}
+	return false
 }

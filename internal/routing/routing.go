@@ -119,6 +119,9 @@ func (r *router) Turn(ctx context.Context, req canon.Request, f execution.Facts,
 		if !ok {
 			return turnFailed(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: no runner registered for provider %q", target.Provider)}, attempts)
 		}
+		if canon.HasImage(req) && !target.ImageInput {
+			return turnFailed(imageUnsupportedFailure(target).Failure, attempts)
+		}
 		budget := target.MaxFailovers
 		if budget <= 0 {
 			budget = policy.MaxAccountFailovers

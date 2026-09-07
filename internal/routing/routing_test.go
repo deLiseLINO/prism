@@ -747,3 +747,50 @@ func TestTurnReleasesLeaseWhenRunnerOmitsTerminal(t *testing.T) {
 		t.Fatalf("records = %d, want lease release", len(pool.records))
 	}
 }
+
+func TestTurnRejectsImageInputForTextOnlyTarget(t *testing.T) {
+	pid := account.ProviderID("p")
+	runner := runnerFunc(func(req provider.RunRequest, sink provider.Sink) error {
+		t.Fatal("runner must not be called for a text-only image request")
+		return nil
+	})
+	target := targetWithImageInput(testTarget(pid, 1), false)
+	req := canon.Request{
+		Model: "gpt-5.2",
+		Input: []canon.Item{canon.Message{
+			Role:    canon.RoleUser,
+			Content: []canon.Content{canon.TextContent{Text: "read"}, canon.ImageContent{MIMEType: "image/png", Data: []byte{1}}},
+		}},
+	}
+	res := NewRouter(poolWith(pid, 1), fakeRunners{pid: runner}, fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}}}, account.QuotaGroup("default")).Turn(
+		context.Background(), req, execution.Facts{}, fakeLifecycle{}, &recordingSink{},
+	)
+	failed, ok := res.Terminal.(Failed)
+	if !ok {
+		t.Fatalf("terminal = %#v, want Failed", res.Terminal)
+	}
+	if failed.Event.Failure.Reason != canon.FailInvalidRequest {
+		t.Fatalf("reason = %v, want FailInvalidRequest", failed.Event.Failure.Reason)
+	}
+}
+
+func TestTurnAllowsImageInputForVisionTarget(t *testing.T) {
+	pid := account.ProviderID("p")
+	runner := runnerFunc(func(req provider.RunRequest, sink provider.Sink) error {
+		return sink.Emit(canon.TurnFinished{})
+	})
+	target := targetWithImageInput(testTarget(pid, 1), true)
+	req := canon.Request{
+		Model: "gpt-5.2",
+		Input: []canon.Item{canon.Message{
+			Role:    canon.RoleUser,
+			Content: []canon.Content{canon.TextContent{Text: "read"}, canon.ImageContent{MIMEType: "image/png", Data: []byte{1}}},
+		}},
+	}
+	res := NewRouter(poolWith(pid, 1), fakeRunners{pid: runner}, fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}}}, account.QuotaGroup("default")).Turn(
+		context.Background(), req, execution.Facts{}, fakeLifecycle{}, &recordingSink{},
+	)
+	if _, ok := res.Terminal.(Finished); !ok {
+		t.Fatalf("terminal = %#v, want Finished", res.Terminal)
+	}
+}

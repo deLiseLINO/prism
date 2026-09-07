@@ -36,7 +36,7 @@ type Options struct {
 	Planner         routing.Planner
 	Registry        *provider.Registry
 	Pool            account.Pool
-	Config          *config.Manager
+	Config          configProvider
 	Management      http.Handler
 	ManagementToken string
 	Clock           Clock
@@ -49,7 +49,7 @@ type Server struct {
 	planner   routing.Planner
 	registry  *provider.Registry
 	pool      account.Pool
-	cfg       *config.Manager
+	cfg       configProvider
 	mgmt      http.Handler
 	mgmtToken string
 	clock     Clock
@@ -286,4 +286,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("server: encode response: %v", err)
 	}
+}
+
+type configProvider interface {
+	Get() config.Snapshot
 }
