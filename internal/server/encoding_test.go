@@ -72,7 +72,7 @@ func TestCompressedRequestBodiesParse(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	body := `{"model":"test-model","input":"hi"}`
+	body := `{"model":"test-model","stream":true,"input":"hi"}`
 	for _, encoding := range []string{"zstd", "gzip"} {
 		rec := postEncoded(t, h, "/v1/responses", encoding, body)
 		if rec.Code != http.StatusOK {

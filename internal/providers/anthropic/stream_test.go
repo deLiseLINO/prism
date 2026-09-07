@@ -94,7 +94,7 @@ func TestFullStreamVocabulary(t *testing.T) {
 		canon.ItemStarted{Item: canon.ReasoningItem{ID: "block-1"}},
 		canon.ReasoningDelta{ItemID: "block-1", Text: "pondering"},
 		canon.ItemStateAvailable{ItemID: "block-1", State: canon.OpaqueRef{Store: stateStoreName, Key: "block-1"}},
-		canon.ItemFinished{Item: canon.ReasoningItem{ID: "block-1", Content: "pondering", State: canon.OpaqueRef{Store: stateStoreName, Key: "block-1"}}},
+		canon.ItemFinished{Item: canon.ReasoningItem{ID: "block-1", Content: "pondering", Signature: "sig-abc", State: canon.OpaqueRef{Store: stateStoreName, Key: "block-1"}}},
 		canon.ItemStarted{Item: canon.FunctionCall{ID: "toolu_1", CallID: "toolu_1", Name: "get_weather"}},
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`{"city":`)},
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`"Paris"}`)},

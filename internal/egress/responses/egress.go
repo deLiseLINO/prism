@@ -61,6 +61,7 @@ type Egress struct {
 	clock   Clock
 	client  execution.Client
 	self    *lifecycle
+	buf     bool
 
 	header      egress.ResponseHeader
 	begun       bool
@@ -84,8 +85,23 @@ func New(w io.Writer, f execution.Facts) *Egress {
 }
 
 func NewWithClock(w io.Writer, f execution.Facts, c Clock) *Egress {
+	return newEgress(w, f, c, false)
+}
+
+// NewBuffered folds a whole turn into one Responses JSON object written at
+// Flush; per-event SSE emission is suppressed.
+func NewBuffered(w io.Writer, f execution.Facts) *Egress {
+	return NewBufferedWithClock(w, f, realClock{})
+}
+
+func NewBufferedWithClock(w io.Writer, f execution.Facts, c Clock) *Egress {
+	return newEgress(w, f, c, true)
+}
+
+func newEgress(w io.Writer, f execution.Facts, c Clock, buffered bool) *Egress {
 	e := &Egress{
 		w:         w,
+		buf:       buffered,
 		clock:     c,
 		client:    f.Client,
 		self:      &lifecycle{},
@@ -94,10 +110,12 @@ func NewWithClock(w io.Writer, f execution.Facts, c Clock) *Egress {
 		done:      make(chan struct{}),
 	}
 	e.self.e = e
-	if fw, ok := w.(http.Flusher); ok {
-		e.flusher = fw
+	if !buffered {
+		if fw, ok := w.(http.Flusher); ok {
+			e.flusher = fw
+		}
+		go e.livenessLoop()
 	}
-	go e.livenessLoop()
 	return e
 }
 
@@ -156,6 +174,9 @@ func (e *Egress) Begin(h egress.ResponseHeader) error {
 	e.header = h
 	e.begun = true
 	e.commitState = provider.ResponseStarted
+	if e.buf {
+		return nil
+	}
 	created := map[string]any{"response": e.snapshotLocked("in_progress", nil, nil)}
 	if err := e.writeEventLocked("response.created", created); err != nil {
 		return err
@@ -212,6 +233,9 @@ func (e *Egress) Flush() error {
 	if e.terminal == nil {
 		return errors.New("egress/responses: flush without terminal")
 	}
+	if e.buf {
+		return e.flushBufferedLocked()
+	}
 	if err := e.writeEventLocked(e.terminal.name, e.terminal.data); err != nil {
 		return err
 	}
@@ -220,6 +244,21 @@ func (e *Egress) Flush() error {
 	}
 	if e.flusher != nil {
 		e.flusher.Flush()
+	}
+	e.flushed = true
+	e.Close()
+	return nil
+}
+
+func (e *Egress) flushBufferedLocked() error {
+	resp := e.terminal.data["response"].(map[string]any)
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return fmt.Errorf("egress/responses: marshal buffered response: %w", err)
+	}
+	if _, err := io.WriteString(e.w, string(raw)+"\n"); err != nil {
+		e.writeErr = fmt.Errorf("egress/responses: write: %w", err)
+		return e.writeErr
 	}
 	e.flushed = true
 	e.Close()
@@ -466,6 +505,9 @@ func (e *Egress) snapshotLocked(status string, output []any, usage any) map[stri
 }
 
 func (e *Egress) writeEventLocked(name string, data map[string]any) error {
+	if e.buf {
+		return nil
+	}
 	data["type"] = name
 	data["sequence_number"] = e.seq
 	e.seq++

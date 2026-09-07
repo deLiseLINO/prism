@@ -209,9 +209,46 @@ func GrokManagedBlock(port int, models []Model) string {
 		if model.ContextWindow > 0 {
 			lines = append(lines, fmt.Sprintf("context_window = %d", model.ContextWindow))
 		}
+		efforts := effortsFor(model, responsesEffortVocabulary)
+		if rung := defaultEffort(efforts, model.DefaultReasoningEffort); rung != "" {
+			// The daemon steers reasoning effort on the responses wire for
+			// every model, so the picker menu is honest; rungs stay inside
+			// grok's vocabulary or the CLI rejects them. Array-of-tables must
+			// follow every parent keyval above.
+			lines = append(lines,
+				"supports_reasoning_effort = true",
+				"reasoning_effort = "+tomlString(rung),
+			)
+			for _, effort := range efforts {
+				meta := grokEffortMeta[effort]
+				lines = append(lines,
+					"",
+					"[[model."+alias+".reasoning_efforts]]",
+					"id = "+tomlString(effort),
+					"value = "+tomlString(effort),
+					"label = "+tomlString(meta.label),
+					"description = "+tomlString(meta.description),
+					fmt.Sprintf("default = %t", effort == rung),
+				)
+			}
+		}
 		tables = append(tables, strings.Join(lines, "\n"))
 	}
 	return strings.Join(tables, "\n\n")
+}
+
+// grokEffortMeta carries the picker copy for each accepted rung, mirroring
+// the menu shape grok renders from [[model.*.reasoning_efforts]] tables.
+var grokEffortMeta = map[string]struct {
+	label       string
+	description string
+}{
+	"off":    {"Off", "No reasoning"},
+	"low":    {"Low", "Quick, fast implementations"},
+	"medium": {"Medium", "Balanced effort"},
+	"high":   {"High", "Highest quality with extensive reasoning"},
+	"xhigh":  {"XHigh", "Extra high reasoning effort"},
+	"max":    {"Max", "Maximum reasoning effort"},
 }
 
 func grokTransform(models []Model, port int) func(current string) ConfigTransform {
@@ -266,7 +303,11 @@ func grokManagedRead(content string) ManagedRead {
 }
 
 func WriteGrokConfig(options GrokOptions) WriteOutcome {
-	outcome, err := ApplyConfigTransform(options.ConfigPath, grokTransform(options.Models, options.Port), options.CrashBeforeRename)
+	models, refusal := resolveModels(options.Models, options.ModelsSource, Grok)
+	if refusal != "" {
+		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
+	}
+	outcome, err := ApplyConfigTransform(options.ConfigPath, grokTransform(models, options.Port), options.CrashBeforeRename)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok apply", err)}
 	}
@@ -295,13 +336,8 @@ type GrokIntegration struct {
 	home       string
 }
 
-func (g *GrokIntegration) currentModels() []Model {
-	if g.modelsSrc != nil {
-		if models := g.modelsSrc(); len(models) > 0 {
-			return models
-		}
-	}
-	return g.models
+func (g *GrokIntegration) Apply() ApplyResult {
+	return ToApplyResult(g.id, WriteGrokConfig(GrokOptions{Port: g.port, Models: g.models, ModelsSource: g.modelsSrc, ConfigPath: g.configPath}))
 }
 
 func NewGrok(options GrokOptions) *GrokIntegration {
@@ -312,10 +348,6 @@ func NewGrok(options GrokOptions) *GrokIntegration {
 }
 
 func (g *GrokIntegration) ID() ID { return g.id }
-
-func (g *GrokIntegration) Apply() ApplyResult {
-	return ToApplyResult(g.id, WriteGrokConfig(GrokOptions{Port: g.port, Models: g.currentModels(), ConfigPath: g.configPath}))
-}
 
 func (g *GrokIntegration) Status() Status {
 	return ObservedIntegrationStatus(g.id, g.configPath, []string{GrokHome(g.env, g.home)}, func(path string) ManagedRead {

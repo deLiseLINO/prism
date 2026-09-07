@@ -136,12 +136,13 @@ func TestDecodeStreamMissingWrapper(t *testing.T) {
 		events = append(events, e)
 		return nil
 	})
-	failed, ok := lastTerminal(events).(canon.TurnFailed)
+	fin, ok := lastTerminal(events).(canon.TurnFinished)
 	if !ok {
-		t.Fatalf("expected TurnFailed, got %T", lastTerminal(events))
+		t.Fatalf("expected TurnFinished, got %T", lastTerminal(events))
 	}
-	if failed.Failure.Reason != canon.FailUpstreamTransport {
-		t.Fatalf("reason = %v", failed.Failure.Reason)
+	reason, incomplete := fin.Status.Reason()
+	if !incomplete || reason != canon.IncompleteAdapterEOF {
+		t.Fatalf("status = %v/%v, want incomplete adapter_eof", fin.Status.Kind(), reason)
 	}
 }
 
@@ -163,12 +164,91 @@ func TestDecodeStreamNoTerminalSignal(t *testing.T) {
 		events = append(events, e)
 		return nil
 	})
-	last, ok := lastTerminal(events).(canon.TurnFailed)
+	fin, ok := lastTerminal(events).(canon.TurnFinished)
 	if !ok {
-		t.Fatalf("expected TurnFailed, got %T", lastTerminal(events))
+		t.Fatalf("expected TurnFinished, got %T", lastTerminal(events))
 	}
-	if last.Failure.Reason != canon.FailUpstreamTransport {
-		t.Fatalf("reason = %v", last.Failure.Reason)
+	if fin.Status.Kind() != canon.StatusCompleted {
+		t.Fatalf("text delivered before EOF must complete the turn, got %v", fin.Status.Kind())
+	}
+	if countTerminals(events) != 1 {
+		t.Fatalf("terminals = %d, want 1", countTerminals(events))
+	}
+	closed := false
+	for _, e := range events {
+		if f, ok := e.(canon.ItemFinished); ok {
+			if _, isMsg := f.Item.(canon.Message); isMsg {
+				closed = true
+			}
+		}
+	}
+	if !closed {
+		t.Fatal("open message must be closed before the synthesized terminal")
+	}
+}
+
+func TestDecodeStreamEOFGate(t *testing.T) {
+	cases := []struct {
+		name      string
+		stream    string
+		wantKind  canon.StatusKind
+		wantInc   canon.IncompleteReason
+		wantIncOK bool
+	}{
+		{
+			name:     "text delivered completes",
+			stream:   "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial answer\"}]}}]}}\n\n",
+			wantKind: canon.StatusCompleted,
+		},
+		{
+			name:     "tool call with complete object args completes",
+			stream:   "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"SF\"}}}]}}]}}\n\n",
+			wantKind: canon.StatusCompleted,
+		},
+		{
+			name:      "tool call with non-object args stays truncated",
+			stream:    "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":\"{\\\"city\\\":\"}}]}}]}}\n\n",
+			wantKind:  canon.StatusIncomplete,
+			wantInc:   canon.IncompleteAdapterEOF,
+			wantIncOK: true,
+		},
+		{
+			name:      "thought-only output stays truncated",
+			stream:    "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"internal\",\"thought\":true}]}}]}}\n\n",
+			wantKind:  canon.StatusIncomplete,
+			wantInc:   canon.IncompleteAdapterEOF,
+			wantIncOK: true,
+		},
+		{
+			name:      "no output stays truncated",
+			stream:    "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[]}}]}}\n\n",
+			wantKind:  canon.StatusIncomplete,
+			wantInc:   canon.IncompleteAdapterEOF,
+			wantIncOK: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []canon.Event
+			_ = DecodeStream(strings.NewReader(tc.stream), func(e canon.Event) error {
+				events = append(events, e)
+				return nil
+			})
+			if countTerminals(events) != 1 {
+				t.Fatalf("terminals = %d, want 1", countTerminals(events))
+			}
+			fin, ok := lastTerminal(events).(canon.TurnFinished)
+			if !ok {
+				t.Fatalf("terminal = %T, want TurnFinished", lastTerminal(events))
+			}
+			if fin.Status.Kind() != tc.wantKind {
+				t.Fatalf("kind = %v, want %v", fin.Status.Kind(), tc.wantKind)
+			}
+			reason, incomplete := fin.Status.Reason()
+			if tc.wantIncOK && (!incomplete || reason != tc.wantInc) {
+				t.Fatalf("reason = %v/%v, want %v", incomplete, reason, tc.wantInc)
+			}
+		})
 	}
 }
 

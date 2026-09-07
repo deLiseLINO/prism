@@ -80,15 +80,6 @@ type HermesIntegration struct {
 	home       string
 }
 
-func (h *HermesIntegration) currentModels() []Model {
-	if h.modelsSrc != nil {
-		if models := h.modelsSrc(); len(models) > 0 {
-			return models
-		}
-	}
-	return h.models
-}
-
 func (h *HermesIntegration) paths() string {
 	if h.configPath != "" {
 		return h.configPath
@@ -99,11 +90,14 @@ func (h *HermesIntegration) paths() string {
 func NewHermes(options HermesOptions) *HermesIntegration {
 	return &HermesIntegration{id: Hermes, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, configPath: options.ConfigPath, env: options.Env, home: options.Home}
 }
-
 func (h *HermesIntegration) ID() ID { return h.id }
 
 func (h *HermesIntegration) Apply() ApplyResult {
-	outcome, err := ApplyConfigTransform(h.paths(), hermesTransform(h.port, h.currentModels()), false)
+	models, refusal := resolveModels(h.models, h.modelsSrc, h.id)
+	if refusal != "" {
+		return ApplyResult{OK: false, ID: h.id, Reason: refusal}
+	}
+	outcome, err := ApplyConfigTransform(h.paths(), hermesTransform(h.port, models), false)
 	if err != nil {
 		return ToApplyResult(h.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("hermes apply", err)})
 	}

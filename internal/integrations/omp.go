@@ -22,15 +22,6 @@ type OmpIntegration struct {
 	options   OmpOptions
 }
 
-func (o *OmpIntegration) currentModels() []Model {
-	if o.modelsSrc != nil {
-		if models := o.modelsSrc(); len(models) > 0 {
-			return models
-		}
-	}
-	return o.models
-}
-
 func NewOmp(options OmpOptions) *OmpIntegration {
 	return &OmpIntegration{id: Omp, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, options: options}
 }
@@ -75,7 +66,11 @@ func ompManagedRead(content string) ManagedRead {
 }
 
 func WriteOmpConfig(options OmpOptions) WriteOutcome {
-	spec := NewOmpSpec(options.Port, options.Models)
+	models, refusal := resolveModels(options.Models, options.ModelsSource, Omp)
+	if refusal != "" {
+		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
+	}
+	spec := NewOmpSpec(options.Port, models)
 	outcome, err := ApplyConfigTransform(options.ModelsPath, func(current string) ConfigTransform {
 		return toTransform(UpsertProviderLeaf(current, "prism", spec))
 	}, options.CrashBeforeRename)
@@ -104,7 +99,7 @@ func (o *OmpIntegration) Apply() ApplyResult {
 	if err != nil {
 		return ApplyResult{OK: false, ID: o.id, Reason: failureReason("omp apply", err)}
 	}
-	return ToApplyResult(o.id, WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: o.port, Models: o.currentModels()}))
+	return ToApplyResult(o.id, WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: o.port, Models: o.models, ModelsSource: o.modelsSrc}))
 }
 
 func (o *OmpIntegration) Status() Status {

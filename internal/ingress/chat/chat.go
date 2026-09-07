@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
@@ -89,7 +90,7 @@ func (Ingress) Parse(_ context.Context, hr *http.Request) (canon.Request, execut
 		Model:           canon.ModelID(b.Model),
 		Stream:          b.Stream,
 		Input:           items,
-		MaxOutputTokens: maxTokensFrom(b.MaxTokens),
+		MaxOutputTokens: maxTokensFrom(b),
 		Sampling:        samplingFrom(b),
 		Reasoning:       reasoningFrom(b.ReasoningEffort),
 	}
@@ -135,11 +136,29 @@ func validModelSlug(model string) bool {
 	}) < 0
 }
 
-func maxTokensFrom(maxTokens *int) int {
-	if maxTokens == nil {
-		return 0
+func maxTokensFrom(b body) int {
+	if n, ok := numberField(b.MaxCompletionTokens); ok {
+		return n
 	}
-	return *maxTokens
+	if n, ok := numberField(b.MaxTokens); ok {
+		return n
+	}
+	return 0
+}
+
+func numberField(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return 0, false
+	}
+	f, ok := v.(float64)
+	if !ok || f != math.Trunc(f) || f < math.MinInt || f > math.MaxInt {
+		return 0, false
+	}
+	return int(f), true
 }
 
 func reasoningFrom(effort *string) canon.ReasoningConfig {
@@ -385,19 +404,20 @@ func toolChoiceFrom(raw json.RawMessage) (canon.ToolChoice, error) {
 }
 
 type body struct {
-	Model             string          `json:"model"`
-	Messages          []message       `json:"messages"`
-	Stream            bool            `json:"stream"`
-	MaxTokens         *int            `json:"max_tokens"`
-	Temperature       *float64        `json:"temperature"`
-	TopP              *float64        `json:"top_p"`
-	Stop              []string        `json:"stop"`
-	PresencePenalty   *float64        `json:"presence_penalty"`
-	FrequencyPenalty  *float64        `json:"frequency_penalty"`
-	ParallelToolCalls *bool           `json:"parallel_tool_calls"`
-	ReasoningEffort   *string         `json:"reasoning_effort"`
-	Tools             []tool          `json:"tools"`
-	ToolChoice        json.RawMessage `json:"tool_choice"`
+	Model               string          `json:"model"`
+	Messages            []message       `json:"messages"`
+	Stream              bool            `json:"stream"`
+	MaxTokens           json.RawMessage `json:"max_tokens"`
+	MaxCompletionTokens json.RawMessage `json:"max_completion_tokens"`
+	Temperature         *float64        `json:"temperature"`
+	TopP                *float64        `json:"top_p"`
+	Stop                []string        `json:"stop"`
+	PresencePenalty     *float64        `json:"presence_penalty"`
+	FrequencyPenalty    *float64        `json:"frequency_penalty"`
+	ParallelToolCalls   *bool           `json:"parallel_tool_calls"`
+	ReasoningEffort     *string         `json:"reasoning_effort"`
+	Tools               []tool          `json:"tools"`
+	ToolChoice          json.RawMessage `json:"tool_choice"`
 }
 
 type message struct {

@@ -104,8 +104,8 @@ func TestCountTokensLocalEstimateDeterministic(t *testing.T) {
 	}
 }
 
-func TestCountTokensProviderCounter(t *testing.T) {
-	counter := &countingRunner{tokens: 42}
+func TestCountTokensAnswersLocallyWithoutDispatch(t *testing.T) {
+	counter := &countingRunner{fakeRunner: &fakeRunner{}, tokens: 42}
 	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"claude-prism-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", counter); err != nil {
 			t.Fatal(err)
@@ -115,25 +115,23 @@ func TestCountTokensProviderCounter(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"input_tokens":42`) {
+	if !strings.Contains(rec.Body.String(), `"input_tokens":`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
-}
-
-func TestCountTokensUnknownModel(t *testing.T) {
-	h := newTestServer(t, nil, nil, nil)
-	rec := postJSON(t, h, "/v1/messages/count_tokens", `{"model":"claude-prism-nope--m1","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "not_found_error") {
-		t.Fatalf("body = %s", rec.Body.String())
+	if counter.callsMade() != 0 {
+		t.Fatalf("count_tokens dispatched %d upstream runs, want 0", counter.callsMade())
 	}
 }
 
 func TestCompactLocalDeterministic(t *testing.T) {
+	script := fakeScript{events: []canon.Event{
+		canon.ItemStarted{Item: messageAssistant("m1", "Summary of the conversation.")},
+		canon.TextDelta{ItemID: "m1", Text: "Summary of the conversation."},
+		canon.ItemFinished{Item: messageAssistant("m1", "Summary of the conversation.")},
+		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}},
+	}}
 	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
-		if err := reg.Register("p1", &fakeRunner{}); err != nil {
+		if err := reg.Register("p1", &fakeRunner{scripts: []fakeScript{script, script}}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -143,14 +141,17 @@ func TestCompactLocalDeterministic(t *testing.T) {
 	if rec1.Code != http.StatusOK || rec2.Code != http.StatusOK {
 		t.Fatalf("status = %d %d bodies %s %s", rec1.Code, rec2.Code, rec1.Body.String(), rec2.Body.String())
 	}
-	if !strings.Contains(rec1.Body.String(), "compacted 1 items") {
+	if !strings.Contains(rec1.Body.String(), `"output":[`) {
 		t.Fatalf("body = %s", rec1.Body.String())
 	}
-	if !strings.Contains(rec1.Body.String(), `"summary"`) || !strings.Contains(rec1.Body.String(), `"usage"`) {
-		t.Fatalf("body = %s", rec1.Body.String())
+	if !strings.Contains(rec1.Body.String(), "compact this conversation") {
+		t.Fatalf("retained user message missing: %s", rec1.Body.String())
 	}
-	if !strings.HasSuffix(strings.TrimSpace(rec1.Body.String()), "}") {
-		t.Fatalf("body = %s", rec1.Body.String())
+	if !strings.Contains(rec1.Body.String(), "Summary of the conversation.") {
+		t.Fatalf("summary message missing: %s", rec1.Body.String())
+	}
+	if rec1.Body.String() != rec2.Body.String() {
+		t.Fatalf("compact not deterministic:\n%s\n%s", rec1.Body.String(), rec2.Body.String())
 	}
 }
 

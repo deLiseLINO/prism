@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/reasonenv"
 	"prism/internal/routing"
 )
 
@@ -37,6 +40,11 @@ const (
 	blockToolUse
 )
 
+var (
+	pingEvery     = 5 * time.Second
+	pingIdleAfter = 20 * time.Second
+)
+
 type openBlock struct {
 	index int
 	kind  blockKind
@@ -57,6 +65,10 @@ type streamEncoder struct {
 	model   string
 	content []any
 	usage   usageWire
+
+	writeMu   sync.Mutex
+	lastWrite time.Time
+	stopPing  chan struct{}
 }
 
 func (e *streamEncoder) Begin(h ResponseHeader) error {
@@ -70,7 +82,7 @@ func (e *streamEncoder) Begin(h ResponseHeader) error {
 	if !e.streaming {
 		return nil
 	}
-	return e.write("message_start", messageStartWire{
+	if err := e.write("message_start", messageStartWire{
 		Type: "message_start",
 		Message: messageWire{
 			ID:      h.ID,
@@ -80,7 +92,12 @@ func (e *streamEncoder) Begin(h ResponseHeader) error {
 			Content: []any{},
 			Usage:   usageWire{},
 		},
-	})
+	}); err != nil {
+		return err
+	}
+	e.stopPing = make(chan struct{})
+	go e.pingLoop()
+	return nil
 }
 
 func (e *streamEncoder) Frame(ev canon.Event) error {
@@ -167,6 +184,9 @@ func (e *streamEncoder) Flush() error {
 		return &FrameError{Reason: ReasonOpenBlocks, Event: "message_delta"}
 	}
 	e.flushed = true
+	if e.stopPing != nil {
+		close(e.stopPing)
+	}
 	switch t := e.terminal.(type) {
 	case canon.TurnFinished:
 		e.usage = usageWire{
@@ -227,6 +247,10 @@ func (e *streamEncoder) itemStarted(item canon.Item) error {
 	case canon.Message:
 		id, kind, start = it.ID, blockText, textBlockWire{Type: "text", Text: ""}
 	case canon.ReasoningItem:
+		if env, ok := reasonenv.Decode(it.Signature); ok && len(env.Red) > 0 {
+			id, kind, start = it.ID, blockThinking, redactedBlockWire{Type: "redacted_thinking", Data: env.Red[0]}
+			break
+		}
 		id, kind, start = it.ID, blockThinking, thinkingBlockWire{Type: "thinking", Thinking: "", Signature: ""}
 	case canon.FunctionCall:
 		id, kind, start = it.ID, blockToolUse, toolUseBlockWire{
@@ -263,12 +287,14 @@ func (e *streamEncoder) itemFinished(item canon.Item) error {
 	}
 	if b.kind == blockThinking {
 		if r, isReasoning := item.(canon.ReasoningItem); isReasoning && r.Signature != "" {
-			if err := e.write("content_block_delta", blockDeltaWire{
-				Type:  "content_block_delta",
-				Index: b.index,
-				Delta: signatureDeltaWire{Type: "signature_delta", Signature: r.Signature},
-			}); err != nil {
-				return err
+			if env, isEnv := reasonenv.Decode(r.Signature); !isEnv || len(env.Red) == 0 {
+				if err := e.write("content_block_delta", blockDeltaWire{
+					Type:  "content_block_delta",
+					Index: b.index,
+					Delta: signatureDeltaWire{Type: "signature_delta", Signature: r.Signature},
+				}); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -287,6 +313,9 @@ func finishedBlockWire(item canon.Item) any {
 		}
 		return textBlockWire{Type: "text", Text: sb.String()}
 	case canon.ReasoningItem:
+		if env, ok := reasonenv.Decode(it.Signature); ok && len(env.Red) > 0 {
+			return redactedBlockWire{Type: "redacted_thinking", Data: env.Red[0]}
+		}
 		return thinkingBlockWire{Type: "thinking", Thinking: it.Content, Signature: it.Signature}
 	case canon.FunctionCall:
 		input := map[string]any{}
@@ -315,10 +344,55 @@ func (e *streamEncoder) write(name string, payload any) error {
 	if err != nil {
 		return fmt.Errorf("messages egress: encode %s: %w", name, err)
 	}
-	if _, err := fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", name, data); err != nil {
-		return fmt.Errorf("messages egress: write %s: %w", name, err)
+	e.writeMu.Lock()
+	_, werr := fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", name, data)
+	if werr == nil {
+		if f, ok := e.w.(http.Flusher); ok {
+			f.Flush()
+		}
+		e.lastWrite = time.Now()
+	}
+	e.writeMu.Unlock()
+	if werr != nil {
+		return fmt.Errorf("messages egress: write %s: %w", name, werr)
 	}
 	return nil
+}
+
+func (e *streamEncoder) writeFrame(line string) {
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
+	if _, err := fmt.Fprint(e.w, line); err != nil {
+		return
+	}
+	if f, ok := e.w.(http.Flusher); ok {
+		f.Flush()
+	}
+	e.lastWrite = time.Now()
+}
+
+// pingLoop keeps the client wire warm during silent upstream phases so a
+// client idle timeout can never fire while the daemon is alive. The first
+// ping waits until a real frame has been written, so a pre-stream failure
+// is delivered without noise.
+func (e *streamEncoder) pingLoop() {
+	ticker := time.NewTicker(pingEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-e.stopPing:
+			return
+		case <-ticker.C:
+			e.writeMu.Lock()
+			empty := e.lastWrite.IsZero()
+			idle := time.Since(e.lastWrite) >= pingIdleAfter
+			e.writeMu.Unlock()
+			if empty || !idle {
+				continue
+			}
+			e.writeFrame("event: ping\ndata: {\"type\": \"ping\"}\n\n")
+		}
+	}
 }
 
 func (e *streamEncoder) writeJSON(payload any) error {
@@ -475,6 +549,11 @@ type thinkingBlockWire struct {
 	Type      string `json:"type"`
 	Thinking  string `json:"thinking"`
 	Signature string `json:"signature"`
+}
+
+type redactedBlockWire struct {
+	Type string `json:"type"`
+	Data string `json:"data"`
 }
 
 type toolUseBlockWire struct {

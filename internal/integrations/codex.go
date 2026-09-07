@@ -334,41 +334,41 @@ type codexProvenance struct {
 }
 
 type codexCatalogEntry struct {
-	Slug                           string                 `json:"slug"`
-	DisplayName                    string                 `json:"display_name"`
-	Description                    string                 `json:"description"`
-	DefaultReasoningLevel          string                 `json:"default_reasoning_level"`
-	SupportedReasoningLevels       []codexReasoningLevel  `json:"supported_reasoning_levels"`
-	ShellType                      string                 `json:"shell_type"`
-	Visibility                     string                 `json:"visibility"`
-	SupportedInAPI                 bool                   `json:"supported_in_api"`
-	Priority                       int                    `json:"priority"`
-	IncludeSkillsUsageInstructions bool                   `json:"include_skills_usage_instructions"`
-	IncludePluginUsageInstructions bool                   `json:"include_plugin_usage_instructions"`
-	IncludeAppsUsageInstructions   bool                   `json:"include_apps_usage_instructions"`
-	DefaultReasoningSummary        string                 `json:"default_reasoning_summary"`
-	SupportVerbosity               bool                   `json:"support_verbosity"`
-	DefaultVerbosity               string                 `json:"default_verbosity"`
-	ApplyPatchToolType             string                 `json:"apply_patch_tool_type"`
-	WebSearchToolType              string                 `json:"web_search_tool_type"`
-	TruncationPolicy               codexTruncationPolicy  `json:"truncation_policy"`
-	SupportsImageDetailOriginal    bool                   `json:"supports_image_detail_original"`
-	CompHash                       string                 `json:"comp_hash"`
-	EffectiveContextWindowPercent  int                    `json:"effective_context_window_percent"`
-	ExperimentalSupportedTools     []string               `json:"experimental_supported_tools"`
-	InputModalities                []string               `json:"input_modalities"`
-	SupportsSearchTool             bool                   `json:"supports_search_tool"`
-	NodeReplAutoReviewRequired     bool                   `json:"node_repl_auto_review_required"`
-	NodeReplDisabled               bool                   `json:"node_repl_disabled"`
-	BaseInstructions               string                 `json:"base_instructions"`
-	SupportsParallelToolCalls      bool                   `json:"supports_parallel_tool_calls"`
-	SupportsReasoningSummaries     bool                   `json:"supports_reasoning_summaries"`
-	ContextWindow                  int                    `json:"context_window"`
-	MaxContextWindow               int                    `json:"max_context_window"`
-	AutoCompactTokenLimit          int                    `json:"auto_compact_token_limit"`
+	Slug                           string                `json:"slug"`
+	DisplayName                    string                `json:"display_name"`
+	Description                    string                `json:"description"`
+	DefaultReasoningLevel          string                `json:"default_reasoning_level"`
+	SupportedReasoningLevels       []codexReasoningLevel `json:"supported_reasoning_levels"`
+	ShellType                      string                `json:"shell_type"`
+	Visibility                     string                `json:"visibility"`
+	SupportedInAPI                 bool                  `json:"supported_in_api"`
+	Priority                       int                   `json:"priority"`
+	IncludeSkillsUsageInstructions bool                  `json:"include_skills_usage_instructions"`
+	IncludePluginUsageInstructions bool                  `json:"include_plugin_usage_instructions"`
+	IncludeAppsUsageInstructions   bool                  `json:"include_apps_usage_instructions"`
+	DefaultReasoningSummary        string                `json:"default_reasoning_summary"`
+	SupportVerbosity               bool                  `json:"support_verbosity"`
+	DefaultVerbosity               string                `json:"default_verbosity"`
+	ApplyPatchToolType             string                `json:"apply_patch_tool_type"`
+	WebSearchToolType              string                `json:"web_search_tool_type,omitempty"`
+	TruncationPolicy               codexTruncationPolicy `json:"truncation_policy"`
+	SupportsImageDetailOriginal    bool                  `json:"supports_image_detail_original"`
+	CompHash                       string                `json:"comp_hash"`
+	EffectiveContextWindowPercent  int                   `json:"effective_context_window_percent"`
+	ExperimentalSupportedTools     []string              `json:"experimental_supported_tools"`
+	InputModalities                []string              `json:"input_modalities"`
+	SupportsSearchTool             bool                  `json:"supports_search_tool"`
+	NodeReplAutoReviewRequired     bool                  `json:"node_repl_auto_review_required"`
+	NodeReplDisabled               bool                  `json:"node_repl_disabled"`
+	BaseInstructions               string                `json:"base_instructions"`
+	SupportsParallelToolCalls      bool                  `json:"supports_parallel_tool_calls"`
+	SupportsReasoningSummaries     bool                  `json:"supports_reasoning_summaries"`
+	ContextWindow                  int                   `json:"context_window"`
+	MaxContextWindow               int                   `json:"max_context_window"`
+	AutoCompactTokenLimit          int                   `json:"auto_compact_token_limit"`
 	PrismCapabilityProvenance  codexProvenance       `json:"prism_capability_provenance"`
-	MultiAgentVersion              *string                `json:"multi_agent_version"`
-	AutoReviewModelOverride        any                    `json:"auto_review_model_override"`
+	MultiAgentVersion              *string               `json:"multi_agent_version"`
+	AutoReviewModelOverride        any                   `json:"auto_review_model_override"`
 }
 
 type codexCatalog struct {
@@ -425,16 +425,17 @@ func RenderCodexCatalog(models []Model) string {
 			SupportVerbosity:               true,
 			DefaultVerbosity:               "low",
 			ApplyPatchToolType:             "freeform",
-			WebSearchToolType:              "text_and_image",
-			TruncationPolicy:               codexTruncationPolicy{Mode: "tokens", Limit: 10000},
-			SupportsImageDetailOriginal:    true,
-			CompHash:                       "3000",
-			EffectiveContextWindowPercent:  95,
-			ExperimentalSupportedTools:     []string{},
-			InputModalities:                modality,
-			SupportsSearchTool:             true,
-			NodeReplAutoReviewRequired:     true,
-			NodeReplDisabled:               false,
+			// The wire drops web_search tools and items, so no web-search
+			// capability is advertised until the daemon implements search.
+			TruncationPolicy:              codexTruncationPolicy{Mode: "tokens", Limit: 10000},
+			SupportsImageDetailOriginal:   true,
+			CompHash:                      "3000",
+			EffectiveContextWindowPercent: 95,
+			ExperimentalSupportedTools:    []string{},
+			InputModalities:               modality,
+			SupportsSearchTool:            false,
+			NodeReplAutoReviewRequired:    true,
+			NodeReplDisabled:              false,
 			BaseInstructions: fmt.Sprintf(
 				"You are a coding agent powered by %s. If asked which model you are, identify as %s. Do not claim to be a different model or to have a different creator. You and the user share one workspace, and your job is to collaborate with them until their intended goal is completely handled.",
 				model.ID, model.ID),
@@ -549,11 +550,9 @@ func codexManagedRead(content string) ManagedRead {
 
 func WriteCodexConfig(options CodexOptions) WriteOutcome {
 	options = normalizeCodexOptions(options)
-	models := options.Models
-	if options.ModelsSource != nil {
-		if live := options.ModelsSource(); len(live) > 0 {
-			models = live
-		}
+	models, refusal := resolveModels(options.Models, options.ModelsSource, Codex)
+	if refusal != "" {
+		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
 	}
 	catalogPath := ""
 	if len(models) > 0 {

@@ -252,23 +252,20 @@ func (s *streamer) handleToolCallDelta(call map[string]any) error {
 				name = n
 			}
 		}
-		canonicalID := canon.ItemID(id)
-		if canonicalID == "" {
-			canonicalID = canon.ItemID(fmt.Sprintf("tool-call-%d", index))
+		callID := id
+		if callID == "" {
+			callID = mintCallID()
 		}
-		open = &openTool{canonID: canonicalID, callID: id, name: name}
+		open = &openTool{canonID: canon.ItemID(callID), callID: callID, name: name}
 		s.tools[index] = open
 		s.toolSeq = append(s.toolSeq, index)
 		if err := s.emit(canon.ItemStarted{Item: canon.FunctionCall{
-			ID:     canonicalID,
-			CallID: canon.CallID(id),
+			ID:     canon.ItemID(callID),
+			CallID: canon.CallID(callID),
 			Name:   canon.ToolName(name),
 		}}); err != nil {
 			return err
 		}
-	}
-	if id, ok := call["id"].(string); ok && id != "" {
-		open.callID = id
 	}
 	fn, _ := call["function"].(map[string]any)
 	if fn != nil {

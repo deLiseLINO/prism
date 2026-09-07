@@ -88,6 +88,7 @@ type streamDecoder struct {
 	sawTerminal      bool
 	finishReason     string
 	toolCallsStarted int
+	toolArgs         [][]byte
 	finished         bool
 }
 
@@ -227,6 +228,7 @@ func (d *streamDecoder) functionCall(part responsePart) error {
 	}
 	d.pendingSig = ""
 	d.toolCallsStarted++
+	d.toolArgs = append(d.toolArgs, args)
 	if err := d.emit(canon.ItemStarted{Item: canon.FunctionCall{
 		ID:        id,
 		CallID:    callID,
@@ -263,7 +265,7 @@ func (d *streamDecoder) finish() error {
 		}
 	}
 	if !d.sawFrame || !d.sawTerminal {
-		return d.fail(canon.FailUpstreamTransport, "antigravity: upstream stream ended without a terminal signal")
+		return d.upstreamEOF()
 	}
 	truncated := d.finishReason == "MAX_TOKENS" || d.finishReason == "MALFORMED_FUNCTION_CALL"
 	if truncated && (d.toolCallsStarted > 0 || d.finishReason == "MALFORMED_FUNCTION_CALL") {
@@ -278,4 +280,30 @@ func (d *streamDecoder) finish() error {
 	default:
 		return d.emit(canon.TurnFinished{Status: canon.Completed(), Usage: d.usage})
 	}
+}
+
+// upstreamEOF closes a turn whose stream ended without any terminal signal.
+// Buffered output makes that recoverable only when the user saw text or every
+// tool call carries complete JSON object arguments; a half-written call or an
+// empty stream stays a truncation. The truncation is reported as an incomplete
+// turn (reason adapter_eof), not a transport failure, so clients treat it as a
+// terminal state instead of blind-retrying.
+func (d *streamDecoder) upstreamEOF() error {
+	if d.messageText.Len() > 0 || d.toolCallsComplete() {
+		return d.emit(canon.TurnFinished{Status: canon.Completed(), Usage: d.usage})
+	}
+	return d.emit(canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteAdapterEOF), Usage: d.usage})
+}
+
+func (d *streamDecoder) toolCallsComplete() bool {
+	if d.toolCallsStarted == 0 {
+		return false
+	}
+	for _, args := range d.toolArgs {
+		var obj map[string]any
+		if err := json.Unmarshal(args, &obj); err != nil || obj == nil {
+			return false
+		}
+	}
+	return true
 }

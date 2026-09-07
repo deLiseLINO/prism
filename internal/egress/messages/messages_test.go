@@ -576,10 +576,10 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 	var msg struct {
-		ID         string `json:"id"`
-		Type       string `json:"type"`
-		Role       string `json:"role"`
-		Content    []struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content []struct {
 			Type      string `json:"type"`
 			Text      string `json:"text"`
 			Thinking  string `json:"thinking"`

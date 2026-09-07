@@ -128,6 +128,16 @@ func TestDifferentialByteIdenticalOutputs(t *testing.T) {
 				"        name: "+m.Name,
 				"        input:",
 				"          - text",
+				"        reasoning: true",
+				"        thinking:",
+				"          mode: effort",
+				"          efforts:",
+				"            - minimal",
+				"            - low",
+				"            - medium",
+				"            - high",
+				"            - xhigh",
+				"          defaultLevel: medium",
 			)
 		}
 		lines = append(lines, "", "")

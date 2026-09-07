@@ -14,6 +14,7 @@ import (
 
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/reasonenv"
 )
 
 type sseFrame struct {
@@ -246,6 +247,12 @@ func (s *streamState) contentBlockStart(payload map[string]any) error {
 		open.itemID = canon.ItemID(fmt.Sprintf("block-%s", key))
 		s.blocks[key] = open
 		return s.emit(canon.ItemStarted{Item: canon.ReasoningItem{ID: open.itemID}})
+	case "redacted_thinking":
+		open.itemID = canon.ItemID(fmt.Sprintf("block-%s", key))
+		data, _ := block["data"].(string)
+		open.signature = reasonenv.EncodeRedacted([]string{data})
+		s.blocks[key] = open
+		return s.emit(canon.ItemStarted{Item: canon.ReasoningItem{ID: open.itemID, Signature: open.signature}})
 	case "tool_use":
 		id, _ := block["id"].(string)
 		name, _ := block["name"].(string)
@@ -324,15 +331,28 @@ func (s *streamState) contentBlockStop(payload map[string]any) error {
 			Content: []canon.Content{canon.TextContent{Text: open.text.String()}},
 		}})
 	case "thinking":
-		item := canon.ReasoningItem{ID: open.itemID, Content: open.text.String()}
-		if open.signature != "" {
-			s.store.put(string(open.itemID), []byte(open.signature))
-			item.State = canon.OpaqueRef{Store: stateStoreName, Key: string(open.itemID)}
-			if err := s.emit(canon.ItemStateAvailable{ItemID: open.itemID, State: item.State}); err != nil {
-				return err
-			}
+		signature := open.signature
+		if signature == "" {
+			signature = reasonenv.Encode(open.text.String())
+		}
+		s.store.put(string(open.itemID), []byte(signature))
+		item := canon.ReasoningItem{
+			ID:        open.itemID,
+			Content:   open.text.String(),
+			Signature: signature,
+			State:     canon.OpaqueRef{Store: stateStoreName, Key: string(open.itemID)},
+		}
+		if err := s.emit(canon.ItemStateAvailable{ItemID: open.itemID, State: item.State}); err != nil {
+			return err
 		}
 		return s.emit(canon.ItemFinished{Item: item})
+	case "redacted_thinking":
+		s.store.put(string(open.itemID), []byte(open.signature))
+		return s.emit(canon.ItemFinished{Item: canon.ReasoningItem{
+			ID:        open.itemID,
+			Signature: open.signature,
+			State:     canon.OpaqueRef{Store: stateStoreName, Key: string(open.itemID)},
+		}})
 	case "tool_use":
 		args := open.args.String()
 		if strings.TrimSpace(args) == "" {
