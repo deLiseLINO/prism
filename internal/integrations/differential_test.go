@@ -6,7 +6,8 @@ import (
 )
 
 // The staged expectations are the byte-identical outputs of the landed TS
-// implementation on the same seeds (the landed TS implementation); any
+// implementation on the same seeds (the landed TS implementation), plus
+// the codex root-routing pair added with the prism takeover support; any
 // drift here means the Go port changed user-visible bytes.
 func TestDifferentialByteIdenticalOutputs(t *testing.T) {
 	codexSeed := "# user configuration\n" +
@@ -27,6 +28,8 @@ func TestDifferentialByteIdenticalOutputs(t *testing.T) {
 			"# user configuration",
 			`top_setting = "keep"`,
 			"",
+			prismRoutingMarker,
+			`openai_base_url = "http://127.0.0.1:8787/v1"`,
 			"[profile.default]",
 			`model = "gpt-5.2"`,
 			"",
@@ -36,6 +39,8 @@ func TestDifferentialByteIdenticalOutputs(t *testing.T) {
 			`name = "prism"`,
 			`base_url = "http://127.0.0.1:8787/v1"`,
 			`wire_api = "responses"`,
+			routingJournalHeader,
+			"# written: http://127.0.0.1:8787/v1",
 			CodexFence.End,
 			"",
 		}, "\n")

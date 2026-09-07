@@ -293,14 +293,19 @@ func (g *Ingress) toolsFrom(root map[string]any, req *canon.Request) error {
 		desc, _ := tm["description"].(string)
 		path := fmt.Sprintf("tools[%d]", i)
 		switch tm["type"] {
-		case "custom":
+	case "custom":
 			format := canon.FormatText
+			var grammar *canon.ToolGrammar
 			if f, ok := tm["format"].(map[string]any); ok {
-				if ft, ok := f["type"].(string); ok && ft == "json" {
+				switch ft, _ := f["type"].(string); ft {
+				case "json":
 					format = canon.FormatJSON
+				case "grammar":
+					syntax, _ := f["syntax"].(string)
+					definition, _ := f["definition"].(string)
+					grammar = &canon.ToolGrammar{Syntax: syntax, Definition: definition}
 				}
 			}
-			var grammar *canon.ToolGrammar
 			if gr, ok := tm["grammar"].(map[string]any); ok {
 				syntax, _ := gr["syntax"].(string)
 				definition, _ := gr["definition"].(string)

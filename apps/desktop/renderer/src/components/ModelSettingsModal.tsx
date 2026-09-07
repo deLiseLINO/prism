@@ -87,7 +87,7 @@ export function ModelSettingsModal({
   }
 
   function pickPreset(value: number): void {
-    setDraft((d) => ({ ...d, contextWindow: d.contextWindow === null ? fallbackContextWindow : value }))
+    setDraft((d) => ({ ...d, contextWindow: value }))
     setCustom('')
   }
 

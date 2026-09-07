@@ -451,10 +451,10 @@ func run(opts options) error {
 		home = ""
 	}
 	daemonEnv := integrations.Environ(os.Environ())
-	if err := intg.Register(integrations.NewCodex(integrations.CodexOptions{Port: daemonPortNum, Env: daemonEnv, Home: home})); err != nil {
+	modelsSrc := integrationModels(cfg)
+	if err := intg.Register(integrations.NewCodex(integrations.CodexOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
 		return err
 	}
-	modelsSrc := integrationModels(cfg)
 	if err := intg.Register(integrations.NewGrok(integrations.GrokOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
 		return err
 	}

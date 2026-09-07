@@ -5,6 +5,7 @@ import { useAsync, useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
 import { ModelSettingsModal, draftToSettings, type ModelSettingsDraft } from '../components/ModelSettingsModal'
 import { ProviderModal } from '../components/ProviderModal'
+import { wireLabel } from '../wires'
 
 function buildWrite(provider: ProviderView, generation: number, patch: Partial<ProviderWrite>): ProviderWrite {
   const base: ProviderWrite = {
@@ -53,10 +54,9 @@ interface DetailProps {
   readonly onEdit: () => void
   readonly onDelete: () => void
   readonly onToggleProvider: (provider: ProviderView) => void
-  readonly onRemoveModel: (provider: ProviderView, model: string) => void
 }
 
-function ProviderDetail({ provider, generation, globalContextWindow, onOptimistic, onMutated, onEdit, onDelete, onToggleProvider, onRemoveModel }: DetailProps): JSX.Element {
+function ProviderDetail({ provider, generation, globalContextWindow, onOptimistic, onMutated, onEdit, onDelete, onToggleProvider }: DetailProps): JSX.Element {
   const [confirming, setConfirming] = useState(false)
   const [addModel, setAddModel] = useState('')
   const [modalModel, setModalModel] = useState<string | null>(null)
@@ -185,7 +185,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
             <span className={`badge badge--${credentialTone}`}>credential {provider.credential.state}</span>
           </div>
           <p className="prov-detail-wire">
-            {provider.wire}
+            {wireLabel(provider.wire)}
             {provider.baseURL ? ` · ${provider.baseURL}` : ''}
           </p>
         </div>
@@ -441,22 +441,6 @@ export function ProvidersView(): JSX.Element {
     providers.refresh()
   }
 
-  async function removeModel(provider: ProviderView, model: string, generation: number): Promise<void> {
-    const nextModels = (provider.models ?? []).filter((m) => m !== model)
-    applyOptimistic(provider.id, {
-      models: nextModels,
-      disabledModels: (provider.disabledModels ?? []).filter((m) => m !== model),
-    })
-    try {
-      await api.replaceProvider(provider.id, buildWrite(provider, generation, {
-        models: nextModels,
-        disabledModels: (provider.disabledModels ?? []).filter((m) => m !== model),
-        modelSettings: stripRemovedModels(provider.modelSettings, nextModels),
-      }))
-    } catch {}
-    providers.refresh()
-  }
-
   return (
     <section className="screen" aria-labelledby="h-providers">
       <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
@@ -491,7 +475,7 @@ export function ProvidersView(): JSX.Element {
             (provider) =>
               needle === '' ||
               provider.id.toLowerCase().includes(needle) ||
-              provider.wire.toLowerCase().includes(needle) ||
+              wireLabel(provider.wire).toLowerCase().includes(needle) ||
               (provider.models ?? []).some((model) => model.toLowerCase().includes(needle)),
           )
           if (filtered.length === 0) {
@@ -508,7 +492,6 @@ export function ProvidersView(): JSX.Element {
                 onEdit={() => setEditing(active.id)}
                 onDelete={() => void remove(active.id, all.generation)}
                 onToggleProvider={(p) => void toggleProvider(p, all.generation)}
-                onRemoveModel={(p, model) => void removeModel(p, model, all.generation)}
               />
             </div>
           )
@@ -548,7 +531,7 @@ export function ProvidersView(): JSX.Element {
                         />
                       </div>
                       <div className="prov-prow-sub">
-                        <span className="prov-prow-wire">{provider.wire}</span>
+                        <span className="prov-prow-wire">{wireLabel(provider.wire)}</span>
                         <span className={`badge badge--${credentialTone}`}>{provider.credential.state}</span>
                         <span className="num" style={{ marginLeft: 'auto' }}>{(provider.models ?? []).length} models</span>
                       </div>

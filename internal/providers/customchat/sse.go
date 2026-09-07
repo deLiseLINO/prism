@@ -92,6 +92,7 @@ type streamer struct {
 
 	status          canon.Status
 	finished        bool
+	finishReason    string
 	terminalEmitted bool
 }
 
@@ -188,8 +189,12 @@ func (s *streamer) handleFrame(f sseFrame) error {
 	}
 	if reason, ok := choice["finish_reason"].(string); ok && reason != "" {
 		if s.finished {
+			if reason == s.finishReason {
+				return nil
+			}
 			return s.protocolError("upstream emitted a second finish reason")
 		}
+		s.finishReason = reason
 		status, known := finishStatus(reason)
 		if !known {
 			return s.failedTurn(fmt.Sprintf("upstream finish reason %q is not representable", reason))

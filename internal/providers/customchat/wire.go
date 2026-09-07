@@ -184,6 +184,28 @@ func messagesFrom(req canon.Request) ([]message, error) {
 				return nil, fmt.Errorf("customchat input: tool result is missing call id")
 			}
 			out = append(out, message{Role: "tool", Content: text, ToolCallID: string(output.CallID)})
+		case canon.CustomToolCall:
+			call := req.Input[i].(canon.CustomToolCall)
+			if call.CallID == "" {
+				return nil, fmt.Errorf("customchat input: custom tool call is missing call id")
+			}
+			arguments, err := json.Marshal(call.Input)
+			if err != nil {
+				return nil, fmt.Errorf("customchat input: custom tool call arguments: %w", err)
+			}
+			out = append(out, message{Role: "assistant", ToolCalls: []toolCall{{
+				ID:       string(call.CallID),
+				Type:     "function",
+				Function: funcCallWire{Name: string(call.Name), Arguments: string(arguments)},
+			}}})
+		case canon.CustomToolOutput:
+			output := req.Input[i].(canon.CustomToolOutput)
+			if output.CallID == "" {
+				return nil, fmt.Errorf("customchat input: custom tool result is missing call id")
+			}
+			out = append(out, message{Role: "tool", Content: output.Output, ToolCallID: string(output.CallID)})
+		case canon.ReasoningItem, canon.CompactionMarker, canon.LocalShellCall, canon.LocalShellOutput, canon.ToolSearchCall, canon.ToolSearchOutput:
+			continue
 		default:
 			return nil, fmt.Errorf("customchat input: unsupported canonical item %T", req.Input[i])
 		}
@@ -370,17 +392,21 @@ func responseFormatFrom(f *canon.TextFormat) (*responseFormat, error) {
 func toolsFrom(tools []canon.Tool) ([]tool, error) {
 	out := make([]tool, 0, len(tools))
 	for _, t := range tools {
-		tt, ok := t.(canon.FunctionTool)
-		if !ok {
-			return nil, fmt.Errorf("customchat tools: unsupported canonical tool %T", t)
-		}
-		def := functionDef{Name: string(tt.Name), Description: tt.Description}
-		if len(tt.Parameters) > 0 {
-			def.Parameters = tt.Parameters
-		}
-		if tt.Strict {
-			strict := true
-			def.Strict = &strict
+		var def functionDef
+		switch tt := t.(type) {
+		case canon.FunctionTool:
+			def = functionDef{Name: string(tt.Name), Description: tt.Description}
+			if len(tt.Parameters) > 0 {
+				def.Parameters = tt.Parameters
+			}
+			if tt.Strict {
+				strict := true
+				def.Strict = &strict
+			}
+		case canon.CustomToolDef:
+			def = functionDef{Name: string(tt.Name), Description: tt.Description}
+		default:
+			continue
 		}
 		out = append(out, tool{Type: "function", Function: def})
 	}

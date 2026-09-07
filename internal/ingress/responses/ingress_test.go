@@ -345,6 +345,20 @@ func TestToolSchemaValidation(t *testing.T) {
 	}
 }
 
+func TestCustomToolGrammarFormatParses(t *testing.T) {
+	body := `{"model": "gpt-5.3", "input": "hi", "tools": [
+		{"type": "custom", "name": "apply_patch", "format": {"type": "grammar", "syntax": "lark", "definition": "start: A"}}
+	]}`
+	req, _, _ := mustParse(t, body, nil)
+	custom, ok := req.Tools[0].(canon.CustomToolDef)
+	if !ok {
+		t.Fatalf("tool[0]: %#v", req.Tools[0])
+	}
+	if custom.Grammar == nil || custom.Grammar.Syntax != "lark" || custom.Grammar.Definition != "start: A" {
+		t.Fatalf("grammar not parsed from nested format: %#v", custom)
+	}
+}
+
 func TestGrokIntegerArgumentNormalization(t *testing.T) {
 	body := `{
 		"model": "gpt-5.3",
