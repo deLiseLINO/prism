@@ -65,13 +65,14 @@ var (
 )
 
 type Document struct {
-	Version       int                 `json:"version"`
-	Daemon        Daemon              `json:"daemon"`
-	ContextWindow int                 `json:"contextWindow,omitempty"`
-	Providers     map[string]Provider `json:"providers"`
-	Combos        map[string]Combo    `json:"combos"`
-	Routes        map[string]string   `json:"routes"`
-	Aliases       map[string]string   `json:"aliases"`
+	Version       int                   `json:"version"`
+	Daemon        Daemon                `json:"daemon"`
+	ContextWindow int                   `json:"contextWindow,omitempty"`
+	Providers     map[string]Provider   `json:"providers"`
+	Combos        map[string]Combo      `json:"combos"`
+	Routes        map[string]string     `json:"routes"`
+	Aliases       map[string]string     `json:"aliases"`
+	VisionSidecar VisionSidecarSettings `json:"visionSidecar,omitempty"`
 }
 
 type Daemon struct {
@@ -202,6 +203,11 @@ func (d Document) validate() error {
 			if t.Weight < 0 {
 				return fmt.Errorf("%w: combos.%s.targets.weight %d", ErrInvalidValue, id, t.Weight)
 			}
+		}
+	}
+	if d.VisionSidecar.Enabled {
+		if err := d.validateVisionSidecar(); err != nil {
+			return err
 		}
 	}
 	for k, v := range d.Routes {
@@ -341,4 +347,40 @@ func contains(xs []string, s string) bool {
 		}
 	}
 	return false
+}
+
+type VisionSidecarSettings struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Target  string `json:"target,omitempty"`
+}
+
+func (d Document) validateVisionSidecar() error {
+	v := d.VisionSidecar.Target
+	if v == "" {
+		return fmt.Errorf("%w: visionSidecar.target", ErrEmptyField)
+	}
+	if _, ok := d.Combos[v]; ok {
+		return fmt.Errorf("%w: visionSidecar.target %q must name a provider/model", ErrInvalidTarget, v)
+	}
+	providerID, model, ok := strings.Cut(v, "/")
+	if !ok || providerID == "" || model == "" {
+		return fmt.Errorf("%w: visionSidecar.target %q", ErrInvalidTarget, v)
+	}
+	p, ok := d.Providers[providerID]
+	if !ok {
+		return fmt.Errorf("%w: visionSidecar.target unknown provider %q", ErrInvalidTarget, providerID)
+	}
+	if !p.IsEnabled() {
+		return fmt.Errorf("%w: visionSidecar.target provider %q is disabled", ErrInvalidTarget, providerID)
+	}
+	if len(p.Models) > 0 && !contains(p.Models, model) {
+		return fmt.Errorf("%w: visionSidecar.target unknown model %q for provider %q", ErrInvalidTarget, model, providerID)
+	}
+	if contains(p.DisabledModels, model) {
+		return fmt.Errorf("%w: visionSidecar.target model %q is disabled", ErrInvalidTarget, model)
+	}
+	if !p.ModelSettings[model].ImageInput {
+		return fmt.Errorf("%w: visionSidecar.target model %q requires imageInput", ErrInvalidTarget, model)
+	}
+	return nil
 }

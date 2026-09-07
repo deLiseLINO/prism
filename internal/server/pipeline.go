@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -110,6 +111,15 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 	if err != nil {
 		s.writeParseError(w, proto, err)
 		return
+	}
+	if sidecar, ok := s.visionSidecar(req); ok {
+		replaced, err := sidecar.describeImages(r.Context(), req)
+		if err != nil {
+			log.Printf("server: request %s vision sidecar provider=%q model=%q failed: %v", facts.RequestID, sidecar.target.Provider, sidecar.target.Model, err)
+			s.writeTurnError(w, proto, err)
+			return
+		}
+		req = replaced
 	}
 	sink := s.newSink(w, proto, req, facts)
 	p := &pipeline{sink: sink, tracker: stream.NewTrackerWithClock(s.clock), clock: s.clock}
@@ -305,6 +315,32 @@ func (s *Server) writeParseError(w http.ResponseWriter, proto protocol, err erro
 		writeJSON(w, http.StatusBadRequest, messagesErrorEnvelope{Type: "error", Error: messagesErrorBody{
 			Type:    "invalid_request_error",
 			Message: err.Error(),
+		}})
+	}
+}
+
+func (s *Server) writeTurnError(w http.ResponseWriter, proto protocol, err error) {
+	status := http.StatusBadGateway
+	if errors.Is(err, errTooManyImages) {
+		status = http.StatusBadRequest
+	}
+	message := err.Error()
+	switch proto {
+	case protocolChat:
+		writeJSON(w, status, chatErrorEnvelope{Error: chatErrorBody{
+			Message: message,
+			Type:    "invalid_request_error",
+			Code:    "vision_sidecar_failed",
+		}})
+	case protocolMessages:
+		writeJSON(w, status, messagesErrorEnvelope{Type: "error", Error: messagesErrorBody{
+			Type:    "api_error",
+			Message: message,
+		}})
+	default:
+		writeJSON(w, status, errorEnvelope{Error: errorObject{
+			Code:    "vision_sidecar_failed",
+			Message: message,
 		}})
 	}
 }

@@ -225,3 +225,72 @@ func TestValidateRejectsBadContextWindows(t *testing.T) {
 		t.Fatalf("valid model override rejected: %v", err)
 	}
 }
+
+func TestCloneDocumentKeepsVisionSidecar(t *testing.T) {
+	m := &Manager{snap: Snapshot{Config: Document{
+		Version:       SchemaVersion,
+		VisionSidecar: VisionSidecarSettings{Enabled: true, Target: "router/gpt-5.6-luna"},
+	}}}
+	got := m.Get().Config.VisionSidecar
+	if !got.Enabled || got.Target != "router/gpt-5.6-luna" {
+		t.Fatalf("VisionSidecar = %+v, want enabled router target", got)
+	}
+}
+
+func TestValidateVisionSidecarTarget(t *testing.T) {
+	doc := func(mutate func(*Document)) Document {
+		d := Document{
+			Version: SchemaVersion,
+			Providers: map[string]Provider{
+				"p": {
+					Wire:    WireOpenAIChat,
+					BaseURL: "http://localhost",
+					Models:  []string{"vision", "text"},
+					ModelSettings: map[string]ModelSettings{
+						"vision": {ImageInput: true},
+					},
+				},
+			},
+			VisionSidecar: VisionSidecarSettings{Enabled: true, Target: "p/vision"},
+		}
+		mutate(&d)
+		return d
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Document)
+		valid  bool
+	}{
+		{"valid", func(*Document) {}, true},
+		{"disabled", func(d *Document) { d.VisionSidecar.Enabled = false }, true},
+		{"empty target", func(d *Document) { d.VisionSidecar.Target = "" }, false},
+		{"combo", func(d *Document) {
+			d.Combos = map[string]Combo{"c": {Targets: []Target{{Provider: "p", Model: "vision"}}}}
+			d.VisionSidecar.Target = "c"
+		}, false},
+		{"unknown provider", func(d *Document) { d.VisionSidecar.Target = "x/vision" }, false},
+		{"unknown model", func(d *Document) { d.VisionSidecar.Target = "p/missing" }, false},
+		{"disabled model", func(d *Document) {
+			p := d.Providers["p"]
+			p.DisabledModels = []string{"vision"}
+			d.Providers["p"] = p
+		}, false},
+		{"disabled provider", func(d *Document) {
+			off := false
+			p := d.Providers["p"]
+			p.Enabled = &off
+			d.Providers["p"] = p
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := doc(tc.mutate).validate()
+			if tc.valid && err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if !tc.valid && err == nil {
+				t.Fatal("validate accepted invalid sidecar target")
+			}
+		})
+	}
+}
