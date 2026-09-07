@@ -70,9 +70,17 @@ type usageResponse struct {
 	RateLimit *usageRateLimit `json:"rate_limit"`
 }
 
+type UsageWindow struct {
+	Label     string
+	Used      int64
+	Limit     *int64
+	WindowEnd time.Time
+}
+
 // parseUsage classifies WHAM windows the same way ParseQuotaHeaders
 // classifies header windows: by declared window length, never by plan name.
-// The governing snapshot is the window with the highest used percent.
+// The governing snapshot is the window with the highest used percent; every
+// readable window is kept alongside so callers can render each limit slot.
 func parseUsage(body []byte) (QuotaResult, error) {
 	var payload usageResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -109,15 +117,56 @@ func parseUsage(body []byte) (QuotaResult, error) {
 	if !ok {
 		return QuotaResult{}, fmt.Errorf("codex: usage payload carries no quota window")
 	}
-	snapshot := quota.Snapshot{
-		Used:   int64(math.Round(governing.percent * 100)),
-		Limit:  newInt64(10000),
-		Source: quota.SourceEndpoint,
-	}
-	if governing.resetPresent {
-		snapshot.WindowEnd = resetTime(governing.resetAt)
-	}
+	snapshot := snapshotFromReading(governing, quota.SourceEndpoint)
+	snapshot.Windows = windowsFromReadings(windows)
 	return QuotaResult{Snapshot: snapshot, OK: true}, nil
+}
+
+func snapshotFromReading(r windowReading, src quota.Source) quota.Snapshot {
+	s := quota.Snapshot{
+		Used:   int64(math.Round(r.percent * 100)),
+		Limit:  newInt64(10000),
+		Source: src,
+	}
+	if r.resetPresent {
+		s.WindowEnd = resetTime(r.resetAt)
+	}
+	return s
+}
+
+func windowsFromReadings(readings []windowReading) []quota.Window {
+	var out []quota.Window
+	for _, r := range readings {
+		if !r.percentSet {
+			continue
+		}
+		w := quota.Window{
+			Label: windowLabel(r.minutes),
+			Used:  int64(math.Round(r.percent * 100)),
+			Limit: newInt64(10000),
+		}
+		if r.resetPresent {
+			w.WindowEnd = resetTime(r.resetAt)
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+func windowLabel(minutes float64) string {
+	if !math.IsNaN(minutes) && minutes > 0 {
+		if minutes >= monthlyWindowMinMinutes {
+			return "Monthly usage limit"
+		}
+		if minutes >= weeklyWindowMinMinutes {
+			return "Weekly usage limit"
+		}
+		if minutes >= 60 {
+			return fmt.Sprintf("%d hour usage limit", int(math.Round(minutes/60)))
+		}
+		return fmt.Sprintf("%d minute usage limit", int(math.Round(minutes)))
+	}
+	return "Usage limit"
 }
 
 func usageReading(w *usageWindow) windowReading {

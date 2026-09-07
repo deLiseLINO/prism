@@ -7,6 +7,14 @@ type Snapshot struct {
 	Limit     *int64
 	WindowEnd time.Time
 	Source    Source
+	Windows   []Window
+}
+
+type Window struct {
+	Label     string
+	Used      int64
+	Limit     *int64
+	WindowEnd time.Time
 }
 
 type Source uint8

@@ -1,26 +1,10 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import type { ModelSettingsView, ProviderView, ProvidersView as ProvidersViewData } from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Confirm, Empty, Field, Row, SearchInput, Select, TextInput, Toggle } from '../components/Ui'
+import { AsyncBoundary, Banner, Button, Confirm, Empty, Row, SearchInput, Toggle } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
 import { ModelSettingsModal, draftToSettings, type ModelSettingsDraft } from '../components/ModelSettingsModal'
-
-const WIRE_OPTIONS: readonly { readonly value: string; readonly label: string }[] = [
-  { value: 'codex', label: 'codex' },
-  { value: 'antigravity', label: 'antigravity' },
-  { value: 'responses', label: 'responses' },
-  { value: 'messages', label: 'messages' },
-  { value: 'chat', label: 'chat' },
-]
-
-const BASE_URL_WIRES: readonly string[] = ['responses', 'messages', 'chat']
-
-interface EditorProps {
-  readonly existing: ProviderView | null
-  readonly generation: number
-  readonly onSaved: (id: string) => void
-  readonly onCancelled: () => void
-}
+import { ProviderModal } from '../components/ProviderModal'
 
 function buildWrite(provider: ProviderView, generation: number, patch: Partial<ProviderWrite>): ProviderWrite {
   const base: ProviderWrite = {
@@ -60,143 +44,6 @@ function stripRemovedModels(
   return next
 }
 
-function ProviderEditor({ existing, generation, onSaved, onCancelled }: EditorProps): JSX.Element {
-  const [id, setId] = useState(existing?.id ?? '')
-  const [wire, setWire] = useState<string>(existing?.wire ?? 'codex')
-  const [baseURL, setBaseURL] = useState(existing?.baseURL ?? '')
-  const [models, setModels] = useState((existing?.models ?? []).join(', '))
-  const [enabled, setEnabled] = useState<boolean>(existing?.enabled ?? true)
-  const [credential, setCredential] = useState('')
-  const [credentialSet, setCredentialSet] = useState<boolean>(existing?.credential.state === 'set')
-  const [apiKeyRef, setApiKeyRef] = useState('')
-  const task = useTask()
-
-  const idMissing = id.trim() === ''
-  const baseURLMissing =
-    BASE_URL_WIRES.includes(wire) &&
-    baseURL.trim() === '' &&
-    (existing === null || (existing.baseURL ?? '') === '')
-  const invalid = idMissing || baseURLMissing
-
-  function splitList(value: string): string[] {
-    return value
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0)
-  }
-
-  async function save(): Promise<void> {
-    if (invalid) return
-    const trimmedBase = baseURL.trim()
-    const trimmedKeyRef = apiKeyRef.trim()
-    const write: ProviderWrite = {
-      id: id.trim(),
-      wire,
-      ...(trimmedBase === '' ? {} : { baseURL: trimmedBase }),
-      ...(trimmedKeyRef === '' ? {} : { apiKeyRef: trimmedKeyRef }),
-      models: splitList(models),
-      disabledModels: existing?.disabledModels ?? [],
-      enabled,
-      ...(existing?.pool === undefined || existing.pool === null ? {} : { pool: existing.pool }),
-      ...(credential === '' ? {} : { credential }),
-      expectedGeneration: generation,
-    }
-    const result = await task.run(() =>
-      existing === null ? api.createProvider(write) : api.replaceProvider(existing.id, write),
-    )
-    if (result === undefined) return
-    setCredential('')
-    setCredentialSet(credential !== '' || credentialSet)
-    onSaved(id.trim())
-  }
-
-  return (
-    <section className="panel card panel-pad" style={{ '--i': 2 } as CSSProperties}>
-      <h3 className="panel-title">{existing === null ? 'New provider' : `Edit ${existing.id}`}</h3>
-      <div className="stack stack--normal">
-        <div className="grid-2">
-          <Field label="ID" htmlFor="prov-id" hint="Unique key. Required.">
-            <TextInput id="prov-id" value={id} onChange={setId} disabled={existing !== null} />
-            {idMissing ? (
-              <p className="meta">ID is required.</p>
-            ) : null}
-          </Field>
-          <Field label="Wire" htmlFor="prov-wire">
-            <Select<string>
-              id="prov-wire"
-              value={wire}
-              onChange={setWire}
-              options={[...WIRE_OPTIONS]}
-              disabled={existing !== null}
-            />
-          </Field>
-          <Field
-            label="Base URL"
-            htmlFor="prov-base"
-            hint={
-              existing === null
-                ? 'Required for responses, messages, and chat wires.'
-                : 'Empty keeps the current value.'
-            }
-          >
-            <TextInput id="prov-base" value={baseURL} onChange={setBaseURL} />
-            {baseURLMissing ? (
-              <p className="meta">Base URL is required for responses, messages, and chat wires.</p>
-            ) : null}
-          </Field>
-          <Field
-            label="Models"
-            htmlFor="prov-models"
-            hint="Comma-separated. Outbound routing keys; inbound alias targets use these."
-          >
-            <TextInput id="prov-models" value={models} onChange={setModels} />
-          </Field>
-          <Field
-            label="Credential"
-            htmlFor="prov-cred"
-            hint={`Paste once; the field is cleared after submit. Currently ${credentialSet ? 'set' : 'unset'}.`}
-          >
-            <TextInput
-              id="prov-cred"
-              type="password"
-              value={credential}
-              onChange={setCredential}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={credentialSet ? '•••••••• (set)' : 'paste credential'}
-            />
-          </Field>
-          <Field label="Credential reference" htmlFor="prov-keyref" hint="Optional keyring identifier.">
-            <TextInput id="prov-keyref" value={apiKeyRef} onChange={setApiKeyRef} autoComplete="off" />
-          </Field>
-        </div>
-        <Row gap="loose" align="start">
-          <Toggle checked={enabled} onChange={setEnabled} label="Provider enabled" />
-        </Row>
-        <Row gap="tight" align="start">
-          <Button tone="primary" size="sm" onClick={() => void save()} disabled={task.running || invalid} busy={task.running}>
-            {existing === null ? 'Create provider' : 'Save changes'}
-          </Button>
-          <Button tone="ghost" size="sm" onClick={onCancelled} disabled={task.running}>
-            Cancel
-          </Button>
-        </Row>
-        {task.error !== null ? (
-          <Banner tone="error" title="Save failed">
-            {describeError(task.error)}
-            {task.error instanceof ApiError && task.error.code === 'stale_generation' ? (
-              <>
-                : config changed underneath.
-                <Button tone="ghost" size="sm" onClick={() => onSaved(id.trim())}>Re-fetch configuration</Button>
-              </>
-            ) : null}
-          </Banner>
-        ) : null}
-      </div>
-    </section>
-  )
-}
-
 interface DetailProps {
   readonly provider: ProviderView
   readonly generation: number
@@ -218,6 +65,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
   const [toggleError, setToggleError] = useState<Error | null>(null)
   const [syncError, setSyncError] = useState<Error | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [freshModels, setFreshModels] = useState<readonly string[]>([])
   const task = useTask()
   const models = provider.models ?? []
   const disabledModels = provider.disabledModels ?? []
@@ -262,9 +110,12 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
     setSyncing(true)
     setSyncError(null)
     try {
-      await api.syncProviderModels(provider.id, generation)
+      const before = new Set(models)
+      const result = await api.syncProviderModels(provider.id, generation)
+      setFreshModels((result.provider.models ?? []).filter((m) => !before.has(m)))
     } catch (err: unknown) {
       setSyncError(err instanceof Error ? err : new Error(String(err)))
+      setFreshModels([])
     }
     setSyncing(false)
     onMutated()
@@ -308,13 +159,17 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
   }
 
   async function removeModel(model: string): Promise<void> {
-    const ok = await task.run(() =>
-      api.replaceProvider(provider.id, buildWrite(provider, generation, {
-        models: models.filter((m) => m !== model),
-        modelSettings: stripRemovedModels(provider.modelSettings, models.filter((m) => m !== model)),
-      })),
-    )
-    if (ok === undefined) return
+    const nextModels = models.filter((m) => m !== model)
+    onOptimistic(provider.id, { models: nextModels, disabledModels: disabledModels.filter((m) => m !== model) })
+    try {
+      await api.replaceProvider(provider.id, buildWrite(provider, generation, {
+        models: nextModels,
+        disabledModels: disabledModels.filter((m) => m !== model),
+        modelSettings: stripRemovedModels(provider.modelSettings, nextModels),
+      }))
+    } catch (err: unknown) {
+      setToggleError(err instanceof Error ? err : new Error(String(err)))
+    }
     onMutated()
   }
 
@@ -380,12 +235,17 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
         </div>
         {models.length > 0 ? (
           <div className="prov-mlist">
-            {models.map((model) => {
+            {[...models].sort((a, b) => {
+              const fa = freshModels.includes(a) ? 0 : 1
+              const fb = freshModels.includes(b) ? 0 : 1
+              return fa - fb
+            }).map((model) => {
               const off = disabledModels.includes(model)
               const manual = !syncedModels.includes(model)
+              const fresh = freshModels.includes(model)
               return (
                 <div
-                  className={`prov-mline${off ? ' prov-mline--off' : ''} prov-mline--click`}
+                  className={`prov-mline${off ? ' prov-mline--off' : ''}${fresh ? ' prov-mline--new' : ''} prov-mline--click`}
                   key={model}
                   role="button"
                   tabIndex={0}
@@ -400,6 +260,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
                   <div className="prov-mline-l">
                     <span className="prov-mline-dot" aria-hidden="true" />
                     <span className="prov-mline-name num">{model}</span>
+                    {fresh ? <span className="badge badge--ok prov-mline-newbadge">new</span> : null}
                     {manual ? <span className="badge badge--muted prov-mline-manual">manual</span> : null}
                   </div>
                   <div className="prov-mline-acts model-toggles" aria-label={`Models for ${provider.id}`}>
@@ -581,11 +442,15 @@ export function ProvidersView(): JSX.Element {
   }
 
   async function removeModel(provider: ProviderView, model: string, generation: number): Promise<void> {
-    applyOptimistic(provider.id, { models: (provider.models ?? []).filter((m) => m !== model) })
+    const nextModels = (provider.models ?? []).filter((m) => m !== model)
+    applyOptimistic(provider.id, {
+      models: nextModels,
+      disabledModels: (provider.disabledModels ?? []).filter((m) => m !== model),
+    })
     try {
-      const nextModels = (provider.models ?? []).filter((m) => m !== model)
       await api.replaceProvider(provider.id, buildWrite(provider, generation, {
         models: nextModels,
+        disabledModels: (provider.disabledModels ?? []).filter((m) => m !== model),
         modelSettings: stripRemovedModels(provider.modelSettings, nextModels),
       }))
     } catch {}
@@ -614,26 +479,6 @@ export function ProvidersView(): JSX.Element {
           </Button>
         </div>
       </div>
-      {creating ? (
-        <AsyncBoundary<ProvidersViewData>
-          state={providers.state}
-          loadingLabel="Preparing form…"
-          empty={null}
-        >
-          {(all) => (
-            <ProviderEditor
-              existing={null}
-              generation={all.generation}
-              onSaved={(newId) => {
-                setCreating(false)
-                setSelected(newId)
-                providers.refresh()
-              }}
-              onCancelled={() => setCreating(false)}
-            />
-          )}
-        </AsyncBoundary>
-      ) : null}
       <AsyncBoundary<ProvidersViewData>
         state={providers.state}
         loadingLabel="Loading providers…"
@@ -652,20 +497,7 @@ export function ProvidersView(): JSX.Element {
           if (filtered.length === 0) {
             return <Empty title={all.providers.length === 0 ? 'No providers configured.' : 'No providers match the current filter.'} />
           }
-          const detail: ReactNode = active === null ? null : editing === active.id ? (
-            <div key={`edit-${active.id}`} className="prov-detail-wrap">
-              <ProviderEditor
-                existing={active}
-                generation={all.generation}
-                onSaved={(savedId) => {
-                  setEditing(null)
-                  setSelected(savedId)
-                  providers.refresh()
-                }}
-                onCancelled={() => setEditing(null)}
-              />
-            </div>
-          ) : (
+          const detail: ReactNode = active === null ? null : (
             <div key={`detail-${active.id}`} className="prov-detail-wrap">
               <ProviderDetail
                 provider={active}
@@ -732,6 +564,33 @@ export function ProvidersView(): JSX.Element {
           )
         }}
       </AsyncBoundary>
+      {creating || editing !== null ? (
+        <AsyncBoundary<ProvidersViewData>
+          state={providers.state}
+          loadingLabel="Preparing form…"
+          empty={null}
+        >
+          {(all) => {
+            const target = editing === null ? null : all.providers.find((p) => p.id === editing) ?? null
+            return (
+              <ProviderModal
+                existing={creating ? null : target}
+                generation={all.generation}
+                onCancel={() => {
+                  setCreating(false)
+                  setEditing(null)
+                }}
+                onSaved={(savedId) => {
+                  setCreating(false)
+                  setEditing(null)
+                  setSelected(savedId)
+                  providers.refresh()
+                }}
+              />
+            )
+          }}
+        </AsyncBoundary>
+      ) : null}
     </section>
   )
 }

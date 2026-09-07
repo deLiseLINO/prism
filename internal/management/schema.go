@@ -94,16 +94,25 @@ type ProviderWrite struct {
 }
 
 type QuotaView struct {
+	Used      int64             `json:"used"`
+	Limit     *int64            `json:"limit,omitempty"`
+	WindowEnd time.Time         `json:"windowEnd"`
+	Source    string            `json:"source"`
+	Windows   []QuotaWindowView `json:"windows,omitempty"`
+}
+
+type QuotaWindowView struct {
+	Label     string    `json:"label"`
 	Used      int64     `json:"used"`
 	Limit     *int64    `json:"limit,omitempty"`
-	WindowEnd time.Time `json:"windowEnd"`
-	Source    string    `json:"source"`
+	WindowEnd time.Time `json:"windowEnd,omitempty"`
 }
 
 type Account struct {
 	ID                   string     `json:"id"`
 	Provider             string     `json:"provider"`
 	State                string     `json:"state"`
+	Email                string     `json:"email,omitempty"`
 	Priority             int        `json:"priority"`
 	Version              uint64     `json:"version"`
 	CredentialGeneration uint64     `json:"credentialGeneration"`

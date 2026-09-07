@@ -53,6 +53,7 @@ type Account struct {
 	Provider       ProviderID
 	Priority       int
 	State          State
+	Email          string
 	CredGen        CredentialGeneration
 	Version        StateVersion
 	Quota          quota.Snapshot
