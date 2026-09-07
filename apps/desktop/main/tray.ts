@@ -9,10 +9,6 @@ export class TrayController {
 
   init(): void {
     const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'resources', 'trayTemplate.png'))
-    icon.addRepresentation({
-      scaleFactor: 2,
-      buffer: nativeImage.createFromPath(path.join(__dirname, '..', '..', 'resources', 'trayTemplate@2x.png')).toPNG(),
-    })
     icon.setTemplateImage(true)
     this.tray = new Tray(icon)
     this.tray.setToolTip('Prism')

@@ -95,60 +95,61 @@ func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Prov
 	for _, a := range accounts {
 		e.pool.Register(a)
 	}
-	switch p.Wire {
+	e.ensureFlows(providerID, p.Wire)
+	runner, err := e.buildRunner(id, p)
+	if err != nil {
+		return err
+	}
+	if err := e.registry.Register(providerID, runner); err != nil {
+		return err
+	}
+	e.wires[providerID] = p.Wire
+	return nil
+}
+
+func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
+	switch w {
 	case config.WireCodex:
 		flow, err := auth.NewCodexFlow(auth.CodexProduction, auth.Options{})
 		if err != nil {
-			return fmt.Errorf("prismd: provider %s auth: %w", id, err)
+			log.Printf("prismd: provider %s auth: %v", providerID, err)
+			return
 		}
 		e.flows[providerID] = flow
 	case config.WireAntigravity:
 		flow, err := auth.NewAntigravityFlow(auth.AntigravityProduction, auth.Options{})
 		if err != nil {
-			return fmt.Errorf("prismd: provider %s auth: %w", id, err)
+			log.Printf("prismd: provider %s auth: %v", providerID, err)
+			return
 		}
 		e.flows[providerID] = flow
+	default:
+		delete(e.flows, providerID)
 	}
+}
+
+func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, error) {
+	providerID := account.ProviderID(id)
 	switch p.Wire {
 	case config.WireCodex:
-		r := &codex.Runner{
+		return &codex.Runner{
 			Creds:       codexCreds{ref: e.refresher},
 			Client:      e.client,
 			Now:         time.Now,
 			QuotaSink:   e.quotas.record,
 			WarningSink: func(w string) { log.Printf("prismd: codex %s warning: %s", id, w) },
-		}
-		if err := e.registry.Register(providerID, r); err != nil {
-			return err
-		}
+		}, nil
 	case config.WireAntigravity:
-		r, err := antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.client, p.BaseURL)
-		if err != nil {
-			return err
-		}
-		if err := r.Register(e.registry, providerID); err != nil {
-			return err
-		}
+		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.client, p.BaseURL)
 	case config.WireOpenAIResponses:
-		r := customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{})
-		if err := e.registry.Register(providerID, r); err != nil {
-			return err
-		}
+		return customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}), nil
 	case config.WireOpenAIChat:
-		r := customchat.New(customKey{e.creds}.Resolve, customchat.Options{})
-		if err := e.registry.Register(providerID, r); err != nil {
-			return err
-		}
+		return customchat.New(customKey{e.creds}.Resolve, customchat.Options{}), nil
 	case config.WireAnthropicMessages:
-		r := anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.client})
-		if err := e.registry.Register(providerID, anthropicRunner{runner: r, creds: e.creds, provider: providerID}); err != nil {
-			return err
-		}
+		return anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.client}), creds: e.creds, provider: providerID}, nil
 	default:
-		return fmt.Errorf("prismd: provider %q has unknown wire %q", id, p.Wire)
+		return nil, fmt.Errorf("prismd: provider %q has unknown wire %q", id, p.Wire)
 	}
-	e.wires[providerID] = p.Wire
-	return nil
 }
 
 func (e *daemonEnv) reconcileOnce(ctx context.Context) {
@@ -164,8 +165,18 @@ func (e *daemonEnv) reconcileOnce(ctx context.Context) {
 			log.Printf("prismd: provider %s applied without restart", id)
 		}
 		if known, ok := e.wires[providerID]; ok && known != p.Wire {
-			log.Printf("prismd: provider %s changed wire %q to %q, restart required", id, known, p.Wire)
-			continue
+			runner, err := e.buildRunner(id, p)
+			if err != nil {
+				log.Printf("prismd: provider %s wire %q: %v", id, p.Wire, err)
+				continue
+			}
+			if err := e.registry.Replace(providerID, runner); err != nil {
+				log.Printf("prismd: provider %s wire swap: %v", id, err)
+				continue
+			}
+			e.ensureFlows(providerID, p.Wire)
+			e.wires[providerID] = p.Wire
+			log.Printf("prismd: provider %s wire %q applied without restart", id, p.Wire)
 		}
 		if customWire(p.Wire) && p.BaseURL != "" {
 			e.syncCustomProvider(ctx, id, p)

@@ -43,5 +43,4 @@ await Promise.all([
   copyFile('renderer/index.html', 'dist/renderer/index.html'),
   copyFile('renderer/styles.css', 'dist/renderer/styles.css'),
   copyFile('renderer/theme-boot.js', 'dist/renderer/theme-boot.js'),
-  copyFile(path.join('resources', 'icon.icns'), path.join('dist', 'icon.icns')),
 ])
