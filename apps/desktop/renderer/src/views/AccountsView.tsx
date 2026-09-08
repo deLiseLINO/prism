@@ -6,6 +6,8 @@ import type {
   ProviderView,
   ProvidersView,
   QuotaResponse,
+  QuotaView,
+  QuotaWindowView,
 } from '@prism/contracts'
 import {
   AsyncBoundary,
@@ -300,20 +302,26 @@ export type QuotaCellState =
       readonly used: number
       readonly limit?: number
       readonly windowEnd: string
-      readonly source: QuotaResponse['quota']['source']
+      readonly source: QuotaView['source']
+      readonly windows: readonly QuotaWindowView[]
     }
 
 export function quotaCell(response: QuotaResponse): QuotaCellState {
-  if (response.quota.source === 'unknown') {
+  return quotaCellFromView(response.quota)
+}
+
+export function quotaCellFromView(quota: QuotaView): QuotaCellState {
+  if (quota.source === 'unknown') {
     return { kind: 'unavailable' }
   }
-  const { used, limit, windowEnd, source } = response.quota
+  const { used, limit, windowEnd, source, windows } = quota
   return {
     kind: 'ready',
     used,
     ...(limit === undefined ? {} : { limit }),
     windowEnd,
     source,
+    windows: windows ?? [],
   }
 }
 
@@ -385,39 +393,83 @@ function LiveQuotaCell({
         </span>
       ) : null}
       {cell !== null && cell.kind === 'ready' ? (
-        <>
-          <span
-            className="num"
-            title={`window ends ${formatWindowEnd(cell.windowEnd)} · source ${cell.source}`}
-          >
-            {cell.used}/{cell.limit === undefined ? '?' : cell.limit}
-          </span>
-          <span className="bar">
-            <span
-              className={`bar-fill ${quotaFillRatio(cell) > 0.9 ? 'f-danger' : quotaFillRatio(cell) > 0.7 ? 'f-warn' : ''}`.trim()}
-              style={{ '--w': quotaFillRatio(cell) } as CSSProperties}
-            />
-          </span>
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            aria-label={`Refresh quota for ${accountId}`}
-            onClick={() => quota.refresh()}
-          >
-            Refresh
-          </button>
-        </>
+        <QuotaBars accountId={accountId} cell={cell} onRefresh={() => quota.refresh()} />
       ) : null}
     </div>
   )
 }
 
-function quotaFillRatio(
+interface QuotaBarsProps {
+  readonly accountId: string
+  readonly cell: Extract<QuotaCellState, { kind: 'ready' }>
+  readonly onRefresh: () => void
+}
+
+function QuotaBars({
+  accountId,
+  cell,
+  onRefresh,
+}: QuotaBarsProps): JSX.Element {
+  const windows = renderQuotaWindows(cell)
+  return (
+    <span className="quota-windows">
+      {windows.map((window) => (
+        <span className="quota-window" key={`${window.label}-${window.windowEnd}`}>
+          <span className="num" title={quotaTitle(window)}>
+            {window.used}/{window.limit === undefined ? '?' : window.limit}
+          </span>
+          <span className="bar">
+            <span
+              className={`bar-fill ${quotaWindowFill(window) > 0.9 ? 'f-danger' : quotaWindowFill(window) > 0.7 ? 'f-warn' : ''}`.trim()}
+              style={{ '--w': quotaWindowFill(window) } as CSSProperties}
+            />
+          </span>
+          <span className="quota-window-label">{window.label}</span>
+        </span>
+      ))}
+      <button
+        type="button"
+        className="btn btn--ghost btn--sm"
+        aria-label={`Refresh quota for ${accountId}`}
+        onClick={onRefresh}
+      >
+        Refresh
+      </button>
+    </span>
+  )
+}
+
+interface RenderQuotaWindow {
+  readonly label: string
+  readonly used: number
+  readonly limit?: number
+  readonly windowEnd: string
+}
+
+function renderQuotaWindows(
   cell: Extract<QuotaCellState, { kind: 'ready' }>,
-): number {
-  const limit = cell.limit
+): readonly RenderQuotaWindow[] {
+  if (cell.windows.length > 0) return cell.windows
+  return [
+    {
+      label: 'Current usage limit',
+      used: cell.used,
+      ...(cell.limit === undefined ? {} : { limit: cell.limit }),
+      windowEnd: cell.windowEnd,
+    },
+  ]
+}
+
+function quotaTitle(window: RenderQuotaWindow): string {
+  const reset = formatWindowEnd(window.windowEnd)
+  const limit = window.limit === undefined ? '?' : String(window.limit)
+  return `${window.label}: window ends ${reset} · ${window.used}/${limit}`
+}
+
+function quotaWindowFill(window: RenderQuotaWindow): number {
+  const limit = window.limit
   if (limit === undefined || limit === 0) return 0
-  return Math.max(0, Math.min(1, cell.used / limit))
+  return Math.max(0, Math.min(1, window.used / limit))
 }
 
 interface PolicyEditorProps {

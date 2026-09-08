@@ -256,6 +256,10 @@ body::before {
 .num, .cell-mono { font-family: var(--font-mono); font-size: 12px; letter-spacing: -0.01em; }
 .quota-cell { display: flex; align-items: center; gap: 10px; min-width: 210px; }
 .quota-cell .bar { flex: 1; }
+.quota-windows { display: flex; align-items: center; gap: 10px; min-width: 340px; }
+.quota-window { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.quota-window .bar { flex: 1; }
+.quota-window-label { color: var(--fg-subtle); font-size: 11px; white-space: nowrap; }
 
 .bar { display: block; height: 6px; border-radius: 999px; background: var(--bar-track); overflow: hidden; min-width: 70px; }
 .bar-fill { display: block; height: 100%; border-radius: inherit; background: var(--ok); transform: scaleX(var(--w, 1)); transform-origin: left; }

@@ -180,7 +180,7 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 					ID:            id + "/" + model,
 					Name:          id + "/" + model,
 					ContextWindow: snap.Config.ResolveContextWindow(id, model),
-					ImageInput:    settings.ImageInput,
+					ImageInput:    settings.ImageInput || snap.Config.VisionSidecar.Enabled,
 				})
 			}
 		}
@@ -452,9 +452,11 @@ func run(opts options) error {
 	}
 	daemonEnv := integrations.Environ(os.Environ())
 	modelsSrc := integrationModels(cfg)
-	if err := intg.Register(integrations.NewCodex(integrations.CodexOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+	codexIntegration := integrations.NewCodex(integrations.CodexOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})
+	if err := intg.Register(codexIntegration); err != nil {
 		return err
 	}
+	env.codex = codexIntegration
 	if err := intg.Register(integrations.NewGrok(integrations.GrokOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
 		return err
 	}

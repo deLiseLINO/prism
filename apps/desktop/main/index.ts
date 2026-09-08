@@ -1,4 +1,5 @@
-import { app, type BrowserWindow } from 'electron'
+import { app, nativeImage, type BrowserWindow } from 'electron'
+import path from 'node:path'
 import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
 import { loadDesktopConfig } from './config'
 import { DaemonSupervisor } from './daemon/supervisor'
@@ -18,6 +19,9 @@ const MAX_RESTARTS = 5
 const STABILITY_WINDOW_MS = 60_000
 
 function bootstrap(): void {
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'resources', 'icon.png'))
+  if (process.platform === 'darwin') app.dock?.setIcon(icon)
+  if (process.platform !== 'darwin') app.commandLine.appendSwitch('icon', path.join(__dirname, '..', '..', 'resources', 'icon.png'))
   let mainWindow: BrowserWindow | null = null
   let quitting = false
   const config = loadDesktopConfig()

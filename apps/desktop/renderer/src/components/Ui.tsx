@@ -1,5 +1,5 @@
 import type { ThemeMode } from '../useTheme'
-import { cloneElement, isValidElement, useEffect, useId, type ReactElement, type ReactNode } from 'react'
+import { cloneElement, Component, isValidElement, useEffect, useId, type ReactElement, type ReactNode } from 'react'
 
 export interface CardProps {
   readonly title?: string
@@ -416,4 +416,65 @@ export function ThemeToggle({ mode, onCycle }: ThemeToggleProps): JSX.Element {
       <span className="theme-toggle__mode">{mode}</span>
     </button>
   )
+}
+
+export function isErrorShape(value: unknown): value is { readonly message?: unknown } {
+  return typeof value === 'object' && value !== null && 'message' in value
+}
+
+export function describeUnknownError(error: unknown): string {
+  if (isErrorShape(error) && typeof error.message === 'string' && error.message !== '') {
+    return error.message
+  }
+  return String(error)
+}
+
+export function VersionMismatchBanner({
+  error,
+  onRetry,
+}: {
+  readonly error: unknown
+  readonly onRetry: () => void
+}): JSX.Element {
+  const detail = describeUnknownError(error)
+  const isContract = detail.includes('quota') || detail.includes('undefined')
+  return (
+    <Banner
+      tone="warn"
+      title={isContract ? 'Daemon and app versions do not match' : 'Renderer error'}
+      action={
+        <Button tone="ghost" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      }
+    >
+      {isContract
+        ? 'Restart Prism so the bundled daemon updates to the same version. Data may be incomplete until then.'
+        : detail}
+    </Banner>
+  )
+}
+
+export class RenderErrorBoundary extends Component<
+  { readonly children: ReactNode },
+  { readonly error: unknown | null }
+> {
+  override state: { readonly error: unknown | null } = { error: null }
+
+  static getDerivedStateFromError(error: unknown): { readonly error: unknown } {
+    return { error }
+  }
+
+  override render(): ReactNode {
+    const { error } = this.state
+    if (error !== null) {
+      return (
+        <VersionMismatchBanner
+          error={error}
+          onRetry={() => this.setState({ error: null })}
+        />
+      )
+    }
+    return this.props.children
+  }
 }

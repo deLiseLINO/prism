@@ -1,9 +1,9 @@
 import { useMemo, type CSSProperties } from 'react'
-import type { UsageAccountView, UsageView } from '@prism/contracts'
+import type { QuotaView, UsageAccountView, UsageView } from '@prism/contracts'
 import { AsyncBoundary, Empty } from '../components/Ui'
 import { useAsync } from '../useAsync'
 import { api } from '../api'
-import { formatWindowEnd } from './AccountsView'
+import { formatWindowEnd, quotaCellFromView } from './AccountsView'
 
 function badgeTone(state: string): 'ok' | 'warn' | 'error' | 'muted' {
   switch (state) {
@@ -65,15 +65,11 @@ function UsageTable({
 }): JSX.Element {
   const rows = useMemo(() => {
     if (list.length === 0) return []
-    const total = list.reduce((sum, row) => sum + row.used, 0)
+    const total = list.reduce((sum, row) => sum + row.quota.used, 0)
     return list.map((row) => {
-      const share = total === 0 ? 0 : Math.max(0, Math.min(1, row.used / total))
-      const ratio =
-        row.limit == null || row.limit === 0
-          ? 0
-          : Math.max(0, Math.min(1, row.used / row.limit))
-      const fill = ratio > 0.9 ? 'f-danger' : ratio > 0.7 ? 'f-warn' : ''
-      return { row, share, fill }
+      const used = row.quota.used
+      const share = total === 0 ? 0 : Math.max(0, Math.min(1, used / total))
+      return { row, share }
     })
   }, [list])
   if (list.length === 0) {
@@ -95,7 +91,7 @@ function UsageTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ row, share, fill }) => (
+            {rows.map(({ row, share }) => (
               <tr key={row.account}>
                 <td className="td-strong">{row.account}</td>
                 <td>{row.provider}</td>
@@ -105,30 +101,74 @@ function UsageTable({
                   </span>
                 </td>
                 <td>
-                  <span className="num">
-                    {row.used} /{' '}
-                    {row.limit == null || row.limit === 0
-                      ? 'no limit'
-                      : row.limit}
-                  </span>
+                  <QuotaWindows quota={row.quota} />
                 </td>
                 <td style={{ minWidth: 130 }}>
                   <span className="bar">
                     <span
-                      className={`bar-fill ${fill}`.trim()}
+                      className="bar-fill"
                       style={{ '--w': share } as CSSProperties}
                     />
                   </span>
                 </td>
                 <td>
-                  <span className="num">{formatWindowEnd(row.windowEnd)}</span>
+                  <span className="num">{formatWindowEnd(row.quota.windowEnd)}</span>
                 </td>
-                <td>{row.source}</td>
+                <td>{row.quota.source}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
     </section>
+  )
+}
+
+function QuotaWindows({ quota }: { readonly quota: QuotaView }): JSX.Element {
+  const cell = quotaCellFromView(quota)
+  if (cell.kind === 'unavailable') {
+    return (
+      <span className="num" style={{ color: 'var(--fg-subtle)' }}>
+        no usage reported
+      </span>
+    )
+  }
+  const windows =
+    cell.windows.length > 0
+      ? cell.windows
+      : [
+          {
+            label: 'Current usage limit',
+            used: cell.used,
+            ...(cell.limit === undefined ? {} : { limit: cell.limit }),
+            windowEnd: cell.windowEnd,
+          },
+        ]
+  return (
+    <span className="quota-windows">
+      {windows.map((window) => {
+        const limit = window.limit ?? 0
+        const ratio =
+          limit === 0 ? 0 : Math.max(0, Math.min(1, window.used / limit))
+        const fill = ratio > 0.9 ? 'f-danger' : ratio > 0.7 ? 'f-warn' : ''
+        return (
+          <span
+            className="quota-window"
+            key={`${window.label}-${window.windowEnd}`}
+          >
+            <span className="num">
+              {window.used}/{limit === 0 ? '?' : limit}
+            </span>
+            <span className="bar">
+              <span
+                className={`bar-fill ${fill}`.trim()}
+                style={{ '--w': ratio } as CSSProperties}
+              />
+            </span>
+            <span className="quota-window-label">{window.label}</span>
+          </span>
+        )
+      })}
+    </span>
   )
 }

@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/providers/{id}", s.providersReplace)
 	mux.HandleFunc("POST /api/v1/providers/{id}/sync-models", s.providersSyncModels)
 	mux.HandleFunc("DELETE /api/v1/providers/{id}", s.providersDelete)
+	mux.HandleFunc("PUT /api/v1/vision-sidecar", s.visionSidecarPut)
 	mux.HandleFunc("PUT /api/v1/context-window", s.contextWindowPut)
 	mux.HandleFunc("GET /api/v1/accounts", s.accountsList)
 	mux.HandleFunc("DELETE /api/v1/accounts/{id}", s.accountsDelete)
@@ -253,6 +254,22 @@ func (s *Server) contextWindowPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ContextWindowWrite{ContextWindow: updated.Config.ContextWindow, ExpectedGeneration: updated.Generation})
+}
+
+func (s *Server) visionSidecarPut(w http.ResponseWriter, r *http.Request) {
+	body, ok := decodeJSON[VisionSidecarWrite](w, r)
+	if !ok {
+		return
+	}
+	snap := s.cfg.Get()
+	doc := snap.Config
+	doc.VisionSidecar = config.VisionSidecarSettings{Enabled: body.Enabled, Target: body.Target}
+	updated, err := s.cfg.Update(doc, body.ExpectedGeneration)
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, VisionSidecarWrite{Enabled: updated.Config.VisionSidecar.Enabled, Target: updated.Config.VisionSidecar.Target, ExpectedGeneration: updated.Generation})
 }
 
 func (s *Server) providersReplace(w http.ResponseWriter, r *http.Request) {
@@ -643,13 +660,10 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	out := make([]UsageAccount, 0, len(snap.Accounts))
 	for _, a := range snap.Accounts {
 		out = append(out, UsageAccount{
-			Account:   string(a.ID),
-			Provider:  string(a.Provider),
-			State:     stateName(a.State),
-			Used:      a.Quota.Used,
-			Limit:     a.Quota.Limit,
-			WindowEnd: a.Quota.WindowEnd,
-			Source:    sourceName(a.Quota.Source),
+			Account:  string(a.ID),
+			Provider: string(a.Provider),
+			State:    stateName(a.State),
+			Quota:    quotaView(a.Quota),
 		})
 	}
 	slices.SortFunc(out, func(a, b UsageAccount) int {

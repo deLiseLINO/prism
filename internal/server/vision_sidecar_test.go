@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -53,7 +52,7 @@ func TestApplyImageDescriptionsReplacesImages(t *testing.T) {
 		t.Fatal("input image was not replaced")
 	}
 	text, ok := m.Content[1].(canon.TextContent)
-	if !ok || text.Text != "<image>\nsecond\n</image>" {
+	if !ok || !strings.HasPrefix(text.Text, "<image path=\"attachment://image-") || !strings.HasSuffix(text.Text, ".png\">\nsecond\n</image>") {
 		t.Fatalf("replacement = %#v, want description block", m.Content[1])
 	}
 }
@@ -69,7 +68,7 @@ func TestApplyImageDescriptionsReplacesFunctionOutputImages(t *testing.T) {
 	out := applyImageDescriptions(req, []string{"tool result"})
 	o := out.Input[0].(canon.FunctionOutput)
 	text, ok := o.Output[0].(canon.TextContent)
-	if !ok || text.Text != "<image>\ntool result\n</image>" {
+	if !ok || !strings.HasPrefix(text.Text, "<image path=\"attachment://") || !strings.HasSuffix(text.Text, "\ntool result\n</image>") {
 		t.Fatalf("replacement = %#v, want description block", o.Output[0])
 	}
 	if o.ID != "o1" || o.CallID != "c1" {
@@ -163,7 +162,7 @@ func TestVisionSidecarTurnReplacesImagesForTextOnlyMainModel(t *testing.T) {
 	}
 	contents := mainRunner.reqs[0].Request.Input[0].(canon.Message).Content
 	text, ok := contents[1].(canon.TextContent)
-	if !ok || text.Text != "<image>\na red square\n</image>" {
+	if !ok || !strings.HasPrefix(text.Text, "<image path=\"attachment://image-") || !strings.HasSuffix(text.Text, ".png\">\na red square\n</image>") {
 		t.Fatalf("main content = %#v, want sidecar description", contents[1])
 	}
 }
@@ -202,9 +201,9 @@ func TestVisionSidecarSkippedForVisionMainModel(t *testing.T) {
 	}
 }
 
-func TestVisionSidecarTurnFailsClosed(t *testing.T) {
+func TestVisionSidecarTurnFailsOpenPerImage(t *testing.T) {
 	visionRunner := &recordingRunner{runner: &fakeRunner{scripts: []fakeScript{{err: errors.New("vision upstream down")}}}}
-	mainRunner := &recordingRunner{runner: &fakeRunner{}}
+	mainRunner := &recordingRunner{runner: &fakeRunner{scripts: []fakeScript{{events: []canon.Event{canon.TurnFinished{Status: canon.Completed()}}}}}}
 	plans := map[canon.ModelID]routing.Plan{
 		"p1/vision-model": {Targets: []provider.Target{{Provider: "p1", Model: "vision-model", ImageInput: true}}},
 		"main/text-model": {Targets: []provider.Target{{Provider: "p2", Model: "text-model"}}},
@@ -221,52 +220,71 @@ func TestVisionSidecarTurnFailsClosed(t *testing.T) {
 	img := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 	body := fmt.Sprintf(`{"model":"main/text-model","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"read"},{"type":"image_url","image_url":{"url":"data:image/png;base64,%s"}}]}]}`, img)
 	rec := postJSON(t, h, "/v1/chat/completions", body)
-	if rec.Code != http.StatusBadGateway {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var envelope struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+	if len(mainRunner.reqs) != 1 {
+		t.Fatalf("main calls = %d, want 1", len(mainRunner.reqs))
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Error.Code != "vision_sidecar_failed" || !strings.Contains(envelope.Error.Message, "vision upstream down") {
-		t.Fatalf("error = %#v, want sidecar failure", envelope.Error)
-	}
-	if len(mainRunner.reqs) != 0 {
-		t.Fatalf("main calls = %d, want 0", len(mainRunner.reqs))
+	contents := mainRunner.reqs[0].Request.Input[0].(canon.Message).Content
+	text, ok := contents[1].(canon.TextContent)
+	if !ok || !strings.Contains(text.Text, "Image description unavailable") {
+		t.Fatalf("main content = %#v, want unavailable note", contents[1])
 	}
 }
 
-func TestVisionSidecarTurnRejectsTooManyImages(t *testing.T) {
-	var images strings.Builder
-	images.WriteString(`{"model":"main/text-model","stream":false,"messages":[{"role":"user","content":[`)
-	for i := 0; i < maxSidecarImages+1; i++ {
-		if i > 0 {
-			images.WriteByte(',')
-		}
-		images.WriteString(`{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}`)
-	}
-	images.WriteString(`]}]}`)
-	visionRunner := &recordingRunner{runner: &fakeRunner{}}
-	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{
+func TestVisionSidecarEmptyDescriptionFallsBackToNote(t *testing.T) {
+	visionRunner := &recordingRunner{runner: &fakeRunner{scripts: []fakeScript{{events: []canon.Event{
+		canon.TurnFinished{Status: canon.Completed()},
+	}}}}}
+	mainRunner := &recordingRunner{runner: &fakeRunner{scripts: []fakeScript{{events: []canon.Event{
+		canon.TurnFinished{Status: canon.Completed()},
+	}}}}}
+	plans := map[canon.ModelID]routing.Plan{
 		"p1/vision-model": {Targets: []provider.Target{{Provider: "p1", Model: "vision-model", ImageInput: true}}},
 		"main/text-model": {Targets: []provider.Target{{Provider: "p2", Model: "text-model"}}},
-	}, func(reg *provider.Registry) {
+	}
+	h := newTestServer(t, nil, plans, func(reg *provider.Registry) {
 		if err := reg.Register("p1", visionRunner); err != nil {
+			t.Fatal(err)
+		}
+		if err := reg.Register("p2", mainRunner); err != nil {
 			t.Fatal(err)
 		}
 	})
 	setConfig(t, h, testVisionSidecarDoc())
-	rec := postJSON(t, h, "/v1/chat/completions", images.String())
-	if rec.Code != http.StatusBadRequest {
+	img := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	body := fmt.Sprintf(`{"model":"main/text-model","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"read"},{"type":"image_url","image_url":{"url":"data:image/png;base64,%s"}}]}]}`, img)
+	rec := postJSON(t, h, "/v1/chat/completions", body)
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if len(visionRunner.reqs) != 0 {
-		t.Fatalf("vision calls = %d, want 0", len(visionRunner.reqs))
+	contents := mainRunner.reqs[0].Request.Input[0].(canon.Message).Content
+	text, ok := contents[1].(canon.TextContent)
+	if !ok || !strings.Contains(text.Text, "Image description unavailable") {
+		t.Fatalf("main content = %#v, want unavailable note", contents[1])
+	}
+}
+
+func TestApplyImageDescriptionsIsContentAddressed(t *testing.T) {
+	img := canon.ImageContent{MIMEType: "image/png", Data: []byte{7}}
+	req := canon.Request{Input: []canon.Item{canon.Message{Content: []canon.Content{img, img}}}}
+	out := applyImageDescriptions(req, []string{"first", "second"})
+	m := out.Input[0].(canon.Message)
+	first := m.Content[0].(canon.TextContent).Text
+	second := m.Content[1].(canon.TextContent).Text
+	if first == second {
+		t.Fatalf("descriptions collapsed: %q", first)
+	}
+	cut := func(block string) string {
+		start := strings.Index(block, `path="`) + len(`path="`)
+		end := strings.Index(block[start:], `"`)
+		return block[start : start+end]
+	}
+	firstRef := cut(first)
+	secondRef := cut(second)
+	if firstRef != secondRef {
+		t.Fatalf("image refs = %q and %q, want identical", firstRef, secondRef)
 	}
 }
 
@@ -281,3 +299,43 @@ func setConfig(t *testing.T, h *harness, doc config.Document) {
 type staticConfig struct{ get func() config.Document }
 
 func (c staticConfig) Get() config.Snapshot { return config.Snapshot{Config: c.get()} }
+
+func TestVisionSidecarRunsForMixedVisionTextPlan(t *testing.T) {
+	visionRunner := &recordingRunner{runner: &fakeRunner{scripts: []fakeScript{{events: []canon.Event{
+		visionSidecarAssistantEvent("a blue circle"),
+		canon.TurnFinished{Status: canon.Completed()},
+	}}}}}
+	mainRunner := &recordingRunner{runner: &fakeRunner{scripts: []fakeScript{{events: []canon.Event{
+		canon.TurnFinished{Status: canon.Completed()},
+	}}}}}
+	plans := map[canon.ModelID]routing.Plan{
+		"p1/vision-model": {Targets: []provider.Target{{Provider: "p1", Model: "vision-model", ImageInput: true}}},
+		"main/mixed": {Targets: []provider.Target{
+			{Provider: "p2", Model: "text-model"},
+			{Provider: "p3", Model: "vision-model", ImageInput: true},
+		}},
+	}
+	h := newTestServer(t, nil, plans, func(reg *provider.Registry) {
+		if err := reg.Register("p1", visionRunner); err != nil {
+			t.Fatal(err)
+		}
+		if err := reg.Register("p2", mainRunner); err != nil {
+			t.Fatal(err)
+		}
+	})
+	setConfig(t, h, testVisionSidecarDoc())
+	img := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	body := fmt.Sprintf(`{"model":"main/mixed","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"read"},{"type":"image_url","image_url":{"url":"data:image/png;base64,%s"}}]}]}`, img)
+	rec := postJSON(t, h, "/v1/chat/completions", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(visionRunner.reqs) != 1 {
+		t.Fatalf("vision calls = %d, want 1", len(visionRunner.reqs))
+	}
+	contents := mainRunner.reqs[0].Request.Input[0].(canon.Message).Content
+	text, ok := contents[1].(canon.TextContent)
+	if !ok || !strings.Contains(text.Text, "a blue circle") {
+		t.Fatalf("main content = %#v, want sidecar description", contents[1])
+	}
+}

@@ -176,6 +176,10 @@ func newEnv(t *testing.T) *testEnv {
 					Limit:     int64Ptr(500),
 					WindowEnd: time.Unix(1_700_000_000, 0).UTC(),
 					Source:    quota.SourceHeader,
+					Windows: []quota.Window{
+						{Label: "5 hour usage limit", Used: 120, Limit: int64Ptr(500), WindowEnd: time.Unix(1_700_000_000, 0).UTC()},
+						{Label: "Weekly usage limit", Used: 25, Limit: int64Ptr(1000), WindowEnd: time.Unix(1_700_050_000, 0).UTC()},
+					},
 				},
 				InFlight: 2,
 			},
@@ -389,6 +393,9 @@ func TestAccountsListRendersSnapshot(t *testing.T) {
 	if a.Quota.Used != 120 || a.Quota.Limit == nil || *a.Quota.Limit != 500 || a.Quota.Source != "header" {
 		t.Fatalf("quota mismatch: %+v", a.Quota)
 	}
+	if len(a.Quota.Windows) != 2 || a.Quota.Windows[0].Label != "5 hour usage limit" || a.Quota.Windows[1].Label != "Weekly usage limit" {
+		t.Fatalf("account quota windows mismatch: %+v", a.Quota.Windows)
+	}
 	if got.Accounts[1].State != "paused" {
 		t.Fatalf("a2 state = %q, want paused", got.Accounts[1].State)
 	}
@@ -562,16 +569,19 @@ func TestUsageRendersQuotaDetails(t *testing.T) {
 	if !strings.Contains(raw, `"used":0`) {
 		t.Fatalf("usage drops zero used: %s", raw)
 	}
-	if !strings.Contains(raw, `"limit":null`) {
-		t.Fatalf("usage drops nil limit: %s", raw)
+	if strings.Contains(raw, `"limit":null`) {
+		t.Fatalf("usage emits null limit: %s", raw)
 	}
 	got := decodeBody[UsageResponse](t, rec)
 	if len(got.Accounts) != 2 {
 		t.Fatalf("usage accounts = %d, want 2", len(got.Accounts))
 	}
 	u := got.Accounts[0]
-	if u.Account != "a1" || u.Provider != "codex" || u.State != "active" || u.Used != 120 || u.Source != "header" {
+	if u.Account != "a1" || u.Provider != "codex" || u.State != "active" || u.Quota.Used != 120 || u.Quota.Source != "header" {
 		t.Fatalf("usage mismatch: %+v", u)
+	}
+	if len(u.Quota.Windows) != 2 || u.Quota.Windows[0].Label != "5 hour usage limit" || u.Quota.Windows[1].Label != "Weekly usage limit" {
+		t.Fatalf("usage windows mismatch: %+v", u.Quota.Windows)
 	}
 }
 
@@ -751,5 +761,40 @@ func TestContextWindowHierarchyAndGlobalEndpoint(t *testing.T) {
 	}
 	if env.cfg.Get().Config.ResolveContextWindow("codex", "gpt-5.2") != 200000 {
 		t.Fatal("model override lost after global update")
+	}
+}
+
+func TestVisionSidecarEndpoint(t *testing.T) {
+	env := newEnv(t)
+	doc := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"router": {
+				Wire:    config.WireOpenAIChat,
+				BaseURL: "http://up.example/v1",
+				Models:  []string{"glm-5.3", "gpt-5.6-luna"},
+				ModelSettings: map[string]config.ModelSettings{
+					"gpt-5.6-luna": {ImageInput: true},
+				},
+			},
+		},
+	}
+	if _, err := env.cfg.Update(doc, 0); err != nil {
+		t.Fatal(err)
+	}
+	bad := env.do(t, http.MethodPut, "/api/v1/vision-sidecar", `{"enabled":true,"target":"router/glm-5.3","expectedGeneration":1}`)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("text-only sidecar target status = %d, want 400", bad.Code)
+	}
+	ok := env.do(t, http.MethodPut, "/api/v1/vision-sidecar", `{"enabled":true,"target":"router/gpt-5.6-luna","expectedGeneration":1}`)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("put status = %d, want 200", ok.Code)
+	}
+	got := decodeBody[VisionSidecarWrite](t, ok)
+	if !got.Enabled || got.Target != "router/gpt-5.6-luna" || got.ExpectedGeneration != 2 {
+		t.Fatalf("vision sidecar = %+v", got)
+	}
+	if s := env.cfg.Get().Config.VisionSidecar; !s.Enabled || s.Target != "router/gpt-5.6-luna" {
+		t.Fatalf("config vision sidecar = %+v", s)
 	}
 }

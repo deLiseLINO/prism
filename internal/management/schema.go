@@ -93,6 +93,12 @@ type ProviderWrite struct {
 	ExpectedGeneration uint64                           `json:"expectedGeneration"`
 }
 
+type VisionSidecarWrite struct {
+	Enabled            bool   `json:"enabled"`
+	Target             string `json:"target,omitempty"`
+	ExpectedGeneration uint64 `json:"expectedGeneration"`
+}
+
 type QuotaView struct {
 	Used      int64             `json:"used"`
 	Limit     *int64            `json:"limit,omitempty"`
@@ -184,13 +190,10 @@ type RouteWrite struct {
 }
 
 type UsageAccount struct {
-	Account   string    `json:"account"`
-	Provider  string    `json:"provider"`
-	State     string    `json:"state"`
-	Used      int64     `json:"used"`
-	Limit     *int64    `json:"limit"`
-	WindowEnd time.Time `json:"windowEnd"`
-	Source    string    `json:"source"`
+	Account  string    `json:"account"`
+	Provider string    `json:"provider"`
+	State    string    `json:"state"`
+	Quota    QuotaView `json:"quota"`
 }
 
 type UsageResponse struct {

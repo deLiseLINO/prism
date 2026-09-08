@@ -351,7 +351,20 @@ describe('live quota rendering helpers', () => {
         account: 'codex:abc',
         quota: { used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint' },
       }),
-    ).toEqual({ kind: 'ready', used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint' })
+    ).toEqual({ kind: 'ready', used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint', windows: [] })
+  })
+
+  it('preserves weekly and five hour windows returned by the API', () => {
+    const windows = [
+      { label: 'Weekly usage limit', used: 1250, limit: 10000, windowEnd: '2026-09-10T05:00:00Z' },
+      { label: '5 hour usage limit', used: 4000, limit: 10000, windowEnd: '2026-09-07T10:00:00Z' },
+    ]
+    expect(
+      quotaCell({
+        account: 'codex:abc',
+        quota: { used: 4000, limit: 10000, windowEnd: '2026-09-07T10:00:00Z', source: 'endpoint', windows },
+      }),
+    ).toEqual({ kind: 'ready', used: 4000, limit: 10000, windowEnd: '2026-09-07T10:00:00Z', source: 'endpoint', windows })
   })
 
   it('omits an absent limit instead of coercing it', () => {
@@ -359,7 +372,7 @@ describe('live quota rendering helpers', () => {
       account: 'codex:abc',
       quota: { used: 7, windowEnd: '2026-08-31T05:00:00Z', source: 'header' },
     })
-    expect(cell).toEqual({ kind: 'ready', used: 7, windowEnd: '2026-08-31T05:00:00Z', source: 'header' })
+    expect(cell).toEqual({ kind: 'ready', used: 7, windowEnd: '2026-08-31T05:00:00Z', source: 'header', windows: [] })
     expect('limit' in cell).toBe(false)
   })
 

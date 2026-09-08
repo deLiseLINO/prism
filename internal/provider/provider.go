@@ -218,6 +218,19 @@ func (r *Registry) Register(id account.ProviderID, runner Runner) error {
 	return nil
 }
 
+func (r *Registry) Replace(id account.ProviderID, runner Runner) error {
+	if id == "" {
+		return errors.New("provider: empty provider id")
+	}
+	if runner == nil {
+		return errors.New("provider: nil runner")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runners[id] = runner
+	return nil
+}
+
 func (r *Registry) Lookup(id account.ProviderID) (Runner, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
