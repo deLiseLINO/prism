@@ -3,6 +3,7 @@ package responses
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -525,5 +526,22 @@ func TestTextFormatParsing(t *testing.T) {
 	var schema map[string]any
 	if err := json.Unmarshal(tf.Schema, &schema); err != nil || schema["type"] != "object" {
 		t.Fatalf("schema: %s %v", tf.Schema, err)
+	}
+}
+
+func TestParseFunctionCallOutputImage(t *testing.T) {
+	img := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+	body := fmt.Sprintf(`{"model":"gpt-5.3","input":[{"type":"function_call_output","call_id":"call_img","output":[{"type":"input_image","image_url":"data:image/png;base64,%s","detail":"high"}]}]}`, img)
+	req, _, _ := mustParse(t, body, nil)
+	out, ok := req.Input[0].(canon.FunctionOutput)
+	if !ok || out.CallID != canon.CallID("call_img") {
+		t.Fatalf("item: %#v", req.Input[0])
+	}
+	if len(out.Output) != 1 {
+		t.Fatalf("output parts: %d", len(out.Output))
+	}
+	imgContent, ok := out.Output[0].(canon.ImageContent)
+	if !ok || imgContent.MIMEType != "image/png" || len(imgContent.Data) == 0 {
+		t.Fatalf("output content: %#v", out.Output[0])
 	}
 }

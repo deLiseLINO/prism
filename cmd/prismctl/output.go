@@ -296,17 +296,17 @@ func (p printer) usage(u management.UsageResponse) error {
 	rows := make([][]string, 0, len(u.Accounts))
 	for _, a := range u.Accounts {
 		limit := "-"
-		if a.Limit != nil {
-			limit = fmt.Sprint(*a.Limit)
+		if a.Quota.Limit != nil {
+			limit = fmt.Sprint(*a.Quota.Limit)
 		}
 		rows = append(rows, []string{
 			a.Account,
 			a.Provider,
 			a.State,
-			fmt.Sprint(a.Used),
+			fmt.Sprint(a.Quota.Used),
 			limit,
-			a.WindowEnd.Format(time.RFC3339),
-			a.Source,
+			a.Quota.WindowEnd.Format(time.RFC3339),
+			a.Quota.Source,
 		})
 	}
 	return p.table(headers, rows)

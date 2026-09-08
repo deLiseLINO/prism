@@ -2,11 +2,13 @@ package integrations
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 var CodexFence = Fence{
@@ -596,6 +598,7 @@ type CodexOptions struct {
 }
 
 type CodexIntegration struct {
+	mu         sync.Mutex
 	id         ID
 	port       int
 	models     []Model
@@ -620,7 +623,22 @@ func normalizeCodexOptions(options CodexOptions) CodexOptions {
 func (c *CodexIntegration) ID() ID { return c.id }
 
 func (c *CodexIntegration) Apply() ApplyResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return ToApplyResult(c.id, WriteCodexConfig(CodexOptions{Port: c.port, Models: c.models, ModelsSource: c.modelsSrc, ConfigPath: c.configPath}))
+}
+
+func (c *CodexIntegration) RefreshCatalog() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	models, refusal := resolveModels(c.models, c.modelsSrc, c.id)
+	if refusal != "" {
+		return errors.New(refusal)
+	}
+	if len(models) == 0 {
+		return nil
+	}
+	return AtomicWrite(CodexCatalogPath(c.configPath), RenderCodexCatalog(models))
 }
 
 func (c *CodexIntegration) Status() Status {

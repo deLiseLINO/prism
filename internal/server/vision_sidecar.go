@@ -2,8 +2,9 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"hash/fnv"
+	"log"
 	"strings"
 
 	"prism/internal/canon"
@@ -13,11 +14,23 @@ import (
 )
 
 const (
-	imageDescribePrompt = "Describe this image concisely for a text-only model. Include visible text verbatim."
-	maxSidecarImages    = 16
-)
+	imageDescribeSystemPrompt = `Image-analysis assistant. Description replaces attached image in downstream model context; downstream relies entirely on text, never sees pixels.
 
-var errTooManyImages = errors.New("too many images in request")
+Core behavior:
+- Faithful, evidence-first: distinguish direct observations from inferences.
+- Transcribe ALL visible text verbatim; preserve casing, punctuation, layout order. Explicitly mark unreadable segments; NEVER guess.
+- NEVER fabricate occluded, blurry, or uncertain details; state uncertainty.
+- Thorough, compact: dense, information-rich prose; no filler.
+- Output description only: no meta commentary, preambles ("This image shows…"), or closing remarks.`
+
+	imageDescribePrompt = `Describe the image in enough detail for a model unable to see it to reason about its content.
+
+Where present, cover: overall scene, subject, action; people and objects—their relationships, positions, colors, counts; all visible text verbatim (OCR); UI/screenshot elements—labels, buttons, inputs, states, errors, highlighted or disabled controls; diagrams, charts, tables—structure, axes, series, encoded values.
+
+Flag anything ambiguous or unreadable. Output plain prose only.`
+
+	descriptionUnavailableNote = "[Image description unavailable: the vision model returned no usable text.]"
+)
 
 type visionSidecar struct {
 	server *Server
@@ -36,10 +49,15 @@ func (s *Server) visionSidecar(req canon.Request) (*visionSidecar, bool) {
 	if !ok || len(plan.Targets) == 0 {
 		return nil, false
 	}
+	textOnly := false
 	for _, target := range plan.Targets {
-		if target.ImageInput {
-			return nil, false
+		if !target.ImageInput {
+			textOnly = true
+			break
 		}
+	}
+	if !textOnly {
+		return nil, false
 	}
 	sidecarPlan, ok := s.planner.Plan(canon.ModelID(cfg.VisionSidecar.Target))
 	if !ok || len(sidecarPlan.Targets) == 0 {
@@ -57,14 +75,13 @@ func (v *visionSidecar) describeImages(ctx context.Context, req canon.Request) (
 	if len(images) == 0 {
 		return req, nil
 	}
-	if len(images) > maxSidecarImages {
-		return req, fmt.Errorf("%w: %d > %d", errTooManyImages, len(images), maxSidecarImages)
-	}
 	descriptions := make([]string, len(images))
 	for i, img := range images {
 		text, err := v.describeImage(ctx, img)
 		if err != nil {
-			return req, fmt.Errorf("vision sidecar: %w", err)
+			log.Printf("server: vision sidecar provider=%q model=%q image=%d description failed: %v", v.target.Provider, v.target.Model, i, err)
+			descriptions[i] = descriptionUnavailableNote
+			continue
 		}
 		descriptions[i] = text
 	}
@@ -73,8 +90,9 @@ func (v *visionSidecar) describeImages(ctx context.Context, req canon.Request) (
 
 func (v *visionSidecar) describeImage(ctx context.Context, img canon.ImageContent) (string, error) {
 	turnReq := canon.Request{
-		Model:  canon.ModelID(string(v.target.Provider) + "/" + string(v.target.Model)),
-		Stream: false,
+		Model:        canon.ModelID(string(v.target.Provider) + "/" + string(v.target.Model)),
+		Stream:       false,
+		Instructions: []canon.Content{canon.TextContent{Text: imageDescribeSystemPrompt}},
 		Input: []canon.Item{canon.Message{
 			Role: canon.RoleUser,
 			Content: []canon.Content{
@@ -99,10 +117,33 @@ func (v *visionSidecar) describeImage(ctx context.Context, img canon.ImageConten
 	return text, nil
 }
 
+func imageRef(img canon.ImageContent) string {
+	h := fnv.New64a()
+	_, _ = h.Write(img.Data)
+	subtype := ""
+	if _, s, ok := strings.Cut(img.MIMEType, "/"); ok {
+		subtype = strings.ToLower(s)
+	}
+	if subtype == "jpeg" {
+		subtype = "jpg"
+	}
+	subtype = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, subtype)
+	if subtype == "" {
+		subtype = "png"
+	}
+	return fmt.Sprintf("image-%x.%s", h.Sum64(), subtype)
+}
+
 func applyImageDescriptions(req canon.Request, descriptions []string) canon.Request {
 	idx := 0
 	replace := func(c canon.Content) canon.Content {
-		if _, ok := c.(canon.ImageContent); !ok {
+		img, ok := c.(canon.ImageContent)
+		if !ok {
 			return c
 		}
 		if idx >= len(descriptions) {
@@ -110,7 +151,7 @@ func applyImageDescriptions(req canon.Request, descriptions []string) canon.Requ
 		}
 		text := strings.ReplaceAll(descriptions[idx], "</image>", "<\\/image>")
 		idx++
-		return canon.TextContent{Text: "<image>\n" + text + "\n</image>"}
+		return canon.TextContent{Text: "<image path=\"attachment://" + imageRef(img) + "\">\n" + text + "\n</image>"}
 	}
 	if len(req.Instructions) > 0 {
 		instructions := make([]canon.Content, len(req.Instructions))

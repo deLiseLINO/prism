@@ -67,11 +67,19 @@ export interface ProviderMutationResponse {
 // Quota snapshot rendered by the daemon for a single account (and embedded in every account
 // view). `limit` is omitted by the daemon when unknown; `windowEnd` is always serialized and
 // is the Go zero time ("0001-01-01T00:00:00Z") when never observed.
+export interface QuotaWindowView {
+  readonly label: string
+  readonly used: number
+  readonly limit?: number
+  readonly windowEnd: string
+}
+
 export interface QuotaView {
   readonly used: number
   readonly limit?: number
   readonly windowEnd: string
   readonly source: 'header' | 'endpoint' | 'report' | 'probe' | 'unknown'
+  readonly windows?: readonly QuotaWindowView[]
 }
 
 // Response of GET /api/v1/accounts/{id}/quota.
@@ -122,10 +130,7 @@ export interface UsageAccountView {
   readonly account: string
   readonly provider: string
   readonly state: string
-  readonly used: number
-  readonly limit?: number | null
-  readonly windowEnd: string
-  readonly source: string
+  readonly quota: QuotaView
 }
 
 export interface UsageView {

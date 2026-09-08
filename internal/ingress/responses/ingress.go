@@ -741,7 +741,7 @@ func (g *Ingress) partToContent(part map[string]any, path string) (canon.Content
 			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonMissingField, Field: path + ".text"}
 		}
 		return canon.TextContent{Text: text}, nil
-	case "input_image":
+	case "input_image", "output_image":
 		imageURL, _ := part["image_url"].(string)
 		detail, _ := part["detail"].(string)
 		img, err := dataURLImage(imageURL, detail)
@@ -912,6 +912,14 @@ func (g *Ingress) functionOutputFrom(m map[string]any, path string) (canon.Item,
 					Reason: ReasonInvalidField,
 					Field:  fmt.Sprintf("%s.output[%d]", path, i),
 				}
+			}
+			if typ, _ := part["type"].(string); typ == "input_image" || typ == "output_image" {
+				content, err := g.partToContent(part, fmt.Sprintf("%s.output[%d]", path, i))
+				if err != nil {
+					return nil, err
+				}
+				contents = append(contents, content)
+				continue
 			}
 			text, ok := part["text"].(string)
 			if !ok {

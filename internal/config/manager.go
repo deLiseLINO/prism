@@ -29,23 +29,42 @@ type fileFormat struct {
 
 func Open(path string) (*Manager, error) {
 	m := &Manager{path: path}
-	b, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		m.snap = Snapshot{Config: Document{Version: SchemaVersion}}
-		return m, nil
-	}
+	snap, err := loadSnapshot(path)
 	if err != nil {
 		return nil, err
 	}
+	m.snap = snap
+	return m, nil
+}
+
+func loadSnapshot(path string) (Snapshot, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Snapshot{Config: Document{Version: SchemaVersion}}, nil
+	}
+	if err != nil {
+		return Snapshot{}, err
+	}
 	var f fileFormat
 	if err := json.Unmarshal(b, &f); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+		return Snapshot{}, fmt.Errorf("%w: %v", ErrCorrupt, err)
 	}
 	if err := f.Config.validate(); err != nil {
-		return nil, err
+		return Snapshot{}, err
 	}
-	m.snap = Snapshot{Config: cloneDocument(f.Config), Generation: f.Generation}
-	return m, nil
+	return Snapshot{Config: cloneDocument(f.Config), Generation: f.Generation}, nil
+}
+
+func readGeneration(path string) (uint64, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var f fileFormat
+	if err := json.Unmarshal(b, &f); err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	return f.Generation, nil
 }
 
 func (m *Manager) Get() Snapshot {
@@ -62,6 +81,12 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 	}
 	if err := next.validate(); err != nil {
 		return Snapshot{}, err
+	}
+	if disk, err := readGeneration(m.path); err == nil && disk != m.snap.Generation {
+		if snap, err := loadSnapshot(m.path); err == nil {
+			m.snap = snap
+		}
+		return Snapshot{}, fmt.Errorf("%w: file advanced to %d", ErrStaleGeneration, disk)
 	}
 	gen := m.snap.Generation + 1
 	if err := writeAtomic(m.path, fileFormat{Version: SchemaVersion, Generation: gen, Config: next}); err != nil {

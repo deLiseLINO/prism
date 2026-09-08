@@ -113,7 +113,8 @@ function daemonSub(status: AsyncState<DaemonStatus>): JSX.Element {
 function providerMix(list: UsageView): StatContent {
   const totals = new Map<string, number>()
   for (const row of list.accounts) {
-    totals.set(row.provider, (totals.get(row.provider) ?? 0) + row.used)
+    const used = row.quota.used
+    totals.set(row.provider, (totals.get(row.provider) ?? 0) + used)
   }
   const sum = [...totals.values()].reduce((left, right) => left + right, 0)
   if (sum === 0)
