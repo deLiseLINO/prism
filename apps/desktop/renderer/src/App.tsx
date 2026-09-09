@@ -8,6 +8,7 @@ import { AuthView } from './views/AuthView'
 import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
 import { OverviewView } from './views/OverviewView'
+import { MachinesView } from './views/MachinesView'
 import { ProvidersView } from './views/ProvidersView'
 import { UsagePanel } from './views/UsageView'
 
@@ -19,6 +20,7 @@ const VIEW_ICONS: Record<View, string> = {
   providers: '#i-plug',
   daemon: '#i-daemon',
   integrations: '#i-puzzle',
+  machines: '#i-cube',
 }
 
 function IconSprite(): JSX.Element {
@@ -58,6 +60,8 @@ function renderView(view: View): JSX.Element {
       return <UsagePanel />
     case 'integrations':
       return <IntegrationsView />
+    case 'machines':
+      return <MachinesView />
   }
 }
 

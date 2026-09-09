@@ -7,6 +7,7 @@ export const IpcChannel = {
   integrationApply: 'prism:integration-apply',
   integrationRollback: 'prism:integration-rollback',
   integrationStatus: 'prism:integration-status',
+  hostsList: 'prism:hosts-list',
   shellOpenExternal: 'prism:shell-open-external',
   windowSetTheme: 'prism:window-set-theme',
 } as const
