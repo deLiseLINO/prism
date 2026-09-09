@@ -58,7 +58,8 @@ describe('renderer routing', () => {
     expect(routing.hashFor('accounts')).toBe('#/accounts')
     expect(routing.hashFor('providers')).toBe('#/providers')
     expect(routing.hashFor('usage')).toBe('#/usage')
-    expect(routing.hashFor('integrations')).toBe('#/integrations')
+  expect(routing.hashFor('integrations')).toBe('#/integrations')
+  expect(routing.hashFor('machines')).toBe('#/machines')
   })
 
   it('falls back to overview for unknown hashes', () => {
@@ -85,5 +86,6 @@ describe('renderer routing', () => {
     expect(seen.has('providers')).toBe(true)
     expect(seen.has('usage')).toBe(true)
     expect(seen.has('integrations')).toBe(true)
+    expect(seen.has('machines')).toBe(true)
   })
 })

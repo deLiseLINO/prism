@@ -8,7 +8,7 @@ export type View =
   | 'providers'
   | 'usage'
   | 'integrations'
-
+  | 'machines'
 export interface ViewEntry {
   readonly view: View
   readonly label: string
@@ -24,6 +24,7 @@ const VIEW_HASHES: Record<View, string> = {
   providers: '#/providers',
   usage: '#/usage',
   integrations: '#/integrations',
+  machines: '#/machines',
 }
 
 const VIEW_BY_HASH: Record<string, View> = {
@@ -34,6 +35,7 @@ const VIEW_BY_HASH: Record<string, View> = {
   '#/providers': 'providers',
   '#/usage': 'usage',
   '#/integrations': 'integrations',
+  '#/machines': 'machines',
 }
 
 export const VIEWS: readonly ViewEntry[] = [
@@ -44,6 +46,7 @@ export const VIEWS: readonly ViewEntry[] = [
   { view: 'usage', label: 'Usage', tagline: 'Real per-account usage', section: 'Operate' },
   { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials', section: 'Configure' },
   { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback', section: 'System' },
+  { view: 'machines', label: 'Machines', tagline: 'Remote hosts over SSH', section: 'System' },
 ]
 
 export const SECTIONS: readonly Section[] = ['Overview', 'Operate', 'Configure', 'System']

@@ -20,7 +20,8 @@ const bridge: PrismBridge = {
   integrations: {
     apply: (request) => ipcRenderer.invoke(IpcChannel.integrationApply, request),
     rollback: (request) => ipcRenderer.invoke(IpcChannel.integrationRollback, request),
-    status: () => ipcRenderer.invoke(IpcChannel.integrationStatus),
+    status: (host) => ipcRenderer.invoke(IpcChannel.integrationStatus, host),
+    hosts: () => ipcRenderer.invoke(IpcChannel.hostsList),
   },
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IpcChannel.shellOpenExternal, url),

@@ -64,9 +64,16 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.integrations.rollback(parseIntegrationRequest(input))
   })
-  ipcMain.handle(IpcChannel.integrationStatus, (event) => {
+  ipcMain.handle(IpcChannel.integrationStatus, (event, host: unknown) => {
     trustedSender(event)
-    return wiring.integrations.status()
+    if (host !== undefined && typeof host !== 'string') {
+      throw new Error('prism: integration host must be a string')
+    }
+    return wiring.integrations.status(host)
+  })
+  ipcMain.handle(IpcChannel.hostsList, (event) => {
+    trustedSender(event)
+    return wiring.integrations.hosts()
   })
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {
     trustedSender(event)

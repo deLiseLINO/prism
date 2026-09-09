@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
-import { AsyncBoundary, Button, Confirm, Empty } from '../components/Ui'
+import type { HostView, IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
+import { AsyncBoundary, Button, Confirm, Empty, Select } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
 
 type RowState = 'managed' | 'unmanaged' | 'uninstalled' | 'drift' | 'damaged'
@@ -24,9 +24,10 @@ const stateDot: Record<RowState, string> = {
 interface IntegrationRowProps {
   readonly status: IntegrationStatus
   readonly onChanged: () => void
+  readonly host: string
 }
 
-function IntegrationRow({ status, onChanged }: IntegrationRowProps): JSX.Element {
+function IntegrationRow({ status, onChanged, host }: IntegrationRowProps): JSX.Element {
   const applyTask = useTask()
   const rollbackTask = useTask()
   const busy = applyTask.running || rollbackTask.running
@@ -37,7 +38,7 @@ function IntegrationRow({ status, onChanged }: IntegrationRowProps): JSX.Element
   const damaged = state === 'damaged'
 
   async function apply(id: IntegrationId, force: boolean): Promise<void> {
-    const result = await applyTask.run(() => window.prism.integrations.apply({ id, ...(force ? { force: true as const } : {}) }))
+    const result = await applyTask.run(() => window.prism.integrations.apply({ id, ...(force ? { force: true as const } : {}), ...(host !== 'local' ? { host } : {}) }))
     if (result === undefined) return
     if (!result.ok) {
       if (result.retryable === true && !force) {
@@ -55,7 +56,7 @@ function IntegrationRow({ status, onChanged }: IntegrationRowProps): JSX.Element
   }
 
   async function rollback(id: IntegrationId): Promise<void> {
-    const result = await rollbackTask.run(() => window.prism.integrations.rollback({ id }))
+    const result = await rollbackTask.run(() => window.prism.integrations.rollback({ id, ...(host !== 'local' ? { host } : {}) }))
     if (result === undefined) return
     if (!result.ok) {
       setActionError(result.reason === '' ? 'reason not reported' : result.reason)
@@ -148,8 +149,21 @@ function StatsStrip({ list }: { readonly list: readonly IntegrationStatus[] }): 
   )
 }
 
+function hostLabel(host: HostView): string {
+  return host.local ? 'This machine' : host.status === 'ok' ? host.id : `${host.id} (${host.status})`
+}
+
 export function IntegrationsView(): JSX.Element {
-  const statuses = useAsync<readonly IntegrationStatus[]>(() => window.prism.integrations.status(), [])
+  const [hostId, setHostId] = useState<string>('local')
+  const hosts = useAsync<readonly HostView[]>(async () => {
+    const view = await window.prism.integrations.hosts()
+    return view.hosts
+  }, [])
+  const hostOptions = hosts.state.kind === 'ready' && hosts.state.value.length > 0
+    ? hosts.state.value
+    : ([{ id: 'local', local: true, status: 'ok' }] as readonly HostView[])
+  const selected = hostOptions.some((h) => h.id === hostId) ? hostId : (hostOptions[0]?.id ?? 'local')
+  const statuses = useAsync<readonly IntegrationStatus[]>(() => window.prism.integrations.status(selected), [selected])
   return (
     <section className="screen" aria-labelledby="h-integrations">
       <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
@@ -162,10 +176,19 @@ export function IntegrationsView(): JSX.Element {
           </h1>
           <p className="sub">config apply and rollback for each CLI Prism manages</p>
         </div>
+        <div className="int-host">
+          <label className="int-host__label" htmlFor="int-host-select">Host</label>
+          <Select<string>
+            id="int-host-select"
+            value={selected}
+            onChange={setHostId}
+            options={hostOptions.map((h) => ({ value: h.id, label: hostLabel(h) }))}
+          />
+        </div>
       </div>
       <AsyncBoundary<readonly IntegrationStatus[]>
         state={statuses.state}
-        loadingLabel="Loading integrations…"
+        loadingLabel={`Loading integrations on ${selected}…`}
         empty={<Empty title="No integrations reported." />}
         onRetry={() => statuses.refresh()}
       >
@@ -174,7 +197,7 @@ export function IntegrationsView(): JSX.Element {
             <StatsStrip list={list} />
             <div className="int-list">
               {list.map((status) => (
-                <IntegrationRow key={status.id} status={status} onChanged={statuses.refresh} />
+                <IntegrationRow key={status.id} status={status} onChanged={statuses.refresh} host={selected} />
               ))}
             </div>
           </div>
