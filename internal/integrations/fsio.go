@@ -1,8 +1,7 @@
 // Package integrations owns Codex, Grok, and OMP client-config mutation: honest
 // status, apply, and rollback over sandboxable paths, with staged atomic writes
-// and fail-closed transforms. Paths, environment, and file IO are injected;
-// nothing here reads process environment, HOME, or touches the local disk
-// directly.
+// and fail-closed transforms. Paths and environment are injected; nothing here
+// reads process environment or HOME.
 package integrations
 
 import (
@@ -12,24 +11,14 @@ import (
 	"strings"
 )
 
-// FileIO is the transport every config read and write goes through: the local
-// disk (LocalIO) or a remote host (SshIO). Implementations keep the staged
-// atomic-write contract: StageWrite leaves the target untouched, CommitStaged
-// swaps in the complete next state in one step, RecoverStaged discards an
-// orphaned stage file, never promoting it.
-type FileIO interface {
-	ReadTextIfExists(path string) (string, bool)
-	FileExists(path string) bool
-	StageWrite(path string, content string) error
-	CommitStaged(path string) error
-	RecoverStaged(path string) bool
-	Remove(path string) error
-}
+type Eol string
 
-// LocalIO is the local-disk FileIO.
-type LocalIO struct{}
+const (
+	EolLF   Eol = "\n"
+	EolCRLF Eol = "\r\n"
+)
 
-func (LocalIO) ReadTextIfExists(path string) (string, bool) {
+func ReadTextIfExists(path string) (string, bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
@@ -37,53 +26,10 @@ func (LocalIO) ReadTextIfExists(path string) (string, bool) {
 	return string(b), true
 }
 
-func (LocalIO) FileExists(path string) bool {
+func FileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
-
-func (LocalIO) StageWrite(path string, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return writeFileDurable(StagedPath(path), content)
-}
-
-func (LocalIO) CommitStaged(path string) error {
-	if err := os.Rename(StagedPath(path), path); err != nil {
-		return err
-	}
-	syncDirectory(path)
-	return nil
-}
-
-func (LocalIO) RecoverStaged(path string) bool {
-	staged := StagedPath(path)
-	if _, err := os.Stat(staged); err != nil {
-		return false
-	}
-	return os.Remove(staged) == nil
-}
-
-func (LocalIO) Remove(path string) error {
-	return os.Remove(path)
-}
-
-// withLocalIO defaults a nil FileIO to the local disk so existing callers and
-// tests construct modules unchanged.
-func withLocalIO(io FileIO) FileIO {
-	if io == nil {
-		return LocalIO{}
-	}
-	return io
-}
-
-type Eol string
-
-const (
-	EolLF   Eol = "\n"
-	EolCRLF Eol = "\r\n"
-)
 
 func DominantEol(content string) Eol {
 	if strings.Contains(content, "\r\n") {
@@ -101,13 +47,6 @@ func ApplyEol(content string, eol Eol) string {
 
 func StagedPath(path string) string {
 	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".prism-tmp")
-}
-
-func AtomicWrite(io FileIO, path string, content string) error {
-	if err := io.StageWrite(path, content); err != nil {
-		return err
-	}
-	return io.CommitStaged(path)
 }
 
 func writeFileDurable(path string, content string) error {
@@ -133,6 +72,42 @@ func syncDirectory(path string) {
 	}
 	_ = d.Sync()
 	_ = d.Close()
+}
+
+// StageWrite stages the next config state in a sibling temp file without touching the target.
+func StageWrite(path string, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return writeFileDurable(StagedPath(path), content)
+}
+
+// CommitStaged renames the staged temp over the target: readers see the old or
+// the new complete file, never a mix.
+func CommitStaged(path string) error {
+	if err := os.Rename(StagedPath(path), path); err != nil {
+		return err
+	}
+	syncDirectory(path)
+	return nil
+}
+
+func AtomicWrite(path string, content string) error {
+	if err := StageWrite(path, content); err != nil {
+		return err
+	}
+	return CommitStaged(path)
+}
+
+// RecoverStaged is the recovery pass after a crash between stage and rename:
+// the target still holds the last complete state, so the staged temp is
+// discarded, never promoted.
+func RecoverStaged(path string) bool {
+	staged := StagedPath(path)
+	if !FileExists(staged) {
+		return false
+	}
+	return os.Remove(staged) == nil
 }
 
 func failureReason(scope string, err error) string {

@@ -1,7 +1,8 @@
-import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { BrowserWindow, clipboard, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IpcChannel } from '@prism/contracts'
 import type { DaemonSupervisor } from './daemon/supervisor'
 import { IntegrationApi, parseIntegrationRequest } from './integrations'
+import { AgentsApi, parseAgentJobRequest } from './agents'
 import { ManagementProxy, validateManagementCall } from './management'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
@@ -10,6 +11,7 @@ export interface IpcWiring {
   readonly supervisor: DaemonSupervisor
   readonly management: ManagementProxy
   readonly integrations: IntegrationApi
+  readonly agents: AgentsApi
 }
 
 function openExternal(url: unknown): Promise<void> {
@@ -64,20 +66,36 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.integrations.rollback(parseIntegrationRequest(input))
   })
-  ipcMain.handle(IpcChannel.integrationStatus, (event, host: unknown) => {
+  ipcMain.handle(IpcChannel.integrationStatus, (event) => {
     trustedSender(event)
-    if (host !== undefined && typeof host !== 'string') {
-      throw new Error('prism: integration host must be a string')
-    }
-    return wiring.integrations.status(host)
-  })
-  ipcMain.handle(IpcChannel.hostsList, (event) => {
-    trustedSender(event)
-    return wiring.integrations.hosts()
+    return wiring.integrations.status()
   })
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {
     trustedSender(event)
     return openExternal(input)
+  })
+  ipcMain.handle(IpcChannel.clipboardWrite, (event, input: unknown) => {
+    trustedSender(event)
+    if (typeof input !== 'string') {
+      throw new Error('prism: clipboard write requires a string')
+    }
+    clipboard.writeText(input)
+  })
+  ipcMain.handle(IpcChannel.agentInstall, (event, input: unknown) => {
+    trustedSender(event)
+    return wiring.agents.install(parseAgentJobRequest(input))
+  })
+  ipcMain.handle(IpcChannel.agentUpdate, (event, input: unknown) => {
+    trustedSender(event)
+    return wiring.agents.update(parseAgentJobRequest(input))
+  })
+  ipcMain.handle(IpcChannel.agentJob, (event, input: unknown) => {
+    trustedSender(event)
+    return wiring.agents.job(parseAgentJobRequest(input))
+  })
+  ipcMain.handle(IpcChannel.agentStatus, (event) => {
+    trustedSender(event)
+    return wiring.agents.status()
   })
   ipcMain.handle(IpcChannel.windowSetTheme, (event, input: unknown) => {
     const sender = trustedSender(event)

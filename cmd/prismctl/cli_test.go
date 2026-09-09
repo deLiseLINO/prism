@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"prism/internal/account"
+	"prism/internal/agentinstall"
 	"prism/internal/auth"
 	"prism/internal/config"
 	"prism/internal/integrations"
@@ -109,6 +111,10 @@ func (q *fakeQuota) Quota(ctx context.Context, id account.AccountID) (quota.Snap
 	return quota.Snapshot{Used: 42, Limit: ptrInt64(100), WindowEnd: time.Unix(1_700_000_000, 0).UTC(), Source: quota.SourceEndpoint}, nil
 }
 
+func (q *fakeQuota) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
+	return q.Quota(ctx, id)
+}
+
 func ptrInt64(v int64) *int64 { return &v }
 
 type fakeAuthSvc struct {
@@ -200,7 +206,7 @@ func newDaemonEnv(t *testing.T, extra func(env *daemonEnv)) *daemonEnv {
 	srv := management.New(pool, cfg, &fakeCatalog{models: []provider.Model{
 		{ID: "codex/gpt-5.3", Alias: "gpt-5.3-codex", Caps: provider.ModelCaps{Reasoning: true}},
 		{ID: "codex/gpt-5.2"},
-	}}, quotaSrc, &fakeCreds{store: map[string][]byte{}}, fake, registry, nil)
+	}}, quotaSrc, &fakeCreds{store: map[string][]byte{}}, fake, registry, nil, agentsManagerForTest(t))
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	env := &daemonEnv{
@@ -347,6 +353,75 @@ func TestUsageTableAndJSON(t *testing.T) {
 	}
 }
 
+func TestStatsRenderAndJSON(t *testing.T) {
+	fixture := `{
+	  "range": "24h",
+	  "overview": {
+	    "requests": 12, "completed": 10, "failed": 2,
+	    "input_tokens": 1000, "output_tokens": 500, "cached_tokens": 300,
+	    "reasoning_tokens": 50, "total_tokens": 1800, "measured": 9
+	  },
+	  "models": [
+	    {"model": "gpt-5.3", "provider": "codex",
+	     "requests": 12, "completed": 10, "failed": 2,
+	     "input_tokens": 1000, "output_tokens": 500, "cached_tokens": 300,
+	     "reasoning_tokens": 50, "total_tokens": 1800, "measured": 9}
+	  ],
+	  "providers": [
+	    {"provider": "codex",
+	     "requests": 12, "completed": 10, "failed": 2,
+	     "input_tokens": 1000, "output_tokens": 500, "cached_tokens": 300,
+	     "reasoning_tokens": 50, "total_tokens": 1800, "measured": 9}
+	  ]
+	}`
+	var gotRange string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/stats" {
+			http.NotFound(w, r)
+			return
+		}
+		gotRange = r.URL.Query().Get("range")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, fixture)
+	}))
+	t.Cleanup(ts.Close)
+	env := &daemonEnv{stdout: bytes.Buffer{}, stderr: bytes.Buffer{}}
+	env.rt = &cliRuntime{
+		baseURL: ts.URL,
+		env:     map[string]string{},
+		stdout:  &env.stdout,
+		stderr:  &env.stderr,
+		client:  newClient(ts.URL),
+	}
+
+	code, out, _ := env.runCLI(t, "stats")
+	if code != exitOK {
+		t.Fatalf("code=%d stderr=%s", code, env.stderr.String())
+	}
+	if gotRange != "24h" {
+		t.Fatalf("default range = %q, want 24h", gotRange)
+	}
+	for _, want := range []string{"codex", "gpt-5.3", "measured: 9/12", "1800"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stats output missing %q:\n%s", want, out)
+		}
+	}
+
+	code, out, _ = env.runCLI(t, "stats", "--range", "7d", "--json")
+	if code != exitOK {
+		t.Fatalf("json code=%d stderr=%s", code, env.stderr.String())
+	}
+	m := decodeJSON(t, out)
+	if m["range"] != "24h" {
+		// The fixture always echoes 24h; the assertion proves --json is
+		// the raw server body, not a CLI re-rendering.
+		t.Fatalf("json range = %v, want fixture value 24h", m["range"])
+	}
+	if !strings.Contains(out, "\"total_tokens\": 1800") {
+		t.Fatalf("json body missing snake_case totals:\n%s", out)
+	}
+}
+
 // --- exit codes ---
 
 func TestDaemonUnreachableExitCode(t *testing.T) {
@@ -452,6 +527,7 @@ func TestParseFailsBeforeNetwork(t *testing.T) {
 		{"integrations", "rollback", "codex", "--force"},
 		{"status", "extra-arg"},
 		{"routes", "set", "only-key"},
+		{"stats", "--range", "bogus"},
 	} {
 		before := len(env.pool.paused)
 		code, _, _ := env.runCLI(t, args...)
@@ -864,6 +940,138 @@ func TestIntegrationsStatusListAndSingle(t *testing.T) {
 	}
 }
 
+func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
+	t.Helper()
+	dir := t.TempDir()
+	// The sandbox mirrors the real layouts: tools in a neutral bin, agent
+	// binaries under <home>/.local/bin so source detection sees a script
+	// install like the real machine's.
+	toolDir := filepath.Join(dir, "tools")
+	localBin := filepath.Join(dir, ".local", "bin")
+	for _, d := range []string{toolDir, localBin} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tool := range []string{"npm", "bash", "sh"} {
+		if err := os.WriteFile(filepath.Join(toolDir, tool), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bin := range []string{"codex", "claude", "grok", "omp", "pi", "opencode", "opencode2", "hermes"} {
+		if err := os.WriteFile(filepath.Join(localBin, bin), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := integrations.Environ([]string{
+		"PATH=" + toolDir + string(os.PathListSeparator) + localBin,
+	})
+	runner := funcRunner(func(ctx context.Context, e integrations.Env, argv []string, dst io.Writer) error {
+		fmt.Fprintf(dst, "ran %s\n", strings.Join(argv, " "))
+		return nil
+	})
+	fetch := func(ctx context.Context, url string) (string, error) {
+		return filepath.Join(dir, "fetched.sh"), nil
+	}
+	return agentinstall.NewManager(env, runner, os.Stat, time.Now, fetch)
+}
+
+type funcRunner func(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error
+
+func (f funcRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error {
+	return f(ctx, env, argv, dst)
+}
+
+func TestAgentsStatusListAndSingle(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	code, out, errOut := env.runCLI(t, "agents")
+	if code != exitOK {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "codex") || !strings.Contains(out, "hermes") {
+		t.Fatalf("agents table: %q", out)
+	}
+	code, out, _ = env.runCLI(t, "agents", "status", "grok", "--json")
+	if code != exitOK {
+		t.Fatalf("json code=%d", code)
+	}
+	m := decodeJSON(t, out)
+	if m["id"] != "grok" {
+		t.Fatalf("single status json: %v", m)
+	}
+	if m["source"] != "script" {
+		t.Fatalf("grok should classify as a script install: %v", m)
+	}
+	if m["canUpdate"] != true {
+		t.Fatalf("grok should be updatable: %v", m)
+	}
+}
+
+func TestAgentsInstallJobLifecycleThroughCLI(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	code, _, errOut := env.runCLI(t, "agents", "install", "codex")
+	if code != exitOK {
+		t.Fatalf("install code=%d stderr=%s", code, errOut)
+	}
+	for {
+		_, out, _ := env.runCLI(t, "agents", "job", "codex", "--json")
+		m := decodeJSON(t, out)
+		job := m["job"].(map[string]any)
+		state := job["state"].(string)
+		if state == "succeeded" {
+			break
+		}
+		if state == "failed" || state == "unsupported" || state == "interrupted" {
+			t.Fatalf("install ended in %s: %v", state, job)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	code, out, _ := env.runCLI(t, "agents", "status", "codex", "--json")
+	if code != exitOK {
+		t.Fatalf("status code=%d", code)
+	}
+	m := decodeJSON(t, out)
+	if m["installed"] != true {
+		t.Fatalf("codex should be installed after job: %v", m)
+	}
+	if m["source"] != "script" {
+		t.Fatalf("unexpected source: %v", m)
+	}
+}
+
+func TestAgentsUpdateRunsSelfUpdate(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	code, _, errOut := env.runCLI(t, "agents", "update", "codex")
+	if code != exitOK {
+		t.Fatalf("update code=%d stderr=%s", code, errOut)
+	}
+	for {
+		_, out, _ := env.runCLI(t, "agents", "job", "codex", "--json")
+		m := decodeJSON(t, out)
+		job := m["job"].(map[string]any)
+		state := job["state"].(string)
+		if state == "succeeded" {
+			break
+		}
+		if state == "failed" || state == "unsupported" || state == "interrupted" {
+			t.Fatalf("update ended in %s: %v", state, job)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAgentsUpdateUnknownAgentUsage(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	code, _, errOut := env.runCLI(t, "agents", "update", "frobnicate")
+	if code != exitUsage {
+		t.Fatalf("unknown agent should be a usage error, got code=%d stderr=%s", code, errOut)
+	}
+	code, _, errOut = env.runCLI(t, "agents", "frobnicate")
+	if code != exitUsage {
+		t.Fatalf("unknown subcommand should be a usage error, got code=%d stderr=%s", code, errOut)
+	}
+}
+
 func TestIntegrationRefusalSurfacesVerbatim(t *testing.T) {
 	env := newDaemonEnv(t, func(e *daemonEnv) {
 		registerSandboxIntegrations(t, e)
@@ -1114,5 +1322,29 @@ func TestTargetParsingVariants(t *testing.T) {
 	}
 	if _, err = parseTarget("a/b:-1"); err == nil {
 		t.Fatal("expected failure for negative weight")
+	}
+}
+
+func TestStatsParseRanges(t *testing.T) {
+	cmd := mustParse(t, "stats")
+	if cmd.verb != "stats" || cmd.statsRange != "24h" || cmd.json {
+		t.Fatalf("stats default parse: %+v", cmd)
+	}
+	for _, rng := range []string{"1h", "24h", "7d", "30d", "all"} {
+		cmd := mustParse(t, "stats", "--range", rng, "--json")
+		if cmd.verb != "stats" || cmd.statsRange != rng || !cmd.json {
+			t.Fatalf("stats --range %s parse: %+v", rng, cmd)
+		}
+	}
+	if _, err := parseCommand([]string{"stats", "--range", "bogus"}); err == nil {
+		t.Fatal("expected parse failure for invalid --range")
+	} else if ue, ok := err.(*usageError); !ok || ue.help != helpStats {
+		t.Fatalf("invalid --range error = %T %v, want usageError with stats help", err, err)
+	}
+	if _, err := parseCommand([]string{"stats", "extra"}); err == nil {
+		t.Fatal("expected parse failure for unexpected argument")
+	}
+	if _, err := parseCommand([]string{"stats", "--bogus"}); err == nil {
+		t.Fatal("expected parse failure for unknown flag")
 	}
 }

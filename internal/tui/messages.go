@@ -58,12 +58,7 @@ type PinnedAccountsMsg struct {
 }
 
 type IntegrationsMsg struct {
-	Host         string
 	Integrations []integrationStatus
-}
-
-type HostsMsg struct {
-	Hosts []hostView
 }
 
 type IntegrationApplyResultMsg struct {
@@ -71,6 +66,15 @@ type IntegrationApplyResultMsg struct {
 	ID     string
 	Reason string
 	Err    error
+}
+
+type StatsMsg struct {
+	Range string
+	Stats management.StatsResponse
+}
+
+type StatsErrMsg struct {
+	Err error
 }
 
 type AnimationFrameMsg struct {

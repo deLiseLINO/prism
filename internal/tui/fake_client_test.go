@@ -29,11 +29,15 @@ type fakeClient struct {
 	integrations []integrations.Status
 	applyResults map[string]integrations.ApplyResult
 	applyErr     map[string]error
-	hosts        []management.HostView
+
 	providers    []management.Provider
 	generation   uint64
 	replacedID   string
 	replacedBody management.ProviderWrite
+
+	stats      management.StatsResponse
+	statsErr   error
+	statsRange []string
 }
 
 func newFakeClient(accounts ...management.Account) *fakeClient {
@@ -157,30 +161,6 @@ func (f *fakeClient) IntegrationApply(ctx context.Context, id string) (integrati
 	return result, nil
 }
 
-func (f *fakeClient) HostsList(ctx context.Context) (management.HostsResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return management.HostsResponse{Hosts: append([]management.HostView(nil), f.hosts...)}, nil
-}
-
-func (f *fakeClient) HostIntegrationsList(ctx context.Context, host string) ([]integrations.Status, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if host != "local" {
-		return nil, fmt.Errorf("no such host %s", host)
-	}
-	return append([]integrations.Status(nil), f.integrations...), nil
-}
-
-func (f *fakeClient) HostIntegrationApply(ctx context.Context, host, id string) (integrations.ApplyResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if host != "local" {
-		return integrations.ApplyResult{}, fmt.Errorf("no such host %s", host)
-	}
-	return f.IntegrationApply(ctx, id)
-}
-
 func (f *fakeClient) ProvidersList(ctx context.Context) (management.ProvidersResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -202,4 +182,14 @@ func (f *fakeClient) ProvidersReplace(ctx context.Context, id string, w manageme
 		}
 	}
 	return management.ProviderMutationResponse{}, fmt.Errorf("unknown provider %s", id)
+}
+
+func (f *fakeClient) Stats(ctx context.Context, statsRange string) (management.StatsResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statsRange = append(f.statsRange, statsRange)
+	if f.statsErr != nil {
+		return management.StatsResponse{}, f.statsErr
+	}
+	return f.stats, nil
 }

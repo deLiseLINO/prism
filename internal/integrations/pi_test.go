@@ -99,20 +99,20 @@ func TestPiVerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "models.json", piUserSeed)
 	probe := JSONBlockProbe(Pi, "providers", "models.json", "baseUrl", ProviderBaseUrl(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(LocalIO{}, path, piTransform(testPort, ompTestModels), crash)
+			outcome, err := ApplyConfigTransform(path, piTransform(testPort, ompTestModels), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi apply", err)}
 			}
 			return outcome
 		},
 		func() WriteOutcome {
-			outcome, err := ApplyConfigTransform(LocalIO{}, path, piRollbackTransform(), false)
+			outcome, err := ApplyConfigTransform(path, piRollbackTransform(), false)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi rollback", err)}
 			}
 			return outcome
 		},
-		func() bool { return RecoverPiConfig(LocalIO{}, path) },
+		func() bool { return RecoverPiConfig(path) },
 	)
 	for _, check := range VerifyIntegration(probe, path, piUserSeed) {
 		if !check.OK {

@@ -76,7 +76,7 @@ func TestCodexReapplyRewritesOwnManagedBlock(t *testing.T) {
 			t.Fatalf("user line %q lost after rewrite:\n%s", want, got)
 		}
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback after fence rewrite: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != userToml {
@@ -88,13 +88,13 @@ func TestCodexRollbackRemovesExactlyManagedBlock(t *testing.T) {
 	dir := t.TempDir()
 	configPath := tempFile(t, dir, "config.toml", userToml)
 	WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort})
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != userToml {
 		t.Fatalf("rollback did not restore user bytes:\n%q", got)
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeUnchanged {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeUnchanged {
 		t.Fatalf("second rollback: %+v", outcome)
 	}
 }
@@ -146,7 +146,7 @@ func TestCodexApplyRefusesForeignCatalogKey(t *testing.T) {
 	if got := readFile(t, configPath); got != foreign {
 		t.Fatal("refused apply touched the file")
 	}
-	if localFileExists(CodexCatalogPath(configPath)) {
+	if FileExists(CodexCatalogPath(configPath)) {
 		t.Fatal("refused apply left an orphan catalog file")
 	}
 }
@@ -155,16 +155,16 @@ func TestCodexRollbackRemovesCatalog(t *testing.T) {
 	dir := t.TempDir()
 	configPath := tempFile(t, dir, "config.toml", userToml)
 	WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort, Models: DefaultPrismModels})
-	if !localFileExists(CodexCatalogPath(configPath)) {
+	if !FileExists(CodexCatalogPath(configPath)) {
 		t.Fatal("catalog file missing after apply")
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback: %+v", outcome)
 	}
 	if contains(readFile(t, configPath), "model_catalog_json") {
 		t.Fatal("rollback left the catalog key")
 	}
-	if localFileExists(CodexCatalogPath(configPath)) {
+	if FileExists(CodexCatalogPath(configPath)) {
 		t.Fatal("rollback left the catalog file")
 	}
 	if got := readFile(t, configPath); got != userToml {
@@ -182,13 +182,13 @@ func TestCodexCrashSafety(t *testing.T) {
 	if got := readFile(t, configPath); got != userToml {
 		t.Fatal("target changed before the rename")
 	}
-	if !localFileExists(StagedPath(configPath)) {
+	if !FileExists(StagedPath(configPath)) {
 		t.Fatal("staged temp missing after crash")
 	}
-	if !RecoverCodexConfig(LocalIO{}, configPath) {
+	if !RecoverCodexConfig(configPath) {
 		t.Fatal("recovery found no staged temp")
 	}
-	if localFileExists(StagedPath(configPath)) {
+	if FileExists(StagedPath(configPath)) {
 		t.Fatal("staged temp survived recovery")
 	}
 	if got := readFile(t, configPath); got != userToml {
@@ -207,7 +207,7 @@ func TestCodexDamagedFenceRefusesByName(t *testing.T) {
 	if outcome := WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort}); outcome.Kind != OutcomeRefused || !contains(outcome.Reason, "damaged") {
 		t.Fatalf("apply on damaged fence: %+v", outcome)
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeRefused || !contains(outcome.Reason, "damaged") {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeRefused || !contains(outcome.Reason, "damaged") {
 		t.Fatalf("rollback on damaged fence: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != damaged {
@@ -249,13 +249,13 @@ func TestCodexApplyTakesOverPrismRouting(t *testing.T) {
 	if contains(got, prismMarker+"\n"+`openai_base_url = "http://127.0.0.1:8080/v1"`) {
 		t.Errorf("displaced pair still routing:\n%s", got)
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback after takeover: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != prismRoutedToml {
 		t.Fatalf("rollback did not restore the displaced prism pair verbatim:\n%q", got)
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeUnchanged {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeUnchanged {
 		t.Fatalf("second rollback: %+v", outcome)
 	}
 }
@@ -363,7 +363,7 @@ func TestCodexApplyProviderOnlyWhenModelProviderPrism(t *testing.T) {
 	if !contains(got, CodexFence.Begin) {
 		t.Fatalf("provider table missing:\n%s", got)
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("provider-only rollback: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != seed {
@@ -385,7 +385,7 @@ func TestCodexApplyProviderOnlyRemovesStaleRoutingPair(t *testing.T) {
 	if contains(got, "openai_base_url") || contains(got, prismRoutingMarker) || contains(got, routingJournalHeader) {
 		t.Fatalf("stale routing pair survived provider-only re-apply:\n%s", got)
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != "model_provider = \"prism\"\n"+userToml {
@@ -420,7 +420,7 @@ func TestCodexRoutingOwnershipSurvivesMarkerStripping(t *testing.T) {
 	if !contains(got, prismRoutingMarker) {
 		t.Fatalf("marker not restored by ownership-by-value:\n%s", got)
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback after stripping: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != prismRoutedToml {
@@ -448,7 +448,7 @@ func TestCodexApplyRoutingPortDriftRewritesPair(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripCodexConfig(configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback after drift: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != userToml {

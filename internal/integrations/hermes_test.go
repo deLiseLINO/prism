@@ -93,20 +93,20 @@ func TestHermesVerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "config.yaml", hermesUserSeed)
 	probe := YAMLProviderProbe(Hermes, "config.yaml", "api", ProviderBaseUrl(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(LocalIO{}, path, hermesTransform(testPort, ompTestModels), crash)
+			outcome, err := ApplyConfigTransform(path, hermesTransform(testPort, ompTestModels), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("hermes apply", err)}
 			}
 			return outcome
 		},
 		func() WriteOutcome {
-			outcome, err := ApplyConfigTransform(LocalIO{}, path, hermesRollbackTransform(), false)
+			outcome, err := ApplyConfigTransform(path, hermesRollbackTransform(), false)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("hermes rollback", err)}
 			}
 			return outcome
 		},
-		func() bool { return RecoverHermesConfig(LocalIO{}, path) },
+		func() bool { return RecoverHermesConfig(path) },
 	)
 	for _, check := range VerifyIntegration(probe, path, hermesUserSeed) {
 		if !check.OK {

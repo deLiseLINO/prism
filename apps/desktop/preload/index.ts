@@ -20,11 +20,17 @@ const bridge: PrismBridge = {
   integrations: {
     apply: (request) => ipcRenderer.invoke(IpcChannel.integrationApply, request),
     rollback: (request) => ipcRenderer.invoke(IpcChannel.integrationRollback, request),
-    status: (host) => ipcRenderer.invoke(IpcChannel.integrationStatus, host),
-    hosts: () => ipcRenderer.invoke(IpcChannel.hostsList),
+    status: () => ipcRenderer.invoke(IpcChannel.integrationStatus),
+  },
+  agents: {
+    install: (request) => ipcRenderer.invoke(IpcChannel.agentInstall, request),
+    update: (request) => ipcRenderer.invoke(IpcChannel.agentUpdate, request),
+    job: (request) => ipcRenderer.invoke(IpcChannel.agentJob, request),
+    status: () => ipcRenderer.invoke(IpcChannel.agentStatus),
   },
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IpcChannel.shellOpenExternal, url),
+    writeClipboard: (text) => ipcRenderer.invoke(IpcChannel.clipboardWrite, text),
   },
   window: {
     setTheme: (theme) => ipcRenderer.invoke(IpcChannel.windowSetTheme, theme),

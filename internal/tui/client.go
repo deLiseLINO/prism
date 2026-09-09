@@ -25,11 +25,9 @@ type Client interface {
 	AuthStatus(ctx context.Context, provider, session string) (management.AuthStatusResponse, error)
 	IntegrationsList(ctx context.Context) ([]integrations.Status, error)
 	IntegrationApply(ctx context.Context, id string) (integrations.ApplyResult, error)
-	HostsList(ctx context.Context) (management.HostsResponse, error)
-	HostIntegrationsList(ctx context.Context, host string) ([]integrations.Status, error)
-	HostIntegrationApply(ctx context.Context, host, id string) (integrations.ApplyResult, error)
 	ProvidersList(ctx context.Context) (management.ProvidersResponse, error)
 	ProvidersReplace(ctx context.Context, id string, w management.ProviderWrite) (management.ProviderMutationResponse, error)
+	Stats(ctx context.Context, statsRange string) (management.StatsResponse, error)
 }
 
 type HTTPClient struct {
@@ -114,29 +112,15 @@ func (c *HTTPClient) IntegrationApply(ctx context.Context, id string) (integrati
 	return out, err
 }
 
-func (c *HTTPClient) HostsList(ctx context.Context) (management.HostsResponse, error) {
-	var out management.HostsResponse
-	err := c.get(ctx, "/api/v1/hosts", &out)
-	return out, err
-}
-
-func (c *HTTPClient) HostIntegrationsList(ctx context.Context, host string) ([]integrations.Status, error) {
-	var out management.IntegrationsResponse
-	if err := c.get(ctx, "/api/v1/hosts/"+urlPathEscape(host)+"/integrations", &out); err != nil {
-		return nil, err
-	}
-	return out.Integrations, nil
-}
-
-func (c *HTTPClient) HostIntegrationApply(ctx context.Context, host, id string) (integrations.ApplyResult, error) {
-	var out integrations.ApplyResult
-	err := c.do(ctx, http.MethodPost, "/api/v1/hosts/"+urlPathEscape(host)+"/integrations/"+urlPathEscape(id)+"/apply", nil, &out)
-	return out, err
-}
-
 func (c *HTTPClient) ProvidersList(ctx context.Context) (management.ProvidersResponse, error) {
 	var out management.ProvidersResponse
 	err := c.get(ctx, "/api/v1/providers", &out)
+	return out, err
+}
+
+func (c *HTTPClient) Stats(ctx context.Context, statsRange string) (management.StatsResponse, error) {
+	var out management.StatsResponse
+	err := c.get(ctx, "/api/v1/stats?range="+urlQueryEscape(statsRange), &out)
 	return out, err
 }
 

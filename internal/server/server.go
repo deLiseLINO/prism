@@ -18,7 +18,9 @@ import (
 	ingressmessages "prism/internal/ingress/messages"
 	"prism/internal/ingress/responses"
 	"prism/internal/provider"
+	"prism/internal/requestlog"
 	"prism/internal/routing"
+	"prism/internal/usage"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -42,6 +44,8 @@ type Options struct {
 	Clock           Clock
 	QuotaGroup      account.QuotaGroup
 	OnWarning       func(responses.Warning)
+	Usage           usage.Store
+	RequestLog      *requestlog.Journal
 }
 
 type Server struct {
@@ -55,6 +59,7 @@ type Server struct {
 	clock     Clock
 	group     account.QuotaGroup
 	onWarn    func(responses.Warning)
+	usage     usage.Store
 
 	ingressResponses *responses.Ingress
 	ingressChat      ingresschat.Ingress
@@ -88,8 +93,13 @@ func New(opts Options) *Server {
 		clock:     clock,
 		group:     group,
 		onWarn:    onWarn,
+		usage:     opts.Usage,
 	}
-	s.router = routing.NewRouter(opts.Pool, opts.Registry, opts.Planner, group)
+	rlog := opts.RequestLog
+	if rlog == nil {
+		rlog = requestlog.New(0, clock.Now)
+	}
+	s.router = routing.NewRouter(opts.Pool, opts.Registry, opts.Planner, group, rlog)
 	s.ingressResponses = responses.New(func(warn responses.Warning) { s.onWarn(warn) })
 	return s
 }

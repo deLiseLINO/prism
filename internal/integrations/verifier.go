@@ -20,7 +20,7 @@ type Check struct {
 
 // VerifyReapplyIsStable checks that applying to a temporary copy twice reports no change the second time.
 func VerifyReapplyIsStable(probe Probe, configPath string, seed string) Check {
-	if err := AtomicWrite(LocalIO{}, configPath, seed); err != nil {
+	if err := AtomicWrite(configPath, seed); err != nil {
 		return Check{Semantic: "reapply-stable", OK: false, Detail: "seed write failed"}
 	}
 	first := probe.Apply(false)
@@ -37,22 +37,22 @@ func VerifyReapplyIsStable(probe Probe, configPath string, seed string) Check {
 // VerifyCrashRecovery checks that a crash between stage and rename keeps the
 // last complete state, never a half-written file.
 func VerifyCrashRecovery(probe Probe, configPath string, seed string) Check {
-	if err := AtomicWrite(LocalIO{}, configPath, seed); err != nil {
+	if err := AtomicWrite(configPath, seed); err != nil {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "seed write failed"}
 	}
-	before, _ := LocalIO{}.ReadTextIfExists(configPath)
+	before, _ := ReadTextIfExists(configPath)
 	crashed := probe.Apply(true)
 	if crashed.Kind != OutcomeCrashed {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "crashing apply reported " + crashed.Kind}
 	}
-	midCrash, _ := LocalIO{}.ReadTextIfExists(configPath)
+	midCrash, _ := ReadTextIfExists(configPath)
 	if midCrash != before {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "target changed before the rename — atomicity broken"}
 	}
 	if !probe.Recover() {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "recovery pass found no staged temp to discard"}
 	}
-	afterRecovery, _ := LocalIO{}.ReadTextIfExists(configPath)
+	afterRecovery, _ := ReadTextIfExists(configPath)
 	if afterRecovery != before {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "recovery pass altered the last complete state"}
 	}
@@ -67,23 +67,23 @@ func VerifyCrashRecovery(probe Probe, configPath string, seed string) Check {
 // re-apply rewrites its content in place (whatever the difference), user bytes
 // outside the region are untouched, and rollback removes exactly the region.
 func VerifyManagedRegionOwnership(probe Probe, configPath string, seed string) Check {
-	if err := AtomicWrite(LocalIO{}, configPath, seed); err != nil {
+	if err := AtomicWrite(configPath, seed); err != nil {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "seed write failed"}
 	}
 	applied := probe.Apply(false)
 	if applied.Kind != OutcomeWritten {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "first apply reported " + applied.Kind}
 	}
-	edited, _ := LocalIO{}.ReadTextIfExists(configPath)
+	edited, _ := ReadTextIfExists(configPath)
 	edited = probe.MutateManagedRegion(edited)
-	if err := AtomicWrite(LocalIO{}, configPath, edited); err != nil {
+	if err := AtomicWrite(configPath, edited); err != nil {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "edit write failed"}
 	}
 	reapplied := probe.Apply(false)
 	if reapplied.Kind != OutcomeWritten {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "apply over a region difference reported " + reapplied.Kind}
 	}
-	current, _ := LocalIO{}.ReadTextIfExists(configPath)
+	current, _ := ReadTextIfExists(configPath)
 	if current == edited {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "re-apply left the region content unchanged"}
 	}
@@ -94,7 +94,7 @@ func VerifyManagedRegionOwnership(probe Probe, configPath string, seed string) C
 	if rolledBack.Kind != OutcomeWritten {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "rollback reported " + rolledBack.Kind}
 	}
-	restored, _ := LocalIO{}.ReadTextIfExists(configPath)
+	restored, _ := ReadTextIfExists(configPath)
 	if restored != probe.Strip(seed) {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "rollback changed user bytes outside the managed region"}
 	}
@@ -104,7 +104,7 @@ func VerifyManagedRegionOwnership(probe Probe, configPath string, seed string) C
 // VerifyRollbackPreservesUserBytes checks that rollback removes exactly the
 // managed region; user bytes outside it are preserved verbatim.
 func VerifyRollbackPreservesUserBytes(probe Probe, configPath string, seed string) Check {
-	if err := AtomicWrite(LocalIO{}, configPath, seed); err != nil {
+	if err := AtomicWrite(configPath, seed); err != nil {
 		return Check{Semantic: "rollback-exact", OK: false, Detail: "seed write failed"}
 	}
 	applied := probe.Apply(false)
@@ -115,7 +115,7 @@ func VerifyRollbackPreservesUserBytes(probe Probe, configPath string, seed strin
 	if rolledBack.Kind != OutcomeWritten {
 		return Check{Semantic: "rollback-exact", OK: false, Detail: "rollback reported " + rolledBack.Kind}
 	}
-	restored, _ := LocalIO{}.ReadTextIfExists(configPath)
+	restored, _ := ReadTextIfExists(configPath)
 	if restored != seed {
 		return Check{Semantic: "rollback-exact", OK: false, Detail: "rollback did not restore the user bytes verbatim"}
 	}

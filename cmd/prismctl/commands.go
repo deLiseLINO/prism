@@ -73,6 +73,14 @@ func (c *command) run(ctx context.Context, rt *cliRuntime) error {
 		return c.runRoutesSet(ctx, rt, p)
 	case "routes-remove":
 		return c.runRoutesRemove(ctx, rt, p)
+	case "agents-status":
+		return c.runAgentsStatus(ctx, rt, p)
+	case "agents-install":
+		return c.runAgentsInstall(ctx, rt, p)
+	case "agents-update":
+		return c.runAgentsUpdate(ctx, rt, p)
+	case "agents-job":
+		return c.runAgentsJob(ctx, rt, p)
 	case "integrations-status":
 		return c.runIntegrationsStatus(ctx, rt, p)
 	case "integrations-apply":
@@ -81,6 +89,8 @@ func (c *command) run(ctx context.Context, rt *cliRuntime) error {
 		return c.runIntegrationsAction(ctx, rt, p, "rollback")
 	case "usage":
 		return c.runUsage(ctx, rt, p)
+	case "stats":
+		return c.runStats(ctx, rt, p)
 	}
 	return fmt.Errorf("internal: unhandled verb %q", c.verb)
 }
@@ -858,6 +868,47 @@ func (c *command) runIntegrationsAction(ctx context.Context, rt *cliRuntime, p p
 	return p.integrationApply(res, action)
 }
 
+// --- agents ---
+
+func (c *command) runAgentsStatus(ctx context.Context, rt *cliRuntime, p printer) error {
+	if c.agentID != "" {
+		st, err := rt.client.agentGet(ctx, c.agentID)
+		if err != nil {
+			return err
+		}
+		return p.agentOne(st)
+	}
+	list, err := rt.client.agentsList(ctx)
+	if err != nil {
+		return err
+	}
+	return p.agentsList(list.Agents)
+}
+
+func (c *command) runAgentsInstall(ctx context.Context, rt *cliRuntime, p printer) error {
+	job, err := rt.client.agentInstall(ctx, c.agentID, c.force)
+	if err != nil {
+		return err
+	}
+	return p.agentJob(job, "install")
+}
+
+func (c *command) runAgentsUpdate(ctx context.Context, rt *cliRuntime, p printer) error {
+	job, err := rt.client.agentUpdate(ctx, c.agentID)
+	if err != nil {
+		return err
+	}
+	return p.agentJob(job, "update")
+}
+
+func (c *command) runAgentsJob(ctx context.Context, rt *cliRuntime, p printer) error {
+	job, err := rt.client.agentJob(ctx, c.agentID)
+	if err != nil {
+		return err
+	}
+	return p.agentJob(job, "job")
+}
+
 // --- usage ---
 
 func (c *command) runUsage(ctx context.Context, rt *cliRuntime, p printer) error {
@@ -866,4 +917,14 @@ func (c *command) runUsage(ctx context.Context, rt *cliRuntime, p printer) error
 		return err
 	}
 	return p.usage(u)
+}
+
+// --- stats ---
+
+func (c *command) runStats(ctx context.Context, rt *cliRuntime, p printer) error {
+	resp, err := rt.client.stats(ctx, c.statsRange)
+	if err != nil {
+		return err
+	}
+	return p.stats(resp)
 }
