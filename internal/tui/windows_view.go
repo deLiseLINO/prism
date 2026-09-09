@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -13,44 +14,104 @@ func (m Model) renderWindowsView() string {
 		return "No quota data.\n"
 	}
 
+	groups := groupQuotaWindows(windows)
+	if len(groups) == 0 {
+		return "No quota data.\n"
+	}
+
 	var s strings.Builder
-	for i, window := range windows {
-		if i > 0 {
+	for gi, group := range groups {
+		if gi > 0 {
 			s.WriteString("\n")
 		}
-		s.WriteString(m.renderWindowHeader(window))
+		s.WriteString(m.renderGroupHeader(group.Title))
 		s.WriteString("\n")
-		s.WriteString(m.renderWindowRow(window))
-		s.WriteString("\n")
+		for _, window := range group.Windows {
+			s.WriteString(m.renderWindowRow(window))
+			s.WriteString("\n")
+		}
 	}
 	return s.String()
 }
 
-func (m Model) renderWindowsLoadingSkeleton() string {
-	windows := []quotaWindow{
-		{Label: "5 hour usage limit", WindowSec: windowSecShort},
-		{Label: "Weekly usage limit", WindowSec: windowSecWeekly},
-	}
-	var s strings.Builder
-	for i, window := range windows {
-		if i > 0 {
-			s.WriteString("\n")
-		}
-		s.WriteString(m.renderWindowHeader(window))
-		s.WriteString("\n")
-		s.WriteString(m.renderWindowStatusRow(window, "Loading..."))
-		s.WriteString("\n")
-	}
-	return s.String()
+type quotaWindowGroup struct {
+	Title   string
+	Windows []quotaWindow
 }
 
-func (m Model) renderWindowHeader(window quotaWindow) string {
-	header := windowHeader(window)
-	nameWidth, barWidth, _, _ := m.windowRowLayout(window.WindowSec)
-	rowWidth := m.windowRowDisplayWidth(window.WindowSec)
-	leadOffset := m.windowLeadOffset(window.WindowSec)
-	barStart := ansi.StringWidth(windowRowIndent) + nameWidth + 1
-	start := barStart + (barWidth-ansi.StringWidth(header))/2
+func groupQuotaWindows(windows []quotaWindow) []quotaWindowGroup {
+	var groups []quotaWindowGroup
+	index := map[string]int{}
+	for _, w := range windows {
+		title := windowGroupTitle(w.Label)
+		if title == "" {
+			continue
+		}
+		gi, ok := index[title]
+		if !ok {
+			gi = len(groups)
+			index[title] = gi
+			groups = append(groups, quotaWindowGroup{Title: title})
+		}
+		groups[gi].Windows = append(groups[gi].Windows, w)
+	}
+	for i := range groups {
+		groups[i].Windows = sortWindowRows(groups[i].Windows)
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return windowGroupOrder(groups[i].Title) < windowGroupOrder(groups[j].Title)
+	})
+	return groups
+}
+
+func windowGroupOrder(title string) int {
+	switch title {
+	case "Gemini Models":
+		return 0
+	case "Claude and GPT models":
+		return 1
+	}
+	return 2
+}
+
+func windowGroupTitle(label string) string {
+	switch {
+	case strings.Contains(label, "Gemini"):
+		return "Gemini Models"
+	case strings.Contains(label, "Claude"):
+		return "Claude and GPT models"
+	}
+	return "Antigravity"
+}
+
+func sortWindowRows(windows []quotaWindow) []quotaWindow {
+	out := append([]quotaWindow(nil), windows...)
+	for i := range out {
+		for j := i + 1; j < len(out); j++ {
+			if windowRowOrder(out[j]) < windowRowOrder(out[i]) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
+}
+
+func windowRowOrder(w quotaWindow) int {
+	if w.WindowSec == windowSecShort {
+		return 0
+	}
+	if w.WindowSec == windowSecWeekly {
+		return 1
+	}
+	return 2
+}
+
+func (m Model) renderGroupHeader(title string) string {
+	_, barWidth, _, _ := m.windowRowLayout(0)
+	rowWidth := m.windowRowDisplayWidth(0)
+	leadOffset := m.windowLeadOffset(0)
+	barStart := ansi.StringWidth(windowRowIndent) + 22 + 1
+	start := barStart + (barWidth-ansi.StringWidth(title))/2
 	if start < 0 {
 		start = 0
 	}
@@ -59,16 +120,29 @@ func (m Model) renderWindowHeader(window quotaWindow) string {
 	}
 	rightPad := 0
 	if rowWidth > 0 {
-		rightPad = rowWidth - start - ansi.StringWidth(header)
+		rightPad = rowWidth - start - ansi.StringWidth(title)
 		if rightPad < 0 {
 			rightPad = 0
 		}
 	}
 	headerStyle := GroupHeaderStyle.Copy().MarginTop(0)
-	return strings.Repeat(" ", leadOffset+start) + headerStyle.Render(header) + strings.Repeat(" ", rightPad)
+	return strings.Repeat(" ", leadOffset+start) + headerStyle.Render(title) + strings.Repeat(" ", rightPad)
 }
 
-func windowHeader(window quotaWindow) string {
+func (m Model) renderWindowsLoadingSkeleton() string {
+	var s strings.Builder
+	for _, title := range []string{"Gemini Models", "Claude and GPT models"} {
+		s.WriteString(m.renderGroupHeader(title))
+		s.WriteString("\n")
+		s.WriteString(m.renderWindowStatusRow(quotaWindow{WindowSec: windowSecShort}, "Loading..."))
+		s.WriteString("\n")
+		s.WriteString(m.renderWindowStatusRow(quotaWindow{WindowSec: windowSecWeekly}, "Loading..."))
+		s.WriteString("\n")
+	}
+	return s.String()
+}
+
+func windowRowLabel(window quotaWindow) string {
 	if window.WindowSec == windowSecShort {
 		return "5 hour"
 	}
@@ -118,7 +192,7 @@ func (m Model) renderWindowRow(window quotaWindow) string {
 
 	nameWidth, barWidth, percentWidth, resetWidth := m.windowRowLayout(window.WindowSec)
 	leadOffset := m.windowLeadOffset(window.WindowSec)
-	name := truncateLabel(window.Label, nameWidth)
+	name := truncateLabel(windowRowLabel(window), nameWidth)
 	alignedName := padRight(name, nameWidth)
 	percentText := fmt.Sprintf("%.0f%%", window.LeftPercent)
 	if !window.HasPercent {
@@ -152,7 +226,7 @@ func (m Model) renderWindowStatusRow(window quotaWindow, status string) string {
 	var s strings.Builder
 	nameWidth, barWidth, percentWidth, resetWidth := m.windowRowLayout(window.WindowSec)
 	leadOffset := m.windowLeadOffset(window.WindowSec)
-	name := truncateLabel(window.Label, nameWidth)
+	name := truncateLabel(windowRowLabel(window), nameWidth)
 	alignedName := padRight(name, nameWidth)
 	status = truncateLabelStrict(status, resetWidth)
 	gradientStart, gradientEnd := barGradientForWindow(window.WindowSec)

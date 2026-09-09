@@ -1,9 +1,10 @@
-import { ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IpcChannel } from '@prism/contracts'
 import type { DaemonSupervisor } from './daemon/supervisor'
 import { IntegrationApi, parseIntegrationRequest } from './integrations'
 import { ManagementProxy, validateManagementCall } from './management'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
+import { titleBarOptions } from './window'
 
 export interface IpcWiring {
   readonly supervisor: DaemonSupervisor
@@ -70,5 +71,14 @@ export function registerIpc(wiring: IpcWiring): void {
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {
     trustedSender(event)
     return openExternal(input)
+  })
+  ipcMain.handle(IpcChannel.windowSetTheme, (event, input: unknown) => {
+    const sender = trustedSender(event)
+    if (input !== 'dark' && input !== 'light') {
+      throw new Error('prism: window theme must be dark or light')
+    }
+    const window = BrowserWindow.fromWebContents(sender)
+    const overlay = titleBarOptions(input).titleBarOverlay
+    if (overlay !== undefined && window !== null && !window.isDestroyed()) window.setTitleBarOverlay(overlay)
   })
 }

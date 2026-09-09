@@ -14,6 +14,36 @@ import { installExternalNavigationGuard } from './window/navigation'
 
 const DEFAULT_WIDTH = 1200
 const DEFAULT_HEIGHT = 800
+const TITLEBAR_OVERLAY_HEIGHT = 40
+const TITLEBAR_DARK_SYMBOL_COLOR = '#f8fafc'
+const TITLEBAR_LIGHT_SYMBOL_COLOR = '#1f2937'
+
+interface TitleBarOptions {
+  readonly titleBarStyle: 'hiddenInset' | 'hidden'
+  readonly trafficLightPosition?: { readonly x: number; readonly y: number }
+  readonly titleBarOverlay?: {
+    readonly color: string
+    readonly height: number
+    readonly symbolColor: string
+  }
+}
+
+export function titleBarOptions(theme: 'dark' | 'light'): TitleBarOptions {
+  if (process.platform === 'darwin') {
+    return {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 16, y: 18 },
+    }
+  }
+  return {
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#01000000',
+      height: TITLEBAR_OVERLAY_HEIGHT,
+      symbolColor: theme === 'dark' ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
+    },
+  }
+}
 
 function isHeadless(): boolean {
   const raw = process.env[PRISM_HEADLESS_ENV] ?? ''
@@ -94,6 +124,7 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 560,
     show: false,
     backgroundColor: '#101014',
+    ...titleBarOptions('dark'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,

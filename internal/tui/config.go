@@ -20,9 +20,17 @@ type Settings struct {
 	BackgroundIntervalSec int  `json:"background_interval_sec"`
 }
 
+type providerSelectMode int
+
+const (
+	providerSelectModeAuth providerSelectMode = iota
+	providerSelectModeSwitch
+)
+
 type UIState struct {
 	CompactMode      bool   `json:"compact_mode"`
 	ActiveAccountKey string `json:"active_account_key"`
+	ProviderFilter   string `json:"provider_filter,omitempty"`
 }
 
 func DefaultSettings() Settings {
@@ -92,6 +100,9 @@ func LoadUIState() (UIState, error) {
 	if active, ok := root["active_account_key"].(string); ok {
 		state.ActiveAccountKey = strings.TrimSpace(active)
 	}
+	if provider, ok := root["provider_filter"].(string); ok {
+		state.ProviderFilter = strings.TrimSpace(provider)
+	}
 	return state, nil
 }
 
@@ -103,6 +114,7 @@ func SaveUIState(state UIState) error {
 	root := map[string]any{
 		"compact_mode":       state.CompactMode,
 		"active_account_key": strings.TrimSpace(state.ActiveAccountKey),
+		"provider_filter":    strings.TrimSpace(state.ProviderFilter),
 	}
 	return writeJSONMap(path, root)
 }

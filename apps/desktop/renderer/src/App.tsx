@@ -109,6 +109,7 @@ export function App(): JSX.Element {
   return (
     <>
       <IconSprite />
+      <div className="drag-region" aria-hidden="true" />
       <aside className="rail" aria-label="Primary">
         <div className="brand">
           <span className="brand-mark"><svg width="22" height="22"><use href="#i-prism" /></svg></span>

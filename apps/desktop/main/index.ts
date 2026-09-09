@@ -18,13 +18,18 @@ const RESTART_MAX_MS = 10_000
 const MAX_RESTARTS = 5
 const STABILITY_WINDOW_MS = 60_000
 
-function bootstrap(): void {
+async function bootstrap(): Promise<void> {
+  const config = await loadDesktopConfig()
+  if (config.userDataPath !== null) app.setPath('userData', config.userDataPath)
+  if (!app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
   const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'resources', 'icon.png'))
   if (process.platform === 'darwin') app.dock?.setIcon(icon)
   if (process.platform !== 'darwin') app.commandLine.appendSwitch('icon', path.join(__dirname, '..', '..', 'resources', 'icon.png'))
   let mainWindow: BrowserWindow | null = null
   let quitting = false
-  const config = loadDesktopConfig()
   const endpoint = `http://${DAEMON_HOST}:${config.port}`
   const supervisor = new DaemonSupervisor(endpoint, {
     port: config.port,
@@ -87,8 +92,4 @@ function bootstrap(): void {
   })
 }
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-} else {
-  bootstrap()
-}
+void bootstrap()

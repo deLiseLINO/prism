@@ -82,24 +82,20 @@ func TestActionMenuEscCloses(t *testing.T) {
 	}
 }
 
-func TestActionMenuPinItemOnlyForCodex(t *testing.T) {
-	m := testModel(nil, management.Account{ID: "codex:main", Provider: "codex", State: "active"})
-	items := m.actionMenuItems()
-
-	foundPin := false
-	for _, item := range items {
-		if item.ID == actionMenuPin {
-			foundPin = true
+func TestActionMenuIncludesPinForProviderAccounts(t *testing.T) {
+	for _, account := range []management.Account{
+		{ID: "codex:main", Provider: "codex", State: "active"},
+		{ID: "ag:main", Provider: "antigravity", State: "active"},
+	} {
+		m := testModel(nil, account)
+		foundPin := false
+		for _, item := range m.actionMenuItems() {
+			if item.ID == actionMenuPin {
+				foundPin = true
+			}
 		}
-	}
-	if !foundPin {
-		t.Fatal("codex account missing pin item")
-	}
-
-	m = testModel(nil, management.Account{ID: "ag:main", Provider: "antigravity", State: "active"})
-	for _, item := range m.actionMenuItems() {
-		if item.ID == actionMenuPin {
-			t.Fatal("non-codex account offered pin")
+		if !foundPin {
+			t.Fatalf("%s account missing pin item", account.Provider)
 		}
 	}
 }
@@ -108,6 +104,7 @@ func TestPinFlowConfirmsAndWritesProvider(t *testing.T) {
 	client := newFakeClient(management.Account{ID: "codex:default", Provider: "codex", State: "active"})
 	client.providers = []management.Provider{{ID: "codex", Wire: "responses", Models: []string{"gpt-5"}}}
 	m := testModel(client, management.Account{ID: "codex:default", Provider: "codex", State: "active"})
+	m.ProviderFilter = "codex"
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	updated := next.(Model)
@@ -123,10 +120,15 @@ func TestPinFlowConfirmsAndWritesProvider(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("pin confirm did not schedule write")
 	}
-	msg := cmd()
-	accountsMsg, ok := msg.(AccountsMsg)
-	if !ok {
-		t.Fatalf("msg = %T", msg)
+	msgs := batchMsgs(cmd)
+	var accountsMsg AccountsMsg
+	for _, msg := range msgs {
+		if value, ok := msg.(AccountsMsg); ok {
+			accountsMsg = value
+		}
+	}
+	if accountsMsg.Notice == "" && len(msgs) > 0 {
+		t.Fatalf("msgs = %T, want AccountsMsg", msgs)
 	}
 	if accountsMsg.Notice != "codex pinned to codex:default" {
 		t.Fatalf("notice = %q", accountsMsg.Notice)
@@ -162,10 +164,15 @@ func TestPinFlowAutoClearsPin(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("auto did not schedule write")
 	}
-	msg := cmd()
-	accountsMsg, ok := msg.(AccountsMsg)
-	if !ok {
-		t.Fatalf("msg = %T", msg)
+	msgs := batchMsgs(cmd)
+	var accountsMsg AccountsMsg
+	for _, msg := range msgs {
+		if value, ok := msg.(AccountsMsg); ok {
+			accountsMsg = value
+		}
+	}
+	if accountsMsg.Notice == "" && len(msgs) > 0 {
+		t.Fatalf("msgs = %T, want AccountsMsg", msgs)
 	}
 	if accountsMsg.Notice != "codex pin cleared" {
 		t.Fatalf("notice = %q", accountsMsg.Notice)
@@ -175,13 +182,13 @@ func TestPinFlowAutoClearsPin(t *testing.T) {
 	}
 }
 
-func TestPinFlowSkipsNonCodexAccount(t *testing.T) {
+func TestPinFlowOpensForAntigravityAccount(t *testing.T) {
 	m := testModel(nil, management.Account{ID: "ag:default", Provider: "antigravity", State: "active"})
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	updated := next.(Model)
-	if updated.PinConfirm {
-		t.Fatal("non-codex account opened pin confirm")
+	if !updated.PinConfirm {
+		t.Fatal("antigravity account did not open pin confirm")
 	}
 }
 

@@ -1,23 +1,58 @@
-import { DAEMON_DEFAULT_PORT } from '@prism/contracts'
+import net from 'node:net'
+import { DAEMON_DEFAULT_PORT, DAEMON_HOST } from '@prism/contracts'
 
 export const PRISMD_PATH_ENV = 'PRISMD_PATH'
 export const PRISM_PORT_ENV = 'PRISM_PORT'
 export const PRISM_DAEMON_CONFIG_ENV = 'PRISM_DAEMON_CONFIG'
 export const PRISM_RENDERER_URL_ENV = 'PRISM_RENDERER_URL'
 export const PRISM_HEADLESS_ENV = 'PRISM_HEADLESS'
+export const PRISM_USER_DATA_ENV = 'PRISM_USER_DATA'
 
 export interface DesktopConfig {
   readonly port: number
   readonly daemonConfigPath: string | null
   readonly headless: boolean
+  readonly userDataPath: string | null
 }
 
-export function loadDesktopConfig(env: NodeJS.ProcessEnv = process.env): DesktopConfig {
+const AUTO_PORT_MIN = 10201
+const AUTO_PORT_MAX = 10250
+
+export async function loadDesktopConfig(env: NodeJS.ProcessEnv = process.env): Promise<DesktopConfig> {
   return {
-    port: parsePort(env[PRISM_PORT_ENV]),
+    port: await resolvePort(env[PRISM_PORT_ENV]),
     daemonConfigPath: parseOptionalPath(env[PRISM_DAEMON_CONFIG_ENV]),
     headless: parseHeadless(env[PRISM_HEADLESS_ENV]),
+    userDataPath: parseOptionalPath(env[PRISM_USER_DATA_ENV]),
   }
+}
+
+async function resolvePort(raw: string | undefined): Promise<number> {
+  if (raw === undefined || raw === '') return DAEMON_DEFAULT_PORT
+  if (raw !== 'auto') return parsePort(raw)
+  const port = await firstFreePort()
+  if (port === null) {
+    throw new Error(`prism: ${PRISM_PORT_ENV}=auto found no free ports in ${AUTO_PORT_MIN}-${AUTO_PORT_MAX}`)
+  }
+  console.info(`prism: selected daemon port ${port}`)
+  return port
+}
+
+async function firstFreePort(): Promise<number | null> {
+  for (let port = AUTO_PORT_MIN; port <= AUTO_PORT_MAX; port++) {
+    if (await isFreePort(port)) return port
+  }
+  return null
+}
+
+function isFreePort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer()
+    server.once('error', () => resolve(false))
+    server.listen(port, DAEMON_HOST, () => {
+      server.close(() => resolve(true))
+    })
+  })
 }
 
 function parsePort(raw: string | undefined): number {

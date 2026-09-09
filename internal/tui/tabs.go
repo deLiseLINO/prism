@@ -70,7 +70,7 @@ func (m Model) renderTabsRange(accounts []management.Account, start, end, active
 	for i := start; i < end; i++ {
 		account := accounts[i]
 		label := accountLabel(account)
-		badge := renderProviderBadge(account.Provider, i == activeIndex)
+		badge := m.renderAccountBadge(account)
 		badgeWidth := ansi.StringWidth(badge)
 		if badgeWidth > 0 {
 			limit := labelLimit - (badgeWidth + 1)

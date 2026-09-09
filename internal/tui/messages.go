@@ -53,6 +53,10 @@ type AuthCopyResultMsg struct {
 	Err  error
 }
 
+type PinnedAccountsMsg struct {
+	Pinned map[string]string
+}
+
 type IntegrationsMsg struct {
 	Integrations []integrationStatus
 }

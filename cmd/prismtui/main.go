@@ -23,7 +23,6 @@ func main() {
 	program := tea.NewProgram(
 		tui.InitialModel(client, *compact),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "prismtui: %v\n", err)

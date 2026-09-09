@@ -11,6 +11,7 @@ import (
 	"prism/internal/canon"
 	"prism/internal/execution"
 	"prism/internal/provider"
+	"prism/internal/requestlog"
 )
 
 type fakeLifecycle struct{ state provider.CommitState }
@@ -123,7 +124,12 @@ func singlePlan(pid account.ProviderID, maxFailovers int, policy TurnPolicy) fak
 }
 
 func testFacts() execution.Facts {
-	return execution.Facts{RequestID: "r1", Session: "s1", Thread: "t1"}
+	return execution.Facts{RequestID: "r1", Client: execution.ClientCodex, Session: "s1", Thread: "t1"}
+}
+
+func testJournal(t *testing.T) *requestlog.Journal {
+	t.Helper()
+	return requestlog.New(0, time.Now)
 }
 
 func successRunner(usage canon.Usage) runnerFunc {
@@ -179,7 +185,7 @@ func gatedRunner(evs []canon.Event, re provider.RunError, succeedSecond bool) ru
 
 func runTurn(t *testing.T, pool *fakePool, runners fakeRunners, planner fakePlanner, lifecycle provider.CommitState, sink provider.Sink) TurnResult {
 	t.Helper()
-	return NewRouter(pool, runners, planner, "default").Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: lifecycle}, sink)
+	return NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: lifecycle}, sink)
 }
 
 func TestTurnSuccessRecordsUsageForwardsEventsAndAcquiresWithFacts(t *testing.T) {
@@ -239,7 +245,7 @@ func TestTurnSendsTargetModelOnTheWire(t *testing.T) {
 	pool := poolWith("codex", 1)
 	runners := fakeRunners{"codex": runner}
 	planner := fakePlanner{"codex/gpt-5.6": Plan{Targets: []provider.Target{{Provider: "codex", Model: "gpt-5.6", MaxFailovers: 0}}}}
-	res := NewRouter(pool, runners, planner, "default").Turn(context.Background(), canon.Request{Model: "codex/gpt-5.6"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "codex/gpt-5.6"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
 	if _, ok := res.Terminal.(Finished); !ok {
 		t.Fatalf("terminal is %T, want Finished", res.Terminal)
 	}
@@ -254,7 +260,7 @@ func TestQuotaOutcomeWithoutRetryAfterAppliesPolicyCooldownDefault(t *testing.T)
 	runners := fakeRunners{"codex": runnerFunc(func(provider.RunRequest, provider.Sink) error { return runErr })}
 	target := provider.Target{Provider: "codex", Model: "gpt-5.2", Policy: account.SelectionPolicy{CooldownDefault: 90 * time.Second}}
 	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}, Policy: TurnPolicy{MaxAccountFailovers: 1}}}
-	res := NewRouter(pool, runners, planner, "default").Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
 	if _, ok := res.Terminal.(Failed); !ok {
 		t.Fatalf("terminal is %T, want Failed", res.Terminal)
 	}
@@ -303,7 +309,7 @@ func TestCooldownMaxCapsRetryAfterForRateLimitedAndQuotaExhausted(t *testing.T) 
 			runners := fakeRunners{"codex": failRunner(runErr)}
 			target := provider.Target{Provider: "codex", Model: "gpt-5.2", Policy: account.SelectionPolicy{CooldownMax: 15 * time.Minute}}
 			planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}, Policy: TurnPolicy{MaxAccountFailovers: 1}}}
-			res := NewRouter(pool, runners, planner, "default").Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+			res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
 			if _, ok := res.Terminal.(Failed); !ok {
 				t.Fatalf("terminal is %T, want Failed", res.Terminal)
 			}
@@ -359,6 +365,106 @@ func TestTurnTargetFailoverMovesToNextTarget(t *testing.T) {
 		t.Fatalf("terminal is %T, want Finished", res.Terminal)
 	}
 }
+
+func TestTurnJournalRecordsFailoverTrail(t *testing.T) {
+	clock := &fakeJournalClock{t: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)}
+	j := requestlog.New(8, clock.Now)
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second}
+	usage := canon.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}
+	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("codex", 1)}}}
+	runners := fakeRunners{"codex": failThenSuccess(1, runErr, usage)}
+	planner := singlePlan("codex", 0, TurnPolicy{})
+	res := NewRouter(pool, runners, planner, "default", j).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	if _, ok := res.Terminal.(Finished); !ok {
+		t.Fatalf("terminal is %T, want Finished", res.Terminal)
+	}
+	snap := j.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("journal entries = %d, want 1", len(snap))
+	}
+	e := snap[0]
+	if e.Status != requestlog.StatusCompleted {
+		t.Fatalf("status = %v, want completed", e.Status)
+	}
+	if e.Model != "gpt-5.2" || e.RequestID != "r1" || e.Client != execution.ClientCodex || e.Session != "s1" {
+		t.Fatalf("entry identity = %+v", e)
+	}
+	if e.Terminal.Usage != usage {
+		t.Fatalf("terminal usage = %+v, want %+v", e.Terminal.Usage, usage)
+	}
+	if len(e.Attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(e.Attempts))
+	}
+	first, second := e.Attempts[0], e.Attempts[1]
+	if first.Outcome != requestlog.AttemptRateLimited {
+		t.Fatalf("first outcome = %v, want rate_limited", first.Outcome)
+	}
+	if first.Error != runErr.Error() {
+		t.Fatalf("first error = %q, want RunError.Error()", first.Error)
+	}
+	if second.Outcome != requestlog.AttemptSucceeded {
+		t.Fatalf("second outcome = %v, want succeeded", second.Outcome)
+	}
+	if second.Error != "" {
+		t.Fatalf("second error = %q, want empty", second.Error)
+	}
+	if first.AccountID != "codex:acct-0" || second.AccountID != "codex:acct-1" {
+		t.Fatalf("accounts = %q, %q, want distinct leases", first.AccountID, second.AccountID)
+	}
+	if first.Model != "gpt-5.2" {
+		t.Fatalf("attempt model = %q, want wire model", first.Model)
+	}
+}
+
+func TestTurnJournalFailedTurnMapsTerminalReason(t *testing.T) {
+	j := requestlog.New(8, time.Now)
+	runErr := provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: errors.New("bad request")}
+	pool := poolWith("codex", 1)
+	runners := fakeRunners{"codex": failRunner(runErr)}
+	planner := singlePlan("codex", 0, TurnPolicy{})
+	res := NewRouter(pool, runners, planner, "default", j).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	if _, ok := res.Terminal.(Failed); !ok {
+		t.Fatalf("terminal is %T, want Failed", res.Terminal)
+	}
+	snap := j.Snapshot()
+	if len(snap) != 1 || snap[0].Status != requestlog.StatusFailed {
+		t.Fatalf("journal = %+v, want single failed entry", snap)
+	}
+	e := snap[0]
+	if !e.Terminal.Failed || e.Terminal.Reason != canon.FailInvalidRequest {
+		t.Fatalf("terminal = %+v, want failed invalid_request", e.Terminal)
+	}
+	if len(e.Attempts) != 1 || e.Attempts[0].Outcome != requestlog.AttemptInvalidRequest {
+		t.Fatalf("attempts = %+v, want one invalid_request", e.Attempts)
+	}
+}
+
+func TestTurnJournalNoAttemptPathsStillOpenAndClose(t *testing.T) {
+	j := requestlog.New(8, time.Now)
+	pool := poolWith("codex", 1)
+	runners := fakeRunners{"codex": successRunner(canon.Usage{})}
+	res := NewRouter(pool, runners, fakePlanner{}, "default", j).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	if _, ok := res.Terminal.(Failed); !ok {
+		t.Fatalf("terminal is %T, want Failed for unknown model", res.Terminal)
+	}
+	snap := j.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("journal entries = %d, want 1 (turn still journaled)", len(snap))
+	}
+	if snap[0].Status != requestlog.StatusFailed {
+		t.Fatalf("status = %v, want failed", snap[0].Status)
+	}
+	if snap[0].Terminal.Reason != canon.FailNotFound {
+		t.Fatalf("reason = %v, want not_found", snap[0].Terminal.Reason)
+	}
+	if len(snap[0].Attempts) != 0 {
+		t.Fatalf("attempts = %d, want 0 (failed before any run)", len(snap[0].Attempts))
+	}
+}
+
+type fakeJournalClock struct{ t time.Time }
+
+func (c *fakeJournalClock) Now() time.Time { return c.t }
 
 func TestTurnCommitStateAndRunErrorGateFailover(t *testing.T) {
 	failure := canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailServerOverloaded, Message: "upstream died"}}
@@ -762,7 +868,7 @@ func TestTurnRejectsImageInputForTextOnlyTarget(t *testing.T) {
 			Content: []canon.Content{canon.TextContent{Text: "read"}, canon.ImageContent{MIMEType: "image/png", Data: []byte{1}}},
 		}},
 	}
-	res := NewRouter(poolWith(pid, 1), fakeRunners{pid: runner}, fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}}}, account.QuotaGroup("default")).Turn(
+	res := NewRouter(poolWith(pid, 1), fakeRunners{pid: runner}, fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}}}, account.QuotaGroup("default"), testJournal(t)).Turn(
 		context.Background(), req, execution.Facts{}, fakeLifecycle{}, &recordingSink{},
 	)
 	failed, ok := res.Terminal.(Failed)
@@ -787,7 +893,7 @@ func TestTurnAllowsImageInputForVisionTarget(t *testing.T) {
 			Content: []canon.Content{canon.TextContent{Text: "read"}, canon.ImageContent{MIMEType: "image/png", Data: []byte{1}}},
 		}},
 	}
-	res := NewRouter(poolWith(pid, 1), fakeRunners{pid: runner}, fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}}}, account.QuotaGroup("default")).Turn(
+	res := NewRouter(poolWith(pid, 1), fakeRunners{pid: runner}, fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}}}, account.QuotaGroup("default"), testJournal(t)).Turn(
 		context.Background(), req, execution.Facts{}, fakeLifecycle{}, &recordingSink{},
 	)
 	if _, ok := res.Terminal.(Finished); !ok {

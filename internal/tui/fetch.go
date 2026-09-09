@@ -321,7 +321,29 @@ func ApplyIntegrationCmd(client Client, id string) tea.Cmd {
 	}
 }
 
-func PinProviderAccountCmd(client Client, accountKey string) tea.Cmd {
+func FetchPinnedAccountsCmd(client Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		list, err := client.ProvidersList(ctx)
+		if err != nil {
+			return ErrMsg{Err: fmt.Errorf("failed to load pinned accounts: %w", err)}
+		}
+		pinned := make(map[string]string)
+		for _, provider := range list.Providers {
+			if provider.Pool != nil && provider.Pool.PinnedAccount != "" {
+				pinned[provider.ID] = provider.Pool.PinnedAccount
+			}
+		}
+		return PinnedAccountsMsg{Pinned: pinned}
+	}
+}
+
+func PinProviderAccountCmd(client Client, providerID, accountKey string) tea.Cmd {
 	if client == nil {
 		return nil
 	}
@@ -334,17 +356,18 @@ func PinProviderAccountCmd(client Client, accountKey string) tea.Cmd {
 			return ErrMsg{Err: fmt.Errorf("failed to load providers: %w", err)}
 		}
 
+		providerID = strings.ToLower(strings.TrimSpace(providerID))
 		var provider management.Provider
 		found := false
 		for _, candidate := range list.Providers {
-			if candidate.ID == "codex" {
+			if strings.EqualFold(candidate.ID, providerID) {
 				provider = candidate
 				found = true
 				break
 			}
 		}
 		if !found {
-			return ErrMsg{Err: fmt.Errorf("provider codex not found")}
+			return ErrMsg{Err: fmt.Errorf("provider %s not found", providerID)}
 		}
 
 		pool := defaultProviderPool()
@@ -365,11 +388,16 @@ func PinProviderAccountCmd(client Client, accountKey string) tea.Cmd {
 		if err != nil {
 			return ErrMsg{Err: fmt.Errorf("failed to reload accounts: %w", err)}
 		}
-		notice := "codex pin cleared"
+		notice := providerID + " pin cleared"
 		if accountKey != "" {
-			notice = "codex pinned to " + accountKey
+			notice = providerID + " pinned to " + accountKey
 		}
-		return AccountsMsg{ActiveKey: accountKey, Accounts: accounts.Accounts, Notice: notice}
+		return tea.Batch(
+			func() tea.Msg {
+				return AccountsMsg{ActiveKey: accountKey, Accounts: accounts.Accounts, Notice: notice}
+			},
+			FetchPinnedAccountsCmd(client),
+		)()
 	}
 }
 

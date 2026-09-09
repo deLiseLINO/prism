@@ -117,7 +117,7 @@ body::before {
 
 .rail {
   position: fixed; top: 16px; left: 16px; bottom: 16px; width: 240px; z-index: 10;
-  display: flex; flex-direction: column; padding: 18px 14px 14px;
+  display: flex; flex-direction: column; padding: 34px 14px 14px;
   border-radius: 22px;
   background: var(--surface);
   backdrop-filter: blur(22px) saturate(1.4);
@@ -126,6 +126,13 @@ body::before {
   box-shadow: var(--inset-hi), var(--panel-shadow);
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 0; }
+.drag-region {
+  position: fixed; top: 0; left: 0; right: 0; height: 32px;
+  z-index: 100;
+  -webkit-app-region: drag;
+}
+.rail { -webkit-app-region: drag; }
+.rail button { -webkit-app-region: no-drag; }
 .brand-mark { color: var(--accent); display: grid; place-items: center; }
 .brand-name { font-size: 16.5px; font-weight: 650; letter-spacing: -0.01em; }
 .brand-sub { font-size: 11.5px; color: var(--fg-subtle); padding: 3px 8px 14px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }

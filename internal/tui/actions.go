@@ -17,6 +17,7 @@ const (
 	actionMenuAdd          = "add"
 	actionMenuIntegrations = "integrations"
 	actionMenuView         = "view"
+	actionMenuProvider     = "provider"
 	actionMenuSettings     = "settings"
 	actionMenuHelp         = "help"
 )
@@ -59,6 +60,8 @@ func (m Model) confirmActionMenu() (tea.Model, tea.Cmd) {
 		return m.beginIntegrationsFlow()
 	case actionMenuView:
 		return m.toggleViewMode()
+	case actionMenuProvider:
+		return m.beginProviderSwitch()
 	case actionMenuSettings:
 		m.openSettingsOverlay()
 		return m, nil
@@ -87,9 +90,6 @@ func (m *Model) beginPinFlow() {
 func (m Model) beginPinHotkey() (tea.Model, tea.Cmd) {
 	account := m.activeAccount()
 	if account == nil {
-		return m, nil
-	}
-	if strings.ToLower(account.Provider) != "codex" {
 		return m, nil
 	}
 	m.beginPinFlow()
@@ -208,6 +208,7 @@ func (m *Model) resetAuthLoginState() {
 
 func (m *Model) resetProviderSelectState() {
 	m.ProviderSelectVisible = false
+	m.ProviderSelectMode = providerSelectModeAuth
 	m.ProviderCursor = 0
 }
 
@@ -282,8 +283,46 @@ func (m Model) beginAddAccount() (tea.Model, tea.Cmd) {
 	m.ShowInfo = false
 	m.Notice = ""
 	m.ProviderSelectVisible = true
+	m.ProviderSelectMode = providerSelectModeAuth
 	m.ProviderCursor = 0
 	return m, nil
+}
+
+func (m *Model) beginProviderSwitch() (tea.Model, tea.Cmd) {
+	if m.AuthLoginVisible || m.ProviderSelectVisible {
+		return m, nil
+	}
+	m.resetHelpState()
+	m.resetActionMenuState()
+	m.resetDeleteState()
+	m.resetIntegrationsState()
+	m.ShowInfo = false
+	m.Err = nil
+	m.Notice = ""
+	m.ProviderCursor = providerCursor(m.ProviderFilter)
+	m.ProviderSelectVisible = true
+	m.ProviderSelectMode = providerSelectModeSwitch
+	return m, nil
+}
+
+func switchProvider(m Model, provider string) (tea.Model, tea.Cmd) {
+	if provider == m.ProviderFilter {
+		return m, nil
+	}
+	m.ProviderFilter = provider
+	return m, tea.Batch(
+		ReloadAccountsCmd(m.api, m.activeAccountKey()),
+		SaveUIStateSnapshotCmd(m.uiStateSnapshot()),
+	)
+}
+
+func providerCursor(provider string) int {
+	for i, candidate := range authProviders {
+		if candidate == provider {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m Model) beginIntegrationsFlow() (tea.Model, tea.Cmd) {

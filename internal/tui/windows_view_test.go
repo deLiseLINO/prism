@@ -40,8 +40,8 @@ func TestRenderWindowsViewShowsBothWindows(t *testing.T) {
 func TestRenderWindowsViewShortWindowFirst(t *testing.T) {
 	view := testWindowsModel().renderWindowsView()
 
-	shortAt := strings.Index(view, "5 hour usage limit")
-	weeklyAt := strings.Index(view, "Weekly usage limit")
+	shortAt := strings.Index(view, "5 hour")
+	weeklyAt := strings.Index(view, "Weekly")
 	if shortAt == -1 || weeklyAt == -1 {
 		t.Fatalf("view = %q", view)
 	}
@@ -50,11 +50,49 @@ func TestRenderWindowsViewShortWindowFirst(t *testing.T) {
 	}
 }
 
-func TestRenderWindowsViewBlankLineBetweenBlocks(t *testing.T) {
+func TestRenderWindowsViewSingleGroupNoBlankLineInside(t *testing.T) {
 	view := testWindowsModel().renderWindowsView()
-	blocks := strings.Split(strings.TrimSuffix(view, "\n"), "\n\n")
-	if len(blocks) != 2 {
-		t.Fatalf("blocks = %d, want 2 separated by blank line\nview = %q", len(blocks), view)
+	if strings.Contains(view, "\n\n") {
+		t.Fatalf("single group must not contain a blank line\nview = %q", view)
+	}
+	if !strings.Contains(view, "5 hour") || !strings.Contains(view, "Weekly") {
+		t.Fatalf("view = %q", view)
+	}
+}
+
+func TestRenderWindowsViewGroupsAntigravityFamilies(t *testing.T) {
+	limit := int64(10000)
+	m := testModel(nil, management.Account{ID: "antigravity:default", Provider: "antigravity", State: "active"})
+	m.Width = 160
+	m.Height = 40
+	m.UsageData["antigravity:default"] = quotaWindowsFromView(management.QuotaView{
+		Windows: []management.QuotaWindowView{
+			{Label: "Gemini Weekly", Used: 100, Limit: &limit, WindowEnd: time.Now().Add(7 * 24 * time.Hour)},
+			{Label: "Claude 5 hour", Used: 4000, Limit: &limit, WindowEnd: time.Now().Add(5 * time.Hour)},
+			{Label: "Gemini 5 hour", Used: 7500, Limit: &limit, WindowEnd: time.Now().Add(5 * time.Hour)},
+			{Label: "Claude Weekly", Used: 0, Limit: &limit, WindowEnd: time.Now().Add(7 * 24 * time.Hour)},
+		},
+	})
+	view := m.renderWindowsView()
+
+	geminiAt := strings.Index(view, "Gemini Models")
+	claudeAt := strings.Index(view, "Claude and GPT models")
+	if geminiAt == -1 || claudeAt == -1 {
+		t.Fatalf("view missing group headers: %q", view)
+	}
+	if geminiAt > claudeAt {
+		t.Fatal("Gemini group must render before Claude group")
+	}
+	geminiBlockEnd := strings.Index(view[geminiAt:], "Claude and GPT models")
+	if geminiBlockEnd == -1 {
+		t.Fatalf("view = %q", view)
+	}
+	geminiBlock := view[geminiAt : geminiAt+geminiBlockEnd]
+	if !strings.Contains(geminiBlock, "5 hour") || !strings.Contains(geminiBlock, "Weekly") {
+		t.Fatalf("Gemini block missing window rows: %q", geminiBlock)
+	}
+	if strings.Count(geminiBlock, "\n") != 4 {
+		t.Fatalf("Gemini block rows = %d, want header + 2 rows + group separator\n%q", strings.Count(geminiBlock, "\n"), geminiBlock)
 	}
 }
 

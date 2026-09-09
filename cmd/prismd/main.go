@@ -34,6 +34,7 @@ import (
 	"prism/internal/providers/antigravity"
 	"prism/internal/providers/codex"
 	"prism/internal/quota"
+	"prism/internal/requestlog"
 	"prism/internal/server"
 	"prism/internal/store"
 )
@@ -305,6 +306,35 @@ func (t *quotaTable) Quota(ctx context.Context, id account.AccountID) (quota.Sna
 	return stored, nil
 }
 
+func governingWindowSnapshot(windows []quota.Window) quota.Snapshot {
+	var governing *quota.Window
+	for i := range windows {
+		w := &windows[i]
+		if governing == nil || usedWindowPercent(w) > usedWindowPercent(governing) {
+			governing = w
+		}
+	}
+	if governing == nil {
+		return quota.Snapshot{}
+	}
+	snap := quota.Snapshot{
+		Used:      governing.Used,
+		Limit:     governing.Limit,
+		WindowEnd: governing.WindowEnd,
+		Source:    quota.SourceEndpoint,
+		Windows:   append([]quota.Window(nil), windows...),
+	}
+	return snap
+}
+
+func usedWindowPercent(w *quota.Window) float64 {
+	limit := 10000.0
+	if w.Limit != nil && *w.Limit > 0 {
+		limit = float64(*w.Limit)
+	}
+	return float64(w.Used) / limit * 100
+}
+
 func (t *quotaTable) probeDue(id account.AccountID) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -342,7 +372,18 @@ func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider a
 		_ = t.pool.UpdateQuota(id, result.Snapshot)
 		return result.Snapshot, true
 	case config.WireAntigravity:
-		windows, err := antigravity.FetchQuota(ctx, t.client, p.BaseURL, antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID})
+		credPair := antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID}
+		summary, err := antigravity.FetchQuotaSummary(ctx, t.client, p.BaseURL, credPair)
+		if err != nil {
+			log.Printf("prismd: quota probe %s: %v", id, err)
+			return quota.Snapshot{}, false
+		}
+		if summaryWindows := summary.Windows(); len(summaryWindows) > 0 {
+			snap := governingWindowSnapshot(summaryWindows)
+			_ = t.pool.UpdateQuota(id, snap)
+			return snap, true
+		}
+		windows, err := antigravity.FetchQuota(ctx, t.client, p.BaseURL, credPair)
 		if err != nil {
 			log.Printf("prismd: quota probe %s: %v", id, err)
 			return quota.Snapshot{}, false
@@ -351,6 +392,7 @@ func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider a
 		if !ok {
 			return quota.Snapshot{}, false
 		}
+		snap.Windows = windows.QuotaWindows()
 		_ = t.pool.UpdateQuota(id, snap)
 		return snap, true
 	}
@@ -512,9 +554,11 @@ func run(opts options) error {
 		return err
 	}
 	planner := server.NewConfigPlanner(cfg)
+	rlog := requestlog.New(500, time.Now)
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, client: client})
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
-	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken}).Handler()
+	mgmt.SetRequestLog(rlog)
+	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, RequestLog: rlog}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)
 	errCh := make(chan error, 1)

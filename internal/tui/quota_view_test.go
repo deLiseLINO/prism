@@ -105,9 +105,9 @@ func TestFormatResetText(t *testing.T) {
 	if got := formatResetText(past); got != "Resets now" {
 		t.Fatalf("past time = %q", got)
 	}
- 	future := time.Now().Add(24*time.Hour + 4*time.Hour + 11*time.Minute + 20*time.Second)
+	future := time.Now().Add(24*time.Hour + 4*time.Hour + 11*time.Minute + 20*time.Second)
 	got := formatResetText(future)
- 	if !strings.HasPrefix(got, "Resets "+future.Local().Format("Mon 15:04")+" (1d 4h") {
+	if !strings.HasPrefix(got, "Resets "+future.Local().Format("Mon 15:04")+" (1d 4h") {
 		t.Fatalf("future = %q", got)
 	}
 }
@@ -161,13 +161,37 @@ func TestQuotaWindowFromDetailViewSetsWindowSec(t *testing.T) {
 }
 
 func TestWindowHeaderShortLabels(t *testing.T) {
-	if got := windowHeader(quotaWindow{Label: "5 hour usage limit", WindowSec: 18000}); got != "5 hour" {
+	if got := windowRowLabel(quotaWindow{Label: "5 hour usage limit", WindowSec: 18000}); got != "5 hour" {
 		t.Fatalf("short header = %q, want 5 hour", got)
 	}
-	if got := windowHeader(quotaWindow{Label: "Weekly usage limit", WindowSec: 604800}); got != "Weekly" {
+	if got := windowRowLabel(quotaWindow{Label: "Weekly usage limit", WindowSec: 604800}); got != "Weekly" {
 		t.Fatalf("weekly header = %q, want Weekly", got)
 	}
-	if got := windowHeader(quotaWindow{Label: "Custom window"}); got != "Custom window" {
+	if got := windowRowLabel(quotaWindow{Label: "Custom window"}); got != "Custom window" {
 		t.Fatalf("custom header = %q, want label passthrough", got)
+	}
+}
+
+func TestQuotaWindowsFromAntigravityLabels(t *testing.T) {
+	limit := int64(10000)
+	view := management.QuotaView{
+		Windows: []management.QuotaWindowView{
+			{Label: "Gemini Weekly", Used: 2000, Limit: &limit},
+			{Label: "Gemini 5 hour", Used: 7500, Limit: &limit},
+			{Label: "Claude 5 hour", Used: 6000, Limit: &limit},
+		},
+	}
+	windows := quotaWindowsFromView(view)
+	if len(windows) != 3 {
+		t.Fatalf("windows = %d, want 3", len(windows))
+	}
+	if windows[0].Label != "Gemini 5 hour" || windows[0].WindowSec != windowSecShort {
+		t.Fatalf("first = %+v, want Gemini 5 hour short window", windows[0])
+	}
+	if windows[1].Label != "Claude 5 hour" || windows[1].WindowSec != windowSecShort {
+		t.Fatalf("second = %+v, want Claude 5 hour short window", windows[1])
+	}
+	if windows[2].Label != "Gemini Weekly" || windows[2].WindowSec != windowSecWeekly {
+		t.Fatalf("third = %+v, want Gemini Weekly weekly window", windows[2])
 	}
 }

@@ -96,10 +96,12 @@ func (m Model) renderDeleteConfirmModal() string {
 
 func (m Model) renderPinConfirmModal() string {
 	accountID := "n/a"
+	provider := m.ProviderFilter
 	if account := m.activeAccount(); account != nil {
 		accountID = account.ID
+		provider = account.Provider
 	}
-	message := fmt.Sprintf("Pin codex to %s?\n[enter] Pinned   [a] Auto (clear pin)   [esc] Cancel", accountID)
+	message := fmt.Sprintf("Pin %s to %s?\n[enter] Pinned   [a] Auto (clear pin)   [esc] Cancel", provider, accountID)
 	return renderMessageModal("Pin account", message, WarningStyle, m.Width)
 }
 
@@ -181,7 +183,7 @@ func (m Model) renderHelpModal() string {
 		renderHelpLine("r", "Refresh active account"),
 		renderHelpLine("R", "Refresh all accounts"),
 		renderHelpLine("p", "Pause or resume account"),
-		renderHelpLine("s", "Pin codex to this account"),
+		renderHelpLine("s", "Pin account provider"),
 		renderHelpLine("n", "Add account"),
 		renderHelpLine("x", "Delete account"),
 		renderHelpLine("i", "Account info"),
@@ -189,6 +191,7 @@ func (m Model) renderHelpModal() string {
 		HelpSectionStyle.Render("Other"),
 		renderHelpLine(primaryMove, "Move between accounts"),
 		renderHelpLine("v / c", "Toggle view mode"),
+		renderHelpLine("P", "Switch provider"),
 		renderHelpLine("o", "Integrations"),
 		renderHelpLine(",", "Settings"),
 		renderHelpLine("?", "Open or close this help"),
@@ -252,10 +255,16 @@ func (m Model) renderActionMenuModal() string {
 }
 
 func (m Model) renderProviderSelectModal() string {
+	title := "Add account"
+	prompt := "Select provider to authorize:"
+	if m.ProviderSelectMode == providerSelectModeSwitch {
+		title = "Switch provider"
+		prompt = "Select provider to show:"
+	}
 	lines := []string{
-		InfoTitleStyle.Render("Add account"),
+		InfoTitleStyle.Render(title),
 		"",
-		InfoValueStyle.Render("Select provider to authorize:"),
+		InfoValueStyle.Render(prompt),
 		"",
 	}
 	for i, provider := range authProviders {
