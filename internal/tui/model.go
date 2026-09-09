@@ -60,6 +60,11 @@ type Model struct {
 	Integrations        []integrationStatus
 	IntegrationsCursor  int
 	IntegrationConfirm  string
+	StatsVisible        bool
+	StatsRange          string
+	StatsData           *management.StatsResponse
+	StatsLoading        bool
+	StatsScroll         int
 
 	DeleteConfirm bool
 	PinConfirm    bool
@@ -72,6 +77,8 @@ type Model struct {
 var authProviders = []string{"codex", "antigravity"}
 
 const defaultProviderFilter = "codex"
+
+const defaultStatsRange = "24h"
 
 func InitialModel(client Client, compactMode bool) Model {
 	settings, err := LoadSettings()
@@ -97,6 +104,7 @@ func InitialModel(client Client, compactMode bool) Model {
 		refreshScheduled:     make(map[string]bool),
 		silentRefresh:        make(map[string]bool),
 		compactBarAnimations: make(map[string]compactBarAnimation),
+		StatsRange:           defaultStatsRange,
 		tabWindowAnimations:  make(map[string]tabWindowAnimation),
 		defaultProgress: progress.New(
 			progress.WithDefaultGradient(),
@@ -141,6 +149,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.IntegrationsVisible {
 			return m.handleIntegrationsOverlay(keyStr)
+		}
+		if m.StatsVisible {
+			return m.handleStatsOverlay(keyStr)
 		}
 		if m.ActionMenuVisible {
 			return m.handleActionMenu(keyStr)
@@ -193,12 +204,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.beginRefreshActive()
 		case "R":
 			return m.beginRefreshAll()
+		case "u":
+			return m.beginStatsFlow()
 		case "i":
 			m.resetHelpState()
 			m.resetActionMenuState()
 			m.ShowInfo = !m.ShowInfo
 			m.resetDeleteState()
 			m.resetIntegrationsState()
+			m.resetStatsState()
 			m.Notice = ""
 			return m, nil
 		case "v", "c":
@@ -258,6 +272,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearTabWindowAnimations()
 		m.resetDeleteState()
 		m.resetIntegrationsState()
+		m.resetStatsState()
 		m.PinConfirm = false
 
 		if len(m.Accounts) == 0 {
@@ -423,6 +438,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.IntegrationsCursor = 0
 		m.Loading = false
 		m.Err = nil
+		return m, nil
+
+	case StatsMsg:
+		if !m.StatsVisible {
+			return m, nil
+		}
+		stats := msg.Stats
+		m.StatsData = &stats
+		m.StatsLoading = false
+		m.StatsScroll = 0
+		return m, nil
+
+	case StatsErrMsg:
+		if !m.StatsVisible {
+			return m, nil
+		}
+		m.resetStatsState()
+		m.Err = msg.Err
+		m.Notice = ""
 		return m, nil
 
 	case IntegrationApplyResultMsg:

@@ -247,3 +247,46 @@ func (m Model) handlePinConfirm(keyStr string) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+func (m Model) handleStatsOverlay(keyStr string) (tea.Model, tea.Cmd) {
+	switch keyStr {
+	case "q", "ctrl+c":
+		m.resetStatsState()
+		return m, tea.Quit
+	case "esc", "u":
+		m.resetStatsState()
+		return m, nil
+	case "r":
+		m.StatsLoading = true
+		return m, FetchStatsCmd(m.api, m.StatsRange)
+	case "left", "h":
+		return m.switchStatsRange(statsRangePrev(m.StatsRange))
+	case "right", "l":
+		return m.switchStatsRange(statsRangeNext(m.StatsRange))
+	case "up", "k":
+		if m.StatsScroll > 0 {
+			m.StatsScroll--
+		}
+		return m, nil
+	case "down", "j":
+		if m.StatsScroll < m.maxStatsScroll() {
+			m.StatsScroll++
+		}
+		return m, nil
+	}
+	if idx := statsRangeIndex(keyStr); idx >= 0 {
+		return m.switchStatsRange(statsRanges[idx])
+	}
+	return m, nil
+}
+
+func (m Model) switchStatsRange(statsRange string) (tea.Model, tea.Cmd) {
+	if statsRange == m.StatsRange {
+		return m, nil
+	}
+	m.StatsRange = statsRange
+	m.StatsData = nil
+	m.StatsScroll = 0
+	m.StatsLoading = true
+	return m, FetchStatsCmd(m.api, m.StatsRange)
+}

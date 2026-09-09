@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { IpcChannel, type DaemonStatus, type PrismBridge } from '@prism/contracts'
+import { IpcChannel, type DaemonStatus, type PrismBridge, type UpdaterStatus } from '@prism/contracts'
 
 const bridge: PrismBridge = {
   daemon: {
@@ -24,9 +24,22 @@ const bridge: PrismBridge = {
   },
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IpcChannel.shellOpenExternal, url),
+    writeClipboard: (text) => ipcRenderer.invoke(IpcChannel.clipboardWrite, text),
   },
   window: {
     setTheme: (theme) => ipcRenderer.invoke(IpcChannel.windowSetTheme, theme),
+  },
+  updater: {
+    status: () => ipcRenderer.invoke(IpcChannel.updaterGetStatus),
+    check: () => ipcRenderer.invoke(IpcChannel.updaterCheck),
+    install: () => ipcRenderer.invoke(IpcChannel.updaterInstall),
+    onStatus: (listener) => {
+      const handler = (_event: IpcRendererEvent, status: UpdaterStatus) => listener(status)
+      ipcRenderer.on(IpcChannel.updaterStatusEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.updaterStatusEvent, handler)
+      }
+    },
   },
 }
 

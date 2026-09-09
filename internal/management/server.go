@@ -8,13 +8,16 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"prism/internal/account"
 	"prism/internal/auth"
+	"prism/internal/buildinfo"
 	"prism/internal/config"
 	"prism/internal/integrations"
 	"prism/internal/provider"
 	"prism/internal/quota"
+	"prism/internal/requestlog"
 )
 
 type ConfigStore interface {
@@ -59,9 +62,10 @@ type Server struct {
 	auth    Auth
 	ints    *integrations.Registry
 	routes  [][]string
-	syncer  ModelSyncer
 	store   AccountStore
 	stats   UsageSource
+	syncer  ModelSyncer
+	reqlog  *requestlog.Journal
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer) *Server {
@@ -70,6 +74,10 @@ func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaS
 
 func (s *Server) SetAccountStore(store AccountStore) {
 	s.store = store
+}
+
+func (s *Server) SetRequestLog(j *requestlog.Journal) {
+	s.reqlog = j
 }
 
 func (s *Server) Handler() http.Handler {
@@ -89,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/accounts/{id}/resume", s.accountResume)
 	mux.HandleFunc("POST /api/v1/accounts/{id}/priority", s.accountPriority)
 	mux.HandleFunc("GET /api/v1/accounts/{id}/quota", s.accountQuota)
+	mux.HandleFunc("POST /api/v1/accounts/{id}/quota/refresh", s.accountQuotaRefresh)
 	mux.HandleFunc("GET /api/v1/combos", s.combosList)
 	mux.HandleFunc("PUT /api/v1/combos/{id}", s.combosPut)
 	mux.HandleFunc("DELETE /api/v1/combos/{id}", s.combosDelete)
@@ -96,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/routes/{key}", s.routesPut)
 	mux.HandleFunc("DELETE /api/v1/routes/{key}", s.routesDelete)
 	mux.HandleFunc("GET /api/v1/stats", s.statsHandler)
+	mux.HandleFunc("GET /api/v1/requests", s.requests)
 	mux.HandleFunc("GET /api/v1/usage", s.usage)
 	mux.HandleFunc("POST /api/v1/auth/{provider}/start", s.authStart)
 	mux.HandleFunc("POST /api/v1/auth/{provider}/callback", s.authCallback)
@@ -128,11 +138,13 @@ var routeTemplates = []string{
 	"/api/v1/accounts/{id}/resume",
 	"/api/v1/accounts/{id}/priority",
 	"/api/v1/accounts/{id}/quota",
+	"/api/v1/accounts/{id}/quota/refresh",
 	"/api/v1/combos",
 	"/api/v1/combos/{id}",
 	"/api/v1/routes",
 	"/api/v1/stats",
 	"/api/v1/routes/{key}",
+	"/api/v1/requests",
 	"/api/v1/usage",
 	"/api/v1/auth/{provider}/start",
 	"/api/v1/auth/{provider}/callback",
@@ -176,7 +188,7 @@ func (s *Server) matchesRoute(path string) bool {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
+	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Version: buildinfo.Version})
 }
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +565,22 @@ func (s *Server) accountQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, QuotaResponse{Account: string(id), Quota: quotaView(q)})
 }
 
+func (s *Server) accountQuotaRefresh(w http.ResponseWriter, r *http.Request) {
+	id := account.AccountID(r.PathValue("id"))
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	q, err := s.quota.RefreshQuota(ctx, id)
+	if err != nil {
+		if errors.Is(err, account.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, "quota_refresh_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, QuotaResponse{Account: string(id), Quota: quotaView(q)})
+}
+
 func (s *Server) combosList(w http.ResponseWriter, r *http.Request) {
 	snap := s.cfg.Get()
 	out := make([]Combo, 0, len(snap.Config.Combos))
@@ -695,6 +723,31 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		return 0
 	})
 	writeJSON(w, http.StatusOK, UsageResponse{Accounts: out})
+}
+
+func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
+	if s.reqlog == nil {
+		writeError(w, http.StatusServiceUnavailable, "not_available", "request journal not configured")
+		return
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_limit", "limit must be a non-negative integer")
+			return
+		}
+		limit = n
+	}
+	entries := s.reqlog.Snapshot()
+	views := make([]RequestView, 0, len(entries))
+	for i := len(entries) - 1; i >= 0; i-- {
+		views = append(views, requestView(entries[i]))
+	}
+	if limit > 0 && limit < len(views) {
+		views = views[:limit]
+	}
+	writeJSON(w, http.StatusOK, RequestsResponse{Requests: views, Dropped: s.reqlog.Dropped()})
 }
 
 func (s *Server) resolveAuthProvider(raw string) account.ProviderID {

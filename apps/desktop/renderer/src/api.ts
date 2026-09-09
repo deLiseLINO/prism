@@ -9,6 +9,9 @@ import type {
   ProviderMutationResponse,
   ProvidersView,
   QuotaResponse,
+  StatsRange,
+  StatsResponseView,
+  RequestsView,
   UsageAccountView,
   UsageView,
 } from '@prism/contracts'
@@ -114,8 +117,18 @@ export const api = {
   quota(id: string): Promise<QuotaResponse> {
     return call('GET', `/api/v1/accounts/${encodeURIComponent(id)}/quota`)
   },
+  refreshQuota(id: string): Promise<QuotaResponse> {
+    return call('POST', `/api/v1/accounts/${encodeURIComponent(id)}/quota/refresh`)
+  },
   usage(): Promise<UsageView> {
     return call('GET', '/api/v1/usage')
+  },
+  stats(range: StatsRange): Promise<StatsResponseView> {
+    return call('GET', `/api/v1/stats?range=${encodeURIComponent(range)}`)
+  },
+  requests(limit?: number): Promise<RequestsView> {
+    const query = limit === undefined ? '' : `?limit=${limit}`
+    return call('GET', `/api/v1/requests${query}`)
   },
   authStart(provider: string): Promise<AuthStartView> {
     return call('POST', `/api/v1/auth/${encodeURIComponent(provider)}/start`)

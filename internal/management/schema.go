@@ -3,7 +3,10 @@ package management
 import (
 	"time"
 
+	"prism/internal/canon"
 	"prism/internal/config"
+	"prism/internal/execution"
+	"prism/internal/requestlog"
 )
 
 type ErrorDetail struct {
@@ -16,7 +19,8 @@ type ErrorBody struct {
 }
 
 type HealthResponse struct {
-	Status string `json:"status"`
+	Status  string `json:"status"`
+	Version string `json:"version,omitempty"`
 }
 
 type Caps struct {
@@ -245,4 +249,174 @@ type AuthCallbackWrite struct {
 type AuthStatusResponse struct {
 	Provider string `json:"provider"`
 	State    string `json:"state"`
+}
+
+type UsageBreakdownView struct {
+	Input     int64 `json:"input"`
+	Output    int64 `json:"output"`
+	Cached    int64 `json:"cached"`
+	Reasoning int64 `json:"reasoning"`
+	Total     int64 `json:"total"`
+}
+
+type AttemptView struct {
+	Provider   string `json:"provider"`
+	Account    string `json:"account"`
+	Model      string `json:"model"`
+	StartedAt  string `json:"startedAt"`
+	DurationMS int64  `json:"durationMs"`
+	Outcome    string `json:"outcome"`
+	Error      string `json:"error,omitempty"`
+}
+
+type RequestView struct {
+	Seq        uint64             `json:"seq"`
+	RequestID  string             `json:"requestId,omitempty"`
+	Client     string             `json:"client"`
+	Session    string             `json:"session,omitempty"`
+	Model      string             `json:"model"`
+	StartedAt  string             `json:"startedAt"`
+	DurationMS int64              `json:"durationMs"`
+	Status     string             `json:"status"`
+	Reason     string             `json:"reason,omitempty"`
+	Usage      UsageBreakdownView `json:"usage"`
+	Attempts   []AttemptView      `json:"attempts"`
+}
+
+type RequestsResponse struct {
+	Requests []RequestView `json:"requests"`
+	Dropped  uint64        `json:"dropped"`
+}
+
+func requestView(e requestlog.Entry) RequestView {
+	views := make([]AttemptView, 0, len(e.Attempts))
+	for _, a := range e.Attempts {
+		views = append(views, AttemptView{
+			Provider:   string(a.Provider),
+			Account:    string(a.AccountID),
+			Model:      string(a.Model),
+			StartedAt:  a.StartedAt.UTC().Format(time.RFC3339),
+			DurationMS: a.Duration.Milliseconds(),
+			Outcome:    a.Outcome.String(),
+			Error:      a.Error,
+		})
+	}
+	v := RequestView{
+		Seq:        e.Seq,
+		RequestID:  string(e.RequestID),
+		Client:     clientName(e.Client),
+		Session:    string(e.Session),
+		Model:      string(e.Model),
+		StartedAt:  e.StartedAt.UTC().Format(time.RFC3339),
+		DurationMS: e.Duration.Milliseconds(),
+		Status:     statusName(e),
+		Reason:     reasonName(e.Terminal),
+		Usage: UsageBreakdownView{
+			Input:     e.Terminal.Usage.InputTokens,
+			Output:    e.Terminal.Usage.OutputTokens,
+			Cached:    e.Terminal.Usage.CachedInputTokens,
+			Reasoning: e.Terminal.Usage.ReasoningTokens,
+			Total:     e.Terminal.Usage.TotalTokens,
+		},
+		Attempts: views,
+	}
+	return v
+}
+
+func statusName(e requestlog.Entry) string {
+	switch e.Status {
+	case requestlog.StatusOpen:
+		return "open"
+	case requestlog.StatusCompleted:
+		return "completed"
+	case requestlog.StatusIncomplete:
+		return "incomplete"
+	case requestlog.StatusFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
+func reasonName(term requestlog.Terminal) string {
+	if term.Failed {
+		return failureName(term.Reason)
+	}
+	if term.Status == requestlog.StatusIncomplete {
+		return incompleteName(term.Incomplete)
+	}
+	return ""
+}
+
+func failureName(r canon.FailureReason) string {
+	switch r {
+	case canon.FailUnauthorized:
+		return "unauthorized"
+	case canon.FailForbidden:
+		return "forbidden"
+	case canon.FailRateLimited:
+		return "rate_limited"
+	case canon.FailQuotaExhausted:
+		return "quota_exhausted"
+	case canon.FailServerOverloaded:
+		return "server_overloaded"
+	case canon.FailContextLength:
+		return "context_length"
+	case canon.FailInvalidRequest:
+		return "invalid_request"
+	case canon.FailOriginRejected:
+		return "origin_rejected"
+	case canon.FailCyberPolicy:
+		return "cyber_policy"
+	case canon.FailToolUndeclared:
+		return "tool_undeclared"
+	case canon.FailToolArgsMalformed:
+		return "tool_args_malformed"
+	case canon.FailUpstreamTransport:
+		return "upstream_transport"
+	case canon.FailNotFound:
+		return "not_found"
+	case canon.FailTimeout:
+		return "timeout"
+	case canon.FailUnknown:
+		return "unknown"
+	case canon.FailClientClosed:
+		return "client_closed"
+	default:
+		return "unknown"
+	}
+}
+
+func incompleteName(r canon.IncompleteReason) string {
+	switch r {
+	case canon.IncompleteMaxOutputTokens:
+		return "max_output_tokens"
+	case canon.IncompleteContentFilter:
+		return "content_filter"
+	case canon.IncompleteUpstreamStall:
+		return "upstream_stall"
+	case canon.IncompleteAdapterEOF:
+		return "adapter_eof"
+	case canon.IncompleteClientDisconnected:
+		return "client_disconnected"
+	case canon.IncompleteBufferLimit:
+		return "buffer_limit"
+	default:
+		return "unknown"
+	}
+}
+
+func clientName(c execution.Client) string {
+	switch c {
+	case execution.ClientCodex:
+		return "codex"
+	case execution.ClientGrok:
+		return "grok"
+	case execution.ClientOMP:
+		return "omp"
+	case execution.ClientAnthropic:
+		return "anthropic"
+	default:
+		return "unknown"
+	}
 }

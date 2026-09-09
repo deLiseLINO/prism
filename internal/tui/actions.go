@@ -198,6 +198,13 @@ func (m *Model) resetIntegrationsState() {
 	m.IntegrationConfirm = ""
 }
 
+func (m *Model) resetStatsState() {
+	m.StatsVisible = false
+	m.StatsData = nil
+	m.StatsLoading = false
+	m.StatsScroll = 0
+}
+
 func (m *Model) resetAuthLoginState() {
 	m.AuthLoginVisible = false
 	m.AuthSession = ""
@@ -336,4 +343,19 @@ func (m Model) beginIntegrationsFlow() (tea.Model, tea.Cmd) {
 	m.IntegrationsCursor = 0
 	m.IntegrationConfirm = ""
 	return m, FetchIntegrationsCmd(m.api)
+}
+
+func (m Model) beginStatsFlow() (tea.Model, tea.Cmd) {
+	m.resetHelpState()
+	m.resetActionMenuState()
+	m.resetDeleteState()
+	m.ShowInfo = false
+	m.resetIntegrationsState()
+	m.StatsVisible = true
+	m.StatsData = nil
+	m.StatsScroll = 0
+	m.StatsLoading = true
+	m.Err = nil
+	m.Notice = ""
+	return m, FetchStatsCmd(m.api, m.StatsRange)
 }
