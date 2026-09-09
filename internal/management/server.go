@@ -46,6 +46,10 @@ type AccountDeleter interface {
 	DeleteAccount(ctx context.Context, id account.AccountID) error
 }
 
+type AccountStore interface {
+	DeleteDurable(ctx context.Context, id account.AccountID) error
+}
+
 type Server struct {
 	pool    account.Pool
 	cfg     ConfigStore
@@ -56,10 +60,15 @@ type Server struct {
 	ints    *integrations.Registry
 	routes  [][]string
 	syncer  ModelSyncer
+	store   AccountStore
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer) *Server {
 	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, routes: [][]string{}, syncer: syncer}
+}
+
+func (s *Server) SetAccountStore(store AccountStore) {
+	s.store = store
 }
 
 func (s *Server) Handler() http.Handler {
@@ -518,6 +527,12 @@ func (s *Server) accountsDelete(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, err)
 		return
 	}
+	if s.store != nil {
+		if err := s.store.DeleteDurable(r.Context(), id); err != nil {
+			writeError(w, http.StatusInternalServerError, "durable_delete", err.Error())
+			return
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -663,6 +678,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 			Account:  string(a.ID),
 			Provider: string(a.Provider),
 			State:    stateName(a.State),
+			Email:    a.Email,
 			Quota:    quotaView(a.Quota),
 		})
 	}

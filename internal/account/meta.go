@@ -194,6 +194,29 @@ func (r *Repository) Ensure(providerID ProviderID, id AccountID, gen CredentialG
 	return r.write(metaFile{Version: metaSchemaVersion, Accounts: records})
 }
 
+// Delete removes the durable metadata row for id. A missing row reports
+// ErrNotFound; credential blobs are owned by the credential store and are
+// cleaned up by the management deletion path.
+func (r *Repository) Delete(providerID ProviderID, id AccountID) error {
+	records, err := r.read(providerID)
+	if err != nil {
+		return err
+	}
+	kept := records[:0]
+	found := false
+	for _, rec := range records {
+		if rec.ID == string(id) {
+			found = true
+			continue
+		}
+		kept = append(kept, rec)
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return r.write(metaFile{Version: metaSchemaVersion, Accounts: kept})
+}
+
 // SetState updates the durable state of an existing account row. The row must
 // already exist; credential generations and metadata are untouched.
 func (r *Repository) SetState(providerID ProviderID, id AccountID, state State) error {

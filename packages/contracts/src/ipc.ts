@@ -8,7 +8,6 @@ export const IpcChannel = {
   integrationRollback: 'prism:integration-rollback',
   integrationStatus: 'prism:integration-status',
   shellOpenExternal: 'prism:shell-open-external',
-  windowSetTheme: 'prism:window-set-theme',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

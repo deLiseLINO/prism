@@ -10,16 +10,9 @@ interface FakeEvent {
 const electronRegistry = {
   handlers: new Map<string, Handler>(),
   openExternal: vi.fn(),
-  setTitleBarOverlay: vi.fn(),
 }
 
 vi.mock('electron', () => ({
-  BrowserWindow: {
-    fromWebContents: () => ({
-      isDestroyed: () => false,
-      setTitleBarOverlay: electronRegistry.setTitleBarOverlay,
-    }),
-  },
   ipcMain: {
     handle: (channel: string, handler: Handler) => {
       electronRegistry.handlers.set(channel, handler)
@@ -39,7 +32,6 @@ describe('shell.openExternal IPC forwarding', () => {
     electronRegistry.handlers.clear()
     electronRegistry.openExternal.mockReset()
     electronRegistry.openExternal.mockResolvedValue(undefined)
-    electronRegistry.setTitleBarOverlay.mockReset()
     // Reset so each test re-registers handlers with a fresh module instance.
     vi.resetModules()
   })
@@ -48,7 +40,7 @@ describe('shell.openExternal IPC forwarding', () => {
     vi.resetModules()
   })
 
-  it('registers a handler on the windowSetTheme channel', async () => {
+  it('registers a handler on the shellOpenExternal channel', async () => {
     const ipcModule = await import('../main/ipc')
     ipcModule.registerIpc({
       supervisor: {} as never,
@@ -83,46 +75,6 @@ describe('shell.openExternal IPC forwarding', () => {
     await expect(handler!(fakeEvent(), '')).rejects.toThrow(/non-empty url/)
     expect(() => handler!(fakeEvent(true), 'https://example.com')).toThrow(/untrusted sender/)
     expect(electronRegistry.openExternal).not.toHaveBeenCalled()
-  })
-
-  it('registers a handler on the windowSetTheme channel', async () => {
-    const ipcModule = await import('../main/ipc')
-    ipcModule.registerIpc({
-      supervisor: {} as never,
-      management: {} as never,
-      integrations: {} as never,
-    })
-    expect(electronRegistry.handlers.has(IpcChannel.windowSetTheme)).toBe(true)
-  })
-
-  it('updates the overlay symbol color for a valid theme', async () => {
-    const originalPlatform = process.platform
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
-    const ipcModule = await import('../main/ipc')
-    ipcModule.registerIpc({
-      supervisor: {} as never,
-      management: {} as never,
-      integrations: {} as never,
-    })
-    const handler = electronRegistry.handlers.get(IpcChannel.windowSetTheme)
-    try {
-      await handler!(fakeEvent(), 'light')
-      expect(electronRegistry.setTitleBarOverlay).toHaveBeenCalled()
-    } finally {
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
-    }
-  })
-
-  it('refuses an invalid window theme', async () => {
-    const ipcModule = await import('../main/ipc')
-    ipcModule.registerIpc({
-      supervisor: {} as never,
-      management: {} as never,
-      integrations: {} as never,
-    })
-    const handler = electronRegistry.handlers.get(IpcChannel.windowSetTheme)
-    await expect(Promise.resolve().then(() => handler!(fakeEvent(), 'system'))).rejects.toThrow(/dark or light/)
-    expect(electronRegistry.setTitleBarOverlay).not.toHaveBeenCalled()
   })
 
   it('opens a valid https url via shell.openExternal', async () => {

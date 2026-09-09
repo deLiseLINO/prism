@@ -91,6 +91,41 @@ func (w QuotaWindows) GoverningSnapshot() (quota.Snapshot, bool) {
 	return *best, true
 }
 
+// DetailedSnapshot returns the governing snapshot enriched with per-family
+// windows: "5 hour Gemini", "Weekly Gemini", "5 hour Claude", "Weekly Claude".
+func (w QuotaWindows) DetailedSnapshot() (quota.Snapshot, bool) {
+	governing, ok := w.GoverningSnapshot()
+	if !ok {
+		return quota.Snapshot{}, false
+	}
+	out := governing
+	out.Windows = nil
+	for _, family := range []struct {
+		label string
+		snap  *quota.Snapshot
+	}{
+		{"Gemini", w.Gem},
+		{"Claude", w.Cla},
+	} {
+		if family.snap == nil {
+			continue
+		}
+		out.Windows = append(out.Windows, quota.Window{
+			Label:     "5 hour " + family.label,
+			Used:      family.snap.Used,
+			Limit:     family.snap.Limit,
+			WindowEnd: family.snap.WindowEnd,
+		})
+		out.Windows = append(out.Windows, quota.Window{
+			Label:     "Weekly " + family.label,
+			Used:      family.snap.Used,
+			Limit:     family.snap.Limit,
+			WindowEnd: family.snap.WindowEnd,
+		})
+	}
+	return out, true
+}
+
 func usedPercent(s *quota.Snapshot) float64 {
 	limit := 10000.0
 	if s.Limit != nil && *s.Limit > 0 {
