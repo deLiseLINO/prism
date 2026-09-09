@@ -794,3 +794,59 @@ func TestTurnAllowsImageInputForVisionTarget(t *testing.T) {
 		t.Fatalf("terminal = %#v, want Finished", res.Terminal)
 	}
 }
+
+func TestTurnTraceOnSuccess(t *testing.T) {
+	usage := canon.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}
+	res := runTurn(t, poolWith("codex", 1), fakeRunners{"codex": successRunner(usage)}, singlePlan("codex", 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	if len(res.Trace) != 1 {
+		t.Fatalf("trace length = %d, want 1", len(res.Trace))
+	}
+	want := AttemptTrace{Provider: "codex", Model: "gpt-5.2", Outcome: "completed", Usage: usage}
+	if res.Trace[0] != want {
+		t.Fatalf("trace = %+v, want %+v", res.Trace[0], want)
+	}
+}
+
+func TestTurnTraceOnFailover(t *testing.T) {
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, ReplaySafe: true}
+	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("antigravity", 0)}}}
+	usage := canon.Usage{OutputTokens: 2, TotalTokens: 2}
+	runners := fakeRunners{"codex": failRunner(runErr), "antigravity": successRunner(usage)}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex", 1), testTarget("antigravity", 1)}}}
+	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
+	if len(res.Trace) != 2 {
+		t.Fatalf("trace length = %d, want 2", len(res.Trace))
+	}
+	if res.Trace[0] != (AttemptTrace{Provider: "codex", Model: "gpt-5.2", Outcome: "failed"}) {
+		t.Fatalf("first trace = %+v, want codex failed with zero usage", res.Trace[0])
+	}
+	if res.Trace[1] != (AttemptTrace{Provider: "antigravity", Model: "gpt-5.2", Outcome: "completed", Usage: usage}) {
+		t.Fatalf("second trace = %+v, want antigravity completed with usage", res.Trace[1])
+	}
+}
+
+func TestTurnTraceOnFailureCarriesProviderAttempts(t *testing.T) {
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true}
+	pool := poolWith("codex", 2)
+	runners := fakeRunners{"codex": failRunner(runErr)}
+	planner := singlePlan("codex", 2, TurnPolicy{MaxAccountFailovers: 1})
+	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
+	if _, ok := res.Terminal.(Failed); !ok {
+		t.Fatalf("terminal = %T, want Failed", res.Terminal)
+	}
+	if len(res.Trace) != 2 {
+		t.Fatalf("trace length = %d, want 2", len(res.Trace))
+	}
+	for i, want := range []AttemptTrace{{Provider: "codex", Model: "gpt-5.2", Outcome: "failed"}, {Provider: "codex", Model: "gpt-5.2", Outcome: "failed"}} {
+		if res.Trace[i] != want {
+			t.Fatalf("trace[%d] = %+v, want %+v", i, res.Trace[i], want)
+		}
+	}
+}
+
+func TestTurnTraceEmptyWhenNoPlan(t *testing.T) {
+	res := runTurn(t, poolWith("codex", 1), fakeRunners{}, fakePlanner{}, provider.NotStarted, &recordingSink{})
+	if len(res.Trace) != 0 {
+		t.Fatalf("trace length = %d, want 0", len(res.Trace))
+	}
+}

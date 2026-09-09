@@ -16,6 +16,7 @@ import (
 	"prism/internal/provider"
 	"prism/internal/quota"
 	"prism/internal/routing"
+	"prism/internal/usage"
 )
 
 type fakePlanner struct {
@@ -167,6 +168,11 @@ func activeAccount(id, providerID string) account.Account {
 
 func newTestServer(t *testing.T, clock Clock, plans map[canon.ModelID]routing.Plan, register func(reg *provider.Registry)) *harness {
 	t.Helper()
+	return newTestServerWithUsage(t, clock, plans, register, nil)
+}
+
+func newTestServerWithUsage(t *testing.T, clock Clock, plans map[canon.ModelID]routing.Plan, register func(reg *provider.Registry), usageStore usage.Store) *harness {
+	t.Helper()
 	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	pool := account.New([]byte("test-secret"), func() time.Time { return base })
 	pool.Register(activeAccount("a1", "p1"))
@@ -190,6 +196,7 @@ func newTestServer(t *testing.T, clock Clock, plans map[canon.ModelID]routing.Pl
 		Management:      mgmt,
 		ManagementToken: "test-mgmt-token",
 		Clock:           clock,
+		Usage:           usageStore,
 	})
 	return &harness{handler: srv.Handler(), pool: pool, cfg: cfg, mgmtToken: "test-mgmt-token"}
 }

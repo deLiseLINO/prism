@@ -233,6 +233,13 @@ func (c *client) usage(ctx context.Context) (management.UsageResponse, error) {
 	return out, err
 }
 
+func (c *client) stats(ctx context.Context, rng string) (management.StatsResponse, error) {
+	var out management.StatsResponse
+	path := "/api/v1/stats?range=" + urlQueryEscape(rng)
+	err := c.call(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
 func (c *client) authStart(ctx context.Context, provider string) (management.AuthStartResponse, error) {
 	var out management.AuthStartResponse
 	err := c.call(ctx, http.MethodPost, "/api/v1/auth/"+escapePath(provider)+"/start", management.AuthStartResponse{}, &out)

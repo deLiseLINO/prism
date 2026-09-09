@@ -3,6 +3,7 @@ import type { DaemonStatus } from '@prism/contracts'
 import { ThemeToggle } from './components/Ui'
 import { useTheme } from './useTheme'
 import { SECTIONS, VIEWS, hashFor, navigateTo, readCurrentView, type View } from './routing'
+import { AccountsView } from './views/AccountsView'
 import { AuthView } from './views/AuthView'
 import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
@@ -12,7 +13,8 @@ import { UsagePanel } from './views/UsageView'
 
 const VIEW_ICONS: Record<View, string> = {
   overview: '#i-gauge',
-  usage: '#i-heart',
+  accounts: '#i-heart',
+  usage: '#i-usage',
   auth: '#i-key',
   providers: '#i-plug',
   daemon: '#i-daemon',
@@ -48,6 +50,8 @@ function renderView(view: View): JSX.Element {
       return <DaemonView />
     case 'auth':
       return <AuthView />
+    case 'accounts':
+      return <AccountsView />
     case 'providers':
       return <ProvidersView />
     case 'usage':

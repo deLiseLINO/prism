@@ -206,7 +206,7 @@ function AttnRow({ account }: { readonly account: AccountView }): JSX.Element {
         {stateLabel(account.state)}
       </span>
       <span className="num">{account.priority}</span>
-      <Button tone="ghost" size="sm" onClick={() => navigateTo('usage')}>
+      <Button tone="ghost" size="sm" onClick={() => navigateTo('accounts')}>
         Open accounts
       </Button>
     </div>

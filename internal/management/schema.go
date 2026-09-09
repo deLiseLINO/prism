@@ -201,6 +201,36 @@ type UsageResponse struct {
 	Accounts []UsageAccount `json:"accounts"`
 }
 
+type StatsOverview struct {
+	Requests        int64 `json:"requests"`
+	Completed       int64 `json:"completed"`
+	Failed          int64 `json:"failed"`
+	InputTokens     int64 `json:"input_tokens"`
+	OutputTokens    int64 `json:"output_tokens"`
+	CachedTokens    int64 `json:"cached_tokens"`
+	ReasoningTokens int64 `json:"reasoning_tokens"`
+	TotalTokens     int64 `json:"total_tokens"`
+	Measured        int64 `json:"measured"`
+}
+
+type StatsModel struct {
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+	StatsOverview
+}
+
+type StatsProvider struct {
+	Provider string `json:"provider"`
+	StatsOverview
+}
+
+type StatsResponse struct {
+	Range     string          `json:"range"`
+	Overview  StatsOverview   `json:"overview"`
+	Models    []StatsModel    `json:"models"`
+	Providers []StatsProvider `json:"providers"`
+}
+
 type AuthStartResponse struct {
 	Session string `json:"session"`
 	URL     string `json:"url"`
