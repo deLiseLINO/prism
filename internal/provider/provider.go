@@ -155,7 +155,6 @@ type Catalog interface {
 
 type QuotaSource interface {
 	Quota(ctx context.Context, id account.AccountID) (quota.Snapshot, error)
-	RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error)
 }
 
 type CompactRequest struct {

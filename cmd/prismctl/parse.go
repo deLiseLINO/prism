@@ -51,9 +51,6 @@ type command struct {
 	clientID string
 	force    bool
 
-	// stats
-	statsRange string
-
 	// models
 	modelID string
 }
@@ -161,7 +158,6 @@ func globalFlags() map[string]bool {
 		"value":           true,
 		"target":          true,
 		"force":           false,
-		"range":           true,
 	}
 }
 
@@ -181,7 +177,6 @@ Commands:
   routes <sub>              list/set/remove
   integrations <sub>        status/apply/rollback
   usage                     quota usage across accounts
-  stats                     request/token statistics across providers and models
 
 Every command accepts --json for machine-stable output.
 `
@@ -191,10 +186,6 @@ var helpStatus = `Usage: prismctl status [--json]
 var helpDoctor = `Usage: prismctl doctor [--json]
 `
 var helpUsage = `Usage: prismctl usage [--json]
-`
-var helpStats = `Usage: prismctl stats [--range 1h|24h|7d|30d|all] [--json]
-
-Default range: 24h
 `
 
 var helpAuth = `Usage: prismctl auth login <codex|antigravity> [--no-open] [--json]
@@ -293,8 +284,6 @@ func parseCommand(args []string) (*command, error) {
 		return parseCombos(args[1:], spec)
 	case "routes":
 		return parseRoutes(args[1:], spec)
-	case "stats":
-		return parseStats(args[1:], spec)
 	case "integrations":
 		return parseIntegrations(args[1:], spec)
 	case "help", "--help", "-h":
@@ -767,26 +756,4 @@ func parseIntegrations(args []string, spec map[string]bool) (*command, error) {
 
 func validClient(s string) bool {
 	return s == "codex" || s == "grok" || s == "omp"
-}
-
-func parseStats(args []string, spec map[string]bool) (*command, error) {
-	pos, fs := scanFlags(args, spec)
-	if err := rejectUnknown(fs, helpStats); err != nil {
-		return nil, err
-	}
-	if len(pos) > 0 {
-		return nil, usageFail(helpStats, "unexpected argument %q", pos[0])
-	}
-	rng := "24h"
-	if v, ok := fs.val("range"); ok {
-		if !validRange(v) {
-			return nil, usageFail(helpStats, "invalid --range %q (want 1h, 24h, 7d, 30d, or all)", v)
-		}
-		rng = v
-	}
-	return &command{verb: "stats", json: fs.has("json"), statsRange: rng}, nil
-}
-
-func validRange(s string) bool {
-	return s == "1h" || s == "24h" || s == "7d" || s == "30d" || s == "all"
 }

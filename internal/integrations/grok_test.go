@@ -117,7 +117,7 @@ func TestGrokRollbackRemovesExactlyManagedBlock(t *testing.T) {
 	dir := t.TempDir()
 	configPath := tempFile(t, dir, "config.toml", userToml)
 	WriteGrokConfig(GrokOptions{ConfigPath: configPath, Port: testPort, Models: grokTestModels})
-	if outcome := StripGrokConfig(configPath); outcome.Kind != OutcomeWritten {
+	if outcome := StripGrokConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback: %+v", outcome)
 	}
 	if got := readFile(t, configPath); got != userToml {
@@ -137,7 +137,7 @@ func TestGrokApplyRollbackByteIdenticalWithoutFinalLF(t *testing.T) {
 		if outcome := WriteGrokConfig(GrokOptions{ConfigPath: configPath, Port: testPort, Models: grokTestModels}); outcome.Kind != OutcomeWritten {
 			t.Fatalf("apply %q: %+v", seed, outcome)
 		}
-		if outcome := StripGrokConfig(configPath); outcome.Kind != OutcomeWritten {
+		if outcome := StripGrokConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
 			t.Fatalf("rollback %q: %+v", seed, outcome)
 		}
 		if got := readFile(t, configPath); got != seed {

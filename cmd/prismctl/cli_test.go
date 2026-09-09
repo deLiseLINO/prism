@@ -109,10 +109,6 @@ func (q *fakeQuota) Quota(ctx context.Context, id account.AccountID) (quota.Snap
 	return quota.Snapshot{Used: 42, Limit: ptrInt64(100), WindowEnd: time.Unix(1_700_000_000, 0).UTC(), Source: quota.SourceEndpoint}, nil
 }
 
-func (q *fakeQuota) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
-	return q.Quota(ctx, id)
-}
-
 func ptrInt64(v int64) *int64 { return &v }
 
 type fakeAuthSvc struct {
@@ -351,75 +347,6 @@ func TestUsageTableAndJSON(t *testing.T) {
 	}
 }
 
-func TestStatsRenderAndJSON(t *testing.T) {
-	fixture := `{
-	  "range": "24h",
-	  "overview": {
-	    "requests": 12, "completed": 10, "failed": 2,
-	    "input_tokens": 1000, "output_tokens": 500, "cached_tokens": 300,
-	    "reasoning_tokens": 50, "total_tokens": 1800, "measured": 9
-	  },
-	  "models": [
-	    {"model": "gpt-5.3", "provider": "codex",
-	     "requests": 12, "completed": 10, "failed": 2,
-	     "input_tokens": 1000, "output_tokens": 500, "cached_tokens": 300,
-	     "reasoning_tokens": 50, "total_tokens": 1800, "measured": 9}
-	  ],
-	  "providers": [
-	    {"provider": "codex",
-	     "requests": 12, "completed": 10, "failed": 2,
-	     "input_tokens": 1000, "output_tokens": 500, "cached_tokens": 300,
-	     "reasoning_tokens": 50, "total_tokens": 1800, "measured": 9}
-	  ]
-	}`
-	var gotRange string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/stats" {
-			http.NotFound(w, r)
-			return
-		}
-		gotRange = r.URL.Query().Get("range")
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, fixture)
-	}))
-	t.Cleanup(ts.Close)
-	env := &daemonEnv{stdout: bytes.Buffer{}, stderr: bytes.Buffer{}}
-	env.rt = &cliRuntime{
-		baseURL: ts.URL,
-		env:     map[string]string{},
-		stdout:  &env.stdout,
-		stderr:  &env.stderr,
-		client:  newClient(ts.URL),
-	}
-
-	code, out, _ := env.runCLI(t, "stats")
-	if code != exitOK {
-		t.Fatalf("code=%d stderr=%s", code, env.stderr.String())
-	}
-	if gotRange != "24h" {
-		t.Fatalf("default range = %q, want 24h", gotRange)
-	}
-	for _, want := range []string{"codex", "gpt-5.3", "measured: 9/12", "1800"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("stats output missing %q:\n%s", want, out)
-		}
-	}
-
-	code, out, _ = env.runCLI(t, "stats", "--range", "7d", "--json")
-	if code != exitOK {
-		t.Fatalf("json code=%d stderr=%s", code, env.stderr.String())
-	}
-	m := decodeJSON(t, out)
-	if m["range"] != "24h" {
-		// The fixture always echoes 24h; the assertion proves --json is
-		// the raw server body, not a CLI re-rendering.
-		t.Fatalf("json range = %v, want fixture value 24h", m["range"])
-	}
-	if !strings.Contains(out, "\"total_tokens\": 1800") {
-		t.Fatalf("json body missing snake_case totals:\n%s", out)
-	}
-}
-
 // --- exit codes ---
 
 func TestDaemonUnreachableExitCode(t *testing.T) {
@@ -525,7 +452,6 @@ func TestParseFailsBeforeNetwork(t *testing.T) {
 		{"integrations", "rollback", "codex", "--force"},
 		{"status", "extra-arg"},
 		{"routes", "set", "only-key"},
-		{"stats", "--range", "bogus"},
 	} {
 		before := len(env.pool.paused)
 		code, _, _ := env.runCLI(t, args...)
@@ -1188,29 +1114,5 @@ func TestTargetParsingVariants(t *testing.T) {
 	}
 	if _, err = parseTarget("a/b:-1"); err == nil {
 		t.Fatal("expected failure for negative weight")
-	}
-}
-
-func TestStatsParseRanges(t *testing.T) {
-	cmd := mustParse(t, "stats")
-	if cmd.verb != "stats" || cmd.statsRange != "24h" || cmd.json {
-		t.Fatalf("stats default parse: %+v", cmd)
-	}
-	for _, rng := range []string{"1h", "24h", "7d", "30d", "all"} {
-		cmd := mustParse(t, "stats", "--range", rng, "--json")
-		if cmd.verb != "stats" || cmd.statsRange != rng || !cmd.json {
-			t.Fatalf("stats --range %s parse: %+v", rng, cmd)
-		}
-	}
-	if _, err := parseCommand([]string{"stats", "--range", "bogus"}); err == nil {
-		t.Fatal("expected parse failure for invalid --range")
-	} else if ue, ok := err.(*usageError); !ok || ue.help != helpStats {
-		t.Fatalf("invalid --range error = %T %v, want usageError with stats help", err, err)
-	}
-	if _, err := parseCommand([]string{"stats", "extra"}); err == nil {
-		t.Fatal("expected parse failure for unexpected argument")
-	}
-	if _, err := parseCommand([]string{"stats", "--bogus"}); err == nil {
-		t.Fatal("expected parse failure for unknown flag")
 	}
 }

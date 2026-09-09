@@ -305,22 +305,6 @@ func FetchIntegrationsCmd(client Client) tea.Cmd {
 	}
 }
 
-func FetchStatsCmd(client Client, statsRange string) tea.Cmd {
-	if client == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		stats, err := client.Stats(ctx, statsRange)
-		if err != nil {
-			return StatsErrMsg{Err: fmt.Errorf("failed to load stats: %w", err)}
-		}
-		return StatsMsg{Range: statsRange, Stats: stats}
-	}
-}
-
 func ApplyIntegrationCmd(client Client, id string) tea.Cmd {
 	if client == nil || id == "" {
 		return nil

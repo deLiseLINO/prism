@@ -25,7 +25,6 @@ import (
 
 	"prism/internal/account"
 	"prism/internal/auth"
-	"prism/internal/buildinfo"
 	"prism/internal/canon"
 	"prism/internal/config"
 	"prism/internal/integrations"
@@ -35,10 +34,8 @@ import (
 	"prism/internal/providers/antigravity"
 	"prism/internal/providers/codex"
 	"prism/internal/quota"
-	"prism/internal/requestlog"
 	"prism/internal/server"
 	"prism/internal/store"
-	"prism/internal/usage"
 )
 
 type options struct {
@@ -286,14 +283,6 @@ func (t *quotaTable) record(id account.AccountID, s quota.Snapshot, warnings []s
 // quota endpoint when the stored one is stale. A failed probe never lies:
 // the caller sees the last known snapshot, or an honest unknown one.
 func (t *quotaTable) Quota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
-	return t.quota(ctx, id, false)
-}
-
-func (t *quotaTable) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
-	return t.quota(ctx, id, true)
-}
-
-func (t *quotaTable) quota(ctx context.Context, id account.AccountID, force bool) (quota.Snapshot, error) {
 	var stored quota.Snapshot
 	var provider account.ProviderID
 	var credGen account.CredentialGeneration
@@ -307,18 +296,13 @@ func (t *quotaTable) quota(ctx context.Context, id account.AccountID, force bool
 	if !found {
 		return quota.Snapshot{}, account.ErrNotFound
 	}
-	if !t.probeDue(id, force) {
+	if !t.probeDue(id) {
 		return stored, nil
 	}
-	snap, err := t.probe(ctx, id, provider, credGen)
-	if err != nil {
-		log.Printf("prismd: quota probe %s: %v", id, err)
-		if force {
-			return quota.Snapshot{}, err
-		}
-		return stored, nil
+	if snap, ok := t.probe(ctx, id, provider, credGen); ok {
+		stored = snap
 	}
-	return snap, nil
+	return stored, nil
 }
 
 func governingWindowSnapshot(windows []quota.Window) quota.Snapshot {
@@ -350,67 +334,68 @@ func usedWindowPercent(w *quota.Window) float64 {
 	return float64(w.Used) / limit * 100
 }
 
-func (t *quotaTable) probeDue(id account.AccountID, force bool) bool {
+func (t *quotaTable) probeDue(id account.AccountID) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if last, ok := t.lastProbe[id]; !force && ok && time.Since(last) < quotaProbeTTL {
+	if last, ok := t.lastProbe[id]; ok && time.Since(last) < quotaProbeTTL {
 		return false
 	}
 	t.lastProbe[id] = time.Now()
 	return true
 }
 
-func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider account.ProviderID, credGen account.CredentialGeneration) (quota.Snapshot, error) {
+func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider account.ProviderID, credGen account.CredentialGeneration) (quota.Snapshot, bool) {
 	if t.cfg == nil || t.client == nil || t.refresher == nil {
-		return quota.Snapshot{}, fmt.Errorf("quota provider is not configured")
+		return quota.Snapshot{}, false
 	}
 	p, ok := t.cfg.Get().Config.Providers[string(provider)]
 	if !ok {
-		return quota.Snapshot{}, fmt.Errorf("quota provider %s not found", provider)
-	}
-	if p.Wire != config.WireCodex && p.Wire != config.WireAntigravity {
-		return quota.Snapshot{}, fmt.Errorf("provider %s does not support quota refresh", provider)
+		return quota.Snapshot{}, false
 	}
 	lease := account.Lease{Provider: provider, Account: id, CredGen: credGen}
 	cred, err := t.refresher.Credential(ctx, lease)
 	if err != nil {
-		return quota.Snapshot{}, fmt.Errorf("credential: %w", err)
+		log.Printf("prismd: quota probe %s: credential: %v", id, err)
+		return quota.Snapshot{}, false
 	}
-	var snap quota.Snapshot
 	switch p.Wire {
 	case config.WireCodex:
 		result, err := codex.FetchUsage(ctx, t.client, codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID})
 		if err != nil {
-			return quota.Snapshot{}, err
+			log.Printf("prismd: quota probe %s: %v", id, err)
+			return quota.Snapshot{}, false
 		}
 		if !result.OK {
-			return quota.Snapshot{}, fmt.Errorf("provider %s returned no quota", provider)
+			return quota.Snapshot{}, false
 		}
-		snap = result.Snapshot
+		_ = t.pool.UpdateQuota(id, result.Snapshot)
+		return result.Snapshot, true
 	case config.WireAntigravity:
 		credPair := antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID}
 		summary, err := antigravity.FetchQuotaSummary(ctx, t.client, p.BaseURL, credPair)
 		if err != nil {
-			return quota.Snapshot{}, err
+			log.Printf("prismd: quota probe %s: %v", id, err)
+			return quota.Snapshot{}, false
 		}
 		if summaryWindows := summary.Windows(); len(summaryWindows) > 0 {
-			snap = governingWindowSnapshot(summaryWindows)
-		} else {
-			windows, err := antigravity.FetchQuota(ctx, t.client, p.BaseURL, credPair)
-			if err != nil {
-				return quota.Snapshot{}, err
-			}
-			snap, ok = windows.DetailedSnapshot()
-			if !ok {
-				return quota.Snapshot{}, fmt.Errorf("provider %s returned no quota", provider)
-			}
-			snap.Windows = windows.QuotaWindows()
+			snap := governingWindowSnapshot(summaryWindows)
+			_ = t.pool.UpdateQuota(id, snap)
+			return snap, true
 		}
+		windows, err := antigravity.FetchQuota(ctx, t.client, p.BaseURL, credPair)
+		if err != nil {
+			log.Printf("prismd: quota probe %s: %v", id, err)
+			return quota.Snapshot{}, false
+		}
+		snap, ok := windows.DetailedSnapshot()
+		if !ok {
+			return quota.Snapshot{}, false
+		}
+		snap.Windows = windows.QuotaWindows()
+		_ = t.pool.UpdateQuota(id, snap)
+		return snap, true
 	}
-	if err := t.pool.UpdateQuota(id, snap); err != nil {
-		return quota.Snapshot{}, err
-	}
-	return snap, nil
+	return quota.Snapshot{}, false
 }
 
 func loadOrCreateSecret(path string) ([]byte, error) {
@@ -457,7 +442,6 @@ func parseFlags(args []string) (options, error) {
 	fs.StringVar(&opts.credentialPath, "credential-store", opts.credentialPath, "credential store directory")
 	fs.StringVar(&opts.listen, "listen", opts.listen, "HTTP listen address")
 	fs.StringVar(&opts.mgmtToken, "management-token", opts.mgmtToken, "bearer token required for remote management API access (loopback is exempt)")
-	showVersion := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
 		out := fs.Output()
 		fmt.Fprintln(out, "prismd is the Prism local proxy daemon.")
@@ -472,10 +456,6 @@ func parseFlags(args []string) (options, error) {
 	}
 	if _, _, err := net.SplitHostPort(opts.listen); err != nil {
 		return options{}, fmt.Errorf("prismd: invalid --listen %q: %w", opts.listen, err)
-	}
-	if *showVersion {
-		fmt.Println(buildinfo.Version)
-		os.Exit(0)
 	}
 	return opts, nil
 }
@@ -531,7 +511,6 @@ func run(opts options) error {
 			return fmt.Errorf("prismd: auth service: %w", err)
 		}
 	}
-	intg := integrations.NewRegistry()
 	_, daemonPort, splitErr := net.SplitHostPort(opts.listen)
 	if splitErr != nil {
 		return fmt.Errorf("prismd: listen address: %w", splitErr)
@@ -546,44 +525,24 @@ func run(opts options) error {
 	}
 	daemonEnv := integrations.Environ(os.Environ())
 	modelsSrc := integrationModels(cfg)
-	codexIntegration := integrations.NewCodex(integrations.CodexOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})
-	if err := intg.Register(codexIntegration); err != nil {
+	intg, codexIntegration, err := newIntegrationRegistry(daemonPortNum, daemonEnv, home, nil, modelsSrc)
+	if err != nil {
 		return err
 	}
 	env.codex = codexIntegration
-	if err := intg.Register(integrations.NewGrok(integrations.GrokOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
-		return err
-	}
-	if err := intg.Register(integrations.NewOmp(integrations.OmpOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
-		return err
-	}
-	if err := intg.Register(integrations.NewClaude(integrations.ClaudeOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
-		return err
-	}
-	if err := intg.Register(integrations.NewPi(integrations.PiOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
-		return err
-	}
-	if err := intg.Register(integrations.NewOpencode(integrations.OpencodeOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
-		return err
-	}
-	if err := intg.Register(integrations.NewOpencode2(integrations.Opencode2Options{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
-		return err
-	}
-	if err := intg.Register(integrations.NewHermes(integrations.HermesOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
-		return err
+	hostTable := management.NewHostRegistries(intg)
+	supervisor := newHostSupervisor(ctx, daemonPortNum, modelsSrc, hostTable)
+	for id, hostCfg := range d.Hosts {
+		if err := supervisor.Ensure(ctx, id, hostCfg.Address); err != nil {
+			log.Printf("prismd: host %s (%s) unresolved: %v", id, hostCfg.Address, err)
+		}
 	}
 	planner := server.NewConfigPlanner(cfg)
-	usageStore, err := usage.Open(filepath.Join(opts.credentialPath, "usage.db"))
-	if err != nil {
-		return fmt.Errorf("prismd: usage store: %w", err)
-	}
-	defer usageStore.Close()
-	rlog := requestlog.New(500, time.Now)
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, client: client})
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
-	mgmt.SetUsageStore(usageStore)
-	mgmt.SetRequestLog(rlog)
-	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, Usage: usageStore, RequestLog: rlog}).Handler()
+	mgmt.SetHostRegistries(hostTable)
+	mgmt.SetHostLifecycle(supervisor)
+	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)
 	errCh := make(chan error, 1)

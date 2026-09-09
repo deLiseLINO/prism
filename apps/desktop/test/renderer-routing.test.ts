@@ -47,12 +47,6 @@ describe('renderer routing', () => {
     routing = await import('../renderer/src/routing')
   })
 
-  it('places stats in the nav after usage under Operate', () => {
-    const entries = routing.VIEWS.map((entry) => entry.view)
-    expect(entries.indexOf('stats')).toBe(entries.indexOf('usage') + 1)
-    expect(routing.VIEWS[entries.indexOf('stats')].section).toBe('Operate')
-  })
-
   afterEach(() => {
     vi.resetModules()
   })
@@ -60,9 +54,11 @@ describe('renderer routing', () => {
   it('hashes each view distinctly', () => {
     expect(routing.hashFor('overview')).toBe('#/overview')
     expect(routing.hashFor('daemon')).toBe('#/daemon')
+    expect(routing.hashFor('auth')).toBe('#/auth')
+    expect(routing.hashFor('accounts')).toBe('#/accounts')
     expect(routing.hashFor('providers')).toBe('#/providers')
-    expect(routing.hashFor('stats')).toBe('#/stats')
-    expect(routing.hashFor('logs')).toBe('#/logs')
+    expect(routing.hashFor('usage')).toBe('#/usage')
+    expect(routing.hashFor('integrations')).toBe('#/integrations')
   })
 
   it('falls back to overview for unknown hashes', () => {
@@ -71,10 +67,10 @@ describe('renderer routing', () => {
   })
 
   it('reads the current view from location.hash', () => {
-    locationStub.hash = '#/stats'
-    expect(routing.readCurrentView()).toBe('stats')
-    locationStub.hash = '#/logs'
-    expect(routing.readCurrentView()).toBe('logs')
+    locationStub.hash = '#/auth'
+    expect(routing.readCurrentView()).toBe('auth')
+    locationStub.hash = '#/usage'
+    expect(routing.readCurrentView()).toBe('usage')
   })
 
   it('lists every workflow in the nav registry', () => {
@@ -84,8 +80,10 @@ describe('renderer routing', () => {
     }
     expect(seen.has('overview')).toBe(true)
     expect(seen.has('daemon')).toBe(true)
+    expect(seen.has('auth')).toBe(true)
+    expect(seen.has('accounts')).toBe(true)
     expect(seen.has('providers')).toBe(true)
-    expect(seen.has('stats')).toBe(true)
-    expect(seen.has('logs')).toBe(true)
+    expect(seen.has('usage')).toBe(true)
+    expect(seen.has('integrations')).toBe(true)
   })
 })

@@ -8,16 +8,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"prism/internal/account"
 	"prism/internal/auth"
-	"prism/internal/buildinfo"
 	"prism/internal/config"
 	"prism/internal/integrations"
 	"prism/internal/provider"
 	"prism/internal/quota"
-	"prism/internal/requestlog"
 )
 
 type ConfigStore interface {
@@ -54,30 +51,37 @@ type AccountStore interface {
 }
 
 type Server struct {
-	pool    account.Pool
-	cfg     ConfigStore
-	catalog Catalog
-	quota   provider.QuotaSource
-	creds   CredentialStore
-	auth    Auth
-	ints    *integrations.Registry
-	routes  [][]string
-	store   AccountStore
-	stats   UsageSource
-	syncer  ModelSyncer
-	reqlog  *requestlog.Journal
+	pool      account.Pool
+	cfg       ConfigStore
+	catalog   Catalog
+	quota     provider.QuotaSource
+	creds     CredentialStore
+	auth      Auth
+	ints      *integrations.Registry
+	hosts     *HostRegistries
+	lifecycle HostLifecycle
+	routes    [][]string
+	syncer    ModelSyncer
+	store     AccountStore
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer) *Server {
-	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, routes: [][]string{}, syncer: syncer}
+	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, hosts: NewHostRegistries(ints), routes: [][]string{}, syncer: syncer}
+}
+
+// SetHostRegistries overrides the host table (tests inject a populated one).
+func (s *Server) SetHostRegistries(h *HostRegistries) {
+	s.hosts = h
+}
+
+// SetHostLifecycle wires the daemon-side host supervisor (probe, registry,
+// tunnel) that host mutations trigger after the config write commits.
+func (s *Server) SetHostLifecycle(l HostLifecycle) {
+	s.lifecycle = l
 }
 
 func (s *Server) SetAccountStore(store AccountStore) {
 	s.store = store
-}
-
-func (s *Server) SetRequestLog(j *requestlog.Journal) {
-	s.reqlog = j
 }
 
 func (s *Server) Handler() http.Handler {
@@ -97,19 +101,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/accounts/{id}/resume", s.accountResume)
 	mux.HandleFunc("POST /api/v1/accounts/{id}/priority", s.accountPriority)
 	mux.HandleFunc("GET /api/v1/accounts/{id}/quota", s.accountQuota)
-	mux.HandleFunc("POST /api/v1/accounts/{id}/quota/refresh", s.accountQuotaRefresh)
 	mux.HandleFunc("GET /api/v1/combos", s.combosList)
 	mux.HandleFunc("PUT /api/v1/combos/{id}", s.combosPut)
 	mux.HandleFunc("DELETE /api/v1/combos/{id}", s.combosDelete)
 	mux.HandleFunc("GET /api/v1/routes", s.routesList)
 	mux.HandleFunc("PUT /api/v1/routes/{key}", s.routesPut)
 	mux.HandleFunc("DELETE /api/v1/routes/{key}", s.routesDelete)
-	mux.HandleFunc("GET /api/v1/stats", s.statsHandler)
-	mux.HandleFunc("GET /api/v1/requests", s.requests)
 	mux.HandleFunc("GET /api/v1/usage", s.usage)
 	mux.HandleFunc("POST /api/v1/auth/{provider}/start", s.authStart)
 	mux.HandleFunc("POST /api/v1/auth/{provider}/callback", s.authCallback)
 	mux.HandleFunc("GET /api/v1/auth/{provider}/status", s.authStatus)
+	mux.HandleFunc("GET /api/v1/hosts", s.hostsList)
+	mux.HandleFunc("POST /api/v1/hosts", s.hostsCreate)
+	mux.HandleFunc("DELETE /api/v1/hosts/{host}", s.hostsDelete)
+	mux.HandleFunc("GET /api/v1/hosts/{host}/integrations", s.hostIntegrationsList)
+	mux.HandleFunc("GET /api/v1/hosts/{host}/integrations/{client}", s.hostIntegrationGet)
+	mux.HandleFunc("POST /api/v1/hosts/{host}/integrations/{client}/apply", s.hostIntegrationApply)
+	mux.HandleFunc("POST /api/v1/hosts/{host}/integrations/{client}/rollback", s.hostIntegrationRollback)
 	mux.HandleFunc("GET /api/v1/integrations", s.integrationsList)
 	mux.HandleFunc("GET /api/v1/integrations/{client}", s.integrationGet)
 	mux.HandleFunc("POST /api/v1/integrations/{client}/apply", s.integrationApply)
@@ -138,17 +146,20 @@ var routeTemplates = []string{
 	"/api/v1/accounts/{id}/resume",
 	"/api/v1/accounts/{id}/priority",
 	"/api/v1/accounts/{id}/quota",
-	"/api/v1/accounts/{id}/quota/refresh",
 	"/api/v1/combos",
 	"/api/v1/combos/{id}",
 	"/api/v1/routes",
-	"/api/v1/stats",
 	"/api/v1/routes/{key}",
-	"/api/v1/requests",
 	"/api/v1/usage",
 	"/api/v1/auth/{provider}/start",
 	"/api/v1/auth/{provider}/callback",
 	"/api/v1/auth/{provider}/status",
+	"/api/v1/hosts",
+	"/api/v1/hosts/{host}",
+	"/api/v1/hosts/{host}/integrations",
+	"/api/v1/hosts/{host}/integrations/{client}",
+	"/api/v1/hosts/{host}/integrations/{client}/apply",
+	"/api/v1/hosts/{host}/integrations/{client}/rollback",
 	"/api/v1/integrations",
 	"/api/v1/integrations/{client}",
 	"/api/v1/integrations/{client}/apply",
@@ -188,7 +199,7 @@ func (s *Server) matchesRoute(path string) bool {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Version: buildinfo.Version})
+	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
@@ -565,22 +576,6 @@ func (s *Server) accountQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, QuotaResponse{Account: string(id), Quota: quotaView(q)})
 }
 
-func (s *Server) accountQuotaRefresh(w http.ResponseWriter, r *http.Request) {
-	id := account.AccountID(r.PathValue("id"))
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	q, err := s.quota.RefreshQuota(ctx, id)
-	if err != nil {
-		if errors.Is(err, account.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
-			return
-		}
-		writeError(w, http.StatusBadGateway, "quota_refresh_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, QuotaResponse{Account: string(id), Quota: quotaView(q)})
-}
-
 func (s *Server) combosList(w http.ResponseWriter, r *http.Request) {
 	snap := s.cfg.Get()
 	out := make([]Combo, 0, len(snap.Config.Combos))
@@ -723,31 +718,6 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		return 0
 	})
 	writeJSON(w, http.StatusOK, UsageResponse{Accounts: out})
-}
-
-func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
-	if s.reqlog == nil {
-		writeError(w, http.StatusServiceUnavailable, "not_available", "request journal not configured")
-		return
-	}
-	limit := 0
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			writeError(w, http.StatusBadRequest, "invalid_limit", "limit must be a non-negative integer")
-			return
-		}
-		limit = n
-	}
-	entries := s.reqlog.Snapshot()
-	views := make([]RequestView, 0, len(entries))
-	for i := len(entries) - 1; i >= 0; i-- {
-		views = append(views, requestView(entries[i]))
-	}
-	if limit > 0 && limit < len(views) {
-		views = views[:limit]
-	}
-	writeJSON(w, http.StatusOK, RequestsResponse{Requests: views, Dropped: s.reqlog.Dropped()})
 }
 
 func (s *Server) resolveAuthProvider(raw string) account.ProviderID {

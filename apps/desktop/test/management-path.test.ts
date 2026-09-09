@@ -21,12 +21,6 @@ describe('management path validation', () => {
         path: '/api/v1/integrations/codex/apply?force=true',
       }),
     ).toMatchObject({ path: '/api/v1/integrations/codex/apply?force=true' })
-    expect(
-      validateManagementCall({
-        method: 'GET',
-        path: '/api/v1/stats?range=7d',
-      }),
-    ).toMatchObject({ path: '/api/v1/stats?range=7d' })
   })
 
   it('rejects traversal, fragments, unknown queries, and DELETE bodies', () => {

@@ -34,10 +34,6 @@ type fakeClient struct {
 	generation   uint64
 	replacedID   string
 	replacedBody management.ProviderWrite
-
-	stats      management.StatsResponse
-	statsErr   error
-	statsRange []string
 }
 
 func newFakeClient(accounts ...management.Account) *fakeClient {
@@ -182,14 +178,4 @@ func (f *fakeClient) ProvidersReplace(ctx context.Context, id string, w manageme
 		}
 	}
 	return management.ProviderMutationResponse{}, fmt.Errorf("unknown provider %s", id)
-}
-
-func (f *fakeClient) Stats(ctx context.Context, statsRange string) (management.StatsResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.statsRange = append(f.statsRange, statsRange)
-	if f.statsErr != nil {
-		return management.StatsResponse{}, f.statsErr
-	}
-	return f.stats, nil
 }
