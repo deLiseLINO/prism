@@ -34,13 +34,27 @@ function fakeEvent(destroyed = false): FakeEvent {
   return { sender: { isDestroyed: () => destroyed } }
 }
 
-describe('shell.openExternal IPC forwarding', () => {
+describe('updater IPC forwarding', () => {
+  const updater = {
+    status: { state: 'idle', currentVersion: '1.0.0' } as never,
+    check: vi.fn().mockResolvedValue(undefined),
+    install: vi.fn(),
+  }
+
+  async function register(): Promise<void> {
+    const ipcModule = await import('../main/ipc')
+    ipcModule.registerIpc({
+      supervisor: {} as never,
+      management: {} as never,
+      integrations: {} as never,
+      updater,
+    })
+  }
+
   beforeEach(() => {
     electronRegistry.handlers.clear()
-    electronRegistry.openExternal.mockReset()
-    electronRegistry.openExternal.mockResolvedValue(undefined)
-    electronRegistry.setTitleBarOverlay.mockReset()
-    // Reset so each test re-registers handlers with a fresh module instance.
+    updater.check.mockClear()
+    updater.install.mockClear()
     vi.resetModules()
   })
 
@@ -48,6 +62,50 @@ describe('shell.openExternal IPC forwarding', () => {
     vi.resetModules()
   })
 
+  it('registers handlers on the updater channels', async () => {
+    await register()
+    expect(electronRegistry.handlers.has(IpcChannel.updaterGetStatus)).toBe(true)
+    expect(electronRegistry.handlers.has(IpcChannel.updaterCheck)).toBe(true)
+    expect(electronRegistry.handlers.has(IpcChannel.updaterInstall)).toBe(true)
+  })
+
+  it('returns the updater status snapshot', async () => {
+    await register()
+    const handler = electronRegistry.handlers.get(IpcChannel.updaterGetStatus)
+    expect(handler!(fakeEvent())).toEqual(updater.status)
+  })
+
+  it('rejects destroyed senders on every updater channel', async () => {
+    await register()
+    for (const channel of [IpcChannel.updaterGetStatus, IpcChannel.updaterCheck, IpcChannel.updaterInstall]) {
+      const handler = electronRegistry.handlers.get(channel)
+      expect(() => handler!(fakeEvent(true))).toThrow(/untrusted sender/)
+    }
+    expect(updater.check).not.toHaveBeenCalled()
+    expect(updater.install).not.toHaveBeenCalled()
+  })
+
+  it('forwards check and install to the service', async () => {
+    await register()
+    await electronRegistry.handlers.get(IpcChannel.updaterCheck)!(fakeEvent())
+    expect(updater.check).toHaveBeenCalledTimes(1)
+    expect(() => electronRegistry.handlers.get(IpcChannel.updaterInstall)!(fakeEvent())).not.toThrow()
+    expect(updater.install).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('shell.openExternal IPC forwarding', () => {
+  beforeEach(() => {
+    electronRegistry.handlers.clear()
+    electronRegistry.openExternal.mockReset()
+    electronRegistry.openExternal.mockResolvedValue(undefined)
+    electronRegistry.setTitleBarOverlay.mockReset()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+  })
   it('registers a handler on the windowSetTheme channel', async () => {
     const ipcModule = await import('../main/ipc')
     ipcModule.registerIpc({

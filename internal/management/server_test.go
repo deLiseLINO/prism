@@ -14,10 +14,14 @@ import (
 
 	"prism/internal/account"
 	"prism/internal/auth"
+	"prism/internal/buildinfo"
+	"prism/internal/canon"
 	"prism/internal/config"
+	"prism/internal/execution"
 	"prism/internal/integrations"
 	"prism/internal/provider"
 	"prism/internal/quota"
+	"prism/internal/requestlog"
 	"prism/internal/usage"
 )
 
@@ -117,7 +121,8 @@ func (c *fakeCatalog) Models(ctx context.Context) ([]provider.Model, error) {
 }
 
 type fakeQuotaSource struct {
-	snapshots map[account.AccountID]quota.Snapshot
+	snapshots  map[account.AccountID]quota.Snapshot
+	refreshErr error
 }
 
 func (q *fakeQuotaSource) Quota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
@@ -126,6 +131,13 @@ func (q *fakeQuotaSource) Quota(ctx context.Context, id account.AccountID) (quot
 		return quota.Snapshot{}, account.ErrNotFound
 	}
 	return s, nil
+}
+
+func (q *fakeQuotaSource) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
+	if q.refreshErr != nil {
+		return quota.Snapshot{}, q.refreshErr
+	}
+	return q.Quota(ctx, id)
 }
 
 type fakeAuth struct {
@@ -255,6 +267,9 @@ func TestHealthReturnsOK(t *testing.T) {
 	got := decodeBody[HealthResponse](t, rec)
 	if got.Status != "ok" {
 		t.Fatalf("status = %q, want ok", got.Status)
+	}
+	if got.Version != buildinfo.Version {
+		t.Fatalf("version = %q, want %q", got.Version, buildinfo.Version)
 	}
 }
 
@@ -457,6 +472,22 @@ func TestAccountQuotaFromSource(t *testing.T) {
 	assertErrorBody(t, missing, http.StatusNotFound, "not_found")
 }
 
+func TestAccountQuotaRefresh(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do(t, http.MethodPost, "/api/v1/accounts/a1/quota/refresh", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeBody[QuotaResponse](t, rec)
+	if got.Account != "a1" || got.Quota.Used != 42 || got.Quota.Source != "endpoint" {
+		t.Fatalf("quota mismatch: %+v", got)
+	}
+	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/accounts/ghost/quota/refresh", ""), http.StatusNotFound, "not_found")
+	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/accounts/a1/quota/refresh", ""), http.StatusMethodNotAllowed, "method_not_allowed")
+	env.srv.quota = &fakeQuotaSource{refreshErr: errors.New("upstream unavailable")}
+	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/accounts/a1/quota/refresh", ""), http.StatusBadGateway, "quota_refresh_failed")
+}
+
 func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
 	env := newEnv(t)
 	rec := env.do(t, http.MethodDelete, "/api/v1/accounts/a1", "")
@@ -475,6 +506,103 @@ func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec2, req)
 	assertErrorBody(t, rec2, http.StatusNotImplemented, "unsupported")
+}
+
+func journalWithEntries(t *testing.T, count int) *requestlog.Journal {
+	t.Helper()
+	clock := &fakeJournalClock{t: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)}
+	j := requestlog.New(8, clock.Now)
+	for i := range count {
+		turn := j.Open(execution.Facts{RequestID: execution.RequestID(fmt.Sprintf("r%d", i)), Client: execution.ClientCodex, Session: "s1"}, canon.ModelID(fmt.Sprintf("m%d", i)))
+		started := turn.Now()
+		if i%2 == 0 {
+			turn.Attempt(requestlog.AttemptInfo{Provider: "codex", AccountID: "codex:a", Model: "m", StartedAt: started, Outcome: requestlog.AttemptServer, Error: "upstream 500"})
+			turn.Close(requestlog.Terminal{Status: requestlog.StatusFailed, Failed: true, Reason: canon.FailServerOverloaded})
+			continue
+		}
+		turn.Attempt(requestlog.AttemptInfo{Provider: "codex", AccountID: "codex:a", Model: "m", StartedAt: started, Outcome: requestlog.AttemptSucceeded})
+		turn.Close(requestlog.Terminal{Status: requestlog.StatusCompleted, Usage: canon.Usage{TotalTokens: 7}})
+	}
+	return j
+}
+
+type fakeJournalClock struct{ t time.Time }
+
+func (c *fakeJournalClock) Now() time.Time { return c.t }
+
+func TestRequestsNewestFirstWithAttempts(t *testing.T) {
+	env := newEnv(t)
+	env.srv.SetRequestLog(journalWithEntries(t, 3))
+	rec := env.do(t, http.MethodGet, "/api/v1/requests", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody[RequestsResponse](t, rec)
+	if len(body.Requests) != 3 {
+		t.Fatalf("requests = %d, want 3", len(body.Requests))
+	}
+	if body.Requests[0].Model != "m2" || body.Requests[1].Model != "m1" || body.Requests[2].Model != "m0" {
+		t.Fatalf("order = %s,%s,%s, want newest first m2,m1,m0", body.Requests[0].Model, body.Requests[1].Model, body.Requests[2].Model)
+	}
+	if body.Dropped != 0 {
+		t.Fatalf("dropped = %d, want 0", body.Dropped)
+	}
+	newest := body.Requests[0]
+	if newest.Status != "failed" || newest.Reason != "server_overloaded" {
+		t.Fatalf("newest = %+v, want failed server_overloaded", newest)
+	}
+	if len(newest.Attempts) != 1 || newest.Attempts[0].Outcome != "server" {
+		t.Fatalf("newest attempts = %+v, want one server outcome", newest.Attempts)
+	}
+	if newest.Attempts[0].Error != "upstream 500" {
+		t.Fatalf("attempt error = %q, want classified error message", newest.Attempts[0].Error)
+	}
+	middle := body.Requests[1]
+	if middle.Status != "completed" || middle.Reason != "" {
+		t.Fatalf("middle = %+v, want completed without reason", middle)
+	}
+	if middle.Usage.Total != 7 {
+		t.Fatalf("middle usage = %+v, want 7 total", middle.Usage)
+	}
+	if middle.Client != "codex" || middle.RequestID != "r1" || middle.Session != "s1" {
+		t.Fatalf("middle identity = %+v", middle)
+	}
+	if middle.StartedAt != "2026-09-09T12:00:00Z" {
+		t.Fatalf("startedAt = %q, want RFC3339 UTC", middle.StartedAt)
+	}
+}
+
+func TestRequestsLimitClampsAndSlices(t *testing.T) {
+	env := newEnv(t)
+	env.srv.SetRequestLog(journalWithEntries(t, 3))
+	rec := env.do(t, http.MethodGet, "/api/v1/requests?limit=2", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody[RequestsResponse](t, rec)
+	if len(body.Requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(body.Requests))
+	}
+	if body.Requests[0].Model != "m2" || body.Requests[1].Model != "m1" {
+		t.Fatalf("order = %s,%s, want newest two", body.Requests[0].Model, body.Requests[1].Model)
+	}
+	rec = env.do(t, http.MethodGet, "/api/v1/requests?limit=99", "")
+	body = decodeBody[RequestsResponse](t, rec)
+	if len(body.Requests) != 3 {
+		t.Fatalf("requests = %d, want all 3 (limit clamped to ring size)", len(body.Requests))
+	}
+	rec = env.do(t, http.MethodGet, "/api/v1/requests?limit=0", "")
+	body = decodeBody[RequestsResponse](t, rec)
+	if len(body.Requests) != 3 {
+		t.Fatalf("requests = %d, want all 3 (limit 0 means no limit)", len(body.Requests))
+	}
+	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/requests?limit=-1", ""), http.StatusBadRequest, "invalid_limit")
+	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/requests?limit=x", ""), http.StatusBadRequest, "invalid_limit")
+}
+
+func TestRequestsUnconfiguredReturns503(t *testing.T) {
+	env := newEnv(t)
+	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/requests", ""), http.StatusServiceUnavailable, "not_available")
 }
 
 type noDeletePool struct {

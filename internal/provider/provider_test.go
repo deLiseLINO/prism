@@ -301,6 +301,10 @@ func (stubQuotaSource) Quota(context.Context, account.AccountID) (quota.Snapshot
 	return quota.Snapshot{}, nil
 }
 
+func (stubQuotaSource) RefreshQuota(context.Context, account.AccountID) (quota.Snapshot, error) {
+	return quota.Snapshot{}, nil
+}
+
 type stubCompactor struct{}
 
 func (stubCompactor) Compact(context.Context, CompactRequest) (CompactResult, error) {

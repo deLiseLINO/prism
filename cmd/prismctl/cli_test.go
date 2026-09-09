@@ -109,6 +109,10 @@ func (q *fakeQuota) Quota(ctx context.Context, id account.AccountID) (quota.Snap
 	return quota.Snapshot{Used: 42, Limit: ptrInt64(100), WindowEnd: time.Unix(1_700_000_000, 0).UTC(), Source: quota.SourceEndpoint}, nil
 }
 
+func (q *fakeQuota) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
+	return q.Quota(ctx, id)
+}
+
 func ptrInt64(v int64) *int64 { return &v }
 
 type fakeAuthSvc struct {

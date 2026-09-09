@@ -3,12 +3,12 @@ export type Section = 'Overview' | 'Operate' | 'Configure' | 'System'
 export type View =
   | 'overview'
   | 'daemon'
-  | 'auth'
-  | 'accounts'
   | 'providers'
   | 'usage'
+  | 'stats'
+  | 'logs'
   | 'integrations'
-
+  | 'update'
 export interface ViewEntry {
   readonly view: View
   readonly label: string
@@ -19,31 +19,35 @@ export interface ViewEntry {
 const VIEW_HASHES: Record<View, string> = {
   overview: '#/overview',
   daemon: '#/daemon',
-  auth: '#/auth',
-  accounts: '#/accounts',
   providers: '#/providers',
   usage: '#/usage',
+  stats: '#/stats',
+  logs: '#/logs',
   integrations: '#/integrations',
+  update: '#/update',
 }
 
 const VIEW_BY_HASH: Record<string, View> = {
   '#/overview': 'overview',
   '#/daemon': 'daemon',
-  '#/auth': 'auth',
-  '#/accounts': 'accounts',
   '#/providers': 'providers',
   '#/usage': 'usage',
+  '#/stats': 'stats',
+  '#/logs': 'logs',
   '#/integrations': 'integrations',
+  '#/update': 'update',
 }
+
 
 export const VIEWS: readonly ViewEntry[] = [
   { view: 'overview', label: 'Overview', tagline: 'Fleet health at a glance', section: 'Overview' },
   { view: 'daemon', label: 'Daemon', tagline: 'Supervisor state and lifecycle', section: 'System' },
-  { view: 'auth', label: 'Auth', tagline: 'OAuth flows per provider', section: 'Operate' },
-  { view: 'accounts', label: 'Accounts', tagline: 'Accounts and selection policy', section: 'Operate' },
-  { view: 'usage', label: 'Usage', tagline: 'Real per-account usage', section: 'Operate' },
+  { view: 'usage', label: 'Accounts', tagline: 'Per-account quota, pinning and login', section: 'Operate' },
+  { view: 'stats', label: 'Stats', tagline: 'Request and token statistics', section: 'Operate' },
+  { view: 'logs', label: 'Logs', tagline: 'Model requests and failover history', section: 'Operate' },
   { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials', section: 'Configure' },
   { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback', section: 'System' },
+  { view: 'update', label: 'Update', tagline: 'App updates and channel status', section: 'System' },
 ]
 
 export const SECTIONS: readonly Section[] = ['Overview', 'Operate', 'Configure', 'System']

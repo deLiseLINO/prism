@@ -138,6 +138,39 @@ export interface UsageView {
   readonly accounts: readonly UsageAccountView[]
 }
 
+// Response of GET /api/v1/stats. Mirrors internal/management/schema.go. Unlike the other
+// views here, the keys are snake_case because the daemon's JSON tags are snake_case and the
+// embedded StatsOverview flattens its totals into each model/provider row.
+export type StatsRange = '1h' | '24h' | '7d' | '30d' | 'all'
+
+export interface StatsOverviewView {
+  readonly requests: number
+  readonly completed: number
+  readonly failed: number
+  readonly input_tokens: number
+  readonly output_tokens: number
+  readonly cached_tokens: number
+  readonly reasoning_tokens: number
+  readonly total_tokens: number
+  readonly measured: number
+}
+
+export interface StatsModelView extends StatsOverviewView {
+  readonly model: string
+  readonly provider: string
+}
+
+export interface StatsProviderView extends StatsOverviewView {
+  readonly provider: string
+}
+
+export interface StatsResponseView {
+  readonly range: StatsRange
+  readonly overview: StatsOverviewView
+  readonly models: readonly StatsModelView[]
+  readonly providers: readonly StatsProviderView[]
+}
+
 export interface AuthStartView {
   readonly session: string
   readonly url: string
@@ -175,4 +208,43 @@ export interface ModelView {
 export interface RouteWrite {
   readonly value: string
   readonly expectedGeneration: number
+}
+
+// Response of GET /api/v1/requests: the daemon's in-memory request journal, newest first.
+// `error` on an attempt is the classified/shortened message only; upstream bodies never appear.
+export interface UsageBreakdownView {
+  readonly input: number
+  readonly output: number
+  readonly cached: number
+  readonly reasoning: number
+  readonly total: number
+}
+
+export interface AttemptView {
+  readonly provider: string
+  readonly account: string
+  readonly model: string
+  readonly startedAt: string
+  readonly durationMs: number
+  readonly outcome: string
+  readonly error?: string
+}
+
+export interface RequestView {
+  readonly seq: number
+  readonly requestId?: string
+  readonly client: string
+  readonly session?: string
+  readonly model: string
+  readonly startedAt: string
+  readonly durationMs: number
+  readonly status: 'open' | 'completed' | 'incomplete' | 'failed'
+  readonly reason?: string
+  readonly usage: UsageBreakdownView
+  readonly attempts: readonly AttemptView[]
+}
+
+export interface RequestsView {
+  readonly requests: readonly RequestView[]
+  readonly dropped: number
 }

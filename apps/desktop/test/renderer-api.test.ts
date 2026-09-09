@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ManagementCall, ManagementReply } from '@prism/contracts'
-import { formatWindowEnd, quotaCell } from '../renderer/src/views/AccountsView'
+import { providerWriteFrom, quotaWindows as usageWindows, windowGradient, windowHeader } from '../renderer/src/views/UsageView'
+import type { ManagementCall, ManagementReply, ProviderView } from '@prism/contracts'
 
 interface RecordedCall extends ManagementCall {
   readonly timestamp: number
@@ -265,6 +265,40 @@ describe('renderer api wrapper', () => {
     expect(recorded[0]).toMatchObject({ method: 'GET', path: '/api/v1/accounts/codex%3Aabc/quota' })
   })
 
+  it('fetches stats with the range in the query string', async () => {
+    const { api } = await loadApi()
+    const overview = {
+      requests: 12,
+      completed: 10,
+      failed: 2,
+      input_tokens: 3400,
+      output_tokens: 900,
+      cached_tokens: 1000,
+      reasoning_tokens: 300,
+      total_tokens: 4300,
+      measured: 11,
+    }
+    setReply({
+      ok: true,
+      status: 200,
+      body: {
+        range: '7d',
+        overview,
+        models: [{ model: 'gpt-5.2-codex', provider: 'codex', ...overview }],
+        providers: [{ provider: 'codex', ...overview }],
+      },
+    })
+    const out = await api.stats('7d')
+    expect(out.range).toBe('7d')
+    expect(out.overview.requests).toBe(12)
+    expect(out.models[0].provider).toBe('codex')
+    expect(out.providers[0].total_tokens).toBe(4300)
+    expect(recorded[0]).toMatchObject({
+      method: 'GET',
+      path: '/api/v1/stats?range=7d',
+    })
+  })
+
   it('preserves hidden apiKeyRef and pool durations when editing through the fetch-write seam', async () => {
     const { api } = await loadApi()
     const existingPool = {
@@ -335,51 +369,64 @@ describe('renderer api wrapper', () => {
   })
 })
 
-describe('live quota rendering helpers', () => {
-  it('marks a source-unknown snapshot as unavailable', () => {
-    expect(
-      quotaCell({
-        account: 'codex:abc',
-        quota: { used: 0, windowEnd: '0001-01-01T00:00:00Z', source: 'unknown' },
-      }),
-    ).toEqual({ kind: 'unavailable' })
+
+describe('antigravity usage window labels', () => {
+  it('signs both label shapes with family and orders gemini before claude', () => {
+    const quota = {
+      used: 4000,
+      limit: 10000,
+      windowEnd: '2026-09-09T00:00:00Z',
+      source: 'endpoint' as const,
+      windows: [
+        { label: 'Claude Weekly', used: 2000, limit: 10000, windowEnd: '2026-09-21T00:00:00Z' },
+        { label: 'Gemini 5 hour', used: 4000, limit: 10000, windowEnd: '2026-09-09T00:00:00Z' },
+        { label: 'Claude 5 hour', used: 1000, limit: 10000, windowEnd: '2026-09-09T00:00:00Z' },
+        { label: 'Weekly Gemini', used: 1250, limit: 10000, windowEnd: '2026-09-21T00:00:00Z' },
+      ],
+    }
+    expect(usageWindows(quota).map((w) => windowHeader(w.label))).toEqual([
+      '5h gemini',
+      'weekly gemini',
+      '5h claude',
+      'weekly claude',
+    ])
   })
 
-  it('renders a ready quota with used, limit, window end, and source', () => {
-    expect(
-      quotaCell({
-        account: 'codex:abc',
-        quota: { used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint' },
-      }),
-    ).toEqual({ kind: 'ready', used: 42, limit: 120, windowEnd: '2026-08-31T05:00:00Z', source: 'endpoint', windows: [] })
+  it('keeps codex window headers unchanged', () => {
+    expect(windowHeader('5 hour usage limit')).toBe('5 hour')
+    expect(windowHeader('Weekly usage limit')).toBe('Weekly')
   })
 
-  it('preserves weekly and five hour windows returned by the API', () => {
-    const windows = [
-      { label: 'Weekly usage limit', used: 1250, limit: 10000, windowEnd: '2026-09-10T05:00:00Z' },
-      { label: '5 hour usage limit', used: 4000, limit: 10000, windowEnd: '2026-09-07T10:00:00Z' },
-    ]
-    expect(
-      quotaCell({
-        account: 'codex:abc',
-        quota: { used: 4000, limit: 10000, windowEnd: '2026-09-07T10:00:00Z', source: 'endpoint', windows },
-      }),
-    ).toEqual({ kind: 'ready', used: 4000, limit: 10000, windowEnd: '2026-09-07T10:00:00Z', source: 'endpoint', windows })
-  })
-
-  it('omits an absent limit instead of coercing it', () => {
-    const cell = quotaCell({
-      account: 'codex:abc',
-      quota: { used: 7, windowEnd: '2026-08-31T05:00:00Z', source: 'header' },
+  it('colors antigravity bars by family and codex bars by window type', () => {
+    const agWindows = usageWindows({
+      used: 4000,
+      limit: 10000,
+      windowEnd: '2026-09-09T00:00:00Z',
+      source: 'endpoint',
+      windows: [
+        { label: 'Gemini 5 hour', used: 4000, limit: 10000, windowEnd: '2026-09-09T00:00:00Z' },
+        { label: 'Weekly Gemini', used: 1250, limit: 10000, windowEnd: '2026-09-21T00:00:00Z' },
+        { label: 'Claude 5 hour', used: 1000, limit: 10000, windowEnd: '2026-09-09T00:00:00Z' },
+        { label: 'Claude Weekly', used: 2000, limit: 10000, windowEnd: '2026-09-21T00:00:00Z' },
+      ],
     })
-    expect(cell).toEqual({ kind: 'ready', used: 7, windowEnd: '2026-08-31T05:00:00Z', source: 'header', windows: [] })
-    expect('limit' in cell).toBe(false)
-  })
-
-  it('formats the quota window end and blanks the daemon zero time', () => {
-    expect(formatWindowEnd('2026-08-31T05:07:00Z')).toBe('2026-08-31 05:07')
-    expect(formatWindowEnd('0001-01-01T00:00:00Z')).toBe('—')
-    expect(formatWindowEnd('not-a-time')).toBe('—')
+    for (const w of agWindows) {
+      expect(windowGradient(w)).toBe(windowHeader(w.label).endsWith('gemini')
+        ? 'linear-gradient(90deg, #4285F4, #34A853)'
+        : 'linear-gradient(90deg, #6C63FF, #D46DFF)')
+    }
+    const codexWindows = usageWindows({
+      used: 500,
+      limit: 10000,
+      windowEnd: '2026-09-09T00:00:00Z',
+      source: 'endpoint',
+      windows: [
+        { label: '5 hour usage limit', used: 500, limit: 10000, windowEnd: '2026-09-09T00:00:00Z' },
+        { label: 'Weekly usage limit', used: 250, limit: 10000, windowEnd: '2026-09-21T00:00:00Z' },
+      ],
+    })
+    expect(windowGradient(codexWindows[0])).toBe('linear-gradient(90deg, #4285F4, #34A853)')
+    expect(windowGradient(codexWindows[1])).toBe('linear-gradient(90deg, #6C63FF, #D46DFF)')
   })
 })
 
@@ -391,10 +438,59 @@ describe('antigravity quota windows', () => {
       { label: 'Gemini Weekly', used: 2000, limit: 10000, windowEnd: '2026-09-15T00:00:00Z' },
     ]
     expect(
-      quotaCell({
-        account: 'antigravity:default',
-        quota: { used: 7500, limit: 10000, windowEnd: '2026-09-10T00:00:00Z', source: 'endpoint', windows },
-      }),
-    ).toEqual({ kind: 'ready', used: 7500, limit: 10000, windowEnd: '2026-09-10T00:00:00Z', source: 'endpoint', windows })
+      usageWindows({
+        used: 7500,
+        limit: 10000,
+        windowEnd: '2026-09-10T00:00:00Z',
+        source: 'endpoint',
+        windows,
+      }).map((w) => w.label),
+    ).toEqual(['Gemini 5 hour', 'Gemini Weekly', 'Claude 5 hour'])
+  })
+})
+
+describe('provider pin write', () => {
+  const provider: ProviderView = {
+    id: 'ag',
+    wire: 'antigravity',
+    models: ['gemini-3-pro'],
+    disabledModels: [],
+    enabled: true,
+    pool: {
+      strategy: 'quota',
+      autoSwitchThreshold: 0.85,
+      affinity: 'sticky',
+      pinnedAccount: '',
+      accountsPath: '',
+      maxFailovers: 3,
+      cooldownDefault: 300_000_000_000,
+      cooldownMax: 3_600_000_000_000,
+      probeEvery: 60_000_000_000,
+    },
+    credential: { state: 'set' },
+  }
+
+  it('round-trips the provider and swaps only the pinned account', () => {
+    const write = providerWriteFrom(provider, 7, {
+      ...(provider.pool as NonNullable<ProviderView['pool']>),
+      pinnedAccount: 'antigravity:probe',
+    })
+    expect(write.id).toBe('ag')
+    expect(write.wire).toBe('antigravity')
+    expect(write.models).toEqual(['gemini-3-pro'])
+    expect(write.expectedGeneration).toBe(7)
+    expect(write.pool?.pinnedAccount).toBe('antigravity:probe')
+    expect(write.pool?.strategy).toBe('quota')
+    expect(write.credential).toBeUndefined()
+  })
+
+  it('clears the pin without touching the rest of the pool', () => {
+    const pinned = { ...(provider.pool as NonNullable<ProviderView['pool']>), pinnedAccount: 'antigravity:probe' }
+    const write = providerWriteFrom({ ...provider, pool: pinned }, 8, {
+      ...pinned,
+      pinnedAccount: '',
+    })
+    expect(write.pool?.pinnedAccount).toBe('')
+    expect(write.pool?.maxFailovers).toBe(3)
   })
 })

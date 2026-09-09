@@ -1,15 +1,17 @@
-import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { BrowserWindow, clipboard, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IpcChannel } from '@prism/contracts'
 import type { DaemonSupervisor } from './daemon/supervisor'
 import { IntegrationApi, parseIntegrationRequest } from './integrations'
 import { ManagementProxy, validateManagementCall } from './management'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
+import type { UpdaterService } from './updater/updater'
 
 export interface IpcWiring {
   readonly supervisor: DaemonSupervisor
   readonly management: ManagementProxy
   readonly integrations: IntegrationApi
+  readonly updater: UpdaterService
 }
 
 function openExternal(url: unknown): Promise<void> {
@@ -72,6 +74,13 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return openExternal(input)
   })
+  ipcMain.handle(IpcChannel.clipboardWrite, (event, input: unknown) => {
+    trustedSender(event)
+    if (typeof input !== 'string') {
+      throw new Error('prism: clipboard write requires a string')
+    }
+    clipboard.writeText(input)
+  })
   ipcMain.handle(IpcChannel.windowSetTheme, (event, input: unknown) => {
     const sender = trustedSender(event)
     if (input !== 'dark' && input !== 'light') {
@@ -80,5 +89,17 @@ export function registerIpc(wiring: IpcWiring): void {
     const window = BrowserWindow.fromWebContents(sender)
     const overlay = titleBarOptions(input).titleBarOverlay
     if (overlay !== undefined && window !== null && !window.isDestroyed()) window.setTitleBarOverlay(overlay)
+  })
+  ipcMain.handle(IpcChannel.updaterGetStatus, (event) => {
+    trustedSender(event)
+    return wiring.updater.status
+  })
+  ipcMain.handle(IpcChannel.updaterCheck, (event) => {
+    trustedSender(event)
+    return wiring.updater.check()
+  })
+  ipcMain.handle(IpcChannel.updaterInstall, (event) => {
+    trustedSender(event)
+    wiring.updater.install()
   })
 }

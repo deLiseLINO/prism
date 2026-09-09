@@ -3,7 +3,13 @@ import type { ManagementCall, ManagementMethod, ManagementReply } from '@prism/c
 const MANAGEMENT_METHODS: readonly ManagementMethod[] = ['GET', 'POST', 'PUT', 'DELETE']
 const MANAGEMENT_PATH_PREFIX = '/api/v1/'
 const MANAGEMENT_PATH_SEGMENT = /^[A-Za-z0-9_{}.%+-]+$/
-const MANAGEMENT_QUERY_KEYS = new Set(['expectedGeneration', 'session', 'force'])
+const MANAGEMENT_QUERY_KEYS: Record<string, true> = {
+  expectedGeneration: true,
+  session: true,
+  force: true,
+  range: true,
+  limit: true,
+}
 const MANAGEMENT_TIMEOUT_MS = 10_000
 
 export class ManagementProxy {
@@ -80,7 +86,7 @@ function isManagementPath(path: string): boolean {
   const params = new URLSearchParams(query)
   let count = 0
   for (const [key, value] of params) {
-    if (!MANAGEMENT_QUERY_KEYS.has(key) || value === '') return false
+    if (MANAGEMENT_QUERY_KEYS[key] !== true || value === '') return false
     count += 1
   }
   return count > 0

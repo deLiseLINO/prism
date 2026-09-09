@@ -1,14 +1,25 @@
 import { build } from 'esbuild'
-import { copyFile, mkdir } from 'node:fs/promises'
+import { copyFile, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-
+const pkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
 const prismdBinary = path.join('resources', 'prismd', 'prismd')
-execFileSync('go', ['build', '-o', prismdBinary, '../../cmd/prismd'], {
-  cwd: new URL('.', import.meta.url).pathname,
-  stdio: 'inherit',
-})
+execFileSync(
+  'go',
+  [
+    'build',
+    '-ldflags',
+    `-X prism/internal/buildinfo.Version=${pkg.version}`,
+    '-o',
+    prismdBinary,
+    '../../cmd/prismd',
+  ],
+  {
+    cwd: new URL('.', import.meta.url).pathname,
+    stdio: 'inherit',
+  },
+)
 
 await mkdir(path.join('dist', 'renderer'), { recursive: true })
 
@@ -19,7 +30,7 @@ await Promise.all([
     platform: 'node',
     format: 'cjs',
     target: 'node20',
-    external: ['electron'],
+    external: ['electron', 'electron-updater'],
     outfile: 'dist/main/index.js',
   }),
   build({

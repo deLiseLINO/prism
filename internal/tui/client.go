@@ -27,6 +27,7 @@ type Client interface {
 	IntegrationApply(ctx context.Context, id string) (integrations.ApplyResult, error)
 	ProvidersList(ctx context.Context) (management.ProvidersResponse, error)
 	ProvidersReplace(ctx context.Context, id string, w management.ProviderWrite) (management.ProviderMutationResponse, error)
+	Stats(ctx context.Context, statsRange string) (management.StatsResponse, error)
 }
 
 type HTTPClient struct {
@@ -114,6 +115,12 @@ func (c *HTTPClient) IntegrationApply(ctx context.Context, id string) (integrati
 func (c *HTTPClient) ProvidersList(ctx context.Context) (management.ProvidersResponse, error) {
 	var out management.ProvidersResponse
 	err := c.get(ctx, "/api/v1/providers", &out)
+	return out, err
+}
+
+func (c *HTTPClient) Stats(ctx context.Context, statsRange string) (management.StatsResponse, error) {
+	var out management.StatsResponse
+	err := c.get(ctx, "/api/v1/stats?range="+urlQueryEscape(statsRange), &out)
 	return out, err
 }
 

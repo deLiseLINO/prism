@@ -68,6 +68,15 @@ type IntegrationApplyResultMsg struct {
 	Err    error
 }
 
+type StatsMsg struct {
+	Range string
+	Stats management.StatsResponse
+}
+
+type StatsErrMsg struct {
+	Err error
+}
+
 type AnimationFrameMsg struct {
 	Now time.Time
 }
