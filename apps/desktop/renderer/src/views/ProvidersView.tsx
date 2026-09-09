@@ -457,6 +457,7 @@ export function ProvidersView(): JSX.Element {
             value={query}
             onChange={setQuery}
             placeholder="Filter by id, wire, or model"
+            hotkey
           />
           <Button tone="primary" size="sm" onClick={() => setCreating(true)}>
             New provider
