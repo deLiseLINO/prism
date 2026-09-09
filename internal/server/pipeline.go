@@ -30,17 +30,6 @@ const (
 	protocolMessages
 )
 
-func (p protocol) String() string {
-	switch p {
-	case protocolResponses:
-		return "responses"
-	case protocolChat:
-		return "chat"
-	default:
-		return "messages"
-	}
-}
-
 const stallPollInterval = 5 * time.Second
 
 var errTerminalWritten = errors.New("server: terminal already emitted")
@@ -123,7 +112,6 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 		s.writeParseError(w, proto, err)
 		return
 	}
-	facts.RequestID = execution.RequestID(newRequestID())
 	if sidecar, ok := s.visionSidecar(req); ok {
 		replaced, err := sidecar.describeImages(r.Context(), req)
 		if err != nil {
@@ -133,7 +121,6 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 			req = replaced
 		}
 	}
-	start := s.clock.Now()
 	sink := s.newSink(w, proto, req, facts)
 	p := &pipeline{sink: sink, tracker: stream.NewTrackerWithClock(s.clock), clock: s.clock}
 	if err := sink.Begin(); err != nil {
@@ -150,7 +137,6 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 	}
 	p.finish(res)
 	sink.Close()
-	s.recordUsage(facts, req, proto, res, start)
 }
 
 func failureStatus(r canon.FailureReason) int {
@@ -179,7 +165,7 @@ func failureStatus(r canon.FailureReason) int {
 }
 
 func (s *Server) newSink(w http.ResponseWriter, proto protocol, req canon.Request, facts execution.Facts) streamSink {
-	id := string(facts.RequestID)
+	id := newRequestID()
 	now := s.clock.Now()
 	switch proto {
 	case protocolResponses:

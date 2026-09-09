@@ -1,6 +1,5 @@
 import { app, nativeImage, type BrowserWindow } from 'electron'
-import { readFileSync } from 'node:fs'
-import path, { join } from 'node:path'
+import path from 'node:path'
 import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
 import { loadDesktopConfig } from './config'
 import { DaemonSupervisor } from './daemon/supervisor'
@@ -8,7 +7,6 @@ import { IntegrationApi } from './integrations'
 import { registerIpc } from './ipc'
 import { ManagementProxy } from './management'
 import { TrayController } from './tray'
-import { UpdaterService } from './updater/updater'
 import { createMainWindow } from './window'
 
 const HEALTH_TIMEOUT_MS = 15_000
@@ -46,13 +44,6 @@ async function bootstrap(): Promise<void> {
     stabilityWindowMs: STABILITY_WINDOW_MS,
   })
   const management = new ManagementProxy(endpoint)
-  const updater = new UpdaterService(
-    { currentVersion: appVersion(), updateUrl: config.updateUrl },
-    {
-      autoUpdater: app.isPackaged && !config.updaterDisabled ? require('electron-updater').autoUpdater : null,
-      quitApp: () => app.quit(),
-    },
-  )
   const integrations = new IntegrationApi(management)
   const showWindow = (): void => {
     if (config.headless) return
@@ -77,19 +68,11 @@ async function bootstrap(): Promise<void> {
     if (quitting) return
     event.preventDefault()
     quitting = true
-    void supervisor.stopForQuit().finally(() => {
-      if (updater.pendingInstall) updater.performInstall()
-      else app.quit()
-    })
+    void supervisor.stopForQuit().finally(() => app.quit())
   })
 
   void app.whenReady().then(() => {
-    registerIpc({ supervisor, management, integrations, updater })
-    updater.subscribe((status) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(IpcChannel.updaterStatusEvent, status)
-      }
-    })
+    registerIpc({ supervisor, management, integrations })
     supervisor.subscribe((status) => {
       if (!config.headless) tray.update(status)
       if (mainWindow !== null && !mainWindow.isDestroyed()) {
@@ -106,18 +89,7 @@ async function bootstrap(): Promise<void> {
     })
     mainWindow = window
     void supervisor.start()
-    updater.start()
   })
 }
 
 void bootstrap()
-
-function appVersion(): string {
-  if (app.isPackaged) return app.getVersion()
-  try {
-    const pkg = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as { version?: string }
-    return pkg.version ?? app.getVersion()
-  } catch {
-    return app.getVersion()
-  }
-}

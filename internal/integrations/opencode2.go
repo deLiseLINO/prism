@@ -57,6 +57,7 @@ type Opencode2Options struct {
 	ConfigPath        string
 	Env               Env
 	Home              string
+	IO                FileIO
 	CrashBeforeRename bool
 }
 
@@ -65,6 +66,7 @@ type Opencode2Integration struct {
 	port       int
 	models     []Model
 	modelsSrc  func() []Model
+	io         FileIO
 	configPath string
 	env        Env
 	home       string
@@ -78,7 +80,7 @@ func (o *Opencode2Integration) paths() string {
 }
 
 func NewOpencode2(options Opencode2Options) *Opencode2Integration {
-	return &Opencode2Integration{id: Opencode2, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, configPath: options.ConfigPath, env: options.Env, home: options.Home}
+	return &Opencode2Integration{id: Opencode2, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, io: withLocalIO(options.IO), configPath: options.ConfigPath, env: options.Env, home: options.Home}
 }
 
 func (o *Opencode2Integration) ID() ID { return o.id }
@@ -88,7 +90,7 @@ func (o *Opencode2Integration) Apply() ApplyResult {
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: o.id, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(o.paths(), opencode2Transform(o.port, models), false)
+	outcome, err := ApplyConfigTransform(o.io, o.paths(), opencode2Transform(o.port, models), false)
 	if err != nil {
 		return ToApplyResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode2 apply", err)})
 	}
@@ -96,8 +98,8 @@ func (o *Opencode2Integration) Apply() ApplyResult {
 }
 
 func (o *Opencode2Integration) Status() Status {
-	return ObservedIntegrationStatus(o.id, o.paths(), []string{OpencodeConfigDir(o.env, o.home)}, func(path string) ManagedRead {
-		content, ok := ReadTextIfExists(path)
+	return ObservedIntegrationStatus(o.io, o.id, o.paths(), []string{OpencodeConfigDir(o.env, o.home)}, func(path string) ManagedRead {
+		content, ok := o.io.ReadTextIfExists(path)
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -106,13 +108,13 @@ func (o *Opencode2Integration) Status() Status {
 }
 
 func (o *Opencode2Integration) Rollback() ApplyResult {
-	outcome, err := ApplyConfigTransform(o.paths(), opencode2RollbackTransform(), false)
+	outcome, err := ApplyConfigTransform(o.io, o.paths(), opencode2RollbackTransform(), false)
 	if err != nil {
 		return ToRollbackResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode2 rollback", err)})
 	}
 	return ToRollbackResult(o.id, outcome)
 }
 
-func RecoverOpencode2Config(configPath string) bool {
-	return RecoverStaged(configPath)
+func RecoverOpencode2Config(io FileIO, configPath string) bool {
+	return io.RecoverStaged(configPath)
 }

@@ -19,10 +19,15 @@ func TestOpencodePathResolution(t *testing.T) {
 	}
 }
 
+var opencodeWindowModels = []Model{
+	{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", ContextWindow: 400000},
+	{ID: "gemini-3-pro", Name: "Gemini 3 Pro"},
+}
+
 func TestOpencodeApplyWritesPrismProvider(t *testing.T) {
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
-	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: ompTestModels, ConfigPath: path})
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: opencodeWindowModels, ConfigPath: path})
 	if result := integration.Apply(); !result.OK {
 		t.Fatalf("apply: %+v", result)
 	}
@@ -81,20 +86,20 @@ func TestOpencodeVerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
 	probe := JSONBlockProbe(Opencode, "provider", "opencode.json", "baseURL", ProviderBaseUrl(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencodeTransform(testPort, ompTestModels), crash)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencodeTransform(testPort, ompTestModels), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode apply", err)}
 			}
 			return outcome
 		},
 		func() WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencodeRollbackTransform(), false)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencodeRollbackTransform(), false)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode rollback", err)}
 			}
 			return outcome
 		},
-		func() bool { return RecoverOpencodeConfig(path) },
+		func() bool { return RecoverOpencodeConfig(LocalIO{}, path) },
 	)
 	for _, check := range VerifyIntegration(probe, path, opencodeUserSeed) {
 		if !check.OK {
@@ -106,7 +111,7 @@ func TestOpencodeVerifierSemantics(t *testing.T) {
 func TestOpencode2ApplyWritesPrismProvider(t *testing.T) {
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencode2UserSeed)
-	integration := NewOpencode2(Opencode2Options{Port: testPort, Models: ompTestModels, ConfigPath: path})
+	integration := NewOpencode2(Opencode2Options{Port: testPort, Models: opencodeWindowModels, ConfigPath: path})
 	if result := integration.Apply(); !result.OK {
 		t.Fatalf("apply: %+v", result)
 	}
@@ -149,20 +154,20 @@ func TestOpencode2VerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "opencode.json", opencode2UserSeed)
 	probe := JSONBlockProbe(Opencode2, "providers", "opencode.json", "baseURL", ProviderBaseUrl(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencode2Transform(testPort, ompTestModels), crash)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencode2Transform(testPort, ompTestModels), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode2 apply", err)}
 			}
 			return outcome
 		},
 		func() WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencode2RollbackTransform(), false)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencode2RollbackTransform(), false)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode2 rollback", err)}
 			}
 			return outcome
 		},
-		func() bool { return RecoverOpencode2Config(path) },
+		func() bool { return RecoverOpencode2Config(LocalIO{}, path) },
 	)
 	for _, check := range VerifyIntegration(probe, path, opencode2UserSeed) {
 		if !check.OK {

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,57 +207,6 @@ func TestQuotaTableProbeFailureKeepsStoredSnapshot(t *testing.T) {
 	}
 	if snap.Used != 1234 || snap.Source != quota.SourceHeader {
 		t.Fatalf("failed probe must keep the stored snapshot: %+v", snap)
-	}
-	if _, err := table.RefreshQuota(context.Background(), "ag:default"); err == nil {
-		t.Fatal("forced refresh hid the provider failure")
-	}
-	stored := pool.Snapshot().Accounts[0].Quota
-	if stored.Used != 1234 || stored.Source != quota.SourceHeader {
-		t.Fatalf("failed refresh replaced stored quota: %+v", stored)
-	}
-}
-
-func TestQuotaRefreshBypassesTTL(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		remaining := "0.75"
-		if requests.Add(1) > 1 {
-			remaining = "0.25"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"groups":[{"displayName":"Gemini Models","buckets":[{"bucketId":"5h","displayName":"5 hour","window":"PT5H","remainingFraction":` + remaining + `,"resetTime":"2026-09-10T00:00:00Z"}]}]}`))
-	}))
-	t.Cleanup(server.Close)
-	mgr, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := mgr.Update(config.Document{
-		Version:   config.SchemaVersion,
-		Providers: map[string]config.Provider{"ag": {Wire: config.WireAntigravity, BaseURL: server.URL, Models: []string{"m"}}},
-	}, 0); err != nil {
-		t.Fatal(err)
-	}
-	pool := account.New([]byte("secret"), time.Now)
-	pool.Register(account.Account{ID: "ag:default", Provider: "ag", State: account.Active, CredGen: 1, Version: 1})
-	table := newQuotaTable(pool, mgr, server.Client())
-	table.refresher = fakeRefresher{cred: account.Credential{Access: "tok", ProjectID: "proj"}}
-	for range 2 {
-		snap, err := table.Quota(context.Background(), "ag:default")
-		if err != nil || snap.Used != 2500 {
-			t.Fatalf("cached read = %+v, err=%v", snap, err)
-		}
-	}
-	snap, err := table.RefreshQuota(context.Background(), "ag:default")
-	if err != nil || snap.Used != 7500 || requests.Load() != 2 {
-		t.Fatalf("forced read = %+v, err=%v, requests=%d", snap, err, requests.Load())
-	}
-	stored, err := table.Quota(context.Background(), "ag:default")
-	if err != nil || stored.Used != 7500 || requests.Load() != 2 {
-		t.Fatalf("refreshed cache = %+v, err=%v, requests=%d", stored, err, requests.Load())
-	}
-	if _, err := table.RefreshQuota(context.Background(), "ghost"); !errors.Is(err, account.ErrNotFound) {
-		t.Fatalf("missing account refresh: %v", err)
 	}
 }
 

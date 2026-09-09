@@ -14,15 +14,10 @@ import (
 
 	"prism/internal/account"
 	"prism/internal/auth"
-	"prism/internal/buildinfo"
-	"prism/internal/canon"
 	"prism/internal/config"
-	"prism/internal/execution"
 	"prism/internal/integrations"
 	"prism/internal/provider"
 	"prism/internal/quota"
-	"prism/internal/requestlog"
-	"prism/internal/usage"
 )
 
 const testSecret = "sk-test-credential-value"
@@ -121,8 +116,7 @@ func (c *fakeCatalog) Models(ctx context.Context) ([]provider.Model, error) {
 }
 
 type fakeQuotaSource struct {
-	snapshots  map[account.AccountID]quota.Snapshot
-	refreshErr error
+	snapshots map[account.AccountID]quota.Snapshot
 }
 
 func (q *fakeQuotaSource) Quota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
@@ -131,13 +125,6 @@ func (q *fakeQuotaSource) Quota(ctx context.Context, id account.AccountID) (quot
 		return quota.Snapshot{}, account.ErrNotFound
 	}
 	return s, nil
-}
-
-func (q *fakeQuotaSource) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
-	if q.refreshErr != nil {
-		return quota.Snapshot{}, q.refreshErr
-	}
-	return q.Quota(ctx, id)
 }
 
 type fakeAuth struct {
@@ -267,9 +254,6 @@ func TestHealthReturnsOK(t *testing.T) {
 	got := decodeBody[HealthResponse](t, rec)
 	if got.Status != "ok" {
 		t.Fatalf("status = %q, want ok", got.Status)
-	}
-	if got.Version != buildinfo.Version {
-		t.Fatalf("version = %q, want %q", got.Version, buildinfo.Version)
 	}
 }
 
@@ -472,22 +456,6 @@ func TestAccountQuotaFromSource(t *testing.T) {
 	assertErrorBody(t, missing, http.StatusNotFound, "not_found")
 }
 
-func TestAccountQuotaRefresh(t *testing.T) {
-	env := newEnv(t)
-	rec := env.do(t, http.MethodPost, "/api/v1/accounts/a1/quota/refresh", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	got := decodeBody[QuotaResponse](t, rec)
-	if got.Account != "a1" || got.Quota.Used != 42 || got.Quota.Source != "endpoint" {
-		t.Fatalf("quota mismatch: %+v", got)
-	}
-	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/accounts/ghost/quota/refresh", ""), http.StatusNotFound, "not_found")
-	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/accounts/a1/quota/refresh", ""), http.StatusMethodNotAllowed, "method_not_allowed")
-	env.srv.quota = &fakeQuotaSource{refreshErr: errors.New("upstream unavailable")}
-	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/accounts/a1/quota/refresh", ""), http.StatusBadGateway, "quota_refresh_failed")
-}
-
 func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
 	env := newEnv(t)
 	rec := env.do(t, http.MethodDelete, "/api/v1/accounts/a1", "")
@@ -506,103 +474,6 @@ func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec2, req)
 	assertErrorBody(t, rec2, http.StatusNotImplemented, "unsupported")
-}
-
-func journalWithEntries(t *testing.T, count int) *requestlog.Journal {
-	t.Helper()
-	clock := &fakeJournalClock{t: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)}
-	j := requestlog.New(8, clock.Now)
-	for i := range count {
-		turn := j.Open(execution.Facts{RequestID: execution.RequestID(fmt.Sprintf("r%d", i)), Client: execution.ClientCodex, Session: "s1"}, canon.ModelID(fmt.Sprintf("m%d", i)))
-		started := turn.Now()
-		if i%2 == 0 {
-			turn.Attempt(requestlog.AttemptInfo{Provider: "codex", AccountID: "codex:a", Model: "m", StartedAt: started, Outcome: requestlog.AttemptServer, Error: "upstream 500"})
-			turn.Close(requestlog.Terminal{Status: requestlog.StatusFailed, Failed: true, Reason: canon.FailServerOverloaded})
-			continue
-		}
-		turn.Attempt(requestlog.AttemptInfo{Provider: "codex", AccountID: "codex:a", Model: "m", StartedAt: started, Outcome: requestlog.AttemptSucceeded})
-		turn.Close(requestlog.Terminal{Status: requestlog.StatusCompleted, Usage: canon.Usage{TotalTokens: 7}})
-	}
-	return j
-}
-
-type fakeJournalClock struct{ t time.Time }
-
-func (c *fakeJournalClock) Now() time.Time { return c.t }
-
-func TestRequestsNewestFirstWithAttempts(t *testing.T) {
-	env := newEnv(t)
-	env.srv.SetRequestLog(journalWithEntries(t, 3))
-	rec := env.do(t, http.MethodGet, "/api/v1/requests", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	body := decodeBody[RequestsResponse](t, rec)
-	if len(body.Requests) != 3 {
-		t.Fatalf("requests = %d, want 3", len(body.Requests))
-	}
-	if body.Requests[0].Model != "m2" || body.Requests[1].Model != "m1" || body.Requests[2].Model != "m0" {
-		t.Fatalf("order = %s,%s,%s, want newest first m2,m1,m0", body.Requests[0].Model, body.Requests[1].Model, body.Requests[2].Model)
-	}
-	if body.Dropped != 0 {
-		t.Fatalf("dropped = %d, want 0", body.Dropped)
-	}
-	newest := body.Requests[0]
-	if newest.Status != "failed" || newest.Reason != "server_overloaded" {
-		t.Fatalf("newest = %+v, want failed server_overloaded", newest)
-	}
-	if len(newest.Attempts) != 1 || newest.Attempts[0].Outcome != "server" {
-		t.Fatalf("newest attempts = %+v, want one server outcome", newest.Attempts)
-	}
-	if newest.Attempts[0].Error != "upstream 500" {
-		t.Fatalf("attempt error = %q, want classified error message", newest.Attempts[0].Error)
-	}
-	middle := body.Requests[1]
-	if middle.Status != "completed" || middle.Reason != "" {
-		t.Fatalf("middle = %+v, want completed without reason", middle)
-	}
-	if middle.Usage.Total != 7 {
-		t.Fatalf("middle usage = %+v, want 7 total", middle.Usage)
-	}
-	if middle.Client != "codex" || middle.RequestID != "r1" || middle.Session != "s1" {
-		t.Fatalf("middle identity = %+v", middle)
-	}
-	if middle.StartedAt != "2026-09-09T12:00:00Z" {
-		t.Fatalf("startedAt = %q, want RFC3339 UTC", middle.StartedAt)
-	}
-}
-
-func TestRequestsLimitClampsAndSlices(t *testing.T) {
-	env := newEnv(t)
-	env.srv.SetRequestLog(journalWithEntries(t, 3))
-	rec := env.do(t, http.MethodGet, "/api/v1/requests?limit=2", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	body := decodeBody[RequestsResponse](t, rec)
-	if len(body.Requests) != 2 {
-		t.Fatalf("requests = %d, want 2", len(body.Requests))
-	}
-	if body.Requests[0].Model != "m2" || body.Requests[1].Model != "m1" {
-		t.Fatalf("order = %s,%s, want newest two", body.Requests[0].Model, body.Requests[1].Model)
-	}
-	rec = env.do(t, http.MethodGet, "/api/v1/requests?limit=99", "")
-	body = decodeBody[RequestsResponse](t, rec)
-	if len(body.Requests) != 3 {
-		t.Fatalf("requests = %d, want all 3 (limit clamped to ring size)", len(body.Requests))
-	}
-	rec = env.do(t, http.MethodGet, "/api/v1/requests?limit=0", "")
-	body = decodeBody[RequestsResponse](t, rec)
-	if len(body.Requests) != 3 {
-		t.Fatalf("requests = %d, want all 3 (limit 0 means no limit)", len(body.Requests))
-	}
-	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/requests?limit=-1", ""), http.StatusBadRequest, "invalid_limit")
-	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/requests?limit=x", ""), http.StatusBadRequest, "invalid_limit")
-}
-
-func TestRequestsUnconfiguredReturns503(t *testing.T) {
-	env := newEnv(t)
-	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/requests", ""), http.StatusServiceUnavailable, "not_available")
 }
 
 type noDeletePool struct {
@@ -925,141 +796,5 @@ func TestVisionSidecarEndpoint(t *testing.T) {
 	}
 	if s := env.cfg.Get().Config.VisionSidecar; !s.Enabled || s.Target != "router/gpt-5.6-luna" {
 		t.Fatalf("config vision sidecar = %+v", s)
-	}
-}
-
-type fakeUsageSource struct {
-	overview  usage.Aggregate
-	models    []usage.ModelAggregate
-	providers []usage.ProviderAggregate
-	err       error
-
-	lastSince time.Time
-	calls     int
-}
-
-func (f *fakeUsageSource) Overview(ctx context.Context, since time.Time) (usage.Aggregate, error) {
-	f.calls++
-	f.lastSince = since
-	return f.overview, f.err
-}
-
-func (f *fakeUsageSource) ByModel(ctx context.Context, since time.Time) ([]usage.ModelAggregate, error) {
-	f.lastSince = since
-	return f.models, f.err
-}
-
-func (f *fakeUsageSource) ByProvider(ctx context.Context, since time.Time) ([]usage.ProviderAggregate, error) {
-	f.lastSince = since
-	return f.providers, f.err
-}
-
-func (f *fakeUsageSource) Insert(ctx context.Context, rec usage.Record) error { return nil }
-func (f *fakeUsageSource) Close() error                                       { return nil }
-
-func TestStatsUnavailableWithoutStore(t *testing.T) {
-	env := newEnv(t)
-	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/stats", ""), http.StatusServiceUnavailable, "stats_unavailable")
-}
-
-func TestStatsReturnsAggregates(t *testing.T) {
-	env := newEnv(t)
-	src := &fakeUsageSource{
-		overview: usage.Aggregate{
-			Requests: 5, Completed: 4, Failed: 1,
-			InputTokens: 1000, OutputTokens: 200, CachedTokens: 300, ReasoningTokens: 50,
-			TotalTokens: 1200, Measured: 3,
-		},
-		models: []usage.ModelAggregate{
-			{Model: "gpt-5.3", Provider: "codex", Aggregate: usage.Aggregate{Requests: 4, TotalTokens: 900}},
-		},
-		providers: []usage.ProviderAggregate{
-			{Provider: "codex", Aggregate: usage.Aggregate{Requests: 5, TotalTokens: 1200}},
-		},
-	}
-	env.srv.SetUsageStore(src)
-	rec := env.do(t, http.MethodGet, "/api/v1/stats", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	got := decodeBody[StatsResponse](t, rec)
-	if got.Range != "1h" {
-		t.Fatalf("default range = %q, want 1h", got.Range)
-	}
-	if got.Overview.Requests != 5 || got.Overview.TotalTokens != 1200 || got.Overview.Measured != 3 {
-		t.Fatalf("overview mismatch: %+v", got.Overview)
-	}
-	if len(got.Models) != 1 || got.Models[0].Model != "gpt-5.3" || got.Models[0].Provider != "codex" || got.Models[0].TotalTokens != 900 {
-		t.Fatalf("models mismatch: %+v", got.Models)
-	}
-	if len(got.Providers) != 1 || got.Providers[0].Provider != "codex" || got.Providers[0].Requests != 5 {
-		t.Fatalf("providers mismatch: %+v", got.Providers)
-	}
-}
-
-func TestStatsRangeParameter(t *testing.T) {
-	env := newEnv(t)
-	src := &fakeUsageSource{}
-	env.srv.SetUsageStore(src)
-	for _, tt := range []struct {
-		query   string
-		want    string
-		allTime bool
-	}{
-		{"", "1h", false},
-		{"range=24h", "24h", false},
-		{"range=7d", "7d", false},
-		{"range=30d", "30d", false},
-		{"range=all", "all", true},
-	} {
-		rec := env.do(t, http.MethodGet, "/api/v1/stats?"+tt.query, "")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("range %q status = %d, want 200; body=%s", tt.query, rec.Code, rec.Body.String())
-		}
-		got := decodeBody[StatsResponse](t, rec)
-		if got.Range != tt.want {
-			t.Fatalf("range %q echoed %q, want %q", tt.query, got.Range, tt.want)
-		}
-		if tt.allTime {
-			if !src.lastSince.IsZero() {
-				t.Fatalf("range %q since = %v, want zero", tt.query, src.lastSince)
-			}
-		} else if src.lastSince.IsZero() {
-			t.Fatalf("range %q since = zero, want computed", tt.query)
-		}
-	}
-	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/stats?range=bogus", ""), http.StatusBadRequest, "invalid_range")
-}
-
-func TestStatsJSONFieldsSnakeCase(t *testing.T) {
-	env := newEnv(t)
-	src := &fakeUsageSource{overview: usage.Aggregate{Requests: 5}}
-	env.srv.SetUsageStore(src)
-	rec := env.do(t, http.MethodGet, "/api/v1/stats", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{
-		`"range"`,
-		`"overview"`,
-		`"requests"`,
-		`"completed"`,
-		`"failed"`,
-		`"input_tokens"`,
-		`"output_tokens"`,
-		`"cached_tokens"`,
-		`"reasoning_tokens"`,
-		`"total_tokens"`,
-		`"measured"`,
-		`"models"`,
-		`"providers"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("body missing %s: %s", want, body)
-		}
-	}
-	if strings.Contains(body, "inputTokens") || strings.Contains(body, "totalTokens") || strings.Contains(body, "reasoningTokens") {
-		t.Fatalf("body contains camelCase field: %s", body)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -812,6 +811,7 @@ func WriteCodexConfigForced(options CodexOptions) WriteOutcome {
 
 func writeCodexConfig(options CodexOptions, force bool) WriteOutcome {
 	options = normalizeCodexOptions(options)
+	io := withLocalIO(options.IO)
 	models, refusal := resolveModels(options.Models, options.ModelsSource, Codex)
 	if refusal != "" {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
@@ -819,43 +819,32 @@ func writeCodexConfig(options CodexOptions, force bool) WriteOutcome {
 	catalogPath := ""
 	if len(models) > 0 {
 		catalogPath = CodexCatalogPath(options.ConfigPath)
-		if err := AtomicWrite(catalogPath, RenderCodexCatalog(models)); err != nil {
+		if err := AtomicWrite(io, catalogPath, RenderCodexCatalog(models)); err != nil {
 			return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
 		}
 	}
-	if force {
-		outcome, err := ApplyConfigTransform(options.ConfigPath, codexTransform(options.Port, catalogPath, true), options.CrashBeforeRename)
-		if err != nil {
-			_ = os.Remove(catalogPath)
-			return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
-		}
-		if outcome.Kind == OutcomeRefused {
-			_ = os.Remove(catalogPath)
-		}
-		return outcome
-	}
-	outcome, err := ApplyConfigTransform(options.ConfigPath, codexTransform(options.Port, catalogPath, false), options.CrashBeforeRename)
+	outcome, err := ApplyConfigTransform(io, options.ConfigPath, codexTransform(options.Port, catalogPath, force), options.CrashBeforeRename)
 	if err != nil {
-		_ = os.Remove(catalogPath)
+		_ = io.Remove(catalogPath)
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
 	}
 	if outcome.Kind == OutcomeRefused {
-		_ = os.Remove(catalogPath)
+		_ = io.Remove(catalogPath)
 	}
 	return outcome
 }
 
-func StripCodexConfig(configPath string) WriteOutcome {
-	outcome, err := ApplyConfigTransform(configPath, codexRollbackTransform(CodexCatalogPath(configPath)), false)
+func StripCodexConfig(io FileIO, configPath string) WriteOutcome {
+	outcome, err := ApplyConfigTransform(io, configPath, codexRollbackTransform(CodexCatalogPath(configPath)), false)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex rollback", err)}
 	}
-	_ = os.Remove(CodexCatalogPath(configPath))
+	_ = io.Remove(CodexCatalogPath(configPath))
 	return outcome
 }
 
-func RecoverCodexConfig(configPath string) bool {
-	return RecoverStaged(configPath)
+func RecoverCodexConfig(io FileIO, configPath string) bool {
+	return io.RecoverStaged(configPath)
 }
 
 type CodexOptions struct {
@@ -865,6 +854,7 @@ type CodexOptions struct {
 	ConfigPath        string
 	Env               Env
 	Home              string
+	IO                FileIO
 	CrashBeforeRename bool
 }
 
@@ -874,6 +864,7 @@ type CodexIntegration struct {
 	port       int
 	models     []Model
 	modelsSrc  func() []Model
+	io         FileIO
 	configPath string
 	env        Env
 	home       string
@@ -881,7 +872,7 @@ type CodexIntegration struct {
 
 func NewCodex(options CodexOptions) *CodexIntegration {
 	options = normalizeCodexOptions(options)
-	return &CodexIntegration{id: Codex, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, configPath: options.ConfigPath, env: options.Env, home: options.Home}
+	return &CodexIntegration{id: Codex, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, io: withLocalIO(options.IO), configPath: options.ConfigPath, env: options.Env, home: options.Home}
 }
 
 func normalizeCodexOptions(options CodexOptions) CodexOptions {
@@ -896,13 +887,13 @@ func (c *CodexIntegration) ID() ID { return c.id }
 func (c *CodexIntegration) Apply() ApplyResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return ToApplyResult(c.id, WriteCodexConfig(CodexOptions{Port: c.port, Models: c.models, ModelsSource: c.modelsSrc, ConfigPath: c.configPath}))
+	return ToApplyResult(c.id, WriteCodexConfig(CodexOptions{Port: c.port, Models: c.models, ModelsSource: c.modelsSrc, ConfigPath: c.configPath, IO: c.io}))
 }
 
 func (c *CodexIntegration) ApplyForced() ApplyResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return ToApplyResult(c.id, writeCodexConfig(CodexOptions{Port: c.port, Models: c.models, ModelsSource: c.modelsSrc, ConfigPath: c.configPath}, true))
+	return ToApplyResult(c.id, writeCodexConfig(CodexOptions{Port: c.port, Models: c.models, ModelsSource: c.modelsSrc, ConfigPath: c.configPath, IO: c.io}, true))
 }
 
 func (c *CodexIntegration) RefreshCatalog() error {
@@ -915,12 +906,12 @@ func (c *CodexIntegration) RefreshCatalog() error {
 	if len(models) == 0 {
 		return nil
 	}
-	return AtomicWrite(CodexCatalogPath(c.configPath), RenderCodexCatalog(models))
+	return AtomicWrite(c.io, CodexCatalogPath(c.configPath), RenderCodexCatalog(models))
 }
 
 func (c *CodexIntegration) Status() Status {
-	return ObservedIntegrationStatus(c.id, c.configPath, []string{CodexHome(c.env, c.home)}, func(path string) ManagedRead {
-		content, ok := ReadTextIfExists(path)
+	return ObservedIntegrationStatus(c.io, c.id, c.configPath, []string{CodexHome(c.env, c.home)}, func(path string) ManagedRead {
+		content, ok := c.io.ReadTextIfExists(path)
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -929,5 +920,5 @@ func (c *CodexIntegration) Status() Status {
 }
 
 func (c *CodexIntegration) Rollback() ApplyResult {
-	return ToRollbackResult(c.id, StripCodexConfig(c.configPath))
+	return ToRollbackResult(c.id, StripCodexConfig(c.io, c.configPath))
 }

@@ -333,6 +333,31 @@ body::before {
 .toggle__label { font-size: 12px; color: var(--fg-muted); }
 .toggle:active .toggle__track { transform: scale(0.95); }
 
+.auth-p { padding: 20px 22px; }
+.auth-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.auth-name { font-weight: 620; font-size: 15px; }
+.steps { display: flex; align-items: center; margin-top: 18px; min-width: 0; flex-wrap: wrap; row-gap: 10px; }
+.step { display: flex; align-items: center; gap: 8px; flex: none; }
+.step .idx {
+  width: 23px; height: 23px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid var(--border-strong); color: var(--fg-subtle);
+  font-family: var(--font-mono); font-size: 10.5px;
+  transition: all 0.3s var(--ease-spring); background: var(--surface-2);
+}
+.step-label { font-size: 12px; color: var(--fg-subtle); font-weight: 530; transition: color 0.3s ease; }
+.step-line { flex: 1; min-width: 20px; height: 1px; background: var(--border-strong); margin: 0 12px; }
+.step.active .idx { border-color: var(--accent); color: var(--accent-fg); background: var(--accent); transform: scale(1.12); }
+.step.active .step-label { color: var(--fg); }
+.step.done .idx { border-color: color-mix(in oklab, var(--ok) 55%, transparent); color: var(--ok); background: color-mix(in oklab, var(--ok) 14%, transparent); }
+.step.done .step-label { color: var(--fg-muted); }
+.step.failed .idx { border-color: color-mix(in oklab, var(--danger) 60%, transparent); color: var(--danger); background: color-mix(in oklab, var(--danger) 14%, transparent); }
+.step.failed .step-label { color: var(--danger); }
+.flow-status { font-size: 11.5px; color: var(--fg-subtle); margin-top: 14px; }
+.flow-status.busy { color: var(--fg-muted); }
+.urls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.url .k { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-subtle); }
+.url .v { font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted); word-break: break-all; margin-top: 3px; line-height: 1.5; }
 .auth-actions { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
 .note { font-size: 12px; color: var(--fg-muted); min-width: 0; }
 .alert, .banner {
@@ -672,7 +697,6 @@ body::before {
 
 @keyframes panel-in { from { opacity: 0; transform: translateY(12px) scale(0.985); } }
 @keyframes bar-in { from { transform: scaleX(0); } }
-@keyframes usage-bar-in { from { clip-path: inset(0 100% 0 0); } }
 @keyframes shimmer { to { transform: translateX(100%); } }
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 55%, transparent); }
@@ -731,7 +755,7 @@ body::before {
 .theme-toggle__icon svg { display: block; }
 
 /* Usage cards */
-.usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+.usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
 .usage-card {
   padding: 18px 20px 16px;
   display: flex; flex-direction: column; gap: 14px;
@@ -739,7 +763,6 @@ body::before {
 }
 .usage-card:hover { transform: translateY(-2px); border-color: color-mix(in oklab, var(--accent) 45%, transparent); }
 .usage-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.usage-card-badges { display: flex; align-items: center; gap: 8px; flex: none; }
 .usage-card-name {
   font-size: 14.5px; font-weight: 620;
   display: flex; align-items: center; gap: 9px; min-width: 0;
@@ -751,13 +774,8 @@ body::before {
 .usage-window-label { color: var(--fg-subtle); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .usage-window-val { font-family: var(--font-mono); font-size: 12px; }
 .usage-window .bar { grid-column: 1 / -1; }
-.usage-window .skel { grid-column: 1 / -1; }
-.usage-window .bar-fill {
-  transform: none;
-  clip-path: inset(0 calc((1 - var(--w, 1)) * 100%) 0 0);
-  animation: usage-bar-in 0.85s var(--ease-out) 0.2s backwards;
-}
 .usage-window-reset { grid-column: 1 / -1; color: var(--fg-subtle); font-size: 11px; }
+.usage-window-reset .num { color: var(--fg-muted); }
 .usage-card-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   color: var(--fg-subtle); font-size: 11.5px; flex-wrap: wrap;
@@ -771,12 +789,3 @@ body::before {
 
 /* Usage cards refresh without re-entering: data updates in place. */
 .screen .usage-card { animation: none; }
-
-/* Stats view rows: name + token total + share bar + request counts. */
-.stats-row { padding: 12px 0; }
-.stats-row-main { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.stats-row-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-weight: 560; font-size: 13.5px; }
-.stats-row-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stats-row-tag { font-size: 10.5px; font-weight: 540; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-subtle); flex: none; }
-.stats-row-main .bar { flex: none; width: 120px; }
-.stats-row-main .sub { flex: none; font-size: 11.5px; }

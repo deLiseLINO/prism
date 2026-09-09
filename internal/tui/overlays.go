@@ -36,9 +36,6 @@ func (m Model) currentOverlayModal() string {
 	if m.ActionMenuVisible {
 		return m.renderActionMenuModal()
 	}
-	if m.StatsVisible {
-		return m.renderStatsModal()
-	}
 	if m.ShowInfo {
 		return m.renderInfoModal()
 	}
@@ -196,7 +193,6 @@ func (m Model) renderHelpModal() string {
 		renderHelpLine("v / c", "Toggle view mode"),
 		renderHelpLine("P", "Switch provider"),
 		renderHelpLine("o", "Integrations"),
-		renderHelpLine("u", "Usage stats"),
 		renderHelpLine(",", "Settings"),
 		renderHelpLine("?", "Open or close this help"),
 		renderHelpLine("q", "Quit"),
