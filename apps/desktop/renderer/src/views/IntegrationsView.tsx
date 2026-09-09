@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { IntegrationId, IntegrationStatus } from '@prism/contracts'
-import { AsyncBoundary, Button, Empty } from '../components/Ui'
+import type { IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
+import { AsyncBoundary, Button, Confirm, Empty } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
 
 type RowState = 'managed' | 'unmanaged' | 'uninstalled' | 'drift' | 'damaged'
@@ -32,16 +32,24 @@ function IntegrationRow({ status, onChanged }: IntegrationRowProps): JSX.Element
   const busy = applyTask.running || rollbackTask.running
   const taskError = applyTask.error ?? rollbackTask.error
   const [actionError, setActionError] = useState<string | null>(null)
+  const [pendingTakeover, setPendingTakeover] = useState<IntegrationApplyResult & { readonly ok: false } | null>(null)
   const state = rowState(status)
   const damaged = state === 'damaged'
 
-  async function apply(id: IntegrationId): Promise<void> {
-    const result = await applyTask.run(() => window.prism.integrations.apply({ id }))
+  async function apply(id: IntegrationId, force: boolean): Promise<void> {
+    const result = await applyTask.run(() => window.prism.integrations.apply({ id, ...(force ? { force: true as const } : {}) }))
     if (result === undefined) return
     if (!result.ok) {
+      if (result.retryable === true && !force) {
+        setPendingTakeover(result)
+        setActionError(null)
+        return
+      }
+      setPendingTakeover(null)
       setActionError(result.reason === '' ? 'reason not reported' : result.reason)
       return
     }
+    setPendingTakeover(null)
     setActionError(null)
     onChanged()
   }
@@ -76,7 +84,7 @@ function IntegrationRow({ status, onChanged }: IntegrationRowProps): JSX.Element
           <Button
             tone={status.managed ? 'ghost' : 'primary'}
             size="sm"
-            onClick={() => void apply(status.id)}
+            onClick={() => void apply(status.id, false)}
             disabled={!status.installed || damaged || busy}
           >
             Apply
@@ -108,6 +116,16 @@ function IntegrationRow({ status, onChanged }: IntegrationRowProps): JSX.Element
             ×
           </button>
         </div>
+      ) : null}
+      {taskError === null && pendingTakeover !== null ? (
+        <Confirm
+          title={`Take over ${pendingTakeover.id} config?`}
+          detail={`${pendingTakeover.reason} Confirmed apply displaces your own values, journals them, and rollback restores them verbatim.`}
+          confirmLabel="Take over"
+          busy={busy}
+          onCancel={() => setPendingTakeover(null)}
+          onConfirm={() => void apply(pendingTakeover.id, true)}
+        />
       ) : null}
     </div>
   )

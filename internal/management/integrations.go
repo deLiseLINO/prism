@@ -37,7 +37,8 @@ func (s *Server) integrationApply(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.ints.Apply(id))
+	force := r.URL.Query().Get("force") == "true"
+	writeJSON(w, http.StatusOK, s.ints.ApplyForced(id, force))
 }
 
 func (s *Server) integrationRollback(w http.ResponseWriter, r *http.Request) {

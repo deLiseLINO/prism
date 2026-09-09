@@ -15,6 +15,12 @@ describe('management path validation', () => {
         path: '/api/v1/providers/custom?expectedGeneration=7',
       }),
     ).toMatchObject({ path: '/api/v1/providers/custom?expectedGeneration=7' })
+    expect(
+      validateManagementCall({
+        method: 'POST',
+        path: '/api/v1/integrations/codex/apply?force=true',
+      }),
+    ).toMatchObject({ path: '/api/v1/integrations/codex/apply?force=true' })
   })
 
   it('rejects traversal, fragments, unknown queries, and DELETE bodies', () => {

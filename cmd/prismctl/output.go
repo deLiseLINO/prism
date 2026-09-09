@@ -374,6 +374,9 @@ func (p printer) integrationApply(res integrations.ApplyResult, action string) e
 	if !res.OK {
 		// The refusal is printed verbatim; the typed exit happens at the
 		// command layer so --json still gets the structured body.
+		if res.Retryable {
+			return p.text(action + " refused (retryable): " + res.Reason)
+		}
 		return p.text(action + " refused: " + res.Reason)
 	}
 	return p.text(action + " ok: " + string(res.ID))

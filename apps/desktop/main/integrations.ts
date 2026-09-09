@@ -13,20 +13,26 @@ export function parseIntegrationRequest(input: unknown): IntegrationRequest {
   if (typeof input !== 'object' || input === null) {
     throw new Error(`prism: integration request must be an object with id in ${INTEGRATION_IDS.join(', ')}`)
   }
-  const id = (input as Record<string, unknown>)['id']
+  const record = input as Record<string, unknown>
+  const id = record['id']
   if (typeof id !== 'string' || !INTEGRATION_IDS.includes(id as IntegrationId)) {
     throw new Error(`prism: unknown integration id, expected one of ${INTEGRATION_IDS.join(', ')}`)
   }
-  return { id: id as IntegrationId }
+  const force = record['force']
+  if (force !== undefined && typeof force !== 'boolean') {
+    throw new Error('prism: integration force must be a boolean')
+  }
+  return { id: id as IntegrationId, ...(force === undefined ? {} : { force }) }
 }
 
 export class IntegrationApi {
   constructor(private readonly management: ManagementProxy) {}
 
   async apply(request: IntegrationRequest): Promise<IntegrationApplyResult> {
+    const query = request.force === true ? '?force=true' : ''
     const reply = await this.management.call({
       method: 'POST',
-      path: `/api/v1/integrations/${request.id}/apply`,
+      path: `/api/v1/integrations/${request.id}/apply${query}`,
     })
     return this.result(request.id, reply)
   }

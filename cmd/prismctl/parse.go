@@ -49,6 +49,7 @@ type command struct {
 
 	// integrations
 	clientID string
+	force    bool
 
 	// models
 	modelID string
@@ -156,6 +157,7 @@ func globalFlags() map[string]bool {
 		"affinity":        true,
 		"value":           true,
 		"target":          true,
+		"force":           false,
 	}
 }
 
@@ -231,7 +233,7 @@ var helpRoutes = `Usage: prismctl routes list [--json]
 `
 
 var helpIntegrations = `Usage: prismctl integrations status [codex|grok|omp] [--json]
-       prismctl integrations apply <codex|grok|omp> [--json]
+       prismctl integrations apply <codex|grok|omp> [--force] [--json]
        prismctl integrations rollback <codex|grok|omp> [--json]
 `
 
@@ -741,6 +743,11 @@ func parseIntegrations(args []string, spec map[string]bool) (*command, error) {
 			return nil, usageFail(helpIntegrations, "unknown integration client %q (want codex, grok, or omp)", pos[0])
 		}
 		cmd.clientID = pos[0]
+		if sub == "apply" {
+			cmd.force = fs.has("force")
+		} else if fs.has("force") {
+			return nil, usageFail(helpIntegrations, "integrations rollback takes no --force flag")
+		}
 		return cmd, nil
 	default:
 		return nil, usageFail(helpIntegrations, "unknown integrations subcommand %q", sub)

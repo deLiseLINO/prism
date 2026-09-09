@@ -59,6 +59,8 @@ func parseCodexRoutingJournal(inner string) codexRoutingJournal {
 		switch {
 		case trimmed == routingJournalHeader:
 			inJournal = true
+		case trimmed == catalogJournalHeader || trimmed == providerJournalHeader:
+			inJournal = false
 		case !inJournal:
 		case strings.HasPrefix(trimmed, "# written:"):
 			journal.written = strings.TrimSpace(strings.TrimPrefix(trimmed, "# written:"))
@@ -81,7 +83,46 @@ func renderCodexRoutingJournal(journal codexRoutingJournal) []string {
 	return lines
 }
 
-func codexManagedBlock(port int, journal codexRoutingJournal) string {
+// codexCatalogJournal records a displaced foreign model_catalog_json pair,
+// restored verbatim by rollback. Unlike routing, the catalog pair has no
+// marker provenance, so the displaced bytes live in the fence only.
+type codexCatalogJournal struct {
+	displaced []string
+}
+
+const catalogJournalHeader = "# prism-catalog"
+
+func parseCodexCatalogJournal(inner string) codexCatalogJournal {
+	var journal codexCatalogJournal
+	inJournal := false
+	for _, line := range strings.Split(inner, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == catalogJournalHeader:
+			inJournal = true
+		case trimmed == routingJournalHeader || trimmed == providerJournalHeader:
+			inJournal = false
+		case !inJournal:
+		case strings.HasPrefix(trimmed, "# displaced:"):
+			rest := strings.TrimPrefix(trimmed, "# displaced:")
+			journal.displaced = append(journal.displaced, strings.TrimPrefix(rest, " "))
+		}
+	}
+	return journal
+}
+
+func renderCodexCatalogJournal(journal codexCatalogJournal) []string {
+	if len(journal.displaced) == 0 {
+		return nil
+	}
+	lines := []string{catalogJournalHeader}
+	for _, line := range journal.displaced {
+		lines = append(lines, "# displaced: "+line)
+	}
+	return lines
+}
+
+func codexManagedBlock(port int, journal codexRoutingJournal, catalogJournal codexCatalogJournal, providerJournal codexProviderJournal) string {
 	lines := []string{
 		"[model_providers.prism]",
 		`name = "prism"`,
@@ -89,6 +130,8 @@ func codexManagedBlock(port int, journal codexRoutingJournal) string {
 		`wire_api = "responses"`,
 	}
 	lines = append(lines, renderCodexRoutingJournal(journal)...)
+	lines = append(lines, renderCodexCatalogJournal(catalogJournal)...)
+	lines = append(lines, renderCodexProviderJournal(providerJournal)...)
 	return strings.Join(lines, "\n")
 }
 
@@ -120,6 +163,161 @@ func codexRootModelProvider(content string) (provider string, found bool, parsea
 	return "", false, true
 }
 
+// codexProviderJournal records a displaced foreign model_provider selection,
+// restored verbatim by rollback alongside the routing journal.
+type codexProviderJournal struct {
+	displaced []string
+}
+
+const providerJournalHeader = "# prism-provider"
+
+func parseCodexProviderJournal(inner string) codexProviderJournal {
+	var journal codexProviderJournal
+	inJournal := false
+	for _, line := range strings.Split(inner, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == providerJournalHeader:
+			inJournal = true
+		case trimmed == routingJournalHeader || trimmed == catalogJournalHeader:
+			inJournal = false
+		case !inJournal:
+		case strings.HasPrefix(trimmed, "# displaced:"):
+			rest := strings.TrimPrefix(trimmed, "# displaced:")
+			journal.displaced = append(journal.displaced, strings.TrimPrefix(rest, " "))
+		}
+	}
+	return journal
+}
+
+func renderCodexProviderJournal(journal codexProviderJournal) []string {
+	if len(journal.displaced) == 0 {
+		return nil
+	}
+	lines := []string{providerJournalHeader}
+	for _, line := range journal.displaced {
+		lines = append(lines, "# displaced: "+line)
+	}
+	return lines
+}
+
+// switchCodexProviderSelection rewrites the single root model_provider pair
+// to the prism selection; only a parseable string pair moves, with the
+// comment line above the key preserved.
+func switchCodexProviderSelection(content string) (string, []string, bool) {
+	lines := strings.Split(content, "\n")
+	rootEnd := codexRootEnd(lines)
+	target := -1
+	for i := range rootEnd {
+		if codexRootProviderKeyRe.MatchString(lines[i]) {
+			if target != -1 {
+				return content, nil, false
+			}
+			target = i
+		}
+	}
+	if target == -1 {
+		return content, nil, false
+	}
+	match := codexRootProviderValueRe.FindStringSubmatch(lines[target])
+	if match == nil {
+		return content, nil, false
+	}
+	displaced := []string{lines[target]}
+	keyLine := "model_provider = " + tomlString("prism")
+	next := append([]string{}, lines...)
+	next[target] = keyLine
+	return strings.Join(next, "\n"), displaced, true
+}
+
+func restoreCodexProviderSelection(content string, journal codexProviderJournal) (string, bool) {
+	if len(journal.displaced) == 0 {
+		return content, false
+	}
+	lines := strings.Split(content, "\n")
+	rootEnd := codexRootEnd(lines)
+	providerIdx := -1
+	providerCount := 0
+	routingIdx := -1
+	routingCount := 0
+	for i := range rootEnd {
+		if codexRootProviderKeyRe.MatchString(lines[i]) {
+			providerCount++
+			providerIdx = i
+		}
+		if codexRootBaseUrlKeyRe.MatchString(lines[i]) {
+			routingCount++
+			routingIdx = i
+		}
+	}
+	if providerCount != 1 {
+		return content, false
+	}
+	match := codexRootProviderValueRe.FindStringSubmatch(lines[providerIdx])
+	if match == nil || match[1] != "prism" {
+		return content, false
+	}
+	out := make([]string, 0, len(lines)+len(journal.displaced))
+	skipRouting := routingCount == 1 && routingIdx == providerIdx+1
+	if skipRouting {
+		from := providerIdx
+		if providerIdx > 0 && lines[providerIdx-1] == prismRoutingMarker {
+			from = providerIdx - 1
+		}
+		out = append(out, lines[:from]...)
+		out = append(out, journal.displaced...)
+		out = append(out, lines[routingIdx+1:]...)
+		return strings.Join(out, "\n"), true
+	}
+	out = append(out, lines[:providerIdx]...)
+	out = append(out, journal.displaced...)
+	out = append(out, lines[providerIdx+1:]...)
+	return strings.Join(out, "\n"), true
+}
+
+// removePrismRootPairs strips the prism-owned root pairs written for a
+// provider-switched apply: the routing marker pair and the catalog marker
+// pair. Rollback restores the displaced provider line, so no prism root
+// bytes may survive it.
+func removePrismRootPairs(content string, catalogPath string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	rootEnd := codexRootEnd(lines)
+	routingIdx := -1
+	catalogIdx := -1
+	for i := range rootEnd {
+		if codexRootBaseUrlKeyRe.MatchString(lines[i]) {
+			if m := codexRootBaseUrlValueRe.FindStringSubmatch(lines[i]); m != nil && i > 0 && lines[i-1] == prismRoutingMarker {
+				routingIdx = i
+			}
+		}
+		if codexRootCatalogKeyRe.MatchString(lines[i]) {
+			if m := codexRootCatalogValueRe.FindStringSubmatch(lines[i]); m != nil && m[1] == catalogPath && i > 0 && lines[i-1] == prismCatalogMarker {
+				catalogIdx = i
+			}
+		}
+	}
+	if routingIdx == -1 && catalogIdx == -1 {
+		return content, false
+	}
+	remove := map[int]bool{}
+	if routingIdx != -1 {
+		remove[routingIdx] = true
+		remove[routingIdx-1] = true
+	}
+	if catalogIdx != -1 {
+		remove[catalogIdx] = true
+		remove[catalogIdx-1] = true
+	}
+	out := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if remove[i] {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n"), true
+}
+
 func insertLinesAt(lines []string, at int, inserted ...string) []string {
 	out := make([]string, 0, len(lines)+len(inserted))
 	out = append(out, lines[:at]...)
@@ -144,8 +342,8 @@ func lastNonBlankLine(lines []string) int {
 // journaled; a prism pair is rewritten in place; a missing pair is inserted
 // before the first table header. providerOnly (model_provider = "prism")
 // removes a journaled prism pair instead, restoring any displaced bytes. A
-// user-owned or ambiguous key is a named refusal and the file stays put.
-func upsertCodexRootRouting(content string, port int, journal codexRoutingJournal, providerOnly bool) (string, codexRoutingJournal, string) {
+// user-owned or ambiguous key is a forceable refusal and the file stays put.
+func upsertCodexRootRouting(content string, port int, journal codexRoutingJournal, providerOnly bool, force bool) (string, codexRoutingJournal, string) {
 	if providerOnly {
 		if journal.written == "" {
 			return content, journal, ""
@@ -201,7 +399,21 @@ func upsertCodexRootRouting(content string, port int, journal codexRoutingJourna
 			lines[i-1] = prismRoutingMarker
 			lines[i] = keyLine
 		default:
-			return content, journal, `prism: codex config sets a user-owned root openai_base_url; remove it, or select the prism provider with model_provider = "prism", then re-apply (file left untouched)`
+			if !force {
+				return content, journal, `prism: codex config sets a user-owned root openai_base_url; remove it, or select the prism provider with model_provider = "prism", then re-apply (file left untouched)`
+			}
+			displaced := []string{lines[i]}
+			from := i
+			if comment != "" {
+				displaced = []string{comment, lines[i]}
+				from = i - 1
+			}
+			next.displaced = append(append([]string{}, journal.displaced...), displaced...)
+			out := make([]string, 0, len(lines)+2-len(displaced))
+			out = append(out, lines[:from]...)
+			out = append(out, prismRoutingMarker, keyLine)
+			out = append(out, lines[i+1:]...)
+			return strings.Join(out, "\n"), next, ""
 		}
 	} else {
 		insertAt := firstTable
@@ -247,9 +459,10 @@ func restoreCodexRootPair(content string, journal codexRoutingJournal) (string, 
 
 // upsertCodexRootCatalog owns the root model_catalog_json pair pointing at
 // the prism-rendered catalog file. A prism pair is rewritten in place; a
-// missing pair is inserted before the first table header; anything else is a
-// named refusal and the file stays put.
-func upsertCodexRootCatalog(content string, catalogPath string) (string, string) {
+// missing pair is inserted before the first table header; a foreign pair is
+// a forceable refusal and the file stays put. Force displaces the foreign
+// pair and journals it for rollback.
+func upsertCodexRootCatalog(content string, catalogPath string, force bool, catalogJournal *codexCatalogJournal) (string, string) {
 	lines := strings.Split(content, "\n")
 	rootEnd := codexRootEnd(lines)
 	var found []int
@@ -273,7 +486,21 @@ func upsertCodexRootCatalog(content string, catalogPath string) (string, string)
 			comment = lines[i-1]
 		}
 		if comment != prismCatalogMarker && match[1] != catalogPath {
-			return content, fmt.Sprintf("prism: codex config already selects a model catalog at %q; remove it, then re-apply (file left untouched)", match[1])
+			if !force {
+				return content, fmt.Sprintf("prism: codex config already selects a model catalog at %q; remove it, then re-apply (file left untouched)", match[1])
+			}
+			from := i
+			displaced := []string{lines[i]}
+			if comment != "" {
+				from = i - 1
+				displaced = []string{comment, lines[i]}
+			}
+			out := make([]string, 0, len(lines)+2-len(displaced))
+			out = append(out, lines[:from]...)
+			out = append(out, prismCatalogMarker, keyLine)
+			out = append(out, lines[i+1:]...)
+			catalogJournal.displaced = displaced
+			return strings.Join(out, "\n"), ""
 		}
 		if comment == prismCatalogMarker {
 			lines[i] = keyLine
@@ -291,9 +518,10 @@ func upsertCodexRootCatalog(content string, catalogPath string) (string, string)
 	return strings.Join(lines, "\n"), ""
 }
 
-// restoreCodexRootCatalog removes the prism-owned model_catalog_json pair.
-// A foreign or edited pair is left in place.
-func restoreCodexRootCatalog(content string, catalogPath string) (string, bool) {
+// restoreCodexRootCatalog removes the prism-owned model_catalog_json pair,
+// restoring a journaled displaced pair at the same position. A foreign or
+// edited pair is left in place.
+func restoreCodexRootCatalog(content string, catalogPath string, catalogJournal codexCatalogJournal) (string, bool) {
 	lines := strings.Split(content, "\n")
 	rootEnd := codexRootEnd(lines)
 	target := -1
@@ -308,7 +536,7 @@ func restoreCodexRootCatalog(content string, catalogPath string) (string, bool) 
 		return content, false
 	}
 	match := codexRootCatalogValueRe.FindStringSubmatch(lines[target])
-	if match == nil || (match[1] != catalogPath && !(target > 0 && lines[target-1] == prismCatalogMarker)) {
+	if match == nil || match[1] != catalogPath {
 		return content, false
 	}
 	removeFrom := target
@@ -316,6 +544,7 @@ func restoreCodexRootCatalog(content string, catalogPath string) (string, bool) 
 		removeFrom = target - 1
 	}
 	out := append([]string{}, lines[:removeFrom]...)
+	out = append(out, catalogJournal.displaced...)
 	out = append(out, lines[target+1:]...)
 	return strings.Join(out, "\n"), true
 }
@@ -465,20 +694,24 @@ func CodexCatalogPath(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), codexCatalogFileName)
 }
 
-func codexTransform(port int, catalogPath string) func(current string) ConfigTransform {
+func codexTransform(port int, catalogPath string, force bool) func(current string) ConfigTransform {
 	return func(current string) ConfigTransform {
-		return applyCodexConfig(current, port, catalogPath)
+		return applyCodexConfig(current, port, catalogPath, force)
 	}
 }
 
-func applyCodexConfig(current string, port int, catalogPath string) ConfigTransform {
+func applyCodexConfig(current string, port int, catalogPath string, force bool) ConfigTransform {
 	fenceLookup := FindFencedRegion(current, CodexFence)
 	if fenceLookup.Kind == FencedOrphaned {
 		return refusedTransform(DamagedFenceApply)
 	}
 	journal := codexRoutingJournal{}
+	catalogJournal := codexCatalogJournal{}
+	providerJournal := codexProviderJournal{}
 	if fenceLookup.Kind == FencedFound {
 		journal = parseCodexRoutingJournal(fenceLookup.Region.Inner)
+		catalogJournal = parseCodexCatalogJournal(fenceLookup.Region.Inner)
+		providerJournal = parseCodexProviderJournal(fenceLookup.Region.Inner)
 	}
 
 	provider, hasProvider, parseable := codexRootModelProvider(current)
@@ -486,22 +719,38 @@ func applyCodexConfig(current string, port int, catalogPath string) ConfigTransf
 		return refusedTransform("prism: codex config has a root model_provider in a form prism cannot parse; apply left the file untouched")
 	}
 	if hasProvider && provider != "openai" && provider != "prism" {
-		return refusedTransform(fmt.Sprintf("prism: codex config selects the external model_provider %q; apply left the file untouched", provider))
+		if !force {
+			return forceableTransform(fmt.Sprintf("prism: codex config selects the external model_provider %q; apply left the file untouched", provider))
+		}
+		if provider == "prism" {
+			return refusedTransform("prism: codex config provider selection is already prism; apply left the file untouched")
+		}
+		switched, displaced, ok := switchCodexProviderSelection(current)
+		if !ok {
+			return refusedTransform(fmt.Sprintf("prism: codex config selects the external model_provider %q in a form prism cannot switch; remove it first (file left untouched)", provider))
+		}
+		providerJournal.displaced = displaced
+		current = switched
+		hasProvider = false
 	}
 
-	next, journal, refusal := upsertCodexRootRouting(current, port, journal, hasProvider && provider == "prism")
+	next, journal, refusal := upsertCodexRootRouting(current, port, journal, hasProvider && provider == "prism", force)
 	if refusal != "" {
-		return refusedTransform(refusal)
+		return forceableTransform(refusal)
 	}
 
 	if catalogPath != "" {
-		next, refusal = upsertCodexRootCatalog(next, catalogPath)
+		next, refusal = upsertCodexRootCatalog(next, catalogPath, force, &catalogJournal)
 		if refusal != "" {
-			return refusedTransform(refusal)
+			return forceableTransform(refusal)
 		}
 	}
 
-	result := UpsertFencedBlock(next, CodexFence, codexManagedBlock(port, journal))
+	if len(providerJournal.displaced) > 0 {
+		next, _ = removePrismRootPairs(next, catalogPath)
+	}
+
+	result := UpsertFencedBlock(next, CodexFence, codexManagedBlock(port, journal, catalogJournal, providerJournal))
 	if result.Kind != "written" {
 		return refusedTransform(result.Reason)
 	}
@@ -518,20 +767,23 @@ func codexRollbackTransform(catalogPath string) func(current string) ConfigTrans
 			if catalogPath == "" {
 				return nextTransform(current, false)
 			}
-			next, changedCatalog := restoreCodexRootCatalog(current, catalogPath)
+			next, changedCatalog := restoreCodexRootCatalog(current, catalogPath, codexCatalogJournal{})
 			return nextTransform(next, changedCatalog)
 		}
-		next, changedFence := RemoveFencedBlock(current, CodexFence)
+		next, _ := RemoveFencedBlock(current, CodexFence)
+		providerJournal := parseCodexProviderJournal(lookup.Region.Inner)
+		if len(providerJournal.displaced) > 0 {
+			next, _ = restoreCodexProviderSelection(next, providerJournal)
+			return nextTransform(next, true)
+		}
 		journal := parseCodexRoutingJournal(lookup.Region.Inner)
-		changedRoot := false
 		if journal.written != "" {
-			next, changedRoot = restoreCodexRootPair(next, journal)
+			next, _ = restoreCodexRootPair(next, journal)
 		}
-		changedCatalog := false
 		if catalogPath != "" {
-			next, changedCatalog = restoreCodexRootCatalog(next, catalogPath)
+			next, _ = restoreCodexRootCatalog(next, catalogPath, parseCodexCatalogJournal(lookup.Region.Inner))
 		}
-		return nextTransform(next, changedFence || changedRoot || changedCatalog)
+		return nextTransform(next, true)
 	}
 }
 
@@ -551,6 +803,14 @@ func codexManagedRead(content string) ManagedRead {
 }
 
 func WriteCodexConfig(options CodexOptions) WriteOutcome {
+	return writeCodexConfig(options, false)
+}
+
+func WriteCodexConfigForced(options CodexOptions) WriteOutcome {
+	return writeCodexConfig(options, true)
+}
+
+func writeCodexConfig(options CodexOptions, force bool) WriteOutcome {
 	options = normalizeCodexOptions(options)
 	models, refusal := resolveModels(options.Models, options.ModelsSource, Codex)
 	if refusal != "" {
@@ -563,7 +823,18 @@ func WriteCodexConfig(options CodexOptions) WriteOutcome {
 			return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
 		}
 	}
-	outcome, err := ApplyConfigTransform(options.ConfigPath, codexTransform(options.Port, catalogPath), options.CrashBeforeRename)
+	if force {
+		outcome, err := ApplyConfigTransform(options.ConfigPath, codexTransform(options.Port, catalogPath, true), options.CrashBeforeRename)
+		if err != nil {
+			_ = os.Remove(catalogPath)
+			return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
+		}
+		if outcome.Kind == OutcomeRefused {
+			_ = os.Remove(catalogPath)
+		}
+		return outcome
+	}
+	outcome, err := ApplyConfigTransform(options.ConfigPath, codexTransform(options.Port, catalogPath, false), options.CrashBeforeRename)
 	if err != nil {
 		_ = os.Remove(catalogPath)
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
@@ -626,6 +897,12 @@ func (c *CodexIntegration) Apply() ApplyResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return ToApplyResult(c.id, WriteCodexConfig(CodexOptions{Port: c.port, Models: c.models, ModelsSource: c.modelsSrc, ConfigPath: c.configPath}))
+}
+
+func (c *CodexIntegration) ApplyForced() ApplyResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return ToApplyResult(c.id, writeCodexConfig(CodexOptions{Port: c.port, Models: c.models, ModelsSource: c.modelsSrc, ConfigPath: c.configPath}, true))
 }
 
 func (c *CodexIntegration) RefreshCatalog() error {

@@ -3,6 +3,7 @@ package integrations
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -251,26 +252,56 @@ var grokEffortMeta = map[string]struct {
 	"max":    {"Max", "Maximum reasoning effort"},
 }
 
-func grokTransform(models []Model, port int) func(current string) ConfigTransform {
+// grokRenamesHeader journals the user-owned tables renamed by a confirmed
+// grok apply, so rollback restores their original names verbatim.
+const grokRenamesHeader = "# prism-renames"
+
+func grokTransform(models []Model, port int, force bool) func(current string) ConfigTransform {
 	return func(current string) ConfigTransform {
 		migrated, migratedChanged := removePrismLegacyTables(current, GrokFence)
 		userTables := UserModelTables(migrated, GrokFence)
-		var collisions []string
-		for _, alias := range GrokAliases(models) {
-			if userTables[alias] {
-				collisions = append(collisions, alias)
+		renames := map[string]string{}
+		if force {
+			taken := map[string]bool{}
+			for alias := range userTables {
+				taken[alias] = true
+			}
+			for _, alias := range GrokAliases(models) {
+				taken[alias] = true
+			}
+			for _, alias := range GrokAliases(models) {
+				if userTables[alias] {
+					renamed := alias + "-user"
+					n := 2
+					for taken[renamed] {
+						renamed = fmt.Sprintf("%s-user-%d", alias, n)
+						n++
+					}
+					taken[renamed] = true
+					renames[alias] = renamed
+				}
+			}
+			if len(renames) > 0 {
+				migrated = renameUserModelTables(migrated, GrokFence, renames)
+			}
+		} else {
+			var collisions []string
+			for _, alias := range GrokAliases(models) {
+				if userTables[alias] {
+					collisions = append(collisions, alias)
+				}
+			}
+			if len(collisions) > 0 {
+				parts := make([]string, len(collisions))
+				for i, alias := range collisions {
+					parts[i] = "[model." + alias + "]"
+				}
+				return forceableTransform("prism: grok apply refused — emitted " + strings.Join(parts, ", ") + " collides with a user-owned model table outside the prism fence")
 			}
 		}
-		if len(collisions) > 0 {
-			parts := make([]string, len(collisions))
-			for i, alias := range collisions {
-				parts[i] = "[model." + alias + "]"
-			}
-			return refusedTransform("prism: grok apply refused — emitted " + strings.Join(parts, ", ") + " collides with a user-owned model table outside the prism fence")
-		}
-		result := UpsertFencedBlock(migrated, GrokFence, GrokManagedBlock(port, models))
+		result := UpsertFencedBlock(migrated, GrokFence, GrokManagedBlock(port, models)+renderGrokRenamesJournal(renames))
 		if result.Kind == "written" {
-			return nextTransform(result.Next, result.Changed || migratedChanged)
+			return nextTransform(result.Next, result.Changed || migratedChanged || len(renames) > 0)
 		}
 		return refusedTransform(result.Reason)
 	}
@@ -282,9 +313,110 @@ func grokRollbackTransform() func(current string) ConfigTransform {
 		if lookup.Kind == FencedOrphaned {
 			return refusedTransform(DamagedFenceRollback)
 		}
+		renames := parseGrokRenamesJournal(current)
 		next, changed := RemoveFencedBlock(current, GrokFence)
+		if len(renames) > 0 {
+			next = restoreUserModelTables(next, renames)
+			changed = true
+		}
 		return nextTransform(next, changed)
 	}
+}
+
+// renameUserModelTables renames user-owned [model.<alias>] headers outside
+// the fence, matching bare, basic-string, and literal-string spellings.
+func renameUserModelTables(content string, fence Fence, renames map[string]string) string {
+	if len(renames) == 0 {
+		return content
+	}
+	lookup := FindFencedRegion(content, fence)
+	inFence := lookup.Kind == FencedFound
+	locs := modelTableHeaderRe.FindAllStringSubmatchIndex(content, -1)
+	var b strings.Builder
+	prev := 0
+	for _, loc := range locs {
+		if canonicalKeySegment(content[loc[2]:loc[3]]) != "model" {
+			continue
+		}
+		alias := canonicalKeySegment(content[loc[4]:loc[5]])
+		renamed, ok := renames[alias]
+		if !ok {
+			continue
+		}
+		headerStart := loc[0]
+		if inFence && headerStart >= lookup.Region.Start && headerStart < lookup.Region.End {
+			continue
+		}
+		b.WriteString(content[prev:loc[4]])
+		b.WriteString(renamed)
+		prev = loc[5]
+	}
+	b.WriteString(content[prev:])
+	return b.String()
+}
+
+func renderGrokRenamesJournal(renames map[string]string) string {
+	if len(renames) == 0 {
+		return ""
+	}
+	aliases := make([]string, 0, len(renames))
+	for alias := range renames {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	lines := []string{"", grokRenamesHeader}
+	for _, alias := range aliases {
+		lines = append(lines, "# renamed: "+alias+" -> "+renames[alias])
+	}
+	return strings.Join(lines, "\n")
+}
+
+func parseGrokRenamesJournal(content string) map[string]string {
+	lookup := FindFencedRegion(content, GrokFence)
+	if lookup.Kind != FencedFound {
+		return nil
+	}
+	renames := map[string]string{}
+	for _, line := range strings.Split(lookup.Region.Inner, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "# renamed:") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "# renamed:"))
+		parts := strings.Split(rest, " -> ")
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			renames[parts[0]] = parts[1]
+		}
+	}
+	if len(renames) == 0 {
+		return nil
+	}
+	return renames
+}
+
+func restoreUserModelTables(content string, renames map[string]string) string {
+	reverse := make(map[string]string, len(renames))
+	for from, to := range renames {
+		reverse[to] = from
+	}
+	locs := modelTableHeaderRe.FindAllStringSubmatchIndex(content, -1)
+	var b strings.Builder
+	prev := 0
+	for _, loc := range locs {
+		if canonicalKeySegment(content[loc[2]:loc[3]]) != "model" {
+			continue
+		}
+		alias := canonicalKeySegment(content[loc[4]:loc[5]])
+		original, ok := reverse[alias]
+		if !ok {
+			continue
+		}
+		b.WriteString(content[prev:loc[4]])
+		b.WriteString(original)
+		prev = loc[5]
+	}
+	b.WriteString(content[prev:])
+	return b.String()
 }
 
 func grokManagedRead(content string) ManagedRead {
@@ -303,11 +435,19 @@ func grokManagedRead(content string) ManagedRead {
 }
 
 func WriteGrokConfig(options GrokOptions) WriteOutcome {
+	return writeGrokConfig(options, false)
+}
+
+func WriteGrokConfigForced(options GrokOptions) WriteOutcome {
+	return writeGrokConfig(options, true)
+}
+
+func writeGrokConfig(options GrokOptions, force bool) WriteOutcome {
 	models, refusal := resolveModels(options.Models, options.ModelsSource, Grok)
 	if refusal != "" {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(options.ConfigPath, grokTransform(models, options.Port), options.CrashBeforeRename)
+	outcome, err := ApplyConfigTransform(options.ConfigPath, grokTransform(models, options.Port, force), options.CrashBeforeRename)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok apply", err)}
 	}
@@ -338,6 +478,10 @@ type GrokIntegration struct {
 
 func (g *GrokIntegration) Apply() ApplyResult {
 	return ToApplyResult(g.id, WriteGrokConfig(GrokOptions{Port: g.port, Models: g.models, ModelsSource: g.modelsSrc, ConfigPath: g.configPath}))
+}
+
+func (g *GrokIntegration) ApplyForced() ApplyResult {
+	return ToApplyResult(g.id, WriteGrokConfigForced(GrokOptions{Port: g.port, Models: g.models, ModelsSource: g.modelsSrc, ConfigPath: g.configPath}))
 }
 
 func NewGrok(options GrokOptions) *GrokIntegration {

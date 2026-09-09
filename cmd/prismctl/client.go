@@ -261,9 +261,13 @@ func (c *client) integrationGet(ctx context.Context, clientID string) (integrati
 	return out, err
 }
 
-func (c *client) integrationApply(ctx context.Context, clientID string) (integrationsApplyJSON, error) {
+func (c *client) integrationApply(ctx context.Context, clientID string, force bool) (integrationsApplyJSON, error) {
 	var out integrationsApplyJSON
-	err := c.call(ctx, http.MethodPost, "/api/v1/integrations/"+escapePath(clientID)+"/apply", nil, &out)
+	path := "/api/v1/integrations/" + escapePath(clientID) + "/apply"
+	if force {
+		path += "?force=true"
+	}
+	err := c.call(ctx, http.MethodPost, path, nil, &out)
 	return out, err
 }
 

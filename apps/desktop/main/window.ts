@@ -90,6 +90,8 @@ export function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     ...bounds,
     title: 'Prism',
+    minWidth: 820,
+    minHeight: 560,
     show: false,
     backgroundColor: '#101014',
     webPreferences: {

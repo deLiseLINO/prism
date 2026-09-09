@@ -132,9 +132,10 @@ func resolveModels(fallback []Model, src func() []Model, id ID) ([]Model, string
 }
 
 type ApplyResult struct {
-	OK     bool   `json:"ok"`
-	ID     ID     `json:"id"`
-	Reason string `json:"reason,omitempty"`
+	OK        bool   `json:"ok"`
+	ID        ID     `json:"id"`
+	Reason    string `json:"reason,omitempty"`
+	Retryable bool   `json:"retryable,omitempty"`
 }
 
 type Status struct {
