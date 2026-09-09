@@ -47,6 +47,39 @@ type options struct {
 
 type credentialStore struct{ file *store.FileCredentialStore }
 
+type durableAccountStore struct {
+	pool  account.Pool
+	file  *store.FileCredentialStore
+	repos map[account.ProviderID]*account.Repository
+}
+
+func (d durableAccountStore) DeleteDurable(ctx context.Context, id account.AccountID) error {
+	var provider account.ProviderID
+	for _, a := range d.pool.Snapshot().Accounts {
+		if a.ID != id {
+			continue
+		}
+		provider = a.Provider
+		break
+	}
+	if provider == "" {
+		parts := strings.SplitN(string(id), ":", 2)
+		if len(parts) != 2 {
+			return nil
+		}
+		provider = account.ProviderID(parts[0])
+	}
+	if err := d.file.Delete(ctx, provider, id); err != nil {
+		return err
+	}
+	if repo, ok := d.repos[provider]; ok {
+		if err := repo.Delete(provider, id); err != nil && !errors.Is(err, account.ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
 type modelSyncer struct {
 	creds  credentialStore
 	client *http.Client
@@ -314,7 +347,7 @@ func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider a
 			log.Printf("prismd: quota probe %s: %v", id, err)
 			return quota.Snapshot{}, false
 		}
-		snap, ok := windows.GoverningSnapshot()
+		snap, ok := windows.DetailedSnapshot()
 		if !ok {
 			return quota.Snapshot{}, false
 		}
@@ -480,6 +513,7 @@ func run(opts options) error {
 	}
 	planner := server.NewConfigPlanner(cfg)
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, client: client})
+	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
 	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)
