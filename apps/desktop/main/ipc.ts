@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IpcChannel } from '@prism/contracts'
 import type { DaemonSupervisor } from './daemon/supervisor'
 import { IntegrationApi, parseIntegrationRequest } from './integrations'
@@ -71,13 +71,6 @@ export function registerIpc(wiring: IpcWiring): void {
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {
     trustedSender(event)
     return openExternal(input)
-  })
-  ipcMain.handle(IpcChannel.clipboardWrite, (event, input: unknown) => {
-    trustedSender(event)
-    if (typeof input !== 'string') {
-      throw new Error('prism: clipboard write requires a string')
-    }
-    clipboard.writeText(input)
   })
   ipcMain.handle(IpcChannel.windowSetTheme, (event, input: unknown) => {
     const sender = trustedSender(event)

@@ -81,6 +81,8 @@ func (c *command) run(ctx context.Context, rt *cliRuntime) error {
 		return c.runIntegrationsAction(ctx, rt, p, "rollback")
 	case "usage":
 		return c.runUsage(ctx, rt, p)
+	case "stats":
+		return c.runStats(ctx, rt, p)
 	}
 	return fmt.Errorf("internal: unhandled verb %q", c.verb)
 }
@@ -866,4 +868,14 @@ func (c *command) runUsage(ctx context.Context, rt *cliRuntime, p printer) error
 		return err
 	}
 	return p.usage(u)
+}
+
+// --- stats ---
+
+func (c *command) runStats(ctx context.Context, rt *cliRuntime, p printer) error {
+	resp, err := rt.client.stats(ctx, c.statsRange)
+	if err != nil {
+		return err
+	}
+	return p.stats(resp)
 }

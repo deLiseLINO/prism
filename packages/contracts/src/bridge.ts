@@ -21,8 +21,7 @@ export interface PrismBridge {
   }
   readonly shell: {
     readonly openExternal: (url: string) => Promise<void>
-    readonly writeClipboard: (text: string) => Promise<void>
-  }
+  },
   readonly window: {
     readonly setTheme: (theme: 'dark' | 'light') => Promise<void>
   }

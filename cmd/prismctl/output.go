@@ -312,6 +312,71 @@ func (p printer) usage(u management.UsageResponse) error {
 	return p.table(headers, rows)
 }
 
+func (p printer) stats(resp management.StatsResponse) error {
+	if p.json {
+		return p.printJSON(resp)
+	}
+	o := resp.Overview
+	if err := p.text("range: " + resp.Range); err != nil {
+		return err
+	}
+	if err := p.kv([][2]string{
+		{"requests", fmt.Sprint(o.Requests)},
+		{"completed", fmt.Sprint(o.Completed)},
+		{"failed", fmt.Sprint(o.Failed)},
+		{"tokens in", fmt.Sprint(o.InputTokens)},
+		{"tokens out", fmt.Sprint(o.OutputTokens)},
+		{"tokens cached", fmt.Sprint(o.CachedTokens)},
+		{"tokens total", fmt.Sprint(o.TotalTokens)},
+		{"measured", fmt.Sprintf("%d/%d", o.Measured, o.Requests)},
+	}); err != nil {
+		return err
+	}
+	if err := p.text("", "providers:"); err != nil {
+		return err
+	}
+	provHeaders := []string{"PROVIDER", "REQUESTS", "COMPLETED", "FAILED", "IN", "OUT", "CACHED", "TOTAL"}
+	provRows := make([][]string, 0, len(resp.Providers))
+	for _, pr := range resp.Providers {
+		provRows = append(provRows, statsRow(pr.Provider, pr.StatsOverview))
+	}
+	if err := p.table(provHeaders, provRows); err != nil {
+		return err
+	}
+	if err := p.text("", "models (top 10):"); err != nil {
+		return err
+	}
+	modelHeaders := []string{"MODEL", "PROVIDER", "REQUESTS", "COMPLETED", "FAILED", "IN", "OUT", "CACHED", "TOTAL"}
+	limit := len(resp.Models)
+	if limit > 10 {
+		limit = 10
+	}
+	modelRows := make([][]string, 0, limit)
+	for _, m := range resp.Models[:limit] {
+		modelRows = append(modelRows, statsRow(m.Model, m.StatsOverview))
+	}
+	if err := p.table(modelHeaders, modelRows); err != nil {
+		return err
+	}
+	if len(resp.Models) > 10 {
+		return p.text(fmt.Sprintf("(%d more models omitted)", len(resp.Models)-10))
+	}
+	return nil
+}
+
+func statsRow(name string, o management.StatsOverview) []string {
+	return []string{
+		name,
+		fmt.Sprint(o.Requests),
+		fmt.Sprint(o.Completed),
+		fmt.Sprint(o.Failed),
+		fmt.Sprint(o.InputTokens),
+		fmt.Sprint(o.OutputTokens),
+		fmt.Sprint(o.CachedTokens),
+		fmt.Sprint(o.TotalTokens),
+	}
+}
+
 func (p printer) authStatus(st management.AuthStatusResponse) error {
 	if p.json {
 		return p.printJSON(st)
