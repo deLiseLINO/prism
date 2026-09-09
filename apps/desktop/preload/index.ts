@@ -25,6 +25,9 @@ const bridge: PrismBridge = {
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IpcChannel.shellOpenExternal, url),
   },
+  window: {
+    setTheme: (theme) => ipcRenderer.invoke(IpcChannel.windowSetTheme, theme),
+  },
 }
 
 contextBridge.exposeInMainWorld('prism', bridge)

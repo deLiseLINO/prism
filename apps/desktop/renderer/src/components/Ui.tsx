@@ -1,5 +1,5 @@
 import type { ThemeMode } from '../useTheme'
-import { cloneElement, Component, isValidElement, useEffect, useId, type ReactElement, type ReactNode } from 'react'
+import { cloneElement, Component, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react'
 
 export interface CardProps {
   readonly title?: string
@@ -296,14 +296,34 @@ export interface SearchInputProps {
   readonly onChange: (next: string) => void
   readonly placeholder?: string
   readonly ariaLabel?: string
+  readonly hotkey?: boolean
 }
 
-export function SearchInput({ id, value, onChange, placeholder, ariaLabel }: SearchInputProps): JSX.Element {
+export function SearchInput({ id, value, onChange, placeholder, ariaLabel, hotkey = false }: SearchInputProps): JSX.Element {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!hotkey) return
+    const onKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
+      const target = event.target as HTMLElement | null
+      if (target !== null && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      const input = inputRef.current
+      if (input === null) return
+      event.preventDefault()
+      input.focus()
+      input.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hotkey])
+
   return (
     <div className="search">
       <span className="search__icon" aria-hidden="true">/</span>
       <input
         id={id}
+        ref={inputRef}
         type="search"
         className="text-input search__input"
         value={value}

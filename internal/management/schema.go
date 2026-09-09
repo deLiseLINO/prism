@@ -193,7 +193,6 @@ type UsageAccount struct {
 	Account  string    `json:"account"`
 	Provider string    `json:"provider"`
 	State    string    `json:"state"`
-	Email    string    `json:"email,omitempty"`
 	Quota    QuotaView `json:"quota"`
 }
 

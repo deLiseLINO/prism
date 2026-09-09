@@ -43,6 +43,7 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = effective
+    void window.prism.window.setTheme(effective).catch(() => undefined)
   }, [effective])
 
   useEffect(() => {
