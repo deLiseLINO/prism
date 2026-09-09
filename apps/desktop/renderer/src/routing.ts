@@ -4,7 +4,6 @@ export type View =
   | 'overview'
   | 'daemon'
   | 'auth'
-  | 'accounts'
   | 'providers'
   | 'usage'
   | 'integrations'
@@ -20,7 +19,6 @@ const VIEW_HASHES: Record<View, string> = {
   overview: '#/overview',
   daemon: '#/daemon',
   auth: '#/auth',
-  accounts: '#/accounts',
   providers: '#/providers',
   usage: '#/usage',
   integrations: '#/integrations',
@@ -30,18 +28,17 @@ const VIEW_BY_HASH: Record<string, View> = {
   '#/overview': 'overview',
   '#/daemon': 'daemon',
   '#/auth': 'auth',
-  '#/accounts': 'accounts',
   '#/providers': 'providers',
   '#/usage': 'usage',
   '#/integrations': 'integrations',
 }
 
+
 export const VIEWS: readonly ViewEntry[] = [
   { view: 'overview', label: 'Overview', tagline: 'Fleet health at a glance', section: 'Overview' },
   { view: 'daemon', label: 'Daemon', tagline: 'Supervisor state and lifecycle', section: 'System' },
   { view: 'auth', label: 'Auth', tagline: 'OAuth flows per provider', section: 'Operate' },
-  { view: 'accounts', label: 'Accounts', tagline: 'Accounts and selection policy', section: 'Operate' },
-  { view: 'usage', label: 'Usage', tagline: 'Real per-account usage', section: 'Operate' },
+  { view: 'usage', label: 'Accounts', tagline: 'Per-account quota, pinning and login', section: 'Operate' },
   { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials', section: 'Configure' },
   { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback', section: 'System' },
 ]

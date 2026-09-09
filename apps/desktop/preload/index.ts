@@ -24,6 +24,7 @@ const bridge: PrismBridge = {
   },
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IpcChannel.shellOpenExternal, url),
+    writeClipboard: (text) => ipcRenderer.invoke(IpcChannel.clipboardWrite, text),
   },
   window: {
     setTheme: (theme) => ipcRenderer.invoke(IpcChannel.windowSetTheme, theme),

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"prism/internal/account"
 	"prism/internal/auth"
@@ -88,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/accounts/{id}/resume", s.accountResume)
 	mux.HandleFunc("POST /api/v1/accounts/{id}/priority", s.accountPriority)
 	mux.HandleFunc("GET /api/v1/accounts/{id}/quota", s.accountQuota)
+	mux.HandleFunc("POST /api/v1/accounts/{id}/quota/refresh", s.accountQuotaRefresh)
 	mux.HandleFunc("GET /api/v1/combos", s.combosList)
 	mux.HandleFunc("PUT /api/v1/combos/{id}", s.combosPut)
 	mux.HandleFunc("DELETE /api/v1/combos/{id}", s.combosDelete)
@@ -126,6 +128,7 @@ var routeTemplates = []string{
 	"/api/v1/accounts/{id}/resume",
 	"/api/v1/accounts/{id}/priority",
 	"/api/v1/accounts/{id}/quota",
+	"/api/v1/accounts/{id}/quota/refresh",
 	"/api/v1/combos",
 	"/api/v1/combos/{id}",
 	"/api/v1/routes",
@@ -545,6 +548,22 @@ func (s *Server) accountQuota(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, QuotaResponse{Account: string(id), Quota: quotaView(q)})
+}
+
+func (s *Server) accountQuotaRefresh(w http.ResponseWriter, r *http.Request) {
+	id := account.AccountID(r.PathValue("id"))
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	q, err := s.quota.RefreshQuota(ctx, id)
+	if err != nil {
+		if errors.Is(err, account.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, "quota_refresh_failed", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, QuotaResponse{Account: string(id), Quota: quotaView(q)})

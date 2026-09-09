@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import type { QuotaView, UsageAccountView, UsageView } from '@prism/contracts'
+import type {
+  PoolSettingsView,
+  ProviderView,
+  ProvidersView,
+  QuotaView,
+  UsageAccountView,
+  UsageView,
+} from '@prism/contracts'
 import { AsyncBoundary, Button, Confirm, Empty, SearchInput } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
-import { api } from '../api'
+import { api, type ProviderWrite } from '../api'
+import { AddAccountModal } from '../components/AddAccountModal'
 
-const AUTO_REFRESH_ACTIVE_MS = 30_000
 const AUTO_REFRESH_BACKGROUND_MS = 300_000
 const AUTO_REFRESH_TICK_MS = 1_000
 const MAX_CONCURRENT_QUOTA_LOADS = 3
 const MAX_QUOTA_LOAD_ATTEMPTS = 3
+
+type QuotaLoadMode = 'initial' | 'background' | 'manual'
 
 const KNOWN_QUOTA_PROVIDERS: Record<string, true> = {
   antigravity: true,
@@ -52,14 +61,20 @@ interface UsageWindow {
   readonly windowEnd: string
 }
 
-function windowOrder(window: UsageWindow): number {
-  const label = window.label.toLowerCase()
-  if (label.includes('5 hour')) return 0
-  if (label.includes('weekly')) return 1
-  return 2
+function windowFamily(label: string): 'gemini' | 'claude' | '' {
+  const lower = label.toLowerCase()
+  if (lower.includes('gemini')) return 'gemini'
+  if (lower.includes('claude')) return 'claude'
+  return ''
 }
 
-function quotaWindows(quota: QuotaView): readonly UsageWindow[] {
+function windowOrder(window: UsageWindow): number {
+  const lower = window.label.toLowerCase()
+  const type = lower.includes('5 hour') ? 0 : lower.includes('weekly') ? 1 : 2
+  return windowFamily(window.label) === 'claude' ? 10 + type : type
+}
+
+export function quotaWindows(quota: QuotaView): readonly UsageWindow[] {
   if (quota.source === 'unknown') return []
   if (quota.windows !== undefined && quota.windows.length > 0) {
     return quota.windows
@@ -69,10 +84,16 @@ function quotaWindows(quota: QuotaView): readonly UsageWindow[] {
   return []
 }
 
-function windowHeader(label: string): string {
+export function windowHeader(label: string): string {
   const lower = label.toLowerCase()
-  if (lower.includes('5 hour')) return '5 hour'
-  if (lower.includes('weekly')) return 'Weekly'
+  const family = windowFamily(label)
+  if (family === '') {
+    if (lower.includes('5 hour')) return '5 hour'
+    if (lower.includes('weekly')) return 'Weekly'
+    return label
+  }
+  if (lower.includes('5 hour')) return `5h ${family}`
+  if (lower.includes('weekly')) return `weekly ${family}`
   return label
 }
 
@@ -122,15 +143,40 @@ function leftPercent(window: UsageWindow): number {
   return Math.round(leftRatio(window) * 100)
 }
 
-function fillClass(window: UsageWindow): string {
-  const usedRatio = 1 - leftRatio(window)
-  if (usedRatio > 0.9) return 'f-danger'
-  if (usedRatio > 0.7) return 'f-warn'
-  return ''
+const SHORT_WINDOW_GRADIENT = 'linear-gradient(90deg, #4285F4, #34A853)'
+const DEFAULT_WINDOW_GRADIENT = 'linear-gradient(90deg, #6C63FF, #D46DFF)'
+
+export function windowGradient(window: UsageWindow): string {
+  const family = windowFamily(window.label)
+  if (family === 'gemini') return SHORT_WINDOW_GRADIENT
+  if (family === 'claude') return DEFAULT_WINDOW_GRADIENT
+  return window.label.toLowerCase().includes('5 hour')
+    ? SHORT_WINDOW_GRADIENT
+    : DEFAULT_WINDOW_GRADIENT
 }
 
 function hasLiveQuota(row: UsageAccountView): boolean {
   return KNOWN_QUOTA_PROVIDERS[row.provider] === true
+}
+
+export function providerWriteFrom(
+  provider: ProviderView,
+  generation: number,
+  pool: PoolSettingsView,
+): ProviderWrite {
+  return {
+    id: provider.id,
+    wire: provider.wire,
+    ...(provider.baseURL === undefined ? {} : { baseURL: provider.baseURL }),
+    ...(provider.defaultModel === undefined ? {} : { defaultModel: provider.defaultModel }),
+    models: provider.models ?? [],
+    disabledModels: provider.disabledModels ?? [],
+    ...(provider.syncedModels === undefined ? {} : { syncedModels: provider.syncedModels }),
+    ...(provider.modelSettings === undefined ? {} : { modelSettings: provider.modelSettings }),
+    ...(provider.enabled === undefined ? {} : { enabled: provider.enabled }),
+    pool,
+    expectedGeneration: generation,
+  }
 }
 
 function hasLoadedQuota(row: UsageAccountView): boolean {
@@ -141,48 +187,83 @@ export function UsagePanel(): JSX.Element {
   const usage = useAsync<UsageView>(() => api.usage(), [])
   const [query, setQuery] = useState('')
   const [quotaLoading, setQuotaLoading] = useState<Record<string, boolean>>({})
-  const [quotaFailed, setQuotaFailed] = useState<Record<string, boolean>>({})
+  const [quotaFailed, setQuotaFailed] = useState<Record<string, string>>({})
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  const providers = useAsync<ProvidersView>(() => api.providers(), [])
+  const [adding, setAdding] = useState(false)
+  const pinTask = useTask()
   const deleteTask = useTask()
+  const refreshAllTask = useTask()
   const loadingRef = useRef<Record<string, boolean>>({})
   const lastLoadedRef = useRef<Record<string, number>>({})
   const attemptsRef = useRef<Record<string, number>>({})
 
+  const providersReady = providers.state.kind === 'ready' ? providers.state.value : null
+  const providerById = useMemo(() => {
+    const index: Record<string, ProviderView> = {}
+    for (const provider of providersReady?.providers ?? []) {
+      index[provider.id] = provider
+    }
+    return index
+  }, [providersReady])
+  const pinIndex = useMemo(() => {
+    const pins: Record<string, string> = {}
+    for (const provider of providersReady?.providers ?? []) {
+      const pinned = provider.pool?.pinnedAccount
+      if (pinned !== undefined && pinned !== '') pins[provider.id] = pinned
+    }
+    return pins
+  }, [providersReady])
+  const authProviders = useMemo(
+    () =>
+      (providersReady?.providers ?? []).filter(
+        (provider) => provider.wire === 'codex' || provider.wire === 'antigravity',
+      ),
+    [providersReady],
+  )
   const accounts = usage.state.kind === 'ready' ? usage.state.value.accounts : []
 
   const refreshQuota = useCallback(
-    async (row: UsageAccountView, silent: boolean): Promise<void> => {
+    async (row: UsageAccountView, mode: QuotaLoadMode): Promise<void> => {
       if (loadingRef.current[row.account] === true) return
       loadingRef.current[row.account] = true
-      if (!silent) setQuotaLoading((prev) => ({ ...prev, [row.account]: true }))
+      if (mode !== 'background') {
+        setQuotaLoading((prev) => ({ ...prev, [row.account]: true }))
+      }
+      setQuotaFailed((prev) => {
+        if (prev[row.account] === undefined) return prev
+        const next = { ...prev }
+        delete next[row.account]
+        return next
+      })
+      let settled = false
       try {
-        const response = await api.quota(row.account)
+        const response = await (mode === 'manual'
+          ? api.refreshQuota(row.account)
+          : api.quota(row.account))
         attemptsRef.current[row.account] = 0
-        setQuotaFailed((prev) => {
-          if (prev[row.account] !== true) return prev
-          const next = { ...prev }
-          delete next[row.account]
-          return next
-        })
-        if (response.quota.source !== 'unknown') {
-          lastLoadedRef.current[row.account] = Date.now()
-        }
+        lastLoadedRef.current[row.account] = Date.now()
+        settled = true
         usage.refresh()
-      } catch {
-        attemptsRef.current[row.account] =
-          (attemptsRef.current[row.account] ?? 0) + 1
+      } catch (err: unknown) {
+        attemptsRef.current[row.account] = mode === 'manual'
+          ? MAX_QUOTA_LOAD_ATTEMPTS
+          : (attemptsRef.current[row.account] ?? 0) + 1
         const attempts = attemptsRef.current[row.account] ?? 0
-        if (attempts >= MAX_QUOTA_LOAD_ATTEMPTS) {
-          setQuotaFailed((prev) => ({ ...prev, [row.account]: true }))
+        if (mode === 'manual' || attempts >= MAX_QUOTA_LOAD_ATTEMPTS) {
+          const error = err instanceof Error ? err : new Error(String(err))
+          setQuotaFailed((prev) => ({ ...prev, [row.account]: describeError(error) }))
         }
       } finally {
         delete loadingRef.current[row.account]
-        setQuotaLoading((prev) => {
-          if (prev[row.account] !== true) return prev
-          const next = { ...prev }
-          delete next[row.account]
-          return next
-        })
+        if (settled || (attemptsRef.current[row.account] ?? 0) >= MAX_QUOTA_LOAD_ATTEMPTS) {
+          setQuotaLoading((prev) => {
+            if (prev[row.account] !== true) return prev
+            const next = { ...prev }
+            delete next[row.account]
+            return next
+          })
+        }
       }
     },
     [usage],
@@ -200,16 +281,8 @@ export function UsagePanel(): JSX.Element {
     for (const row of pending) {
       if (slots <= 0) break
       const last = lastLoadedRef.current[row.account]
-      if (hasLoadedQuota(row)) {
-        const lastLoaded = last === undefined ? now : last
-        if (now - lastLoaded < AUTO_REFRESH_BACKGROUND_MS) continue
-        lastLoadedRef.current[row.account] = now
-        void refreshQuota(row, true)
-        slots--
-        continue
-      }
-      lastLoadedRef.current[row.account] = now
-      void refreshQuota(row, false)
+      if (last !== undefined && now - last < AUTO_REFRESH_BACKGROUND_MS) continue
+      void refreshQuota(row, last === undefined ? 'initial' : 'background')
       slots--
     }
   }, [accounts, refreshQuota])
@@ -235,15 +308,44 @@ export function UsagePanel(): JSX.Element {
         accountLabel(row).toLowerCase().includes(needle),
     )
   }, [accounts, query])
+  const liveAccounts = useMemo(
+    () => accounts.filter(hasLiveQuota),
+    [accounts],
+  )
+
+  async function setPin(row: UsageAccountView, pinned: boolean): Promise<void> {
+    const provider = providerById[row.provider]
+    if (provider === undefined || provider.pool === undefined) return
+    const pool = { ...provider.pool, pinnedAccount: pinned ? row.account : '' }
+    const result = await pinTask.run(() =>
+      api.replaceProvider(
+        provider.id,
+        providerWriteFrom(provider, providersReady?.generation ?? 0, pool),
+      ),
+    )
+    if (result === undefined) return
+    providers.refresh()
+  }
 
   async function removeAccount(): Promise<void> {
     if (confirmingDelete === null) return
+    const row = accounts.find((entry) => entry.account === confirmingDelete)
     const result = await deleteTask.run(() =>
       api.deleteAccount(confirmingDelete),
     )
     if (result === undefined) return
     setConfirmingDelete(null)
+    if (row !== undefined && pinIndex[row.provider] === row.account) {
+      await setPin(row, false)
+    }
     usage.refresh()
+  }
+
+  function refreshAll(): void {
+    if (liveAccounts.length === 0) return
+    void refreshAllTask.run(() =>
+      Promise.all(liveAccounts.map((row) => refreshQuota(row, 'manual'))),
+    )
   }
 
   return (
@@ -252,15 +354,33 @@ export function UsagePanel(): JSX.Element {
         <div>
           <h1 id="h-usage">
             <svg width="19" height="19" className="h-ic">
-              <use href="#i-usage" />
+              <use href="#i-heart" />
             </svg>
-            Usage
+            Accounts
           </h1>
           <p className="sub">
-            per-account used vs limit inside the current quota window
+            per-account quota windows, the account in use per provider, login
           </p>
         </div>
         <div className="head-actions">
+          <Button
+            tone="ghost"
+            size="sm"
+            onClick={() => setAdding(true)}
+            disabled={authProviders.length === 0}
+            title="Authorize a new account through the provider login flow."
+          >
+            Add account
+          </Button>
+          <Button
+            tone="ghost"
+            size="sm"
+            onClick={refreshAll}
+            busy={refreshAllTask.running}
+            disabled={liveAccounts.length === 0}
+          >
+            Refresh all
+          </Button>
           <SearchInput
             id="usage-search"
             value={query}
@@ -275,38 +395,52 @@ export function UsagePanel(): JSX.Element {
         empty={<Empty title="No usage reported." />}
         onRetry={() => usage.refresh()}
       >
-        {() =>
-          filtered.length === 0 ? (
-            <Empty
-              title={
-                accounts.length === 0
-                  ? 'No usage reported.'
-                  : 'No accounts match the filter.'
-              }
-            />
-          ) : (
-            <div className="usage-grid">
-              {filtered.map((row, index) => (
-                <UsageCard
-                  key={row.account}
-                  row={row}
-                  index={index}
-                  loading={
-                    quotaLoading[row.account] === true &&
-                    quotaFailed[row.account] !== true
-                  }
-                  failed={quotaFailed[row.account] === true}
-                  confirmingDelete={confirmingDelete === row.account}
-                  deleteBusy={deleteTask.running}
-                  deleteError={deleteTask.error}
-                  onDelete={() => setConfirmingDelete(row.account)}
-                  onCancelDelete={() => setConfirmingDelete(null)}
-                  onConfirmDelete={() => void removeAccount()}
-                />
-              ))}
-            </div>
-          )
-        }
+        {() => (
+          <>
+            {adding ? (
+              <AddAccountModal
+                providers={authProviders}
+                onAdded={() => {
+                  usage.refresh()
+                  providers.refresh()
+                }}
+                onClose={() => setAdding(false)}
+              />
+            ) : null}
+            {filtered.length === 0 ? (
+              <Empty
+                title={
+                  accounts.length === 0
+                    ? 'No accounts yet. Add one to start routing.'
+                    : 'No accounts match the filter.'
+                }
+              />
+            ) : (
+              <div className="usage-grid">
+                {filtered.map((row, index) => (
+                  <UsageCard
+                    key={row.account}
+                    row={row}
+                    index={index}
+                    loading={quotaLoading[row.account] === true}
+                    failed={quotaFailed[row.account]}
+                    pinned={pinIndex[row.provider] === row.account}
+                    canPin={providerById[row.provider]?.pool !== undefined}
+                    onPinToggle={() =>
+                      void setPin(row, pinIndex[row.provider] !== row.account)
+                    }
+                    confirmingDelete={confirmingDelete === row.account}
+                    deleteBusy={deleteTask.running || pinTask.running}
+                    deleteError={deleteTask.error}
+                    onDelete={() => setConfirmingDelete(row.account)}
+                    onCancelDelete={() => setConfirmingDelete(null)}
+                    onConfirmDelete={() => void removeAccount()}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </AsyncBoundary>
     </section>
   )
@@ -316,7 +450,10 @@ interface UsageCardProps {
   readonly row: UsageAccountView
   readonly index: number
   readonly loading: boolean
-  readonly failed: boolean
+  readonly failed: string | undefined
+  readonly pinned: boolean
+  readonly canPin: boolean
+  readonly onPinToggle: () => void
   readonly confirmingDelete: boolean
   readonly deleteBusy: boolean
   readonly deleteError: Error | null
@@ -330,6 +467,9 @@ function UsageCard({
   index,
   loading,
   failed,
+  pinned,
+  canPin,
+  onPinToggle,
   confirmingDelete,
   deleteBusy,
   deleteError,
@@ -337,27 +477,36 @@ function UsageCard({
   onCancelDelete,
   onConfirmDelete,
 }: UsageCardProps): JSX.Element {
+
   const windows = quotaWindows(row.quota)
   return (
     <article
       className="panel card usage-card"
       style={{ '--i': index + 1 } as CSSProperties}
     >
-      <div>
-        <div className="usage-card-top">
-          <div className="usage-card-name">
-            <span
-              className={`dot dot-${dotTone(row.state)}`}
-              aria-hidden="true"
-            />
-            <span title={row.account}>{accountLabel(row)}</span>
-          </div>
+      <div className="usage-card-top">
+        <div className="usage-card-name">
+          <span
+            className={`dot dot-${dotTone(row.state)}`}
+            aria-hidden="true"
+          />
+          <span title={row.account}>{accountLabel(row)}</span>
+        </div>
+        <span className="usage-card-badges">
           <span className={`badge badge--${badgeTone(row.state)}`}>
             {stateLabel(row.state)}
           </span>
-        </div>
-        <div className="usage-card-prov">{row.provider}</div>
+          {pinned ? (
+            <span
+              className="badge badge--ok"
+              title="Only this account is used for its provider while pinned."
+            >
+              Pinned
+            </span>
+          ) : null}
+        </span>
       </div>
+      <div className="usage-card-prov">{row.provider}</div>
       {loading ? (
         <div className="usage-windows" aria-label="Loading quota">
           <div className="usage-window">
@@ -392,11 +541,23 @@ function UsageCard({
             onConfirm={onConfirmDelete}
           />
         ) : (
-          <Button tone="danger" size="sm" onClick={onDelete}>
-            Remove
-          </Button>
+          <>
+            {canPin ? (
+              <Button tone="ghost" size="sm" onClick={onPinToggle}>
+                {pinned ? 'Use all accounts' : 'Use only this'}
+              </Button>
+            ) : null}
+            <Button tone="danger" size="sm" onClick={onDelete}>
+              Remove
+            </Button>
+          </>
         )}
       </div>
+      {deleteError !== null && !confirmingDelete ? (
+        <div className="alert" role="alert">
+          <span>{describeError(deleteError)}</span>
+        </div>
+      ) : null}
       {deleteError !== null && confirmingDelete ? (
         <div className="alert" role="alert">
           <span>{describeError(deleteError)}</span>
@@ -417,8 +578,11 @@ function UsageWindowBar({
       <span className="usage-window-val">{leftPercent(window)}%</span>
       <span className="bar">
         <span
-          className={`bar-fill ${fillClass(window)}`.trim()}
-          style={{ '--w': leftRatio(window) } as CSSProperties}
+          className="bar-fill"
+          style={{
+            '--w': leftRatio(window),
+            background: windowGradient(window),
+          } as CSSProperties}
         />
       </span>
       <span className="usage-window-reset">

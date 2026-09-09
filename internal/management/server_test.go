@@ -116,7 +116,8 @@ func (c *fakeCatalog) Models(ctx context.Context) ([]provider.Model, error) {
 }
 
 type fakeQuotaSource struct {
-	snapshots map[account.AccountID]quota.Snapshot
+	snapshots  map[account.AccountID]quota.Snapshot
+	refreshErr error
 }
 
 func (q *fakeQuotaSource) Quota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
@@ -125,6 +126,13 @@ func (q *fakeQuotaSource) Quota(ctx context.Context, id account.AccountID) (quot
 		return quota.Snapshot{}, account.ErrNotFound
 	}
 	return s, nil
+}
+
+func (q *fakeQuotaSource) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
+	if q.refreshErr != nil {
+		return quota.Snapshot{}, q.refreshErr
+	}
+	return q.Quota(ctx, id)
 }
 
 type fakeAuth struct {
@@ -454,6 +462,22 @@ func TestAccountQuotaFromSource(t *testing.T) {
 	}
 	missing := env.do(t, http.MethodGet, "/api/v1/accounts/ghost/quota", "")
 	assertErrorBody(t, missing, http.StatusNotFound, "not_found")
+}
+
+func TestAccountQuotaRefresh(t *testing.T) {
+	env := newEnv(t)
+	rec := env.do(t, http.MethodPost, "/api/v1/accounts/a1/quota/refresh", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeBody[QuotaResponse](t, rec)
+	if got.Account != "a1" || got.Quota.Used != 42 || got.Quota.Source != "endpoint" {
+		t.Fatalf("quota mismatch: %+v", got)
+	}
+	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/accounts/ghost/quota/refresh", ""), http.StatusNotFound, "not_found")
+	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/accounts/a1/quota/refresh", ""), http.StatusMethodNotAllowed, "method_not_allowed")
+	env.srv.quota = &fakeQuotaSource{refreshErr: errors.New("upstream unavailable")}
+	assertErrorBody(t, env.do(t, http.MethodPost, "/api/v1/accounts/a1/quota/refresh", ""), http.StatusBadGateway, "quota_refresh_failed")
 }
 
 func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
