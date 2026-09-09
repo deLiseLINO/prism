@@ -283,6 +283,14 @@ func (t *quotaTable) record(id account.AccountID, s quota.Snapshot, warnings []s
 // quota endpoint when the stored one is stale. A failed probe never lies:
 // the caller sees the last known snapshot, or an honest unknown one.
 func (t *quotaTable) Quota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
+	return t.quota(ctx, id, false)
+}
+
+func (t *quotaTable) RefreshQuota(ctx context.Context, id account.AccountID) (quota.Snapshot, error) {
+	return t.quota(ctx, id, true)
+}
+
+func (t *quotaTable) quota(ctx context.Context, id account.AccountID, force bool) (quota.Snapshot, error) {
 	var stored quota.Snapshot
 	var provider account.ProviderID
 	var credGen account.CredentialGeneration
@@ -296,13 +304,18 @@ func (t *quotaTable) Quota(ctx context.Context, id account.AccountID) (quota.Sna
 	if !found {
 		return quota.Snapshot{}, account.ErrNotFound
 	}
-	if !t.probeDue(id) {
+	if !t.probeDue(id, force) {
 		return stored, nil
 	}
-	if snap, ok := t.probe(ctx, id, provider, credGen); ok {
-		stored = snap
+	snap, err := t.probe(ctx, id, provider, credGen)
+	if err != nil {
+		log.Printf("prismd: quota probe %s: %v", id, err)
+		if force {
+			return quota.Snapshot{}, err
+		}
+		return stored, nil
 	}
-	return stored, nil
+	return snap, nil
 }
 
 func governingWindowSnapshot(windows []quota.Window) quota.Snapshot {
@@ -334,68 +347,67 @@ func usedWindowPercent(w *quota.Window) float64 {
 	return float64(w.Used) / limit * 100
 }
 
-func (t *quotaTable) probeDue(id account.AccountID) bool {
+func (t *quotaTable) probeDue(id account.AccountID, force bool) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if last, ok := t.lastProbe[id]; ok && time.Since(last) < quotaProbeTTL {
+	if last, ok := t.lastProbe[id]; !force && ok && time.Since(last) < quotaProbeTTL {
 		return false
 	}
 	t.lastProbe[id] = time.Now()
 	return true
 }
 
-func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider account.ProviderID, credGen account.CredentialGeneration) (quota.Snapshot, bool) {
+func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider account.ProviderID, credGen account.CredentialGeneration) (quota.Snapshot, error) {
 	if t.cfg == nil || t.client == nil || t.refresher == nil {
-		return quota.Snapshot{}, false
+		return quota.Snapshot{}, fmt.Errorf("quota provider is not configured")
 	}
 	p, ok := t.cfg.Get().Config.Providers[string(provider)]
 	if !ok {
-		return quota.Snapshot{}, false
+		return quota.Snapshot{}, fmt.Errorf("quota provider %s not found", provider)
+	}
+	if p.Wire != config.WireCodex && p.Wire != config.WireAntigravity {
+		return quota.Snapshot{}, fmt.Errorf("provider %s does not support quota refresh", provider)
 	}
 	lease := account.Lease{Provider: provider, Account: id, CredGen: credGen}
 	cred, err := t.refresher.Credential(ctx, lease)
 	if err != nil {
-		log.Printf("prismd: quota probe %s: credential: %v", id, err)
-		return quota.Snapshot{}, false
+		return quota.Snapshot{}, fmt.Errorf("credential: %w", err)
 	}
+	var snap quota.Snapshot
 	switch p.Wire {
 	case config.WireCodex:
 		result, err := codex.FetchUsage(ctx, t.client, codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID})
 		if err != nil {
-			log.Printf("prismd: quota probe %s: %v", id, err)
-			return quota.Snapshot{}, false
+			return quota.Snapshot{}, err
 		}
 		if !result.OK {
-			return quota.Snapshot{}, false
+			return quota.Snapshot{}, fmt.Errorf("provider %s returned no quota", provider)
 		}
-		_ = t.pool.UpdateQuota(id, result.Snapshot)
-		return result.Snapshot, true
+		snap = result.Snapshot
 	case config.WireAntigravity:
 		credPair := antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID}
 		summary, err := antigravity.FetchQuotaSummary(ctx, t.client, p.BaseURL, credPair)
 		if err != nil {
-			log.Printf("prismd: quota probe %s: %v", id, err)
-			return quota.Snapshot{}, false
+			return quota.Snapshot{}, err
 		}
 		if summaryWindows := summary.Windows(); len(summaryWindows) > 0 {
-			snap := governingWindowSnapshot(summaryWindows)
-			_ = t.pool.UpdateQuota(id, snap)
-			return snap, true
+			snap = governingWindowSnapshot(summaryWindows)
+		} else {
+			windows, err := antigravity.FetchQuota(ctx, t.client, p.BaseURL, credPair)
+			if err != nil {
+				return quota.Snapshot{}, err
+			}
+			snap, ok = windows.DetailedSnapshot()
+			if !ok {
+				return quota.Snapshot{}, fmt.Errorf("provider %s returned no quota", provider)
+			}
+			snap.Windows = windows.QuotaWindows()
 		}
-		windows, err := antigravity.FetchQuota(ctx, t.client, p.BaseURL, credPair)
-		if err != nil {
-			log.Printf("prismd: quota probe %s: %v", id, err)
-			return quota.Snapshot{}, false
-		}
-		snap, ok := windows.DetailedSnapshot()
-		if !ok {
-			return quota.Snapshot{}, false
-		}
-		snap.Windows = windows.QuotaWindows()
-		_ = t.pool.UpdateQuota(id, snap)
-		return snap, true
 	}
-	return quota.Snapshot{}, false
+	if err := t.pool.UpdateQuota(id, snap); err != nil {
+		return quota.Snapshot{}, err
+	}
+	return snap, nil
 }
 
 func loadOrCreateSecret(path string) ([]byte, error) {

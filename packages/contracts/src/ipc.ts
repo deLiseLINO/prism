@@ -8,6 +8,7 @@ export const IpcChannel = {
   integrationRollback: 'prism:integration-rollback',
   integrationStatus: 'prism:integration-status',
   shellOpenExternal: 'prism:shell-open-external',
+  clipboardWrite: 'prism:clipboard-write',
   windowSetTheme: 'prism:window-set-theme',
 } as const
 

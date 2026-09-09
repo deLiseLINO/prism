@@ -114,6 +114,9 @@ export const api = {
   quota(id: string): Promise<QuotaResponse> {
     return call('GET', `/api/v1/accounts/${encodeURIComponent(id)}/quota`)
   },
+  refreshQuota(id: string): Promise<QuotaResponse> {
+    return call('POST', `/api/v1/accounts/${encodeURIComponent(id)}/quota/refresh`)
+  },
   usage(): Promise<UsageView> {
     return call('GET', '/api/v1/usage')
   },
