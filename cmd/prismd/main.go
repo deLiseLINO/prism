@@ -34,7 +34,6 @@ import (
 	"prism/internal/providers/antigravity"
 	"prism/internal/providers/codex"
 	"prism/internal/quota"
-	"prism/internal/requestlog"
 	"prism/internal/server"
 	"prism/internal/store"
 )
@@ -554,11 +553,9 @@ func run(opts options) error {
 		return err
 	}
 	planner := server.NewConfigPlanner(cfg)
-	rlog := requestlog.New(500, time.Now)
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, client: client})
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
-	mgmt.SetRequestLog(rlog)
-	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, RequestLog: rlog}).Handler()
+	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)
 	errCh := make(chan error, 1)
