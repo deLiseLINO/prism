@@ -285,8 +285,53 @@ func TestCodexApplyRefusesExternalModelProvider(t *testing.T) {
 	if outcome.Kind != OutcomeRefused || !contains(outcome.Reason, "cursorapi") {
 		t.Fatalf("external provider apply: %+v", outcome)
 	}
+	if !outcome.Retryable {
+		t.Fatalf("external provider refusal must be retryable: %+v", outcome)
+	}
 	if got := readFile(t, configPath); got != seed {
 		t.Fatalf("refused apply touched the file:\n%s", got)
+	}
+}
+
+func TestCodexForcedApplySwitchesExternalProviderAndRollbackRestores(t *testing.T) {
+	dir := t.TempDir()
+	seed := "# user configuration\nmodel_provider = \"cursorapi\"\n\n[features]\nfast_mode = false\n"
+	configPath := tempFile(t, dir, "config.toml", seed)
+	c := NewCodex(CodexOptions{ConfigPath: configPath, Port: testPort})
+	if result := c.Apply(); result.OK || !result.Retryable {
+		t.Fatalf("plain apply must refuse retryable: %+v", result)
+	}
+	if result := c.ApplyForced(); !result.OK {
+		t.Fatalf("forced apply: %+v", result)
+	}
+	if got := readFile(t, configPath); !contains(got, "model_provider = \"prism\"") || contains(got, "cursorapi\"") && !contains(got, "# displaced:") {
+		t.Fatalf("forced apply must switch the provider and journal the displaced line:\n%s", got)
+	}
+	if result := c.Rollback(); !result.OK {
+		t.Fatalf("rollback: %+v", result)
+	}
+	if got := readFile(t, configPath); got != seed {
+		t.Fatalf("rollback did not restore the provider selection verbatim:\n%q", got)
+	}
+}
+
+func TestCodexForcedApplyDisplacesUserOwnedRoutingAndCatalog(t *testing.T) {
+	dir := t.TempDir()
+	seed := "# user configuration\nopenai_base_url = \"http://127.0.0.1:9999/v1\"\nmodel_catalog_json = \"/other/catalog.json\"\n\n[features]\nfast_mode = false\n"
+	configPath := tempFile(t, dir, "config.toml", seed)
+	c := NewCodex(CodexOptions{ConfigPath: configPath, Port: testPort, Models: DefaultPrismModels})
+	if result := c.ApplyForced(); !result.OK {
+		t.Fatalf("forced apply: %+v", result)
+	}
+	got := readFile(t, configPath)
+	if !contains(got, `openai_base_url = "http://127.0.0.1:8787/v1"`) || !contains(got, "# displaced:") {
+		t.Fatalf("forced apply must displace the user-owned pairs:\n%s", got)
+	}
+	if result := c.Rollback(); !result.OK {
+		t.Fatalf("rollback: %+v", result)
+	}
+	if got := readFile(t, configPath); got != seed {
+		t.Fatalf("rollback did not restore user pairs verbatim:\n%q", got)
 	}
 }
 

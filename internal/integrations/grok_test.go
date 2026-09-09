@@ -233,11 +233,38 @@ func TestGrokCollisionRefusal(t *testing.T) {
 	if outcome.Kind != OutcomeRefused || !contains(outcome.Reason, "collides with a user-owned model table") {
 		t.Fatalf("collision apply: %+v", outcome)
 	}
+	if !outcome.Retryable {
+		t.Fatalf("collision refusal must be retryable: %+v", outcome)
+	}
 	if got := readFile(t, configPath); got != userToml+"\n"+userTable {
 		t.Fatal("collision apply wrote bytes")
 	}
 	if contains(readFile(t, configPath), GrokFence.Begin) {
 		t.Fatal("fence present after refusal")
+	}
+}
+
+func TestGrokForcedApplyRenamesCollisionAndRollbackRestores(t *testing.T) {
+	dir := t.TempDir()
+	userTable := "[model.prism-gpt-5-2-codex]\nmodel = \"gpt-5.2-codex\"\n"
+	seed := userToml + "\n" + userTable
+	configPath := tempFile(t, dir, "config.toml", seed)
+	g := NewGrok(GrokOptions{ConfigPath: configPath, Port: testPort, Models: grokTestModels})
+	if result := g.Apply(); result.OK || !result.Retryable {
+		t.Fatalf("plain apply must refuse retryable: %+v", result)
+	}
+	if result := g.ApplyForced(); !result.OK {
+		t.Fatalf("forced apply: %+v", result)
+	}
+	got := readFile(t, configPath)
+	if !contains(got, "[model.prism-gpt-5-2-codex-user]") || !contains(got, "[model.prism-gpt-5-2-codex]") {
+		t.Fatalf("forced apply must keep the renamed user table and the managed table:\n%s", got)
+	}
+	if result := g.Rollback(); !result.OK {
+		t.Fatalf("rollback: %+v", result)
+	}
+	if got := readFile(t, configPath); got != seed {
+		t.Fatalf("rollback did not restore the user table verbatim:\nGOT:\n%q\nWANT:\n%q", got, seed)
 	}
 }
 

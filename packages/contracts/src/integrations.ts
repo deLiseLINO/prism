@@ -2,11 +2,12 @@ export type IntegrationId = 'codex' | 'grok' | 'omp' | 'claude' | 'pi' | 'openco
 
 export interface IntegrationRequest {
   readonly id: IntegrationId
+  readonly force?: boolean
 }
 
 export type IntegrationApplyResult =
   | { readonly ok: true; readonly id: IntegrationId }
-  | { readonly ok: false; readonly id: IntegrationId; readonly reason: string }
+  | { readonly ok: false; readonly id: IntegrationId; readonly reason: string; readonly retryable?: boolean }
 
 export interface IntegrationStatus {
   readonly id: IntegrationId

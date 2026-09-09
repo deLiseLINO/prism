@@ -7,11 +7,14 @@ import (
 )
 
 // ConfigTransform is one pass over a config file body: either the next bytes
-// and whether they changed, or a named refusal (fail-closed).
+// and whether they changed, or a named refusal (fail-closed). A refusal with
+// Retryable set is a conflict with user-owned bytes that a confirmed
+// (forced) apply may take over; structural refusals stay final.
 type ConfigTransform struct {
-	Next    string
-	Changed bool
-	Refused string
+	Next      string
+	Changed   bool
+	Refused   string
+	Retryable bool
 }
 
 func nextTransform(next string, changed bool) ConfigTransform {
@@ -22,6 +25,10 @@ func refusedTransform(reason string) ConfigTransform {
 	return ConfigTransform{Refused: reason}
 }
 
+func forceableTransform(reason string) ConfigTransform {
+	return ConfigTransform{Refused: reason, Retryable: true}
+}
+
 const (
 	OutcomeWritten   = "written"
 	OutcomeUnchanged = "unchanged"
@@ -30,8 +37,9 @@ const (
 )
 
 type WriteOutcome struct {
-	Kind   string
-	Reason string
+	Kind      string
+	Reason    string
+	Retryable bool
 }
 
 // ApplyConfigTransform is one apply pass over a config file: read, normalize
@@ -44,7 +52,7 @@ func ApplyConfigTransform(path string, transform func(currentLf string) ConfigTr
 	eol := DominantEol(raw)
 	result := transform(ApplyEol(raw, EolLF))
 	if result.Refused != "" {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: result.Refused}, nil
+		return WriteOutcome{Kind: OutcomeRefused, Reason: result.Refused, Retryable: result.Retryable}, nil
 	}
 	if !result.Changed {
 		return WriteOutcome{Kind: OutcomeUnchanged}, nil
@@ -108,7 +116,7 @@ func ToRollbackResult(id ID, outcome WriteOutcome) ApplyResult {
 
 func ToApplyResult(id ID, outcome WriteOutcome) ApplyResult {
 	if outcome.Kind == OutcomeRefused {
-		return ApplyResult{OK: false, ID: id, Reason: outcome.Reason}
+		return ApplyResult{OK: false, ID: id, Reason: outcome.Reason, Retryable: outcome.Retryable}
 	}
 	if outcome.Kind == OutcomeCrashed {
 		return ApplyResult{OK: false, ID: id, Reason: "prism: config write staged but not committed (crash simulation); recovery discards it"}

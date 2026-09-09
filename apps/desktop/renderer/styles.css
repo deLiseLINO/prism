@@ -701,7 +701,10 @@ body::before {
 @media (max-width: 1120px) {
   .daemon-grid { grid-template-columns: 1fr; gap: 16px; }
   .urls { grid-template-columns: 1fr; }
-  .int-row { grid-template-columns: 110px 110px minmax(0, 1fr); grid-template-rows: auto auto; }
+  .int-row { grid-template-columns: 108px 96px minmax(0, 1fr) auto; gap: 10px; padding: 9px 12px; }
+}
+@media (max-width: 760px) {
+  .int-row { grid-template-columns: 108px 96px minmax(0, 1fr); grid-template-rows: auto auto; }
   .int-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
 @media (max-width: 1040px) {

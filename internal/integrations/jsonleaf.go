@@ -8,12 +8,15 @@ import (
 )
 
 // JSONPatch mirrors YamlLeafPatch: the next bytes and whether they changed, or
-// a named refusal (fail-closed).
+// a named refusal (fail-closed). A refusal with Retryable set is a conflict
+// with user-owned bytes that a confirmed (forced) apply may take over;
+// structural refusals stay final.
 type JSONPatch struct {
-	Kind    string
-	Next    string
-	Changed bool
-	Reason  string
+	Kind      string
+	Next      string
+	Changed   bool
+	Reason    string
+	Retryable bool
 }
 
 // JSONScalarEntry is one `"key": "value"` member prism owns inside a container.
@@ -256,6 +259,10 @@ func jsonPatchWritten(lines []sourceLine, changed bool) JSONPatch {
 
 func jsonPatchRefused(reason string) JSONPatch {
 	return JSONPatch{Kind: "refused", Reason: reason}
+}
+
+func jsonPatchForceable(reason string) JSONPatch {
+	return JSONPatch{Kind: "refused", Reason: reason, Retryable: true}
 }
 
 // UpsertJSONBlockLeaf patches one `container.leaf` object member into a
@@ -504,6 +511,13 @@ func jsonEndpointRe(key string) *regexp.Regexp {
 // canonical value is present they are user-owned and the patch refuses before
 // any write.
 func UpsertJSONScalarKeys(text, containerKey, fileLabel string, entries []JSONScalarEntry) JSONPatch {
+	return UpsertJSONScalarKeysForced(text, containerKey, fileLabel, entries, false)
+}
+
+// UpsertJSONScalarKeysForced takes over user-owned scalar keys after an
+// explicit confirmation: the displaced key lines are journaled in the fence
+// comment of the sibling leaf so rollback restores them verbatim.
+func UpsertJSONScalarKeysForced(text, containerKey, fileLabel string, entries []JSONScalarEntry, force bool) JSONPatch {
 	doc, refused := scanJSONDocument(text, fileLabel)
 	if refused != "" {
 		return jsonPatchRefused(refused)
@@ -541,7 +555,9 @@ func UpsertJSONScalarKeys(text, containerKey, fileLabel string, entries []JSONSc
 		}
 	}
 	if len(userOwned) > 0 && !prismOwned {
-		return jsonPatchRefused("prism: " + fileLabel + " patch refused — " + strings.Join(userOwned, ", ") + " under \"" + containerKey + "\" is user-owned; remove or rename it before applying")
+		if !force {
+			return jsonPatchForceable("prism: " + fileLabel + " patch refused — " + strings.Join(userOwned, ", ") + " under \"" + containerKey + "\" is user-owned; remove or rename it before applying")
+		}
 	}
 	lines := doc.lines
 	changed := false

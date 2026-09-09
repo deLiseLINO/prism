@@ -78,12 +78,15 @@ func claudeEnvKeyNames() []string {
 	return keys
 }
 
-func claudeTransform(port int, models []Model) func(current string) ConfigTransform {
+func claudeTransform(port int, models []Model, force bool) func(current string) ConfigTransform {
 	entries := ClaudeEnvEntries(port, models)
 	return func(current string) ConfigTransform {
-		result := UpsertJSONScalarKeys(current, "env", "settings.json", entries)
+		result := UpsertJSONScalarKeysForced(current, "env", "settings.json", entries, force)
 		if result.Kind == "written" {
 			return nextTransform(result.Next, result.Changed)
+		}
+		if result.Retryable {
+			return forceableTransform(result.Reason)
 		}
 		return refusedTransform(result.Reason)
 	}
@@ -166,16 +169,89 @@ func NewClaude(options ClaudeOptions) *ClaudeIntegration {
 
 func (c *ClaudeIntegration) ID() ID { return c.id }
 
+// claudeEnvJournalHeader journals the user-owned env values displaced by a
+// confirmed claude apply, so rollback restores them verbatim.
+const claudeEnvJournalHeader = "prism-env"
+
+// claudeEnvJournalPath is the sibling file holding the displaced env values.
+func (c *ClaudeIntegration) envJournalPath() string {
+	return filepath.Join(filepath.Dir(c.paths()), ".prism-claude-env.json")
+}
+
+// cacheJournalPath is the sibling file holding a displaced foreign gateway
+// cache, restored verbatim by rollback.
+func (c *ClaudeIntegration) cacheJournalPath() string {
+	return filepath.Join(filepath.Dir(c.cachePath()), ".prism-gateway-models.json")
+}
+
 func (c *ClaudeIntegration) Apply() ApplyResult {
-	cacheErr := c.seedGatewayCache()
+	return c.applyWith(false)
+}
+
+func (c *ClaudeIntegration) ApplyForced() ApplyResult {
+	return c.applyWith(true)
+}
+
+func (c *ClaudeIntegration) applyWith(force bool) ApplyResult {
+	cacheErr := c.seedGatewayCacheForced(force)
 	if cacheErr != nil {
-		return ToApplyResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", cacheErr)})
+		return ToApplyResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", cacheErr), Retryable: !force && isForeignCacheError(cacheErr)})
 	}
-	outcome, err := ApplyConfigTransform(c.paths(), claudeTransform(c.port, c.currentModels()), false)
+	displaced := map[string]string{}
+	outcome, err := ApplyConfigTransform(c.paths(), claudeTransformForced(c.port, c.currentModels(), force, displaced), false)
 	if err != nil {
 		return ToApplyResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", err)})
 	}
+	if outcome.Kind == OutcomeWritten && len(displaced) > 0 {
+		_ = AtomicWrite(c.envJournalPath(), renderClaudeEnvJournal(displaced))
+	}
 	return ToApplyResult(c.id, outcome)
+}
+
+func claudeTransformForced(port int, models []Model, force bool, displaced map[string]string) func(current string) ConfigTransform {
+	entries := ClaudeEnvEntries(port, models)
+	return func(current string) ConfigTransform {
+		result := UpsertJSONScalarKeysForced(current, "env", "settings.json", entries, force)
+		if result.Kind == "written" {
+			if force {
+				collectDisplacedEnv(current, entries, result.Next, displaced)
+			}
+			return nextTransform(result.Next, result.Changed)
+		}
+		if result.Retryable {
+			return forceableTransform(result.Reason)
+		}
+		return refusedTransform(result.Reason)
+	}
+}
+
+func collectDisplacedEnv(before string, entries []JSONScalarEntry, after string, displaced map[string]string) {
+	for _, entry := range entries {
+		read := ReadJSONScalarKeys(before, "env", entry.Key, "settings.json", []string{entry.Key})
+		if read.Kind != jsonLeafPresent || read.Endpoint == nil || *read.Endpoint == entry.Value {
+			continue
+		}
+		_ = after
+		displaced[entry.Key] = *read.Endpoint
+	}
+}
+
+func renderClaudeEnvJournal(displaced map[string]string) string {
+	keys := make([]string, 0, len(displaced))
+	for key := range displaced {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	lines := []string{"{"}
+	for i, key := range keys {
+		comma := ","
+		if i == len(keys)-1 {
+			comma = ""
+		}
+		lines = append(lines, "  "+jsonString(key)+": "+jsonString(displaced[key])+comma)
+	}
+	lines = append(lines, "}")
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func (c *ClaudeIntegration) Status() Status {
@@ -189,12 +265,55 @@ func (c *ClaudeIntegration) Status() Status {
 }
 
 func (c *ClaudeIntegration) Rollback() ApplyResult {
-	outcome, err := ApplyConfigTransform(c.paths(), claudeRollbackTransform(), false)
+	outcome, err := ApplyConfigTransform(c.paths(), claudeRollbackTransformForced(c.envJournalPath()), false)
 	if err != nil {
 		return ToRollbackResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude rollback", err)})
 	}
 	c.removeGatewayCache()
+	_ = os.Remove(c.envJournalPath())
+	_ = os.Remove(c.cacheJournalPath())
 	return ToRollbackResult(c.id, outcome)
+}
+
+func claudeRollbackTransformForced(journalPath string) func(current string) ConfigTransform {
+	keys := claudeEnvKeyNames()
+	displaced := readClaudeEnvJournal(journalPath)
+	return func(current string) ConfigTransform {
+		result := RemoveJSONScalarKeys(current, "env", "settings.json", keys)
+		if result.Kind != "written" {
+			return refusedTransform(result.Reason)
+		}
+		if len(displaced) > 0 {
+			restored := restoreDisplacedEnv(result.Next, displaced)
+			return nextTransform(restored, true)
+		}
+		return nextTransform(result.Next, result.Changed)
+	}
+}
+
+func readClaudeEnvJournal(path string) map[string]string {
+	raw, ok := ReadTextIfExists(path)
+	if !ok {
+		return nil
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil || len(decoded) == 0 {
+		return nil
+	}
+	return decoded
+}
+
+func restoreDisplacedEnv(content string, displaced map[string]string) string {
+	entries := make([]JSONScalarEntry, 0, len(displaced))
+	for key, value := range displaced {
+		entries = append(entries, JSONScalarEntry{Key: key, Value: value})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
+	result := UpsertJSONScalarKeys(content, "env", "settings.json", entries)
+	if result.Kind == "written" {
+		return result.Next
+	}
+	return content
 }
 
 // seedGatewayCache writes Claude Code's gateway model discovery cache when it
@@ -203,7 +322,16 @@ func (c *ClaudeIntegration) Rollback() ApplyResult {
 // another endpoint is a named refusal; one already pointing here is left
 // alone so the CLI's own refreshes survive re-applies.
 func (c *ClaudeIntegration) seedGatewayCache() error {
+	return c.seedGatewayCacheForced(false)
+}
+
+func isForeignCacheError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "belongs to endpoint")
+}
+
+func (c *ClaudeIntegration) seedGatewayCacheForced(force bool) error {
 	path := c.cachePath()
+	displacedPath := c.cacheJournalPath()
 	raw, exists := ReadTextIfExists(path)
 	if exists {
 		var current struct {
@@ -216,7 +344,12 @@ func (c *ClaudeIntegration) seedGatewayCache() error {
 		case current.BaseURL == ClaudeBaseURL(c.port):
 			return nil
 		case current.BaseURL != "":
-			return fmt.Errorf("gateway cache %s belongs to endpoint %s", path, current.BaseURL)
+			if !force {
+				return fmt.Errorf("gateway cache %s belongs to endpoint %s", path, current.BaseURL)
+			}
+			if err := AtomicWrite(displacedPath, raw); err != nil {
+				return fmt.Errorf("gateway cache %s belongs to endpoint %s (journal write failed: %v)", path, current.BaseURL, err)
+			}
 		}
 	}
 	return AtomicWrite(path, RenderClaudeGatewayCache(ClaudeBaseURL(c.port), c.currentModels(), c.nowMS()))
@@ -226,6 +359,7 @@ func (c *ClaudeIntegration) removeGatewayCache() {
 	path := c.cachePath()
 	raw, exists := ReadTextIfExists(path)
 	if !exists {
+		_ = os.Remove(c.cacheJournalPath())
 		return
 	}
 	var current struct {
@@ -233,6 +367,10 @@ func (c *ClaudeIntegration) removeGatewayCache() {
 	}
 	if json.Unmarshal([]byte(raw), &current) == nil && current.BaseURL == ClaudeBaseURL(c.port) {
 		_ = os.Remove(path)
+		if journal, ok := ReadTextIfExists(c.cacheJournalPath()); ok {
+			_ = AtomicWrite(path, journal)
+		}
+		_ = os.Remove(c.cacheJournalPath())
 	}
 }
 

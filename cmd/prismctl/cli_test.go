@@ -449,6 +449,7 @@ func TestParseFailsBeforeNetwork(t *testing.T) {
 		{"providers", "add", "x"},
 		{"combos", "set", "x"},
 		{"integrations", "apply", "not-a-client"},
+		{"integrations", "rollback", "codex", "--force"},
 		{"status", "extra-arg"},
 		{"routes", "set", "only-key"},
 	} {
@@ -894,6 +895,35 @@ func TestIntegrationApplyRollbackRoundTripThroughCLI(t *testing.T) {
 		t.Fatalf("status after apply: %q", env.stdout.String())
 	}
 	code, _, errOut = env.runCLI(t, "integrations", "rollback", "codex")
+	if code != exitOK {
+		t.Fatalf("rollback code=%d stderr=%s", code, errOut)
+	}
+}
+
+func TestIntegrationApplyForceTakeoverThroughCLI(t *testing.T) {
+	env := newDaemonEnv(t, func(e *daemonEnv) {
+		registerSandboxIntegrations(t, e)
+	})
+	grokPath := filepath.Join(env.sandboxDir, "grok", "config.toml")
+	userTable := "[model.prism-codex-main-gpt-5-2-codex]\nmodel = \"codex-main/gpt-5.2-codex\"\n"
+	if err := os.MkdirAll(filepath.Dir(grokPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(grokPath, []byte("# user configuration\ntop_setting = \"keep\"\n\n"+userTable), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := env.runCLI(t, "integrations", "apply", "grok")
+	if code != exitRefused {
+		t.Fatalf("plain apply code=%d want %d stderr=%s", code, exitRefused, errOut)
+	}
+	if !strings.Contains(errOut, "--force") {
+		t.Fatalf("retryable refusal must name --force: %q", errOut)
+	}
+	code, _, errOut = env.runCLI(t, "integrations", "apply", "grok", "--force")
+	if code != exitOK {
+		t.Fatalf("forced apply code=%d stderr=%s", code, errOut)
+	}
+	code, _, errOut = env.runCLI(t, "integrations", "rollback", "grok")
 	if code != exitOK {
 		t.Fatalf("rollback code=%d stderr=%s", code, errOut)
 	}

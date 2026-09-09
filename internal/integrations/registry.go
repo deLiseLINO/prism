@@ -11,6 +11,14 @@ type Module interface {
 	Rollback() ApplyResult
 }
 
+// ForcedModule is implemented by modules whose user-owned conflicts can be
+// taken over after an explicit confirmation: fail-closed by default, the
+// displaced bytes are journaled and restored by rollback.
+type ForcedModule interface {
+	Module
+	ApplyForced() ApplyResult
+}
+
 type Registry struct {
 	mu      sync.Mutex
 	modules map[ID]Module
@@ -42,11 +50,20 @@ func (r *Registry) unregistered(id ID) ApplyResult {
 // for the same client take the registry lock for the whole staged write, so
 // the sibling stage file never has two writers.
 func (r *Registry) Apply(id ID) ApplyResult {
+	return r.ApplyForced(id, false)
+}
+
+func (r *Registry) ApplyForced(id ID, force bool) ApplyResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	module, ok := r.modules[id]
 	if !ok {
 		return r.unregistered(id)
+	}
+	if force {
+		if forced, ok := module.(ForcedModule); ok {
+			return forced.ApplyForced()
+		}
 	}
 	return module.Apply()
 }

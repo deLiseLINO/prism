@@ -3,7 +3,7 @@ import type { ManagementCall, ManagementMethod, ManagementReply } from '@prism/c
 const MANAGEMENT_METHODS: readonly ManagementMethod[] = ['GET', 'POST', 'PUT', 'DELETE']
 const MANAGEMENT_PATH_PREFIX = '/api/v1/'
 const MANAGEMENT_PATH_SEGMENT = /^[A-Za-z0-9_{}.%+-]+$/
-const MANAGEMENT_QUERY_KEYS = new Set(['expectedGeneration', 'session'])
+const MANAGEMENT_QUERY_KEYS = new Set(['expectedGeneration', 'session', 'force'])
 const MANAGEMENT_TIMEOUT_MS = 10_000
 
 export class ManagementProxy {

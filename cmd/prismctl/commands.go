@@ -837,7 +837,7 @@ func (c *command) runIntegrationsAction(ctx context.Context, rt *cliRuntime, p p
 	var res integrationsApplyJSON
 	var err error
 	if action == "apply" {
-		res, err = rt.client.integrationApply(ctx, c.clientID)
+		res, err = rt.client.integrationApply(ctx, c.clientID, c.force)
 	} else {
 		res, err = rt.client.integrationRollback(ctx, c.clientID)
 	}
@@ -845,9 +845,13 @@ func (c *command) runIntegrationsAction(ctx context.Context, rt *cliRuntime, p p
 		return err
 	}
 	if !res.OK {
-		// Refusal reason surfaces verbatim; typed exit code.
+		// Refusal reason surfaces verbatim; typed exit code. A retryable
+		// conflict names the confirmed re-run so scripts can branch on it.
 		if perr := p.integrationApply(res, action); perr != nil {
 			return perr
+		}
+		if action == "apply" && res.Retryable && !c.force {
+			return exitErr(exitRefused, "%s refused: %s (re-run with --force to take over after confirmation)", action, res.Reason)
 		}
 		return exitErr(exitRefused, "%s refused: %s", action, res.Reason)
 	}

@@ -118,6 +118,41 @@ func TestIntegrationUnknownClient404(t *testing.T) {
 	}
 }
 
+func TestIntegrationApplyForceQueryTakeover(t *testing.T) {
+	dir := t.TempDir()
+	ts, registry := integrationEnv(t)
+	registerSandbox(t, registry, dir)
+	grokPath := filepath.Join(dir, "grok", "config.toml")
+	userTable := "[model.prism-codex-main-gpt-5-2-codex]\nmodel = \"codex-main/gpt-5.2-codex\"\n"
+	writeFile(t, grokPath, "# user configuration\ntop_setting = \"keep\"\n\n"+userTable)
+
+	res, err := http.Post(ts.URL+"/api/v1/integrations/grok/apply", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plain integrations.ApplyResult
+	if err := json.NewDecoder(res.Body).Decode(&plain); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if plain.OK || !plain.Retryable {
+		t.Fatalf("plain apply must refuse retryable: %+v", plain)
+	}
+
+	res, err = http.Post(ts.URL+"/api/v1/integrations/grok/apply?force=true", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forced integrations.ApplyResult
+	if err := json.NewDecoder(res.Body).Decode(&forced); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if !forced.OK {
+		t.Fatalf("forced apply: %+v", forced)
+	}
+}
+
 func TestIntegrationApplyRollbackRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	ts, registry := integrationEnv(t)

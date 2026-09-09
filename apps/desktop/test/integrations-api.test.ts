@@ -18,8 +18,10 @@ function fakeProxy(reply: ManagementReply): ManagementProxy & { calls: Managemen
 describe('integration request parsing', () => {
   it('accepts only the three known ids and rejects everything else', () => {
     expect(parseIntegrationRequest({ id: 'grok' })).toEqual({ id: 'grok' })
+    expect(parseIntegrationRequest({ id: 'codex', force: true })).toEqual({ id: 'codex', force: true })
     expect(() => parseIntegrationRequest({ id: 'disable' })).toThrow('unknown integration id')
     expect(() => parseIntegrationRequest('codex')).toThrow('must be an object')
+    expect(() => parseIntegrationRequest({ id: 'codex', force: 'yes' })).toThrow('force must be a boolean')
   })
 })
 
@@ -38,6 +40,17 @@ describe('integration api over the management seam', () => {
     const api = new IntegrationApi(proxy)
     expect(await api.rollback({ id: 'grok' })).toEqual(refusal)
     expect(proxy.calls).toEqual([{ method: 'POST', path: '/api/v1/integrations/grok/rollback' }])
+  })
+
+  it('sends force as a query flag and keeps plain apply unflagged', async () => {
+    const proxy = fakeProxy({ ok: true, status: 200, body: { ok: true, id: 'claude' } })
+    const api = new IntegrationApi(proxy)
+    await api.apply({ id: 'claude', force: true })
+    await api.apply({ id: 'codex' })
+    expect(proxy.calls).toEqual([
+      { method: 'POST', path: '/api/v1/integrations/claude/apply?force=true' },
+      { method: 'POST', path: '/api/v1/integrations/codex/apply' },
+    ])
   })
 
   it('surfaces transport failures as failed results with the daemon reason', async () => {

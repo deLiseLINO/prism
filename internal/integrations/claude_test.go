@@ -89,6 +89,28 @@ func TestClaudeApplyRefusesUserOwnedEnv(t *testing.T) {
 	if !strings.Contains(result.Reason, "ANTHROPIC_BASE_URL") {
 		t.Fatalf("refusal does not name the key: %s", result.Reason)
 	}
+	if !result.Retryable {
+		t.Fatalf("user-owned refusal must be retryable: %+v", result)
+	}
+}
+
+func TestClaudeForcedApplyDisplacesEnvAndRollbackRestores(t *testing.T) {
+	dir := tempDir(t)
+	seed := "{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"https://my-gateway.example\"\n  }\n}\n"
+	path := tempFile(t, dir, "settings.json", seed)
+	integration := NewClaude(ClaudeOptions{Port: testPort, Models: DefaultPrismModels, ConfigPath: path})
+	if result := integration.ApplyForced(); !result.OK {
+		t.Fatalf("forced apply: %+v", result)
+	}
+	if got := readText(t, path); !strings.Contains(got, `"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"`) {
+		t.Fatalf("forced apply did not take over the env slot:\n%s", got)
+	}
+	if result := integration.Rollback(); !result.OK {
+		t.Fatalf("rollback: %+v", result)
+	}
+	if readText(t, path) != seed {
+		t.Fatalf("rollback did not restore the displaced env value:\nGOT:\n%s\nWANT:\n%s", readText(t, path), seed)
+	}
 }
 
 func TestClaudeStatusLifecycle(t *testing.T) {
@@ -126,7 +148,7 @@ func TestClaudeVerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "settings.json", "{\n  \"env\": {\n    \"CUSTOM_TOOL\": \"keep\"\n  }\n}\n")
 	probe := JSONScalarKeysProbe(Claude, "env", "settings.json", "ANTHROPIC_BASE_URL", ClaudeBaseURL(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, claudeTransform(testPort, DefaultPrismModels), crash)
+			outcome, err := ApplyConfigTransform(path, claudeTransform(testPort, DefaultPrismModels, false), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", err)}
 			}
@@ -221,5 +243,36 @@ func TestClaudeApplyRefusesForeignGatewayCache(t *testing.T) {
 	}
 	if readText(t, filepath.Join(cacheDir, "gateway-models.json")) != foreign {
 		t.Fatal("refused apply must not touch the foreign cache")
+	}
+}
+
+func TestClaudeForcedApplyDisplacesForeignCacheAndRollbackRestores(t *testing.T) {
+	dir := tempDir(t)
+	path := tempFile(t, dir, "settings.json", "{\n  \"env\": {\n    \"CUSTOM_TOOL\": \"keep\"\n  }\n}\n")
+	cacheDir := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := `{"baseUrl":"https://other-gateway.example","fetchedAt":1,"models":[]}`
+	cachePath := filepath.Join(cacheDir, "gateway-models.json")
+	if err := os.WriteFile(cachePath, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	integration := NewClaude(ClaudeOptions{Port: testPort, Models: DefaultPrismModels, ConfigPath: path, NowMS: func() int64 { return 2 }})
+	result := integration.Apply()
+	if result.OK || !result.Retryable {
+		t.Fatalf("plain apply over a foreign cache must refuse retryable: %+v", result)
+	}
+	if result := integration.ApplyForced(); !result.OK {
+		t.Fatalf("forced apply: %+v", result)
+	}
+	if got := readText(t, cachePath); !strings.Contains(got, `"baseUrl":"http://127.0.0.1:8787"`) {
+		t.Fatalf("forced apply did not take over the cache:\n%s", got)
+	}
+	if result := integration.Rollback(); !result.OK {
+		t.Fatalf("rollback: %+v", result)
+	}
+	if readText(t, cachePath) != foreign {
+		t.Fatalf("rollback did not restore the foreign cache:\nGOT:\n%s\nWANT:\n%s", readText(t, cachePath), foreign)
 	}
 }
