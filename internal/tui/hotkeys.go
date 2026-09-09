@@ -86,7 +86,11 @@ func (m Model) handleProviderSelect(keyStr string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		provider := authProviders[m.ProviderCursor]
+		mode := m.ProviderSelectMode
 		m.resetProviderSelectState()
+		if mode == providerSelectModeSwitch {
+			return switchProvider(m, provider)
+		}
 		return m, StartAuthCmd(m.api, provider)
 	}
 	return m, nil
@@ -221,14 +225,16 @@ func (m Model) handlePinConfirm(keyStr string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		accountKey := account.ID
+		providerID := account.Provider
 		m.Loading = true
 		m.Err = nil
 		m.Notice = ""
 		m.ShowInfo = false
 		m.PinConfirm = false
-		return m, PinProviderAccountCmd(m.api, accountKey)
+		return m, PinProviderAccountCmd(m.api, providerID, accountKey)
 	case "a":
-		if m.activeAccount() == nil {
+		account := m.activeAccount()
+		if account == nil {
 			m.PinConfirm = false
 			return m, nil
 		}
@@ -237,7 +243,7 @@ func (m Model) handlePinConfirm(keyStr string) (tea.Model, tea.Cmd) {
 		m.Notice = ""
 		m.ShowInfo = false
 		m.PinConfirm = false
-		return m, PinProviderAccountCmd(m.api, "")
+		return m, PinProviderAccountCmd(m.api, account.Provider, "")
 	}
 	return m, nil
 }

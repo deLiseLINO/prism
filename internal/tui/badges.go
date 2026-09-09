@@ -1,14 +1,10 @@
 package tui
 
-import "strings"
+import "prism/internal/management"
 
-func renderProviderBadge(provider string, isActive bool) string {
-	if strings.ToLower(strings.TrimSpace(provider)) != "codex" {
+func (m Model) renderAccountBadge(account management.Account) string {
+	if m.PinnedAccounts[account.Provider] != account.ID {
 		return ""
 	}
-	style := SourceCodexBadgeMutedStyle
-	if isActive {
-		style = SourceCodexBadgeActiveStyle
-	}
-	return SourceBadgeBracketStyle.Render("[") + style.Render("C") + SourceBadgeBracketStyle.Render("]")
+	return SourceBadgeBracketStyle.Render("[") + SourceCodexBadgeActiveStyle.Render("P") + SourceBadgeBracketStyle.Render("]")
 }

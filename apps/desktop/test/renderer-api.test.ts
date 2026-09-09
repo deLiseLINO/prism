@@ -382,3 +382,19 @@ describe('live quota rendering helpers', () => {
     expect(formatWindowEnd('not-a-time')).toBe('—')
   })
 })
+
+describe('antigravity quota windows', () => {
+  it('preserves antigravity family windows returned by the API', () => {
+    const windows = [
+      { label: 'Gemini 5 hour', used: 7500, limit: 10000, windowEnd: '2026-09-10T00:00:00Z' },
+      { label: 'Claude 5 hour', used: 6000, limit: 10000, windowEnd: '2026-09-10T00:00:00Z' },
+      { label: 'Gemini Weekly', used: 2000, limit: 10000, windowEnd: '2026-09-15T00:00:00Z' },
+    ]
+    expect(
+      quotaCell({
+        account: 'antigravity:default',
+        quota: { used: 7500, limit: 10000, windowEnd: '2026-09-10T00:00:00Z', source: 'endpoint', windows },
+      }),
+    ).toEqual({ kind: 'ready', used: 7500, limit: 10000, windowEnd: '2026-09-10T00:00:00Z', source: 'endpoint', windows })
+  })
+})

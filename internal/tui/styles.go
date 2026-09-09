@@ -88,10 +88,8 @@ var (
 	SourceBadgeBracketStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))
 	SourceCodexBadgeActiveStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("205"))
-	SourceCodexBadgeMutedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("176"))
+					Bold(true).
+					Foreground(lipgloss.Color("205"))
 
 	CompactExhaustedHeaderStyle = lipgloss.NewStyle().
 					Bold(true).

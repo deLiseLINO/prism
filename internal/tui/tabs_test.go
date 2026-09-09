@@ -47,7 +47,23 @@ func TestRenderWindowsLoadingSkeletonShowsBothWindows(t *testing.T) {
 	if !strings.Contains(skeleton, "Weekly") {
 		t.Fatal("skeleton missing Weekly window header")
 	}
-	if strings.Count(skeleton, "Loading...") != 2 {
-		t.Fatalf("loading rows = %d, want 2", strings.Count(skeleton, "Loading..."))
+	if strings.Count(skeleton, "Loading...") != 4 {
+		t.Fatalf("loading rows = %d, want 4", strings.Count(skeleton, "Loading..."))
+	}
+	if !strings.Contains(skeleton, "Gemini Models") || !strings.Contains(skeleton, "Claude and GPT models") {
+		t.Fatal("skeleton missing group headers")
+	}
+}
+
+func TestOnlyPinnedAccountHasBadge(t *testing.T) {
+	m := testModel(nil, management.Account{ID: "codex:main", Provider: "codex"})
+
+	if got := m.renderAccountBadge(m.Accounts[0]); got != "" {
+		t.Fatalf("unpinned badge = %q, want empty", got)
+	}
+
+	m.PinnedAccounts = map[string]string{"codex": "codex:main"}
+	if got := m.renderAccountBadge(m.Accounts[0]); !strings.Contains(got, "P") {
+		t.Fatalf("pinned badge = %q, want P", got)
 	}
 }

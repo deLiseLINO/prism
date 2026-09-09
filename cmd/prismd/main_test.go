@@ -113,11 +113,18 @@ func (f fakeRefresher) Credential(context.Context, account.Lease) (account.Crede
 
 func TestQuotaTableProbesAntigravityAccountLive(t *testing.T) {
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1internal:fetchAvailableModels" {
+		switch r.URL.Path {
+		case "/v1internal:retrieveUserQuotaSummary":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"groups":[{"displayName":"Gemini Models","buckets":[
+				{"bucketId":"gemini-5h","displayName":"5-hour interactive","window":"PT5H","remainingFraction":0.25,"resetTime":"2026-09-10T00:00:00Z"},
+				{"bucketId":"gemini-weekly","displayName":"Weekly","window":"P7D","remainingFraction":0.8,"resetTime":"2026-09-15T00:00:00Z"}]}]}`))
+		case "/v1internal:fetchAvailableModels":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"models":{"gemini-3.7-flash":{"quotaInfo":{"remainingPercentage":25}}}}`))
+		default:
 			t.Errorf("path = %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"models":{"gemini-3.7-flash":{"quotaInfo":{"remainingPercentage":25}}}}`))
 	}))
 	server.Start()
 	t.Cleanup(server.Close)
@@ -143,6 +150,15 @@ func TestQuotaTableProbesAntigravityAccountLive(t *testing.T) {
 	}
 	if snap.Used != 7500 || snap.Limit == nil || *snap.Limit != 10000 || snap.Source != quota.SourceEndpoint {
 		t.Fatalf("probed quota = %+v, want 7500/10000 endpoint basis points", snap)
+	}
+	if len(snap.Windows) != 2 {
+		t.Fatalf("windows = %d, want 2 (5h + weekly)", len(snap.Windows))
+	}
+	if snap.Windows[0].Label != "Gemini 5 hour" || snap.Windows[0].Used != 7500 {
+		t.Fatalf("first window = %+v, want Gemini 5 hour 7500", snap.Windows[0])
+	}
+	if snap.Windows[1].Label != "Gemini Weekly" || snap.Windows[1].Used != 2000 {
+		t.Fatalf("second window = %+v, want Gemini Weekly 2000", snap.Windows[1])
 	}
 	stored := pool.Snapshot().Accounts[0].Quota
 	if stored.Used != 7500 || stored.Source != quota.SourceEndpoint {

@@ -11,6 +11,7 @@ import (
 
 func testModel(client Client, accounts ...management.Account) Model {
 	m := InitialModel(client, false)
+	m.ProviderFilter = defaultProviderFilter
 	m.Accounts = accounts
 	m.ActiveAccountIx = 0
 	m.UsageData = make(map[string][]quotaWindow)
@@ -137,8 +138,9 @@ func TestUpdateNoticeTimesOut(t *testing.T) {
 	}
 }
 
-func TestUpdateFiltersNonCodexAccounts(t *testing.T) {
+func TestUpdateFiltersAccountsByProvider(t *testing.T) {
 	m := testModel(nil, management.Account{ID: "codex:default", Provider: "codex"})
+	m.ProviderFilter = "antigravity"
 
 	next, _ := m.Update(AccountsMsg{Accounts: []management.Account{
 		{ID: "antigravity:default", Provider: "antigravity"},
@@ -147,13 +149,89 @@ func TestUpdateFiltersNonCodexAccounts(t *testing.T) {
 	}})
 	updated := next.(Model)
 
-	if len(updated.Accounts) != 2 {
-		t.Fatalf("accounts = %d, want 2 codex accounts", len(updated.Accounts))
+	if len(updated.Accounts) != 1 {
+		t.Fatalf("accounts = %d, want 1 antigravity account", len(updated.Accounts))
 	}
-	for _, account := range updated.Accounts {
-		if account.Provider != "codex" {
-			t.Fatalf("non-codex account %q survived filter", account.ID)
+	if updated.Accounts[0].ID != "antigravity:default" {
+		t.Fatalf("account = %q, want antigravity:default", updated.Accounts[0].ID)
+	}
+}
+
+func TestProviderSwitchHotkeyOpensModal(t *testing.T) {
+	m := testModel(nil, management.Account{ID: "codex:default", Provider: "codex"})
+	m.beginProviderSwitch()
+	if !m.ProviderSelectVisible {
+		t.Fatal("P did not open provider switch modal")
+	}
+	if m.ProviderSelectMode != providerSelectModeSwitch {
+		t.Fatal("provider modal opened in auth mode")
+	}
+	if m.ProviderCursor != 0 {
+		t.Fatalf("cursor = %d, want current provider", m.ProviderCursor)
+	}
+}
+
+func TestProviderSwitchReloadsAccounts(t *testing.T) {
+	client := newFakeClient(
+		management.Account{ID: "codex:default", Provider: "codex"},
+		management.Account{ID: "antigravity:default", Provider: "antigravity"},
+	)
+	m := testModel(client, management.Account{ID: "codex:default", Provider: "codex"})
+	m.beginProviderSwitch()
+	m.ProviderCursor = 1
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := next.(Model)
+	if updated.ProviderSelectVisible {
+		t.Fatal("provider modal stayed visible")
+	}
+	if updated.ProviderFilter != "antigravity" {
+		t.Fatalf("filter = %q, want antigravity", updated.ProviderFilter)
+	}
+	if cmd == nil {
+		t.Fatal("provider switch did not schedule reload")
+	}
+	msgs := batchMsgs(cmd)
+	var foundAccounts bool
+	for _, msg := range msgs {
+		if _, ok := msg.(AccountsMsg); ok {
+			foundAccounts = true
 		}
+	}
+	if !foundAccounts {
+		t.Fatalf("msgs = %T, want AccountsMsg", msgs)
+	}
+}
+
+func TestProviderSwitchSameProviderDoesNothing(t *testing.T) {
+	m := testModel(nil, management.Account{ID: "codex:default", Provider: "codex"})
+	m.ProviderFilter = "codex"
+	m.beginProviderSwitch()
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := next.(Model)
+	if updated.ProviderSelectVisible {
+		t.Fatal("modal stayed visible for same provider")
+	}
+	if cmd != nil {
+		t.Fatal("same provider switch scheduled work")
+	}
+}
+
+func TestUpdateDefaultsFilterToCodex(t *testing.T) {
+	m := testModel(nil, management.Account{ID: "codex:default", Provider: "codex"})
+
+	next, _ := m.Update(AccountsMsg{Accounts: []management.Account{
+		{ID: "antigravity:default", Provider: "antigravity"},
+		{ID: "codex:default", Provider: "codex"},
+	}})
+	updated := next.(Model)
+
+	if len(updated.Accounts) != 1 {
+		t.Fatalf("accounts = %d, want 1 codex account", len(updated.Accounts))
+	}
+	if updated.Accounts[0].ID != "codex:default" {
+		t.Fatalf("account = %q, want codex:default", updated.Accounts[0].ID)
 	}
 }
 
@@ -169,5 +247,21 @@ func TestAccountLabelFallsBackToShortID(t *testing.T) {
 	}
 	if got := accountLabel(management.Account{ID: "codex:default"}); got != "codex:...ault" {
 		t.Fatalf("label = %q, want short id for long id", got)
+	}
+}
+
+func batchMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	switch typed := cmd().(type) {
+	case tea.BatchMsg:
+		out := make([]tea.Msg, 0, len(typed))
+		for _, inner := range typed {
+			out = append(out, batchMsgs(inner)...)
+		}
+		return out
+	default:
+		return []tea.Msg{typed}
 	}
 }

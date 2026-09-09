@@ -10,6 +10,7 @@ import (
 	"prism/internal/canon"
 	"prism/internal/execution"
 	"prism/internal/provider"
+	"prism/internal/requestlog"
 )
 
 const defaultMaxAccountFailovers = 3
@@ -68,8 +69,8 @@ type Router interface {
 	Turn(ctx context.Context, req canon.Request, f execution.Facts, lifecycle ResponseLifecycle, sink provider.Sink) TurnResult
 }
 
-func NewRouter(pool account.Pool, runners Runners, planner Planner, group account.QuotaGroup) Router {
-	return &router{pool: pool, runners: runners, planner: planner, group: group}
+func NewRouter(pool account.Pool, runners Runners, planner Planner, group account.QuotaGroup, log *requestlog.Journal) Router {
+	return &router{pool: pool, runners: runners, planner: planner, group: group, log: log}
 }
 
 type router struct {
@@ -77,6 +78,7 @@ type router struct {
 	runners Runners
 	planner Planner
 	group   account.QuotaGroup
+	log     *requestlog.Journal
 }
 
 type captureSink struct {
@@ -96,8 +98,14 @@ func (s *captureSink) Emit(ev canon.Event) error {
 	}
 	return s.next.Emit(ev)
 }
-
 func (r *router) Turn(ctx context.Context, req canon.Request, f execution.Facts, lifecycle ResponseLifecycle, sink provider.Sink) TurnResult {
+	j := r.log.Open(f, req.Model)
+	res := r.turn(ctx, req, f, lifecycle, sink, j)
+	j.Close(terminalOf(res))
+	return res
+}
+
+func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts, lifecycle ResponseLifecycle, sink provider.Sink, j *requestlog.Turn) TurnResult {
 	plan, ok := r.planner.Plan(req.Model)
 	if !ok {
 		return turnFailed(canon.Failure{Reason: canon.FailNotFound, Message: fmt.Sprintf("routing: no plan for model %q", req.Model)}, 0)
@@ -147,23 +155,39 @@ func (r *router) Turn(ctx context.Context, req canon.Request, f execution.Facts,
 			attempts++
 			wireReq := req
 			wireReq.Model = target.Model
+			started := j.Now()
 			err = runner.Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f}, capture)
+			logAttempt := func(outcome requestlog.Outcome, msg string) {
+				j.Attempt(requestlog.AttemptInfo{
+					Provider:  target.Provider,
+					AccountID: lease.Account,
+					Model:     target.Model,
+					StartedAt: started,
+					Outcome:   outcome,
+					Error:     msg,
+				})
+			}
 			if err == nil {
 				if !capture.hasFinished {
+					logAttempt(requestlog.AttemptNoTerminal, "routing: runner returned without terminal event")
 					_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 					return turnFailed(canon.Failure{Reason: canon.FailUnknown, Message: "routing: runner returned without terminal event"}, attempts)
 				}
+				logAttempt(requestlog.AttemptSucceeded, "")
 				_ = r.pool.Record(ctx, lease, account.TurnSucceeded{Usage: capture.finished.Usage})
 				return TurnResult{Terminal: Finished{Event: capture.finished}, Attempts: attempts}
 			}
 			if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				logAttempt(requestlog.AttemptClientClosed, "routing: client closed the request")
 				return turnFailed(canon.Failure{Reason: canon.FailClientClosed, Message: "routing: client closed the request"}, attempts)
 			}
 			re, typed := runErrorOf(err)
 			if !typed {
+				logAttempt(requestlog.AttemptRejected, err.Error())
 				_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 				return turnFailed(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: untyped runner error: %v", err)}, attempts)
 			}
+			logAttempt(attemptOutcome(re), re.Error())
 			if o, mappable := outcomeFor(re, target.Policy); mappable {
 				_ = r.pool.Record(ctx, lease, o)
 			} else {
@@ -248,6 +272,49 @@ func failureReason(c provider.ErrorClass) canon.FailureReason {
 		return canon.FailContextLength
 	default:
 		return canon.FailUnknown
+	}
+}
+
+func terminalOf(res TurnResult) requestlog.Terminal {
+	switch term := res.Terminal.(type) {
+	case Finished:
+		if reason, incomplete := term.Event.Status.Reason(); incomplete {
+			return requestlog.Terminal{Status: requestlog.StatusIncomplete, Incomplete: reason, Usage: term.Event.Usage}
+		}
+		return requestlog.Terminal{Status: requestlog.StatusCompleted, Usage: term.Event.Usage}
+	case Failed:
+		return requestlog.Terminal{
+			Status: requestlog.StatusFailed,
+			Failed: true,
+			Reason: term.Event.Failure.Reason,
+		}
+	default:
+		return requestlog.Terminal{Status: requestlog.StatusIncomplete}
+	}
+}
+
+func attemptOutcome(re provider.RunError) requestlog.Outcome {
+	switch re.Class {
+	case provider.ClassUnauthorized:
+		return requestlog.AttemptUnauthorized
+	case provider.ClassRateLimited:
+		return requestlog.AttemptRateLimited
+	case provider.ClassQuotaExhausted:
+		return requestlog.AttemptQuotaExhausted
+	case provider.ClassNotFound:
+		return requestlog.AttemptNotFound
+	case provider.ClassTimeout:
+		return requestlog.AttemptTimeout
+	case provider.ClassServer:
+		return requestlog.AttemptServer
+	case provider.ClassTransport:
+		return requestlog.AttemptTransport
+	case provider.ClassInvalidRequest:
+		return requestlog.AttemptInvalidRequest
+	case provider.ClassContextLength:
+		return requestlog.AttemptContextLength
+	default:
+		return requestlog.AttemptRejected
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"prism/internal/integrations"
 	"prism/internal/provider"
 	"prism/internal/quota"
+	"prism/internal/requestlog"
 )
 
 type ConfigStore interface {
@@ -59,8 +60,9 @@ type Server struct {
 	auth    Auth
 	ints    *integrations.Registry
 	routes  [][]string
-	syncer  ModelSyncer
 	store   AccountStore
+	syncer  ModelSyncer
+	reqlog  *requestlog.Journal
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer) *Server {
@@ -69,6 +71,10 @@ func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaS
 
 func (s *Server) SetAccountStore(store AccountStore) {
 	s.store = store
+}
+
+func (s *Server) SetRequestLog(j *requestlog.Journal) {
+	s.reqlog = j
 }
 
 func (s *Server) Handler() http.Handler {
@@ -94,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/routes", s.routesList)
 	mux.HandleFunc("PUT /api/v1/routes/{key}", s.routesPut)
 	mux.HandleFunc("DELETE /api/v1/routes/{key}", s.routesDelete)
+	mux.HandleFunc("GET /api/v1/requests", s.requests)
 	mux.HandleFunc("GET /api/v1/usage", s.usage)
 	mux.HandleFunc("POST /api/v1/auth/{provider}/start", s.authStart)
 	mux.HandleFunc("POST /api/v1/auth/{provider}/callback", s.authCallback)
@@ -130,6 +137,7 @@ var routeTemplates = []string{
 	"/api/v1/combos/{id}",
 	"/api/v1/routes",
 	"/api/v1/routes/{key}",
+	"/api/v1/requests",
 	"/api/v1/usage",
 	"/api/v1/auth/{provider}/start",
 	"/api/v1/auth/{provider}/callback",
@@ -692,6 +700,31 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		return 0
 	})
 	writeJSON(w, http.StatusOK, UsageResponse{Accounts: out})
+}
+
+func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
+	if s.reqlog == nil {
+		writeError(w, http.StatusServiceUnavailable, "not_available", "request journal not configured")
+		return
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_limit", "limit must be a non-negative integer")
+			return
+		}
+		limit = n
+	}
+	entries := s.reqlog.Snapshot()
+	views := make([]RequestView, 0, len(entries))
+	for i := len(entries) - 1; i >= 0; i-- {
+		views = append(views, requestView(entries[i]))
+	}
+	if limit > 0 && limit < len(views) {
+		views = views[:limit]
+	}
+	writeJSON(w, http.StatusOK, RequestsResponse{Requests: views, Dropped: s.reqlog.Dropped()})
 }
 
 func (s *Server) resolveAuthProvider(raw string) account.ProviderID {

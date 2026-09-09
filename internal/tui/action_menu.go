@@ -27,14 +27,9 @@ func (m Model) actionMenuSections() []actionMenuSection {
 		currentItems = append(currentItems, actionMenuItem{ID: actionMenuPause, Label: "Pause account", Shortcut: "p"})
 	}
 	account := m.activeAccount()
-	if account != nil && strings.ToLower(account.Provider) == "codex" {
+	if account != nil {
 		currentItems = append(currentItems,
 			actionMenuItem{ID: actionMenuPin, Label: "Pin account (switch)", Shortcut: "s"},
-			actionMenuItem{ID: actionMenuInfo, Label: "Account details", Shortcut: "i"},
-			actionMenuItem{ID: actionMenuDelete, Label: "Delete account", Shortcut: "x"},
-		)
-	} else {
-		currentItems = append(currentItems,
 			actionMenuItem{ID: actionMenuInfo, Label: "Account details", Shortcut: "i"},
 			actionMenuItem{ID: actionMenuDelete, Label: "Delete account", Shortcut: "x"},
 		)
@@ -51,6 +46,7 @@ func (m Model) actionMenuSections() []actionMenuSection {
 				{ID: actionMenuRefreshAll, Label: "Refresh all", Shortcut: "R"},
 				{ID: actionMenuAdd, Label: "Add account", Shortcut: "n"},
 				{ID: actionMenuIntegrations, Label: "Integrations", Shortcut: "o"},
+				{ID: actionMenuProvider, Label: "Switch provider", Shortcut: "P"},
 				{ID: actionMenuView, Label: "Switch view", Shortcut: "v"},
 				{ID: actionMenuSettings, Label: "Settings", Shortcut: ","},
 				{ID: actionMenuHelp, Label: "Help", Shortcut: "?"},

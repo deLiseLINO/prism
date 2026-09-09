@@ -44,7 +44,10 @@ type Model struct {
 	settingsDraftActive bool
 	ShowInfo            bool
 
+	ProviderFilter        string
+	PinnedAccounts        map[string]string
 	ProviderSelectVisible bool
+	ProviderSelectMode    providerSelectMode
 	ProviderCursor        int
 	AuthLoginVisible      bool
 	AuthProvider          string
@@ -68,6 +71,8 @@ type Model struct {
 
 var authProviders = []string{"codex", "antigravity"}
 
+const defaultProviderFilter = "codex"
+
 func InitialModel(client Client, compactMode bool) Model {
 	settings, err := LoadSettings()
 	if err != nil {
@@ -84,6 +89,7 @@ func InitialModel(client Client, compactMode bool) Model {
 		Loading:              true,
 		CompactMode:          compact,
 		Settings:             settings,
+		ProviderFilter:       normalizeProviderFilter(uiState.ProviderFilter),
 		UsageData:            make(map[string][]quotaWindow),
 		LoadingMap:           make(map[string]bool),
 		ErrorsMap:            make(map[string]error),
@@ -110,6 +116,7 @@ func (m Model) Init() tea.Cmd {
 		tea.SetWindowTitle("Prism UI"),
 		autoRefreshTickCmd(),
 		ReloadAccountsCmd(m.api, ""),
+		FetchPinnedAccountsCmd(m.api),
 	}
 	return tea.Batch(cmds...)
 }
@@ -198,6 +205,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.toggleViewMode()
 		case "n":
 			return m.beginAddAccount()
+		case "P":
+			return m.beginProviderSwitch()
 		case "o":
 			return m.beginIntegrationsFlow()
 		case "p":
@@ -239,7 +248,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.shortProgress.Width = barWidth
 
 	case AccountsMsg:
-		m.Accounts = filterCodexAccounts(msg.Accounts)
+		m.ProviderFilter = normalizeProviderFilter(m.ProviderFilter)
+		m.Accounts = filterProviderAccounts(msg.Accounts, m.ProviderFilter)
 		m.ActiveAccountIx = 0
 		m.UsageData = make(map[string][]quotaWindow)
 		m.pruneAccountKeyedMaps()
@@ -404,6 +414,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.AuthLoginStatus = strings.TrimSpace(msg.Text)
 		return m, nil
 
+	case PinnedAccountsMsg:
+		m.PinnedAccounts = msg.Pinned
+		return m, nil
+
 	case IntegrationsMsg:
 		m.Integrations = msg.Integrations
 		m.IntegrationsCursor = 0
@@ -452,22 +466,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func filterCodexAccounts(accounts []management.Account) []management.Account {
+func filterProviderAccounts(accounts []management.Account, provider string) []management.Account {
 	if len(accounts) == 0 {
 		return accounts
 	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = defaultProviderFilter
+	}
 	out := make([]management.Account, 0, len(accounts))
 	for _, a := range accounts {
-		if a.Provider == "codex" {
+		if strings.ToLower(a.Provider) == provider {
 			out = append(out, a)
 		}
 	}
 	return out
 }
 
+func normalizeProviderFilter(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	for _, candidate := range authProviders {
+		if provider == candidate {
+			return provider
+		}
+	}
+	return defaultProviderFilter
+}
+
 func (m Model) uiStateSnapshot() UIState {
 	return UIState{
 		CompactMode:      m.CompactMode,
 		ActiveAccountKey: m.activeAccountKey(),
+		ProviderFilter:   m.ProviderFilter,
 	}
 }

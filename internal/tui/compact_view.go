@@ -68,7 +68,7 @@ func (m Model) renderCompactAccountRow(index int, acc management.Account, accoun
 		prefix = "> "
 	}
 
-	badge := renderProviderBadge(acc.Provider, isActive)
+	badge := m.renderAccountBadge(acc)
 	badgeWidth := ansi.StringWidth(badge)
 	nameWidth := accountWidth
 	if badgeWidth > 0 {
