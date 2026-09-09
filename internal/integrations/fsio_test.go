@@ -37,15 +37,14 @@ func TestApplyEOLRoundTrip(t *testing.T) {
 func TestAtomicWriteAndRecover(t *testing.T) {
 	dir := tempDir(t)
 	path := filepath.Join(dir, "config.toml")
-	if err := AtomicWrite(LocalIO{}, path, "v1\n"); err != nil {
+	if err := AtomicWrite(path, "v1\n"); err != nil {
 		t.Fatalf("atomic write: %v", err)
 	}
 	if got := readText(t, path); got != "v1\n" {
 		t.Fatalf("expected v1, got %q", got)
 	}
 	// Simulate a crash: stage a temp without committing.
-	local := LocalIO{}
-	if err := local.StageWrite(path, "v2\n"); err != nil {
+	if err := StageWrite(path, "v2\n"); err != nil {
 		t.Fatalf("stage: %v", err)
 	}
 	if _, err := os.Stat(StagedPath(path)); err != nil {
@@ -54,7 +53,7 @@ func TestAtomicWriteAndRecover(t *testing.T) {
 	if got := readText(t, path); got != "v1\n" {
 		t.Fatalf("target changed before commit: %q", got)
 	}
-	if !local.RecoverStaged(path) {
+	if !RecoverStaged(path) {
 		t.Fatalf("expected recovery to remove the staged temp")
 	}
 	if _, err := os.Stat(StagedPath(path)); !os.IsNotExist(err) {
@@ -72,9 +71,9 @@ func TestApplyEOLCRLFSource(t *testing.T) {
 		t.Fatalf("expected normalized LF, got %q", got)
 	}
 }
+
 func TestRecoverStagedAbsent(t *testing.T) {
-	local := LocalIO{}
-	if local.RecoverStaged("/nonexistent/config.toml") {
+	if RecoverStaged("/nonexistent/config.toml") {
 		t.Fatalf("expected removed=false for absent staged file")
 	}
 }

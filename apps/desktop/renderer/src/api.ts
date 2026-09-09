@@ -3,15 +3,15 @@ import type {
   AccountsView,
   AuthStartView,
   AuthStatusView,
-  HostMutationResponse,
-  HostsView,
-  HostWrite,
   ManagementReply,
   ModelView,
   PoolSettingsView,
   ProviderMutationResponse,
   ProvidersView,
   QuotaResponse,
+  StatsRange,
+  StatsResponseView,
+  RequestsView,
   UsageAccountView,
   UsageView,
 } from '@prism/contracts'
@@ -117,17 +117,18 @@ export const api = {
   quota(id: string): Promise<QuotaResponse> {
     return call('GET', `/api/v1/accounts/${encodeURIComponent(id)}/quota`)
   },
+  refreshQuota(id: string): Promise<QuotaResponse> {
+    return call('POST', `/api/v1/accounts/${encodeURIComponent(id)}/quota/refresh`)
+  },
   usage(): Promise<UsageView> {
     return call('GET', '/api/v1/usage')
   },
-  hosts(): Promise<HostsView> {
-    return call('GET', '/api/v1/hosts')
+  stats(range: StatsRange): Promise<StatsResponseView> {
+    return call('GET', `/api/v1/stats?range=${encodeURIComponent(range)}`)
   },
-  createHost(body: HostWrite): Promise<HostMutationResponse> {
-    return call('POST', '/api/v1/hosts', body)
-  },
-  deleteHost(id: string, expectedGeneration: number): Promise<{ generation: number }> {
-    return call('DELETE', `/api/v1/hosts/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`)
+  requests(limit?: number): Promise<RequestsView> {
+    const query = limit === undefined ? '' : `?limit=${limit}`
+    return call('GET', `/api/v1/requests${query}`)
   },
   authStart(provider: string): Promise<AuthStartView> {
     return call('POST', `/api/v1/auth/${encodeURIComponent(provider)}/start`)

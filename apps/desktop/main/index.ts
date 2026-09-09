@@ -3,8 +3,9 @@ import path from 'node:path'
 import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
 import { loadDesktopConfig } from './config'
 import { DaemonSupervisor } from './daemon/supervisor'
-import { IntegrationApi } from './integrations'
 import { registerIpc } from './ipc'
+import { AgentsApi } from './agents'
+import { IntegrationApi } from './integrations'
 import { ManagementProxy } from './management'
 import { TrayController } from './tray'
 import { createMainWindow } from './window'
@@ -45,6 +46,7 @@ async function bootstrap(): Promise<void> {
   })
   const management = new ManagementProxy(endpoint)
   const integrations = new IntegrationApi(management)
+  const agents = new AgentsApi(management)
   const showWindow = (): void => {
     if (config.headless) return
     mainWindow?.show()
@@ -72,7 +74,7 @@ async function bootstrap(): Promise<void> {
   })
 
   void app.whenReady().then(() => {
-    registerIpc({ supervisor, management, integrations })
+    registerIpc({ supervisor, management, integrations, agents })
     supervisor.subscribe((status) => {
       if (!config.headless) tray.update(status)
       if (mainWindow !== null && !mainWindow.isDestroyed()) {

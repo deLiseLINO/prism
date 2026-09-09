@@ -117,7 +117,6 @@ type PiOptions struct {
 	ConfigPath        string
 	Env               Env
 	Home              string
-	IO                FileIO
 	CrashBeforeRename bool
 }
 
@@ -126,7 +125,6 @@ type PiIntegration struct {
 	port       int
 	models     []Model
 	modelsSrc  func() []Model
-	io         FileIO
 	configPath string
 	env        Env
 	home       string
@@ -149,7 +147,7 @@ func (p *PiIntegration) paths() (agentDir string, configPath string, err error) 
 }
 
 func NewPi(options PiOptions) *PiIntegration {
-	return &PiIntegration{id: Pi, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, io: withLocalIO(options.IO), configPath: options.ConfigPath, env: options.Env, home: options.Home}
+	return &PiIntegration{id: Pi, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, configPath: options.ConfigPath, env: options.Env, home: options.Home}
 }
 
 func (p *PiIntegration) ID() ID { return p.id }
@@ -163,7 +161,7 @@ func (p *PiIntegration) Apply() ApplyResult {
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: p.id, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(p.io, configPath, piTransform(p.port, models), false)
+	outcome, err := ApplyConfigTransform(configPath, piTransform(p.port, models), false)
 	if err != nil {
 		return ToApplyResult(p.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi apply", err)})
 	}
@@ -181,8 +179,8 @@ func (p *PiIntegration) Status() Status {
 	} else {
 		detectDirs = []string{filepath.Join(p.home, ".pi")}
 	}
-	return ObservedIntegrationStatus(p.io, p.id, configPath, detectDirs, func(path string) ManagedRead {
-		content, ok := p.io.ReadTextIfExists(path)
+	return ObservedIntegrationStatus(p.id, configPath, detectDirs, func(path string) ManagedRead {
+		content, ok := ReadTextIfExists(path)
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -195,13 +193,13 @@ func (p *PiIntegration) Rollback() ApplyResult {
 	if err != nil {
 		return ApplyResult{OK: false, ID: p.id, Reason: failureReason("pi rollback", err)}
 	}
-	outcome, err := ApplyConfigTransform(p.io, configPath, piRollbackTransform(), false)
+	outcome, err := ApplyConfigTransform(configPath, piRollbackTransform(), false)
 	if err != nil {
 		return ToRollbackResult(p.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi rollback", err)})
 	}
 	return ToRollbackResult(p.id, outcome)
 }
 
-func RecoverPiConfig(io FileIO, configPath string) bool {
-	return io.RecoverStaged(configPath)
+func RecoverPiConfig(configPath string) bool {
+	return RecoverStaged(configPath)
 }

@@ -47,9 +47,13 @@ type command struct {
 	alias    string
 	value    string
 
-	// integrations
+	// integrations / agents
 	clientID string
 	force    bool
+	agentID  string
+
+	// stats
+	statsRange string
 
 	// models
 	modelID string
@@ -158,6 +162,7 @@ func globalFlags() map[string]bool {
 		"value":           true,
 		"target":          true,
 		"force":           false,
+		"range":           true,
 	}
 }
 
@@ -177,6 +182,8 @@ Commands:
   routes <sub>              list/set/remove
   integrations <sub>        status/apply/rollback
   usage                     quota usage across accounts
+  stats                     request/token statistics across providers and models
+  agents <sub>              status/install/update/job for agent binaries
 
 Every command accepts --json for machine-stable output.
 `
@@ -186,6 +193,10 @@ var helpStatus = `Usage: prismctl status [--json]
 var helpDoctor = `Usage: prismctl doctor [--json]
 `
 var helpUsage = `Usage: prismctl usage [--json]
+`
+var helpStats = `Usage: prismctl stats [--range 1h|24h|7d|30d|all] [--json]
+
+Default range: 24h
 `
 
 var helpAuth = `Usage: prismctl auth login <codex|antigravity> [--no-open] [--json]
@@ -237,6 +248,12 @@ var helpIntegrations = `Usage: prismctl integrations status [codex|grok|omp] [--
        prismctl integrations rollback <codex|grok|omp> [--json]
 `
 
+var helpAgents = `Usage: prismctl agents [status] [codex|claude|grok|omp|pi|opencode|opencode2|hermes] [--json]
+       prismctl agents install <agent> [--force] [--json]
+       prismctl agents update <agent> [--json]
+       prismctl agents job <agent> [--json]
+`
+
 // parseCommand turns argv (after the binary name) into one command value or a
 // usage error. No network, no disk, no clock.
 func parseCommand(args []string) (*command, error) {
@@ -284,6 +301,10 @@ func parseCommand(args []string) (*command, error) {
 		return parseCombos(args[1:], spec)
 	case "routes":
 		return parseRoutes(args[1:], spec)
+	case "stats":
+		return parseStats(args[1:], spec)
+	case "agents":
+		return parseAgents(args[1:], spec)
 	case "integrations":
 		return parseIntegrations(args[1:], spec)
 	case "help", "--help", "-h":
@@ -754,6 +775,88 @@ func parseIntegrations(args []string, spec map[string]bool) (*command, error) {
 	}
 }
 
+func parseAgents(args []string, spec map[string]bool) (*command, error) {
+	if len(args) == 0 {
+		return &command{verb: "agents-status"}, nil
+	}
+	if args[0] == "status" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return &command{verb: "agents-status"}, nil
+	}
+	if isAgentID(args[0]) || strings.HasPrefix(args[0], "--") {
+		pos, fs := scanFlags(args, spec)
+		if err := rejectUnknown(fs, helpAgents); err != nil {
+			return nil, err
+		}
+		cmd := &command{verb: "agents-status", json: fs.has("json")}
+		for _, a := range pos {
+			if !isAgentID(a) {
+				return nil, usageFail(helpAgents, "unknown agent %q", a)
+			}
+			if cmd.agentID != "" {
+				return nil, usageFail(helpAgents, "agents status takes at most one agent")
+			}
+			cmd.agentID = a
+		}
+		return cmd, nil
+	}
+	sub := args[0]
+	pos, fs := scanFlags(args[1:], spec)
+	if err := rejectUnknown(fs, helpAgents); err != nil {
+		return nil, err
+	}
+	cmd := &command{verb: "agents-" + sub, json: fs.has("json")}
+	switch sub {
+	case "install":
+		if len(pos) != 1 || !isAgentID(pos[0]) {
+			return nil, usageFail(helpAgents, "agents install requires exactly one agent id")
+		}
+		cmd.agentID = pos[0]
+		cmd.force = fs.has("force")
+		return cmd, nil
+	case "update", "job":
+		if len(pos) != 1 || !isAgentID(pos[0]) {
+			return nil, usageFail(helpAgents, "agents %s requires exactly one agent id", sub)
+		}
+		cmd.agentID = pos[0]
+		return cmd, nil
+	default:
+		return nil, usageFail(helpAgents, "unknown agents subcommand %q", sub)
+	}
+}
+
+func isAgentID(s string) bool {
+	switch s {
+	case "codex", "claude", "grok", "omp", "pi", "opencode", "opencode2", "hermes":
+		return true
+	}
+	return false
+}
+
 func validClient(s string) bool {
 	return s == "codex" || s == "grok" || s == "omp"
+}
+
+func parseStats(args []string, spec map[string]bool) (*command, error) {
+	pos, fs := scanFlags(args, spec)
+	if err := rejectUnknown(fs, helpStats); err != nil {
+		return nil, err
+	}
+	if len(pos) > 0 {
+		return nil, usageFail(helpStats, "unexpected argument %q", pos[0])
+	}
+	rng := "24h"
+	if v, ok := fs.val("range"); ok {
+		if !validRange(v) {
+			return nil, usageFail(helpStats, "invalid --range %q (want 1h, 24h, 7d, 30d, or all)", v)
+		}
+		rng = v
+	}
+	return &command{verb: "stats", json: fs.has("json"), statsRange: rng}, nil
+}
+
+func validRange(s string) bool {
+	return s == "1h" || s == "24h" || s == "7d" || s == "30d" || s == "all"
 }

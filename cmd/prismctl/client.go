@@ -233,6 +233,13 @@ func (c *client) usage(ctx context.Context) (management.UsageResponse, error) {
 	return out, err
 }
 
+func (c *client) stats(ctx context.Context, rng string) (management.StatsResponse, error) {
+	var out management.StatsResponse
+	path := "/api/v1/stats?range=" + urlQueryEscape(rng)
+	err := c.call(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
 func (c *client) authStart(ctx context.Context, provider string) (management.AuthStartResponse, error) {
 	var out management.AuthStartResponse
 	err := c.call(ctx, http.MethodPost, "/api/v1/auth/"+escapePath(provider)+"/start", management.AuthStartResponse{}, &out)
@@ -274,6 +281,40 @@ func (c *client) integrationApply(ctx context.Context, clientID string, force bo
 func (c *client) integrationRollback(ctx context.Context, clientID string) (integrationsApplyJSON, error) {
 	var out integrationsApplyJSON
 	err := c.call(ctx, http.MethodPost, "/api/v1/integrations/"+escapePath(clientID)+"/rollback", nil, &out)
+	return out, err
+}
+
+func (c *client) agentsList(ctx context.Context) (management.AgentsResponse, error) {
+	var out management.AgentsResponse
+	err := c.call(ctx, http.MethodGet, "/api/v1/agents", nil, &out)
+	return out, err
+}
+
+func (c *client) agentGet(ctx context.Context, agentID string) (agentStatusJSON, error) {
+	var out agentStatusJSON
+	err := c.call(ctx, http.MethodGet, "/api/v1/agents/"+escapePath(agentID), nil, &out)
+	return out, err
+}
+
+func (c *client) agentInstall(ctx context.Context, agentID string, force bool) (agentJobJSON, error) {
+	var out agentJobJSON
+	path := "/api/v1/agents/" + escapePath(agentID) + "/install"
+	if force {
+		path += "?force=true"
+	}
+	err := c.call(ctx, http.MethodPost, path, nil, &out)
+	return out, err
+}
+
+func (c *client) agentUpdate(ctx context.Context, agentID string) (agentJobJSON, error) {
+	var out agentJobJSON
+	err := c.call(ctx, http.MethodPost, "/api/v1/agents/"+escapePath(agentID)+"/update", nil, &out)
+	return out, err
+}
+
+func (c *client) agentJob(ctx context.Context, agentID string) (agentJobJSON, error) {
+	var out agentJobJSON
+	err := c.call(ctx, http.MethodGet, "/api/v1/agents/"+escapePath(agentID)+"/job", nil, &out)
 	return out, err
 }
 

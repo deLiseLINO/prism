@@ -21,18 +21,24 @@ func TestIdlePingKeepsWireWarm(t *testing.T) {
 	t.Cleanup(func() { pingEvery, pingIdleAfter = oldEvery, oldIdle })
 	rec := &flushRecorder{}
 	eg := New(rec, true)
+	enc := eg.(*streamEncoder)
 	if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "claude-prism-codex--gpt-5"}); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
+	written := func() string {
+		enc.writeMu.Lock()
+		defer enc.writeMu.Unlock()
+		return rec.String()
+	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(rec.String(), "event: ping") {
+		if strings.Contains(written(), "event: ping") {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !strings.Contains(rec.String(), "event: ping") {
-		t.Fatalf("no ping observed on idle wire: %s", rec.String())
+	if !strings.Contains(written(), "event: ping") {
+		t.Fatalf("no ping observed on idle wire: %s", written())
 	}
 	if err := eg.Frame(canon.TurnFinished{Status: canon.Completed()}); err != nil {
 		t.Fatalf("Frame: %v", err)

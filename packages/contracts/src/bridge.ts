@@ -1,5 +1,6 @@
 import type { DaemonStatus } from './daemon'
-import type { HostsView, IntegrationApplyResult, IntegrationRequest, IntegrationStatus } from './integrations'
+import type { IntegrationApplyResult, IntegrationRequest, IntegrationStatus } from './integrations'
+import type { AgentJob, AgentJobReply, AgentJobRequest, AgentStatus } from './agents'
 import type { ManagementCall, ManagementReply } from './management'
 
 export type Unsubscribe = () => void
@@ -17,12 +18,18 @@ export interface PrismBridge {
   readonly integrations: {
     readonly apply: (request: IntegrationRequest) => Promise<IntegrationApplyResult>
     readonly rollback: (request: IntegrationRequest) => Promise<IntegrationApplyResult>
-    readonly status: (host?: string) => Promise<readonly IntegrationStatus[]>
-    readonly hosts: () => Promise<HostsView>
+    readonly status: () => Promise<readonly IntegrationStatus[]>
+  }
+  readonly agents: {
+    readonly install: (request: AgentJobRequest) => Promise<AgentJobReply>
+    readonly update: (request: AgentJobRequest) => Promise<AgentJobReply>
+    readonly job: (request: AgentJobRequest) => Promise<AgentJob>
+    readonly status: () => Promise<readonly AgentStatus[]>
   }
   readonly shell: {
     readonly openExternal: (url: string) => Promise<void>
-  },
+    readonly writeClipboard: (text: string) => Promise<void>
+  }
   readonly window: {
     readonly setTheme: (theme: 'dark' | 'light') => Promise<void>
   }
