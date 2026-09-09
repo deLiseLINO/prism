@@ -663,6 +663,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 			Account:  string(a.ID),
 			Provider: string(a.Provider),
 			State:    stateName(a.State),
+			Email:    a.Email,
 			Quota:    quotaView(a.Quota),
 		})
 	}

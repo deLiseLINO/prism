@@ -130,6 +130,7 @@ export interface UsageAccountView {
   readonly account: string
   readonly provider: string
   readonly state: string
+  readonly email?: string
   readonly quota: QuotaView
 }
 
