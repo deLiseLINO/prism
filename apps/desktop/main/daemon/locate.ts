@@ -29,3 +29,13 @@ function bundledDaemonPath(): string {
     ? path.join(process.resourcesPath, 'prismd', binary)
     : path.join(app.getAppPath(), 'resources', 'prismd', binary)
 }
+
+export function locateWebui(configured: string | null): string | null {
+  if (configured !== null && configured !== '') {
+    return existsSync(configured) ? configured : null
+  }
+  const bundled = app.isPackaged
+    ? path.join(process.resourcesPath, 'webui')
+    : path.join(app.getAppPath(), 'resources', 'webui')
+  return existsSync(bundled) ? bundled : null
+}

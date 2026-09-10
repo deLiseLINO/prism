@@ -1,5 +1,5 @@
 import { build } from 'esbuild'
-import { copyFile, mkdir, readFile } from 'node:fs/promises'
+import { cp, copyFile, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 
@@ -21,8 +21,7 @@ execFileSync(
   },
 )
 
-await mkdir(path.join('dist', 'renderer'), { recursive: true })
-
+await mkdir(path.join('dist', 'webui'), { recursive: true })
 await Promise.all([
   build({
     entryPoints: ['main/index.ts'],
@@ -51,8 +50,21 @@ await Promise.all([
     jsx: 'automatic',
     outfile: 'dist/renderer/index.js',
   }),
+  build({
+    entryPoints: ['renderer/src/index.tsx'],
+    bundle: true,
+    platform: 'browser',
+    format: 'esm',
+    target: 'es2022',
+    jsx: 'automatic',
+    outfile: 'dist/webui/index.js',
+  }),
   copyFile('renderer/index.html', 'dist/renderer/index.html'),
   copyFile('renderer/styles.css', 'dist/renderer/styles.css'),
   copyFile('renderer/theme-boot.js', 'dist/renderer/theme-boot.js'),
-  copyFile(path.join('resources', 'icon.icns'), path.join('dist', 'icon.icns')),
+  copyFile('renderer/web.html', 'dist/webui/index.html'),
+  copyFile('renderer/styles.css', 'dist/webui/styles.css'),
+  copyFile('renderer/theme-boot.js', 'dist/webui/theme-boot.js'),
 ])
+
+await cp(path.join('dist', 'webui'), path.join('resources', 'webui'), { recursive: true })

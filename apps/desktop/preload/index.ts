@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, type IpcRendererEvent } from 'electron'
 import { IpcChannel, type DaemonStatus, type PrismBridge, type UpdaterStatus } from '@prism/contracts'
 
 const bridge: PrismBridge = {
@@ -20,8 +20,7 @@ const bridge: PrismBridge = {
   integrations: {
     apply: (request) => ipcRenderer.invoke(IpcChannel.integrationApply, request),
     rollback: (request) => ipcRenderer.invoke(IpcChannel.integrationRollback, request),
-    status: (host) => ipcRenderer.invoke(IpcChannel.integrationStatus, host),
-    hosts: () => ipcRenderer.invoke(IpcChannel.hostsList),
+    status: () => ipcRenderer.invoke(IpcChannel.integrationStatus),
   },
   agents: {
     install: (request) => ipcRenderer.invoke(IpcChannel.agentInstall, request),
@@ -35,6 +34,9 @@ const bridge: PrismBridge = {
   },
   window: {
     setTheme: (theme) => ipcRenderer.invoke(IpcChannel.windowSetTheme, theme),
+  },
+  zoom: {
+    factor: () => webFrame.getZoomFactor(),
   },
   updater: {
     status: () => ipcRenderer.invoke(IpcChannel.updaterGetStatus),

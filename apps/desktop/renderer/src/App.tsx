@@ -7,11 +7,11 @@ import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
 import { LogsView } from './views/LogsView'
 import { OverviewView } from './views/OverviewView'
-import { MachinesView } from './views/MachinesView'
 import { ProvidersView } from './views/ProvidersView'
 import { StatsView } from './views/StatsView'
 import { UpdateView } from './views/UpdateView'
 import { UsagePanel } from './views/UsageView'
+import { bridge } from './bridge'
 
 const VIEW_ICONS: Record<View, string> = {
   overview: '#i-gauge',
@@ -20,10 +20,8 @@ const VIEW_ICONS: Record<View, string> = {
   providers: '#i-plug',
   daemon: '#i-daemon',
   integrations: '#i-puzzle',
-  machines: '#i-cube',
   logs: '#i-logs',
   update: '#i-refresh',
-
 }
 function IconSprite(): JSX.Element {
   return (
@@ -60,11 +58,8 @@ function renderView(view: View): JSX.Element {
       return <LogsView />
     case 'integrations':
       return <IntegrationsView />
-    case 'machines':
-      return <MachinesView />
     case 'update':
       return <UpdateView />
-
   }
 }
 
@@ -75,7 +70,18 @@ export function App(): JSX.Element {
   const [updater, setUpdater] = useState<UpdaterStatus | null>(null)
   const mainRef = useRef<HTMLElement | null>(null)
   const viewRef = useRef(view)
+
+
   const { mode, cycle } = useTheme()
+  useEffect(() => {
+    const apply = (): void => {
+      const factor = bridge.zoom.factor()
+      document.documentElement.style.setProperty('--zoom', String(factor))
+    }
+    apply()
+    window.addEventListener('resize', apply)
+    return () => window.removeEventListener('resize', apply)
+  }, [])
 
   useEffect(() => {
     const onChange = (): void => {
@@ -95,7 +101,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     let cancelled = false
-    void window.prism.daemon.status().then(
+    void bridge.daemon.status().then(
       (status) => {
         if (!cancelled) setDaemon(status)
       },
@@ -103,7 +109,7 @@ export function App(): JSX.Element {
         if (!cancelled) setDaemonUnreachable(true)
       },
     )
-    const unsubscribe = window.prism.daemon.onStatus((next) => {
+    const unsubscribe = bridge.daemon.onStatus((next) => {
       if (cancelled) return
       setDaemon(next)
       setDaemonUnreachable(false)
@@ -115,21 +121,21 @@ export function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    const unsubscribe = window.prism.updater.onStatus(setUpdater)
-    void window.prism.updater.status().then(setUpdater, () => {})
+    const unsubscribe = bridge.updater.onStatus(setUpdater)
+    void bridge.updater.status().then(setUpdater, () => {})
     return unsubscribe
   }, [])
 
   return (
     <>
       <IconSprite />
-      <div className="drag-region" aria-hidden="true" />
-      <aside className="rail" aria-label="Primary">
+      <header className="titleline">
         <div className="brand">
           <span className="brand-mark"><svg width="22" height="22"><use href="#i-prism" /></svg></span>
           <span className="brand-name">Prism</span>
         </div>
-        <div className="brand-sub">model router control</div>
+      </header>
+      <aside className="rail" aria-label="Primary">
         <nav className="nav" aria-label="Workflows">
           {SECTIONS.map((section) => (
             <div className="nav-section" key={section}>
@@ -170,7 +176,7 @@ export function App(): JSX.Element {
                 <p className="banner__detail">Prism {updater.downloadedVersion} downloaded — restart to install.</p>
               </div>
               <div className="banner__action">
-                <button type="button" className="btn btn--primary" onClick={() => void window.prism.updater.install()}>
+                <button type="button" className="btn btn--primary" onClick={() => void bridge.updater.install()}>
                   Restart to update
                 </button>
               </div>

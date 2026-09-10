@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { AgentStatus, HostView, IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
-import { AsyncBoundary, Button, Confirm, Empty, Select } from '../components/Ui'
+import type { AgentStatus, IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
+import { AsyncBoundary, Button, Confirm, Empty } from '../components/Ui'
 import { InstallCell } from '../components/InstallCell'
-
 import { useAsync, useTask, describeError } from '../useAsync'
+import { bridge } from '../bridge'
 
 type RowState = 'managed' | 'unmanaged' | 'uninstalled' | 'drift' | 'damaged'
 
@@ -26,10 +26,8 @@ interface IntegrationRowProps {
   readonly status: IntegrationStatus
   readonly agent: AgentStatus | undefined
   readonly onChanged: () => void
-  readonly host: string
 }
-function IntegrationRow({ status, agent, onChanged, host }: IntegrationRowProps): JSX.Element {
-
+function IntegrationRow({ status, agent, onChanged }: IntegrationRowProps): JSX.Element {
   const applyTask = useTask()
   const rollbackTask = useTask()
   const busy = applyTask.running || rollbackTask.running
@@ -40,7 +38,7 @@ function IntegrationRow({ status, agent, onChanged, host }: IntegrationRowProps)
   const damaged = state === 'damaged'
 
   async function apply(id: IntegrationId, force: boolean): Promise<void> {
-    const result = await applyTask.run(() => window.prism.integrations.apply({ id, ...(force ? { force: true as const } : {}), ...(host !== 'local' ? { host } : {}) }))
+    const result = await applyTask.run(() => bridge.integrations.apply({ id, ...(force ? { force: true as const } : {}) }))
     if (result === undefined) return
     if (!result.ok) {
       if (result.retryable === true && !force) {
@@ -58,7 +56,7 @@ function IntegrationRow({ status, agent, onChanged, host }: IntegrationRowProps)
   }
 
   async function rollback(id: IntegrationId): Promise<void> {
-    const result = await rollbackTask.run(() => window.prism.integrations.rollback({ id, ...(host !== 'local' ? { host } : {}) }))
+    const result = await rollbackTask.run(() => bridge.integrations.rollback({ id }))
     if (result === undefined) return
     if (!result.ok) {
       setActionError(result.reason === '' ? 'reason not reported' : result.reason)
@@ -158,24 +156,10 @@ function StatsStrip({ list }: { readonly list: readonly IntegrationStatus[] }): 
   )
 }
 
-function hostLabel(host: HostView): string {
-  return host.local ? 'This machine' : host.status === 'ok' ? host.id : `${host.id} (${host.status})`
-}
-
 export function IntegrationsView(): JSX.Element {
-  const [hostId, setHostId] = useState<string>('local')
-  const hosts = useAsync<readonly HostView[]>(async () => {
-    const view = await window.prism.integrations.hosts()
-    return view.hosts
-  }, [])
-  const hostOptions = hosts.state.kind === 'ready' && hosts.state.value.length > 0
-    ? hosts.state.value
-    : ([{ id: 'local', local: true, status: 'ok' }] as readonly HostView[])
-  const selected = hostOptions.some((h) => h.id === hostId) ? hostId : (hostOptions[0]?.id ?? 'local')
-  const statuses = useAsync<readonly IntegrationStatus[]>(() => window.prism.integrations.status(selected), [selected])
-  const agents = useAsync<readonly AgentStatus[]>(() => window.prism.agents.status(), [])
+  const statuses = useAsync<readonly IntegrationStatus[]>(() => bridge.integrations.status(), [])
+  const agents = useAsync<readonly AgentStatus[]>(() => bridge.agents.status(), [])
   const byAgent = new Map((agents.state.kind === 'ready' ? agents.state.value : []).map((a) => [a.id, a]))
-
   return (
     <section className="screen" aria-labelledby="h-integrations">
       <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
@@ -188,19 +172,10 @@ export function IntegrationsView(): JSX.Element {
           </h1>
           <p className="sub">config apply and rollback for each CLI Prism manages</p>
         </div>
-        <div className="int-host">
-          <label className="int-host__label" htmlFor="int-host-select">Host</label>
-          <Select<string>
-            id="int-host-select"
-            value={selected}
-            onChange={setHostId}
-            options={hostOptions.map((h) => ({ value: h.id, label: hostLabel(h) }))}
-          />
-        </div>
       </div>
       <AsyncBoundary<readonly IntegrationStatus[]>
         state={statuses.state}
-        loadingLabel={`Loading integrations on ${selected}…`}
+        loadingLabel="Loading integrations…"
         empty={<Empty title="No integrations reported." />}
         onRetry={() => statuses.refresh()}
       >
@@ -213,13 +188,11 @@ export function IntegrationsView(): JSX.Element {
                   key={status.id}
                   status={status}
                   agent={byAgent.get(status.id)}
-                  host={selected}
                   onChanged={() => {
                     statuses.refresh()
                     agents.refresh()
                   }}
                 />
-
               ))}
             </div>
           </div>

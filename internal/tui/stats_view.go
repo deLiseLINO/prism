@@ -59,6 +59,15 @@ func statsRangeNext(statsRange string) string {
 	return statsRanges[0]
 }
 
+func normalizeStatsRange(raw string) string {
+	for _, r := range statsRanges {
+		if r == raw {
+			return r
+		}
+	}
+	return defaultStatsRange
+}
+
 func (m Model) maxStatsScroll() int {
 	available := m.Height - statsChromeLines
 	if available <= 0 {

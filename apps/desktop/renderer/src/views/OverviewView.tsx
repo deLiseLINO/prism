@@ -1,15 +1,17 @@
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import type {
   AccountView,
   AccountsView,
   DaemonStatus,
   ProvidersView,
+  ProviderView,
   UsageView,
 } from '@prism/contracts'
-import { AsyncBoundary, Button, Empty } from '../components/Ui'
-import { useAsync, type AsyncState } from '../useAsync'
+import { AsyncBoundary, Banner, Button, Empty, Toggle } from '../components/Ui'
+import { useAsync, useTask, describeError, type AsyncState, type UseAsyncResult } from '../useAsync'
 import { api } from '../api'
 import { navigateTo } from '../routing'
+import { bridge } from '../bridge'
 
 interface StatContent {
   readonly value: string
@@ -212,9 +214,127 @@ function AttnRow({ account }: { readonly account: AccountView }): JSX.Element {
     </div>
   )
 }
+function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
+  const ids: string[] = []
+  for (const provider of providers) {
+    if (provider.enabled === false) continue
+    for (const model of provider.models ?? []) {
+      if ((provider.disabledModels ?? []).includes(model)) continue
+      if (provider.modelSettings?.[model]?.imageInput) ids.push(`${provider.id}/${model}`)
+    }
+  }
+  return ids.sort((a, b) => a.localeCompare(b))
+}
+
+function VisionSidecarCard({
+  providers,
+}: {
+  readonly providers: UseAsyncResult<ProvidersView>
+}): ReactNode {
+  const task = useTask()
+  const save = async (enabled: boolean, target: string): Promise<void> => {
+    const ready = providers.state.kind === 'ready' ? providers.state.value : null
+    if (ready === null) return
+    await task.run(() =>
+      api.visionSidecar({
+        enabled,
+        ...(target === '' ? {} : { target }),
+        expectedGeneration: ready.generation,
+      }),
+    )
+    providers.refresh()
+  }
+
+  return (
+    <section className="panel card panel-pad" style={{ '--i': 2 } as CSSProperties}>
+      <div className="prov-detail-head">
+        <div>
+          <div className="panel-title">Vision sidecar</div>
+          <p className="panel-sub">
+            describes images with a vision model before they reach text-only models
+          </p>
+        </div>
+        <AsyncBoundary<ProvidersView>
+          state={providers.state}
+          loadingLabel="Loading sidecar…"
+          empty={null}
+          onRetry={providers.refresh}
+        >
+          {(all) => (
+            <Toggle
+              checked={all.visionSidecar.enabled === true}
+              onChange={(next) => void save(next, all.visionSidecar.target ?? '')}
+              label={all.visionSidecar.enabled === true ? 'Enabled' : 'Disabled'}
+              disabled={task.running}
+            />
+          )}
+        </AsyncBoundary>
+      </div>
+      <AsyncBoundary<ProvidersView>
+        state={providers.state}
+        loadingLabel="Loading models…"
+        empty={null}
+        onRetry={providers.refresh}
+      >
+        {(all) => {
+          const eligible = eligibleSidecarModels(all.providers)
+          const current = all.visionSidecar.target ?? ''
+          const enabled = all.visionSidecar.enabled === true
+          return (
+            <div className="divide" style={{ marginTop: 10 }}>
+              {task.error !== null ? (
+                <Banner tone="error" title="Sidecar change failed">
+                  {describeError(task.error)}
+                </Banner>
+              ) : null}
+              {eligible.length === 0 ? (
+                <Empty title="No vision models configured.">
+                  Enable image input on a model in Providers to make it eligible.
+                </Empty>
+              ) : (
+                <div className="prov-mlist">
+                  {eligible.map((id) => {
+                    const selected = id === current
+                    return (
+                      <div
+                        key={id}
+                        className={`prov-mline prov-mline--click${selected ? ' prov-prow--sel' : ''}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={selected}
+                        onClick={() => void save(true, id)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
+                          void save(true, id)
+                        }}
+                      >
+                        <div className="prov-mline-l">
+                          <span className="prov-mline-dot" aria-hidden="true" />
+                          <span className="prov-mline-name num">{id}</span>
+                        </div>
+                        {selected ? <span className="badge badge--ok">sidecar</span> : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {enabled && current !== '' && !eligible.includes(current) ? (
+                <Banner tone="warn" title="Configured target is no longer eligible.">
+                  {current} is disabled or lost image input; pick another model.
+                </Banner>
+              ) : null}
+            </div>
+          )
+        }}
+      </AsyncBoundary>
+    </section>
+  )
+}
+
 
 export function OverviewView(): JSX.Element {
-  const status = useAsync<DaemonStatus>(() => window.prism.daemon.status(), [])
+  const status = useAsync<DaemonStatus>(() => bridge.daemon.status(), [])
   const accounts = useAsync<AccountsView>(() => api.accounts(), [])
   const providers = useAsync<ProvidersView>(() => api.providers(), [])
   const usage = useAsync<UsageView>(() => api.usage(), [])
@@ -304,9 +424,10 @@ export function OverviewView(): JSX.Element {
           render={providerMix}
         />
       </section>
+      <VisionSidecarCard providers={providers} />
       <section
         className="panel card panel-pad"
-        style={{ '--i': 2 } as CSSProperties}
+        style={{ '--i': 3 } as CSSProperties}
       >
         <div className="panel-title">Accounts needing attention</div>
         <p className="panel-sub">

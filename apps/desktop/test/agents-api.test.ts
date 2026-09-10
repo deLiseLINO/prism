@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ManagementCall, ManagementReply } from '@prism/contracts'
-import { AgentsApi, parseAgentJobRequest } from '../main/agents'
-import type { ManagementProxy } from '../main/management'
+import { AgentsApi, parseAgentJobRequest } from '../shared/agents'
+import type { ManagementProxy } from '../shared/management'
 
 function fakeProxy(reply: ManagementReply): ManagementProxy & { calls: ManagementCall[] } {
   const calls: ManagementCall[] = []

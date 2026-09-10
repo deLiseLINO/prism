@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import type {
   StatsModelView,
   StatsProviderView,
@@ -21,6 +21,22 @@ export const STATS_RANGES: readonly {
 ]
 
 const MAX_MODELS = 10
+const RANGE_STORAGE_KEY = 'prism-stats-range'
+const AUTO_REFRESH_ACTIVE_MS = 5_000
+const AUTO_REFRESH_BACKGROUND_MS = 30_000
+
+export function isStatsRange(value: unknown): value is StatsRange {
+  return STATS_RANGES.some((entry) => entry.value === value)
+}
+
+export function storedRange(): StatsRange {
+  try {
+    const value = window.localStorage.getItem(RANGE_STORAGE_KEY)
+    return isStatsRange(value) ? value : '24h'
+  } catch {
+    return '24h'
+  }
+}
 
 export function barRatio(value: number, max: number): number {
   if (max <= 0) return 0
@@ -125,12 +141,38 @@ function StatsPanel({
 }
 
 export function StatsView(): JSX.Element {
-  const [range, setRange] = useState<StatsRange>('24h')
+  const [range, setRange] = useState<StatsRange>(storedRange)
   const stats = useAsync<StatsResponseView>(() => api.stats(range), [range])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(RANGE_STORAGE_KEY, range)
+    } catch {
+      return
+    }
+  }, [range])
   const value = stats.state.kind === 'ready' ? stats.state.value : null
   const overview = value?.overview
   const providers = value?.providers ?? []
   const models = (value?.models ?? []).slice(0, MAX_MODELS)
+
+  useEffect(() => {
+    const refresh = (): void => stats.refresh()
+    const timer = window.setInterval(
+      refresh,
+      document.hidden ? AUTO_REFRESH_BACKGROUND_MS : AUTO_REFRESH_ACTIVE_MS,
+    )
+    const onVisibility = (): void => {
+      window.clearInterval(timer)
+      refresh()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [stats])
+
   const maxTotal = Math.max(
     0,
     ...providers.map((row) => row.total_tokens),

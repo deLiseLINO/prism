@@ -40,6 +40,7 @@ import (
 	"prism/internal/server"
 	"prism/internal/store"
 	"prism/internal/usage"
+	"prism/internal/webui"
 )
 
 type options struct {
@@ -47,6 +48,7 @@ type options struct {
 	configPath     string
 	credentialPath string
 	mgmtToken      string
+	webuiDir       string
 }
 
 type credentialStore struct{ file *store.FileCredentialStore }
@@ -457,6 +459,7 @@ func parseFlags(args []string) (options, error) {
 	fs.StringVar(&opts.configPath, "config", opts.configPath, "configuration file path")
 	fs.StringVar(&opts.credentialPath, "credential-store", opts.credentialPath, "credential store directory")
 	fs.StringVar(&opts.listen, "listen", opts.listen, "HTTP listen address")
+	fs.StringVar(&opts.webuiDir, "webui", "", "serve the web UI bundle from this directory under /ui")
 	fs.StringVar(&opts.mgmtToken, "management-token", opts.mgmtToken, "bearer token required for remote management API access (loopback is exempt)")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
@@ -532,6 +535,7 @@ func run(opts options) error {
 			return fmt.Errorf("prismd: auth service: %w", err)
 		}
 	}
+	intg := integrations.NewRegistry()
 	_, daemonPort, splitErr := net.SplitHostPort(opts.listen)
 	if splitErr != nil {
 		return fmt.Errorf("prismd: listen address: %w", splitErr)
@@ -546,17 +550,31 @@ func run(opts options) error {
 	}
 	daemonEnv := integrations.Environ(os.Environ())
 	modelsSrc := integrationModels(cfg)
-	intg, codexIntegration, err := newIntegrationRegistry(daemonPortNum, daemonEnv, home, nil, modelsSrc)
-	if err != nil {
+	codexIntegration := integrations.NewCodex(integrations.CodexOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})
+	if err := intg.Register(codexIntegration); err != nil {
 		return err
 	}
 	env.codex = codexIntegration
-	hostTable := management.NewHostRegistries(intg)
-	supervisor := newHostSupervisor(ctx, daemonPortNum, modelsSrc, hostTable)
-	for id, hostCfg := range d.Hosts {
-		if err := supervisor.Ensure(ctx, id, hostCfg.Address); err != nil {
-			log.Printf("prismd: host %s (%s) unresolved: %v", id, hostCfg.Address, err)
-		}
+	if err := intg.Register(integrations.NewGrok(integrations.GrokOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+		return err
+	}
+	if err := intg.Register(integrations.NewOmp(integrations.OmpOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+		return err
+	}
+	if err := intg.Register(integrations.NewClaude(integrations.ClaudeOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+		return err
+	}
+	if err := intg.Register(integrations.NewPi(integrations.PiOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+		return err
+	}
+	if err := intg.Register(integrations.NewOpencode(integrations.OpencodeOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+		return err
+	}
+	if err := intg.Register(integrations.NewOpencode2(integrations.Opencode2Options{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+		return err
+	}
+	if err := intg.Register(integrations.NewHermes(integrations.HermesOptions{Port: daemonPortNum, Models: integrations.DefaultPrismModels, ModelsSource: modelsSrc, Env: daemonEnv, Home: home})); err != nil {
+		return err
 	}
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
 	planner := server.NewConfigPlanner(cfg)
@@ -568,12 +586,14 @@ func run(opts options) error {
 	rlog := requestlog.New(500, time.Now)
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, client: client}, installer)
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
-	mgmt.SetHostRegistries(hostTable)
-	mgmt.SetHostLifecycle(supervisor)
 	mgmt.SetUsageStore(usageStore)
 	mgmt.SetRequestLog(rlog)
-	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, Usage: usageStore, RequestLog: rlog}).Handler()
-
+	var webUI http.Handler
+	if opts.webuiDir != "" {
+		webUI = webui.New(opts.webuiDir)
+		log.Printf("prismd: webui serving %s at /ui", opts.webuiDir)
+	}
+	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, WebUI: webUI, Usage: usageStore, RequestLog: rlog}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)
 	errCh := make(chan error, 1)

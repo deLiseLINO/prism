@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { bridge } from './bridge'
 
 export type ThemeMode = 'auto' | 'light' | 'dark'
 export type EffectiveTheme = 'light' | 'dark'
@@ -43,7 +44,7 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = effective
-    void window.prism.window.setTheme(effective).catch(() => undefined)
+    void bridge.window.setTheme(effective).catch(() => undefined)
   }, [effective])
 
   useEffect(() => {

@@ -105,26 +105,6 @@ describe('renderer api wrapper', () => {
     expect(recorded[1]).toMatchObject({ method: 'PUT', path: '/api/v1/providers/newprov' })
   })
 
-  it('maps host create and delete to the host routes', async () => {
-    const { api } = await loadApi()
-    setReply({ ok: true, status: 200, body: { generation: 2, host: { id: 'workmac', local: false, status: 'ok' } } })
-    const created = await api.createHost({ id: 'workmac', address: 'user@host', expectedGeneration: 1 })
-    expect(created.host.status).toBe('ok')
-    expect(recorded[0]).toMatchObject({ method: 'POST', path: '/api/v1/hosts' })
-    setReply({ ok: true, status: 200, body: { generation: 3 } })
-    await api.deleteHost('workmac', 2)
-    expect(recorded[1]).toMatchObject({ method: 'DELETE', path: '/api/v1/hosts/workmac?expectedGeneration=2' })
-  })
-
-  it('lists hosts through the same seam', async () => {
-    const { api } = await loadApi()
-    setReply({ ok: true, status: 200, body: { hosts: [{ id: 'local', local: true, status: 'ok' }] } })
-    const view = await api.hosts()
-    expect(view.hosts[0]?.id).toBe('local')
-    expect(recorded[0]).toMatchObject({ method: 'GET', path: '/api/v1/hosts' })
-  })
-
-
   it('writes a credential through the same bridge seam without echoing it', async () => {
     const { api } = await loadApi()
     setReply({ ok: true, status: 200, body: { generation: 5, providers: [] } })
@@ -379,6 +359,24 @@ describe('renderer api wrapper', () => {
       pool: existingPool,
       credential: null,
       expectedGeneration: 10,
+    })
+  })
+
+  it('writes the vision sidecar through the bridge seam with CAS generation', async () => {
+    const { api } = await loadApi()
+    setReply({
+      ok: true,
+      status: 200,
+      body: { enabled: true, target: 'router/gpt-5.6-luna', expectedGeneration: 8 },
+    })
+    const out = await api.visionSidecar({ enabled: true, target: 'router/gpt-5.6-luna', expectedGeneration: 7 })
+    expect(out.enabled).toBe(true)
+    expect(out.target).toBe('router/gpt-5.6-luna')
+    expect(out.expectedGeneration).toBe(8)
+    expect(recorded[0]).toMatchObject({
+      method: 'PUT',
+      path: '/api/v1/vision-sidecar',
+      body: { enabled: true, target: 'router/gpt-5.6-luna', expectedGeneration: 7 },
     })
   })
 

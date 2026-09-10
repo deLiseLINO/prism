@@ -2,6 +2,7 @@ import { useEffect, type CSSProperties } from 'react'
 import type { DaemonState, DaemonStatus } from '@prism/contracts'
 import { AsyncBoundary, Banner, Button } from '../components/Ui'
 import { useAsync, useTask } from '../useAsync'
+import { bridge } from '../bridge'
 
 const STATE_ORDER: readonly DaemonState[] = ['idle', 'starting', 'ready', 'backoff', 'stopped', 'failed', 'stopping', 'quitting']
 
@@ -100,12 +101,12 @@ function renderMachine(current: DaemonState): JSX.Element {
 
 export function DaemonView(): JSX.Element {
   const status = useAsync<DaemonStatus>(
-    () => window.prism.daemon.status(),
+    () => bridge.daemon.status(),
     [],
   )
 
   useEffect(() => {
-    const unsubscribe = window.prism.daemon.onStatus((next) => {
+    const unsubscribe = bridge.daemon.onStatus((next) => {
       status.set(next)
     })
     return unsubscribe
@@ -117,8 +118,8 @@ export function DaemonView(): JSX.Element {
   const actionError = startTask.error ?? stopTask.error ?? restartTask.error
 
   async function restart(): Promise<void> {
-    await stopTask.run(() => window.prism.daemon.stop())
-    await startTask.run(() => window.prism.daemon.start())
+    await stopTask.run(() => bridge.daemon.stop())
+    await startTask.run(() => bridge.daemon.start())
     status.refresh()
   }
 
@@ -171,7 +172,7 @@ export function DaemonView(): JSX.Element {
                     <Button
                       tone="primary"
                       onClick={() => {
-                        void startTask.run(() => window.prism.daemon.start())
+                        void startTask.run(() => bridge.daemon.start())
                       }}
                       disabled={!canStart || startTask.running || stopTask.running}
                       busy={startTask.running}
@@ -181,7 +182,7 @@ export function DaemonView(): JSX.Element {
                     <Button
                       tone="ghost"
                       onClick={() => {
-                        void stopTask.run(() => window.prism.daemon.stop())
+                        void stopTask.run(() => bridge.daemon.stop())
                       }}
                       disabled={!canStop || startTask.running || stopTask.running}
                       busy={stopTask.running}

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 
 const spawnMock = vi.hoisted(() => vi.fn())
 const locateMock = vi.hoisted(() => vi.fn())
+const locateWebuiMock = vi.hoisted(() => vi.fn())
 const healthMock = vi.hoisted(() => vi.fn())
 
 vi.mock('node:child_process', () => ({
@@ -11,6 +12,7 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('../main/daemon/locate', () => ({
   locateDaemon: locateMock,
+  locateWebui: locateWebuiMock,
 }))
 
 vi.mock('../main/daemon/health', () => ({
@@ -32,6 +34,7 @@ interface RecordedStatus {
 const options = {
   port: 4931,
   daemonConfigPath: null,
+  webuiDir: null,
   healthTimeoutMs: 200,
   healthIntervalMs: 20,
   healthProbeTimeoutMs: 50,
@@ -81,6 +84,7 @@ describe('DaemonSupervisor restart policy', () => {
       return child
     })
     locateMock.mockReset().mockReturnValue({ path: '/virtual/prismd', source: 'bundled' })
+    locateWebuiMock.mockReset().mockReturnValue(null)
     healthMock.mockReset().mockImplementation(() => healthQueue.shift() ?? 'timeout')
     vi.resetModules()
   })
@@ -180,5 +184,28 @@ describe('DaemonSupervisor restart policy', () => {
     await vi.advanceTimersByTimeAsync(200)
     expect(spawnMock).toHaveBeenCalledTimes(2)
     expect(lastStatus()).toMatchObject({ state: 'starting', attempt: 2 })
+  })
+
+  it('passes the webui bundle directory to the daemon when located', async () => {
+    locateWebuiMock.mockReturnValue('/virtual/webui')
+    const supervisor = await makeSupervisor()
+    setHealth('healthy')
+    await supervisor.start()
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/virtual/prismd',
+      ['--listen', '127.0.0.1:4931', '--webui', '/virtual/webui'],
+      expect.anything(),
+    )
+  })
+
+  it('omits the webui flag when no bundle exists', async () => {
+    const supervisor = await makeSupervisor()
+    setHealth('healthy')
+    await supervisor.start()
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/virtual/prismd',
+      ['--listen', '127.0.0.1:4931'],
+      expect.anything(),
+    )
   })
 })

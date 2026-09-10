@@ -31,6 +31,7 @@ type UIState struct {
 	CompactMode      bool   `json:"compact_mode"`
 	ActiveAccountKey string `json:"active_account_key"`
 	ProviderFilter   string `json:"provider_filter,omitempty"`
+	StatsRange       string `json:"stats_range,omitempty"`
 }
 
 func DefaultSettings() Settings {
@@ -103,6 +104,9 @@ func LoadUIState() (UIState, error) {
 	if provider, ok := root["provider_filter"].(string); ok {
 		state.ProviderFilter = strings.TrimSpace(provider)
 	}
+	if statsRange, ok := root["stats_range"].(string); ok {
+		state.StatsRange = normalizeStatsRange(strings.TrimSpace(statsRange))
+	}
 	return state, nil
 }
 
@@ -115,6 +119,7 @@ func SaveUIState(state UIState) error {
 		"compact_mode":       state.CompactMode,
 		"active_account_key": strings.TrimSpace(state.ActiveAccountKey),
 		"provider_filter":    strings.TrimSpace(state.ProviderFilter),
+		"stats_range":        normalizeStatsRange(state.StatsRange),
 	}
 	return writeJSONMap(path, root)
 }

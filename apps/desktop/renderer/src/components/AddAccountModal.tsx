@@ -4,6 +4,7 @@ import type { AuthSessionState, AuthStartView, ProviderView } from '@prism/contr
 import { Banner, Button } from './Ui'
 import { useTask, describeError } from '../useAsync'
 import { api, ApiError } from '../api'
+import { bridge } from '../bridge'
 
 const POLL_INTERVAL_MS = 1_500
 
@@ -119,7 +120,7 @@ export function AddAccountModal({
 
   async function copyLink(): Promise<void> {
     if (session === null) return
-    await window.prism.shell.writeClipboard(session.url)
+    await bridge.shell.writeClipboard(session.url)
     setCopied(true)
     window.setTimeout(() => {
       setCopied(false)
@@ -291,7 +292,7 @@ export function AddAccountModal({
                   size="sm"
                   title="Open the authorization page in your default browser."
                   onClick={() => {
-                    void window.prism.shell.openExternal(session.url)
+                    void bridge.shell.openExternal(session.url)
                   }}
                 >
                   Open in browser

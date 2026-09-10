@@ -5,9 +5,9 @@ import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
 import { loadDesktopConfig } from './config'
 import { DaemonSupervisor } from './daemon/supervisor'
 import { registerIpc } from './ipc'
-import { AgentsApi } from './agents'
-import { IntegrationApi } from './integrations'
-import { ManagementProxy } from './management'
+import { AgentsApi } from '../shared/agents'
+import { IntegrationApi } from '../shared/integrations'
+import { ManagementProxy } from '../shared/management'
 import { TrayController } from './tray'
 import { UpdaterService } from './updater/updater'
 import { createMainWindow } from './window'
@@ -37,6 +37,7 @@ async function bootstrap(): Promise<void> {
   const supervisor = new DaemonSupervisor(endpoint, {
     port: config.port,
     daemonConfigPath: config.daemonConfigPath,
+    webuiDir: config.webuiDir,
     healthTimeoutMs: HEALTH_TIMEOUT_MS,
     healthIntervalMs: HEALTH_INTERVAL_MS,
     healthProbeTimeoutMs: HEALTH_PROBE_TIMEOUT_MS,

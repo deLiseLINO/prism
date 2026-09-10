@@ -48,7 +48,22 @@ export interface ProviderView {
 export interface ProvidersView {
   readonly generation: number
   readonly contextWindow: number
+  readonly visionSidecar: VisionSidecarView
   readonly providers: readonly ProviderView[]
+}
+
+// Mirrors internal/management/schema.go VisionSidecarWrite (PUT) and the
+// visionSidecar object embedded in GET /api/v1/providers. Target is
+// `provider/model` naming an enabled model with imageInput, or empty.
+export interface VisionSidecarView {
+  readonly enabled?: boolean
+  readonly target?: string
+}
+
+export interface VisionSidecarWrite {
+  readonly enabled: boolean
+  readonly target?: string
+  readonly expectedGeneration: number
 }
 
 export interface ModelSettingsView {

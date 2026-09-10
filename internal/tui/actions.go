@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -203,6 +204,7 @@ func (m *Model) resetStatsState() {
 	m.StatsData = nil
 	m.StatsLoading = false
 	m.StatsScroll = 0
+	m.statsFetchInflight = false
 }
 
 func (m *Model) resetAuthLoginState() {
@@ -342,7 +344,7 @@ func (m Model) beginIntegrationsFlow() (tea.Model, tea.Cmd) {
 	m.IntegrationsVisible = true
 	m.IntegrationsCursor = 0
 	m.IntegrationConfirm = ""
-	return m, tea.Batch(FetchHostsCmd(m.api), FetchHostIntegrationsCmd(m.api, m.activeHostID()))
+	return m, FetchIntegrationsCmd(m.api)
 }
 
 func (m Model) beginStatsFlow() (tea.Model, tea.Cmd) {
@@ -355,6 +357,8 @@ func (m Model) beginStatsFlow() (tea.Model, tea.Cmd) {
 	m.StatsData = nil
 	m.StatsScroll = 0
 	m.StatsLoading = true
+	m.statsLastRefresh = time.Now()
+	m.statsFetchInflight = true
 	m.Err = nil
 	m.Notice = ""
 	return m, FetchStatsCmd(m.api, m.StatsRange)

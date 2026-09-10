@@ -21,12 +21,14 @@ type Model struct {
 	Notice          string
 	noticeSeq       int
 
-	UsageData        map[string][]quotaWindow
-	LoadingMap       map[string]bool
-	ErrorsMap        map[string]error
-	lastRefresh      map[string]time.Time
-	refreshScheduled map[string]bool
-	silentRefresh    map[string]bool
+	UsageData          map[string][]quotaWindow
+	LoadingMap         map[string]bool
+	ErrorsMap          map[string]error
+	lastRefresh        map[string]time.Time
+	refreshScheduled   map[string]bool
+	silentRefresh      map[string]bool
+	statsLastRefresh   time.Time
+	statsFetchInflight bool
 
 	CompactMode     bool
 	Width           int
@@ -60,15 +62,11 @@ type Model struct {
 	Integrations        []integrationStatus
 	IntegrationsCursor  int
 	IntegrationConfirm  string
-	HostsView           []hostView
-	HostsCursor         int
-	ActiveHost          string
 	StatsVisible        bool
 	StatsRange          string
 	StatsData           *management.StatsResponse
 	StatsLoading        bool
 	StatsScroll         int
-
 
 	DeleteConfirm bool
 	PinConfirm    bool
@@ -101,7 +99,6 @@ func InitialModel(client Client, compactMode bool) Model {
 		CompactMode:          compact,
 		Settings:             settings,
 		ProviderFilter:       normalizeProviderFilter(uiState.ProviderFilter),
-		ActiveHost:           managementHostLocal,
 		UsageData:            make(map[string][]quotaWindow),
 		LoadingMap:           make(map[string]bool),
 		ErrorsMap:            make(map[string]error),
@@ -109,7 +106,7 @@ func InitialModel(client Client, compactMode bool) Model {
 		refreshScheduled:     make(map[string]bool),
 		silentRefresh:        make(map[string]bool),
 		compactBarAnimations: make(map[string]compactBarAnimation),
-		StatsRange:           defaultStatsRange,
+		StatsRange:           normalizeStatsRange(uiState.StatsRange),
 		tabWindowAnimations:  make(map[string]tabWindowAnimation),
 		defaultProgress: progress.New(
 			progress.WithDefaultGradient(),
@@ -439,27 +436,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case IntegrationsMsg:
-		if msg.Host != m.activeHostID() {
-			return m, nil
-		}
 		m.Integrations = msg.Integrations
 		m.IntegrationsCursor = 0
 		m.Loading = false
 		m.Err = nil
 		return m, nil
-
-	case HostsMsg:
-		m.HostsView = msg.Hosts
-		if len(msg.Hosts) == 0 {
-			m.HostsView = []hostView{{ID: managementHostLocal, Local: true, Status: "ok"}}
-		}
-		if m.HostsCursor >= len(m.HostsView) {
-			m.HostsCursor = 0
-		}
-		return m, nil
-
 	case StatsMsg:
+		m.statsFetchInflight = false
 		if !m.StatsVisible {
+			return m, nil
+		}
+		if msg.Range != m.StatsRange {
 			return m, nil
 		}
 		stats := msg.Stats
@@ -469,6 +456,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StatsErrMsg:
+		m.statsFetchInflight = false
 		if !m.StatsVisible {
 			return m, nil
 		}
@@ -476,7 +464,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Err = msg.Err
 		m.Notice = ""
 		return m, nil
-
 
 	case IntegrationApplyResultMsg:
 		m.IntegrationConfirm = ""
@@ -489,13 +476,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Reason = "unknown reason"
 			}
 			m.Err = fmt.Errorf("apply failed: %s", msg.Reason)
-			return m, FetchHostIntegrationsCmd(m.api, m.activeHostID())
+			return m, FetchIntegrationsCmd(m.api)
 		}
 		m.Err = nil
-		m.Notice = "integration applied: " + msg.ID + " on " + m.activeHostLabel()
+		m.Notice = "integration applied: " + msg.ID
 		m.noticeSeq++
-		return m, tea.Batch(scheduleNoticeClearCmd(m.noticeSeq), FetchHostIntegrationsCmd(m.api, m.activeHostID()))
-
+		return m, tea.Batch(scheduleNoticeClearCmd(m.noticeSeq), FetchIntegrationsCmd(m.api))
 
 	case AnimationFrameMsg:
 		if !m.advanceAnimations(msg.Now) {
@@ -552,5 +538,6 @@ func (m Model) uiStateSnapshot() UIState {
 		CompactMode:      m.CompactMode,
 		ActiveAccountKey: m.activeAccountKey(),
 		ProviderFilter:   m.ProviderFilter,
+		StatsRange:       m.StatsRange,
 	}
 }
