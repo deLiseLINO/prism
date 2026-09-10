@@ -3,6 +3,7 @@ package integrations
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -120,7 +121,6 @@ type ClaudeOptions struct {
 	ConfigPath        string
 	Env               Env
 	Home              string
-	IO                FileIO
 	CrashBeforeRename bool
 	NowMS             func() int64
 }
@@ -130,7 +130,6 @@ type ClaudeIntegration struct {
 	port       int
 	models     []Model
 	modelsSrc  func() []Model
-	io         FileIO
 	configPath string
 	env        Env
 	home       string
@@ -165,7 +164,7 @@ func NewClaude(options ClaudeOptions) *ClaudeIntegration {
 	if nowMS == nil {
 		nowMS = func() int64 { return time.Now().UnixMilli() }
 	}
-	return &ClaudeIntegration{id: Claude, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, io: withLocalIO(options.IO), configPath: options.ConfigPath, env: options.Env, home: options.Home, nowMS: nowMS}
+	return &ClaudeIntegration{id: Claude, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, configPath: options.ConfigPath, env: options.Env, home: options.Home, nowMS: nowMS}
 }
 
 func (c *ClaudeIntegration) ID() ID { return c.id }
@@ -199,12 +198,12 @@ func (c *ClaudeIntegration) applyWith(force bool) ApplyResult {
 		return ToApplyResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", cacheErr), Retryable: !force && isForeignCacheError(cacheErr)})
 	}
 	displaced := map[string]string{}
-	outcome, err := ApplyConfigTransform(c.io, c.paths(), claudeTransformForced(c.port, c.currentModels(), force, displaced), false)
+	outcome, err := ApplyConfigTransform(c.paths(), claudeTransformForced(c.port, c.currentModels(), force, displaced), false)
 	if err != nil {
 		return ToApplyResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", err)})
 	}
 	if outcome.Kind == OutcomeWritten && len(displaced) > 0 {
-		_ = AtomicWrite(c.io, c.envJournalPath(), renderClaudeEnvJournal(displaced))
+		_ = AtomicWrite(c.envJournalPath(), renderClaudeEnvJournal(displaced))
 	}
 	return ToApplyResult(c.id, outcome)
 }
@@ -256,8 +255,8 @@ func renderClaudeEnvJournal(displaced map[string]string) string {
 }
 
 func (c *ClaudeIntegration) Status() Status {
-	return ObservedIntegrationStatus(c.io, c.id, c.paths(), []string{ClaudeConfigDir(c.env, c.home)}, func(path string) ManagedRead {
-		content, ok := c.io.ReadTextIfExists(path)
+	return ObservedIntegrationStatus(c.id, c.paths(), []string{ClaudeConfigDir(c.env, c.home)}, func(path string) ManagedRead {
+		content, ok := ReadTextIfExists(path)
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -266,19 +265,19 @@ func (c *ClaudeIntegration) Status() Status {
 }
 
 func (c *ClaudeIntegration) Rollback() ApplyResult {
-	outcome, err := ApplyConfigTransform(c.io, c.paths(), claudeRollbackTransformForced(c.io, c.envJournalPath()), false)
+	outcome, err := ApplyConfigTransform(c.paths(), claudeRollbackTransformForced(c.envJournalPath()), false)
 	if err != nil {
 		return ToRollbackResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude rollback", err)})
 	}
 	c.removeGatewayCache()
-	_ = c.io.Remove(c.envJournalPath())
-	_ = c.io.Remove(c.cacheJournalPath())
+	_ = os.Remove(c.envJournalPath())
+	_ = os.Remove(c.cacheJournalPath())
 	return ToRollbackResult(c.id, outcome)
 }
 
-func claudeRollbackTransformForced(io FileIO, journalPath string) func(current string) ConfigTransform {
+func claudeRollbackTransformForced(journalPath string) func(current string) ConfigTransform {
 	keys := claudeEnvKeyNames()
-	displaced := readClaudeEnvJournal(io, journalPath)
+	displaced := readClaudeEnvJournal(journalPath)
 	return func(current string) ConfigTransform {
 		result := RemoveJSONScalarKeys(current, "env", "settings.json", keys)
 		if result.Kind != "written" {
@@ -292,8 +291,8 @@ func claudeRollbackTransformForced(io FileIO, journalPath string) func(current s
 	}
 }
 
-func readClaudeEnvJournal(io FileIO, path string) map[string]string {
-	raw, ok := io.ReadTextIfExists(path)
+func readClaudeEnvJournal(path string) map[string]string {
+	raw, ok := ReadTextIfExists(path)
 	if !ok {
 		return nil
 	}
@@ -333,7 +332,7 @@ func isForeignCacheError(err error) bool {
 func (c *ClaudeIntegration) seedGatewayCacheForced(force bool) error {
 	path := c.cachePath()
 	displacedPath := c.cacheJournalPath()
-	raw, exists := c.io.ReadTextIfExists(path)
+	raw, exists := ReadTextIfExists(path)
 	if exists {
 		var current struct {
 			BaseURL string `json:"baseUrl"`
@@ -348,30 +347,30 @@ func (c *ClaudeIntegration) seedGatewayCacheForced(force bool) error {
 			if !force {
 				return fmt.Errorf("gateway cache %s belongs to endpoint %s", path, current.BaseURL)
 			}
-			if err := AtomicWrite(c.io, displacedPath, raw); err != nil {
+			if err := AtomicWrite(displacedPath, raw); err != nil {
 				return fmt.Errorf("gateway cache %s belongs to endpoint %s (journal write failed: %v)", path, current.BaseURL, err)
 			}
 		}
 	}
-	return AtomicWrite(c.io, path, RenderClaudeGatewayCache(ClaudeBaseURL(c.port), c.currentModels(), c.nowMS()))
+	return AtomicWrite(path, RenderClaudeGatewayCache(ClaudeBaseURL(c.port), c.currentModels(), c.nowMS()))
 }
 
 func (c *ClaudeIntegration) removeGatewayCache() {
 	path := c.cachePath()
-	raw, exists := c.io.ReadTextIfExists(path)
+	raw, exists := ReadTextIfExists(path)
 	if !exists {
-		_ = c.io.Remove(c.cacheJournalPath())
+		_ = os.Remove(c.cacheJournalPath())
 		return
 	}
 	var current struct {
 		BaseURL string `json:"baseUrl"`
 	}
 	if json.Unmarshal([]byte(raw), &current) == nil && current.BaseURL == ClaudeBaseURL(c.port) {
-		_ = c.io.Remove(path)
-		if journal, ok := c.io.ReadTextIfExists(c.cacheJournalPath()); ok {
-			_ = AtomicWrite(c.io, path, journal)
+		_ = os.Remove(path)
+		if journal, ok := ReadTextIfExists(c.cacheJournalPath()); ok {
+			_ = AtomicWrite(path, journal)
 		}
-		_ = c.io.Remove(c.cacheJournalPath())
+		_ = os.Remove(c.cacheJournalPath())
 	}
 }
 
@@ -410,6 +409,6 @@ type gatewayCacheModel struct {
 	DisplayName string `json:"display_name"`
 }
 
-func RecoverClaudeConfig(io FileIO, configPath string) bool {
-	return io.RecoverStaged(configPath)
+func RecoverClaudeConfig(configPath string) bool {
+	return RecoverStaged(configPath)
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AgentJob, AgentJobRequest, AgentStatus } from '@prism/contracts'
 import { Button } from '../components/Ui'
 import { useTask, describeError } from '../useAsync'
+import { bridge } from '../bridge'
 
 const LIVE_STATES: ReadonlySet<string> = new Set(['running', 'installing', 'verifying'])
 const POLL_MS = 700
@@ -26,7 +27,7 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
   useEffect(() => {
     if (!LIVE_STATES.has(job.state)) return
     const timer = window.setInterval(() => {
-      void window.prism.agents.job({ id: status.id }).then((next) => {
+      void bridge.agents.job({ id: status.id }).then((next) => {
         setJob(next)
         if (!LIVE_STATES.has(next.state)) onChanged()
       }, () => {})
@@ -35,7 +36,7 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
   }, [job.state, status.id, onChanged])
 
   async function install(): Promise<void> {
-    const reply = await installTask.run(() => window.prism.agents.install({ id: status.id }))
+    const reply = await installTask.run(() => bridge.agents.install({ id: status.id }))
     if (reply === undefined) return
     if (!reply.ok) {
       setActionError(reply.reason === '' ? 'install refused without a reason' : reply.reason)
@@ -46,7 +47,7 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
   }
 
   async function update(): Promise<void> {
-    const reply = await updateTask.run(() => window.prism.agents.update({ id: status.id }))
+    const reply = await updateTask.run(() => bridge.agents.update({ id: status.id }))
     if (reply === undefined) return
     if (!reply.ok) {
       setActionError(reply.reason === '' ? 'update refused without a reason' : reply.reason)

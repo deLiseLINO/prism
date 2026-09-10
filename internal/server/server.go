@@ -41,6 +41,7 @@ type Options struct {
 	Config          configProvider
 	Management      http.Handler
 	ManagementToken string
+	WebUI           http.Handler
 	Clock           Clock
 	QuotaGroup      account.QuotaGroup
 	OnWarning       func(responses.Warning)
@@ -56,6 +57,7 @@ type Server struct {
 	cfg       configProvider
 	mgmt      http.Handler
 	mgmtToken string
+	webui     http.Handler
 	clock     Clock
 	group     account.QuotaGroup
 	onWarn    func(responses.Warning)
@@ -90,6 +92,7 @@ func New(opts Options) *Server {
 		cfg:       opts.Config,
 		mgmt:      opts.Management,
 		mgmtToken: opts.ManagementToken,
+		webui:     opts.WebUI,
 		clock:     clock,
 		group:     group,
 		onWarn:    onWarn,
@@ -128,6 +131,13 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.mgmt != nil {
 		mux.Handle("/api/v1/", s.mgmt)
+	}
+	if s.webui != nil {
+		mux.Handle("/ui", http.StripPrefix("/ui", s.webui))
+		mux.Handle("/ui/", http.StripPrefix("/ui", s.webui))
+		mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/ui/", http.StatusFound)
+		})
 	}
 	mux.HandleFunc("/", notFound)
 	return s.admit(mux)

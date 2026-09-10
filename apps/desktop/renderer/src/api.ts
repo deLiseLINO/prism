@@ -3,9 +3,6 @@ import type {
   AccountsView,
   AuthStartView,
   AuthStatusView,
-  HostMutationResponse,
-  HostsView,
-  HostWrite,
   ManagementReply,
   ModelView,
   PoolSettingsView,
@@ -17,7 +14,9 @@ import type {
   RequestsView,
   UsageAccountView,
   UsageView,
+  VisionSidecarWrite,
 } from '@prism/contracts'
+import { bridge } from './bridge'
 
 export class ApiError extends Error {
   constructor(
@@ -54,7 +53,7 @@ async function call<T>(
   body?: unknown,
   expectedStatus = 200,
 ): Promise<T> {
-  const reply = await window.prism.management.call({
+  const reply = await bridge.management.call({
     method,
     path,
     ...(body === undefined ? {} : { body }),
@@ -99,6 +98,9 @@ export const api = {
       `/api/v1/providers/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`,
     )
   },
+  visionSidecar(body: VisionSidecarWrite): Promise<VisionSidecarWrite> {
+    return call('PUT', '/api/v1/vision-sidecar', body)
+  },
   accounts(): Promise<AccountsView> {
     return call('GET', '/api/v1/accounts')
   },
@@ -126,15 +128,6 @@ export const api = {
   usage(): Promise<UsageView> {
     return call('GET', '/api/v1/usage')
   },
-  hosts(): Promise<HostsView> {
-    return call('GET', '/api/v1/hosts')
-  },
-  createHost(body: HostWrite): Promise<HostMutationResponse> {
-    return call('POST', '/api/v1/hosts', body)
-  },
-  deleteHost(id: string, expectedGeneration: number): Promise<{ generation: number }> {
-    return call('DELETE', `/api/v1/hosts/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`)
-  },
   stats(range: StatsRange): Promise<StatsResponseView> {
     return call('GET', `/api/v1/stats?range=${encodeURIComponent(range)}`)
   },
@@ -142,7 +135,6 @@ export const api = {
     const query = limit === undefined ? '' : `?limit=${limit}`
     return call('GET', `/api/v1/requests${query}`)
   },
-
   authStart(provider: string): Promise<AuthStartView> {
     return call('POST', `/api/v1/auth/${encodeURIComponent(provider)}/start`)
   },

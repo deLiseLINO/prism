@@ -8,6 +8,8 @@ files:
 extraResources:
   - from: resources/prismd
     to: prismd
+  - from: resources/webui
+    to: webui
 asarUnpack:
   - "**/node_modules/electron-updater/**"
 publish:

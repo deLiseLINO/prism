@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -110,6 +111,7 @@ func TestStatsOverlayCloseKeys(t *testing.T) {
 }
 
 func TestStatsRangeSwitchRefetches(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
@@ -133,9 +135,49 @@ func TestStatsRangeSwitchRefetches(t *testing.T) {
 			t.Fatalf("fetch %d = %q, want %q", i, client.statsRange[i], r)
 		}
 	}
+
+	state, err := LoadUIState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.StatsRange != "1h" {
+		t.Fatalf("persisted range = %q, want 1h", state.StatsRange)
+	}
+
+	restored := InitialModel(client, false)
+	if restored.StatsRange != "1h" {
+		t.Fatalf("restored range = %q, want 1h", restored.StatsRange)
+	}
+}
+
+func TestUIStateStatsRangeNormalizes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if err := SaveUIState(UIState{StatsRange: "bogus"}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := LoadUIState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.StatsRange != "24h" {
+		t.Fatalf("range = %q, want fallback 24h", state.StatsRange)
+	}
+
+	if err := SaveUIState(UIState{StatsRange: "30d"}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = LoadUIState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.StatsRange != "30d" {
+		t.Fatalf("range = %q, want 30d", state.StatsRange)
+	}
 }
 
 func TestStatsRefreshHotkeyRefetches(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
@@ -145,6 +187,57 @@ func TestStatsRefreshHotkeyRefetches(t *testing.T) {
 	batchMsgs(cmd)
 	if len(client.statsRange) != 2 {
 		t.Fatalf("fetched ranges = %v, want 2 fetches", client.statsRange)
+	}
+}
+
+func TestStatsAutoRefreshPollsWhileVisible(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	client := newFakeClient(management.Account{ID: "acc-1"})
+	m := testModel(client, management.Account{ID: "acc-1"})
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	var openMsg StatsMsg
+	for _, msg := range batchMsgs(cmd) {
+		if typed, ok := msg.(StatsMsg); ok {
+			openMsg = typed
+		}
+	}
+	next, _ = next.(Model).Update(openMsg)
+	updated := next.(Model)
+	fetches := len(client.statsRange)
+
+	early := updated.statsLastRefresh.Add(2 * time.Second)
+	if updated.statsAutoRefreshCmd(early) != nil {
+		t.Fatal("poll scheduled before interval elapsed")
+	}
+
+	due := updated.statsLastRefresh.Add(statsAutoRefreshInterval)
+	poll := updated.statsAutoRefreshCmd(due)
+	if poll == nil {
+		t.Fatal("poll not scheduled at interval")
+	}
+	if _, ok := poll().(StatsMsg); !ok {
+		t.Fatal("poll cmd did not fetch stats")
+	}
+	if len(client.statsRange) != fetches+1 {
+		t.Fatalf("fetched ranges = %v, want one poll fetch", client.statsRange)
+	}
+
+	closed, _ := updated.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if closed.(Model).statsAutoRefreshCmd(due.Add(statsAutoRefreshInterval)) != nil {
+		t.Fatal("poll scheduled with stats overlay closed")
+	}
+}
+
+func TestStatsAutoRefreshDisabledSkipsPoll(t *testing.T) {
+	client := newFakeClient(management.Account{ID: "acc-1"})
+	m := testModel(client, management.Account{ID: "acc-1"})
+	m.Settings.AutoRefreshEnabled = false
+	m.StatsVisible = true
+	m.statsLastRefresh = time.Now().Add(-time.Hour)
+
+	if m.statsAutoRefreshCmd(time.Now()) != nil {
+		t.Fatal("poll scheduled with auto-refresh disabled")
 	}
 }
 

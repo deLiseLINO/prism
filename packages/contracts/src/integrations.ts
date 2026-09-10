@@ -3,32 +3,6 @@ export type IntegrationId = 'codex' | 'grok' | 'omp' | 'claude' | 'pi' | 'openco
 export interface IntegrationRequest {
   readonly id: IntegrationId
   readonly force?: boolean
-  readonly host?: HostId
-}
-
-
-export type HostId = string
-
-export interface HostView {
-  readonly id: HostId
-  readonly local: boolean
-  readonly status: string
-  readonly detail?: string
-}
-
-export interface HostsView {
-  readonly hosts: readonly HostView[]
-}
-
-export interface HostWrite {
-  readonly id: string
-  readonly address: string
-  readonly expectedGeneration: number
-}
-
-export interface HostMutationResponse {
-  readonly generation: number
-  readonly host: HostView
 }
 
 export type IntegrationApplyResult =

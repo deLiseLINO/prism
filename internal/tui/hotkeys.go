@@ -108,7 +108,7 @@ func (m Model) handleIntegrationsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 		case "enter":
 			id := m.IntegrationConfirm
 			m.IntegrationConfirm = ""
-			return m, ApplyHostIntegrationCmd(m.api, m.activeHostID(), id)
+			return m, ApplyIntegrationCmd(m.api, id)
 		}
 		return m, nil
 	}
@@ -130,9 +130,6 @@ func (m Model) handleIntegrationsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 			m.IntegrationsCursor = (m.IntegrationsCursor + 1) % len(m.Integrations)
 		}
 		return m, nil
-	case "H":
-		m.cycleActiveHost()
-		return m, FetchHostIntegrationsCmd(m.api, m.activeHostID())
 	case "enter":
 		if m.IntegrationsCursor < 0 || m.IntegrationsCursor >= len(m.Integrations) {
 			return m, nil
@@ -260,6 +257,7 @@ func (m Model) handleStatsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 		m.resetStatsState()
 		return m, nil
 	case "r":
+		m.statsFetchInflight = true
 		m.StatsLoading = true
 		return m, FetchStatsCmd(m.api, m.StatsRange)
 	case "left", "h":
@@ -291,5 +289,6 @@ func (m Model) switchStatsRange(statsRange string) (tea.Model, tea.Cmd) {
 	m.StatsData = nil
 	m.StatsScroll = 0
 	m.StatsLoading = true
-	return m, FetchStatsCmd(m.api, m.StatsRange)
+	m.statsFetchInflight = true
+	return m, tea.Batch(FetchStatsCmd(m.api, m.StatsRange), SaveUIStateSnapshotCmd(m.uiStateSnapshot()))
 }

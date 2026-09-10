@@ -72,11 +72,3 @@ func readText(t *testing.T, path string) string {
 	t.Helper()
 	return readFile(t, path)
 }
-
-func localFileExists(path string) bool {
-	return LocalIO{}.FileExists(path)
-}
-
-func localReadTextIfExists(path string) (string, bool) {
-	return LocalIO{}.ReadTextIfExists(path)
-}

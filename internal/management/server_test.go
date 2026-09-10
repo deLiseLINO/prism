@@ -926,6 +926,11 @@ func TestVisionSidecarEndpoint(t *testing.T) {
 	if s := env.cfg.Get().Config.VisionSidecar; !s.Enabled || s.Target != "router/gpt-5.6-luna" {
 		t.Fatalf("config vision sidecar = %+v", s)
 	}
+	rec := env.do(t, http.MethodGet, "/api/v1/providers", "")
+	listed := decodeBody[ProvidersResponse](t, rec)
+	if !listed.VisionSidecar.Enabled || listed.VisionSidecar.Target != "router/gpt-5.6-luna" {
+		t.Fatalf("listed vision sidecar = %+v", listed.VisionSidecar)
+	}
 }
 
 type fakeUsageSource struct {

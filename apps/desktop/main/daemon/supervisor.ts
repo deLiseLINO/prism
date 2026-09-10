@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { DAEMON_HEALTH_PATH, DAEMON_HOST, type DaemonExit, type DaemonStatus } from '@prism/contracts'
-import { locateDaemon } from './locate'
+import { locateDaemon, locateWebui } from './locate'
 import { waitForHealth } from './health'
 
 export interface SupervisorOptions {
   readonly port: number
   readonly daemonConfigPath: string | null
+  readonly webuiDir: string | null
   readonly healthTimeoutMs: number
   readonly healthIntervalMs: number
   readonly healthProbeTimeoutMs: number
@@ -118,6 +119,8 @@ export class DaemonSupervisor {
     this.emit()
     const args = ['--listen', `${DAEMON_HOST}:${this.options.port}`]
     if (this.options.daemonConfigPath !== null) args.push('--config', this.options.daemonConfigPath)
+    const webuiDir = locateWebui(this.options.webuiDir)
+    if (webuiDir !== null) args.push('--webui', webuiDir)
     const child = spawn(binaryPath, args, {
       stdio: ['ignore', 'ignore', 'inherit'],
       shell: false,

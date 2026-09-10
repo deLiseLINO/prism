@@ -72,12 +72,7 @@ type Document struct {
 	Combos        map[string]Combo      `json:"combos"`
 	Routes        map[string]string     `json:"routes"`
 	Aliases       map[string]string     `json:"aliases"`
-	Hosts         map[string]Host       `json:"hosts,omitempty"`
 	VisionSidecar VisionSidecarSettings `json:"visionSidecar,omitempty"`
-}
-
-type Host struct {
-	Address string `json:"address"`
 }
 
 type Daemon struct {
@@ -229,14 +224,6 @@ func (d Document) validate() error {
 		}
 		if err := d.validateRouteValue(v); err != nil {
 			return fmt.Errorf("aliases.%s: %w", k, err)
-		}
-	}
-	for id, h := range d.Hosts {
-		if id == "" {
-			return fmt.Errorf("%w: host id", ErrEmptyField)
-		}
-		if strings.TrimSpace(h.Address) == "" {
-			return fmt.Errorf("%w: hosts.%s.address", ErrEmptyField, id)
 		}
 	}
 	return nil

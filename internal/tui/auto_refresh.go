@@ -14,6 +14,8 @@ func autoRefreshTickCmd() tea.Cmd {
 	})
 }
 
+const statsAutoRefreshInterval = 5 * time.Second
+
 func (m Model) handleAutoRefreshTick(now time.Time) (tea.Model, tea.Cmd) {
 	if m.lastRefresh == nil {
 		m.lastRefresh = make(map[string]time.Time)
@@ -49,7 +51,19 @@ func (m Model) handleAutoRefreshTick(now time.Time) (tea.Model, tea.Cmd) {
 		m.refreshScheduled[accountKey] = true
 	}
 
-	return m, tea.Batch(autoRefreshTickCmd(), m.fetchNextCmd())
+	return m, tea.Batch(autoRefreshTickCmd(), m.fetchNextCmd(), m.statsAutoRefreshCmd(now))
+}
+
+func (m Model) statsAutoRefreshCmd(now time.Time) tea.Cmd {
+	if !m.Settings.AutoRefreshEnabled || !m.StatsVisible || m.statsFetchInflight {
+		return nil
+	}
+	if now.Sub(m.statsLastRefresh) < statsAutoRefreshInterval {
+		return nil
+	}
+	m.statsLastRefresh = now
+	m.statsFetchInflight = true
+	return FetchStatsCmd(m.api, m.StatsRange)
 }
 
 func (m Model) autoRefreshInterval(accountKey string) time.Duration {

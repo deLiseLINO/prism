@@ -7,16 +7,18 @@ export const PRISM_DAEMON_CONFIG_ENV = 'PRISM_DAEMON_CONFIG'
 export const PRISM_RENDERER_URL_ENV = 'PRISM_RENDERER_URL'
 export const PRISM_HEADLESS_ENV = 'PRISM_HEADLESS'
 export const PRISM_USER_DATA_ENV = 'PRISM_USER_DATA'
+export const PRISM_WEBUI_DIR_ENV = 'PRISM_WEBUI_DIR'
 export const PRISM_UPDATE_URL_ENV = 'PRISM_UPDATE_URL'
 export const PRISM_UPDATER_ENV = 'PRISM_UPDATER'
 
 export interface DesktopConfig {
   readonly port: number
-  readonly daemonConfigPath: string | null
   readonly headless: boolean
   readonly userDataPath: string | null
   readonly updateUrl: string | null
   readonly updaterDisabled: boolean
+  readonly daemonConfigPath: string | null
+  readonly webuiDir: string | null
 }
 
 const AUTO_PORT_MIN = 10201
@@ -29,9 +31,11 @@ export async function loadDesktopConfig(env: NodeJS.ProcessEnv = process.env): P
     headless: parseHeadless(env[PRISM_HEADLESS_ENV]),
     userDataPath: parseOptionalPath(env[PRISM_USER_DATA_ENV]),
     updateUrl: parseUpdateUrl(env[PRISM_UPDATE_URL_ENV]),
+    webuiDir: parseOptionalPath(env[PRISM_WEBUI_DIR_ENV]),
     updaterDisabled: parseUpdaterDisabled(env[PRISM_UPDATER_ENV]),
   }
 }
+
 
 async function resolvePort(raw: string | undefined): Promise<number> {
   if (raw === undefined || raw === '') return DAEMON_DEFAULT_PORT

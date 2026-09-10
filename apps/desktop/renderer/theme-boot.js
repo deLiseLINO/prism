@@ -9,6 +9,5 @@
   var dark =
     mode === 'dark' ||
     (mode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
-
+  document.documentElement.dataset.os = /Mac|iPhone|iPad/.test(navigator.platform) ? 'mac' : 'other'
 })()

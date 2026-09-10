@@ -1,9 +1,9 @@
 import { BrowserWindow, clipboard, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { IpcChannel } from '@prism/contracts'
 import type { DaemonSupervisor } from './daemon/supervisor'
-import { IntegrationApi, parseIntegrationRequest } from './integrations'
-import { AgentsApi, parseAgentJobRequest } from './agents'
-import { ManagementProxy, validateManagementCall } from './management'
+import { IntegrationApi, parseIntegrationRequest } from '../shared/integrations'
+import { AgentsApi, parseAgentJobRequest } from '../shared/agents'
+import { ManagementProxy, validateManagementCall } from '../shared/management'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
 import type { UpdaterService } from './updater/updater'
@@ -68,16 +68,9 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.integrations.rollback(parseIntegrationRequest(input))
   })
-  ipcMain.handle(IpcChannel.integrationStatus, (event, host: unknown) => {
+  ipcMain.handle(IpcChannel.integrationStatus, (event) => {
     trustedSender(event)
-    if (host !== undefined && typeof host !== 'string') {
-      throw new Error('prism: integration host must be a string')
-    }
-    return wiring.integrations.status(host)
-  })
-  ipcMain.handle(IpcChannel.hostsList, (event) => {
-    trustedSender(event)
-    return wiring.integrations.hosts()
+    return wiring.integrations.status()
   })
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {
     trustedSender(event)

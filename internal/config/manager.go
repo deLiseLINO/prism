@@ -142,7 +142,6 @@ func cloneDocument(d Document) Document {
 		Combos:        cloneMap(d.Combos),
 		Routes:        cloneMap(d.Routes),
 		Aliases:       cloneMap(d.Aliases),
-		Hosts:         cloneMap(d.Hosts),
 		VisionSidecar: d.VisionSidecar,
 	}
 	for id, p := range d.Providers {

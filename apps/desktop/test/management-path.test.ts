@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateManagementCall } from '../main/management'
+import { validateManagementCall } from '../shared/management'
 
 describe('management path validation', () => {
   it('accepts auth sessions and generation CAS query parameters', () => {

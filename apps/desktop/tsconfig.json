@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["main", "preload"]
+  "include": ["main", "preload", "shared"]
 }

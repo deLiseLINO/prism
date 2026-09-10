@@ -148,20 +148,20 @@ func TestClaudeVerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "settings.json", "{\n  \"env\": {\n    \"CUSTOM_TOOL\": \"keep\"\n  }\n}\n")
 	probe := JSONScalarKeysProbe(Claude, "env", "settings.json", "ANTHROPIC_BASE_URL", ClaudeBaseURL(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(LocalIO{}, path, claudeTransform(testPort, DefaultPrismModels, false), crash)
+			outcome, err := ApplyConfigTransform(path, claudeTransform(testPort, DefaultPrismModels, false), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", err)}
 			}
 			return outcome
 		},
 		func() WriteOutcome {
-			outcome, err := ApplyConfigTransform(LocalIO{}, path, claudeRollbackTransform(), false)
+			outcome, err := ApplyConfigTransform(path, claudeRollbackTransform(), false)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude rollback", err)}
 			}
 			return outcome
 		},
-		func() bool { return RecoverClaudeConfig(LocalIO{}, path) },
+		func() bool { return RecoverClaudeConfig(path) },
 	)
 	for _, check := range VerifyIntegration(probe, path, "{\n  \"env\": {\n    \"CUSTOM_TOOL\": \"keep\"\n  }\n}\n") {
 		if !check.OK {

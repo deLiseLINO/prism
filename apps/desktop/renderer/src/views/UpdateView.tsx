@@ -2,6 +2,7 @@ import { useEffect, type CSSProperties } from 'react'
 import type { UpdaterState, UpdaterStatus } from '@prism/contracts'
 import { AsyncBoundary, Banner, Button } from '../components/Ui'
 import { useAsync, useTask } from '../useAsync'
+import { bridge } from '../bridge'
 
 const STATE_ORDER: readonly UpdaterState[] = [
   'disabled',
@@ -41,12 +42,12 @@ const CHECKABLE: Record<UpdaterState, boolean> = {
 
 export function UpdateView(): JSX.Element {
   const status = useAsync<UpdaterStatus>(
-    () => window.prism.updater.status(),
+    () => bridge.updater.status(),
     [],
   )
 
   useEffect(() => {
-    const unsubscribe = window.prism.updater.onStatus((next) => {
+    const unsubscribe = bridge.updater.onStatus((next) => {
       status.set(next)
     })
     return unsubscribe
@@ -69,7 +70,7 @@ export function UpdateView(): JSX.Element {
           <Button
             tone="primary"
             onClick={() => {
-              void checkTask.run(() => window.prism.updater.check())
+              void checkTask.run(() => bridge.updater.check())
             }}
             disabled={current === null || !CHECKABLE[current.state]}
             busy={checkTask.running}
@@ -96,7 +97,7 @@ export function UpdateView(): JSX.Element {
                     <Button
                       tone="primary"
                       onClick={() => {
-                        void installTask.run(() => window.prism.updater.install())
+                        void installTask.run(() => bridge.updater.install())
                       }}
                       disabled={!canInstall || installTask.running}
                       busy={installTask.running}

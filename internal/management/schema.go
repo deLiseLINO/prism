@@ -63,9 +63,10 @@ type Provider struct {
 }
 
 type ProvidersResponse struct {
-	Generation    uint64     `json:"generation"`
-	ContextWindow int        `json:"contextWindow"`
-	Providers     []Provider `json:"providers"`
+	Generation    uint64                       `json:"generation"`
+	ContextWindow int                          `json:"contextWindow"`
+	VisionSidecar config.VisionSidecarSettings `json:"visionSidecar"`
+	Providers     []Provider                   `json:"providers"`
 }
 
 type ContextWindowWrite struct {
