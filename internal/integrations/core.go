@@ -41,14 +41,13 @@ type WriteOutcome struct {
 	Reason    string
 	Retryable bool
 }
-
 // ApplyConfigTransform is one apply pass over a config file: read, normalize
 // EOL, transform (fail-closed via Refused), restore the dominant EOL, then a
-// staged atomic write. crashBeforeRename stops after the temp file is durable
-// and skips the rename, leaving the target at its last complete state — the
-// seam the crash-safety verifier drives.
-func ApplyConfigTransform(path string, transform func(currentLf string) ConfigTransform, crashBeforeRename bool) (WriteOutcome, error) {
-	raw, _ := ReadTextIfExists(path)
+// staged atomic write through io. crashBeforeRename stops after the temp file
+// is durable and skips the rename, leaving the target at its last complete
+// state — the seam the crash-safety verifier drives.
+func ApplyConfigTransform(io FileIO, path string, transform func(currentLf string) ConfigTransform, crashBeforeRename bool) (WriteOutcome, error) {
+	raw, _ := io.ReadTextIfExists(path)
 	eol := DominantEol(raw)
 	result := transform(ApplyEol(raw, EolLF))
 	if result.Refused != "" {
@@ -57,13 +56,13 @@ func ApplyConfigTransform(path string, transform func(currentLf string) ConfigTr
 	if !result.Changed {
 		return WriteOutcome{Kind: OutcomeUnchanged}, nil
 	}
-	if err := StageWrite(path, ApplyEol(result.Next, eol)); err != nil {
+	if err := io.StageWrite(path, ApplyEol(result.Next, eol)); err != nil {
 		return WriteOutcome{}, err
 	}
 	if crashBeforeRename {
 		return WriteOutcome{Kind: OutcomeCrashed}, nil
 	}
-	if err := CommitStaged(path); err != nil {
+	if err := io.CommitStaged(path); err != nil {
 		return WriteOutcome{}, err
 	}
 	return WriteOutcome{Kind: OutcomeWritten}, nil
@@ -156,11 +155,15 @@ type ManagedRead struct {
 // installed comes from file or detection-directory existence, managed only
 // from Prism-owned bytes actually found in the target, endpoint from the
 // managed bytes, and drift from comparing that endpoint with the requested one.
-func ObservedIntegrationStatus(id ID, targetPath string, detectDirs []string, read func(path string) ManagedRead, requestedEndpoint string) Status {
-	configPresent := FileExists(targetPath)
+// ObservedIntegrationStatus derives status from observable file facts through io:
+// installed comes from file or detection-directory existence, managed only
+// from Prism-owned bytes actually found in the target, endpoint from the
+// managed bytes, and drift from comparing that endpoint with the requested one.
+func ObservedIntegrationStatus(io FileIO, id ID, targetPath string, detectDirs []string, read func(path string) ManagedRead, requestedEndpoint string) Status {
+	configPresent := io.FileExists(targetPath)
 	installed := configPresent
 	for _, dir := range detectDirs {
-		if FileExists(dir) {
+		if io.FileExists(dir) {
 			installed = true
 			break
 		}

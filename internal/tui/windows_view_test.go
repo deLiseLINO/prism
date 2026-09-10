@@ -11,6 +11,7 @@ import (
 func testWindowsModel() Model {
 	limit := int64(100)
 	m := testModel(nil, management.Account{ID: "codex:default", Provider: "codex", State: "active"})
+	m.ProviderFilter = "codex"
 	m.Width = 160
 	m.Height = 40
 	m.Loading = false
@@ -27,7 +28,7 @@ func TestRenderWindowsViewShowsBothWindows(t *testing.T) {
 	view := testWindowsModel().renderWindowsView()
 
 	if !strings.Contains(view, "5 hour") {
-		t.Fatal("missing 5 hour header")
+		t.Fatal("missing 5 hour row")
 	}
 	if !strings.Contains(view, "Weekly") {
 		t.Fatal("missing Weekly header")
@@ -50,19 +51,42 @@ func TestRenderWindowsViewShortWindowFirst(t *testing.T) {
 	}
 }
 
-func TestRenderWindowsViewSingleGroupNoBlankLineInside(t *testing.T) {
+func TestRenderWindowsViewSeparatesWindowRowsWithBlankLine(t *testing.T) {
 	view := testWindowsModel().renderWindowsView()
-	if strings.Contains(view, "\n\n") {
-		t.Fatalf("single group must not contain a blank line\nview = %q", view)
-	}
-	if !strings.Contains(view, "5 hour") || !strings.Contains(view, "Weekly") {
+	shortEnd := strings.Index(view, "5 hour")
+	weeklyAt := strings.Index(view, "Weekly")
+	if shortEnd == -1 || weeklyAt == -1 {
 		t.Fatalf("view = %q", view)
+	}
+	rows := strings.Split(view, "\n")
+	betweenRows := 0
+	weeklyRow := -1
+	for i, row := range rows {
+		if strings.Contains(row, "Weekly") {
+			weeklyRow = i
+			break
+		}
+	}
+	if weeklyRow <= 1 {
+		t.Fatalf("5 hour and Weekly must be separated by a blank line\nview = %q", view)
+	}
+	for _, row := range rows[1:weeklyRow] {
+		if strings.TrimSpace(row) == "" {
+			betweenRows++
+		}
+	}
+	if betweenRows != 1 {
+		t.Fatalf("5 hour and Weekly must be separated by one blank line\nview = %q", view)
+	}
+	if strings.Contains(view, "Antigravity") {
+		t.Fatalf("codex windows must not render antigravity group title\nview = %q", view)
 	}
 }
 
 func TestRenderWindowsViewGroupsAntigravityFamilies(t *testing.T) {
 	limit := int64(10000)
 	m := testModel(nil, management.Account{ID: "antigravity:default", Provider: "antigravity", State: "active"})
+	m.ProviderFilter = "antigravity"
 	m.Width = 160
 	m.Height = 40
 	m.UsageData["antigravity:default"] = quotaWindowsFromView(management.QuotaView{
@@ -91,8 +115,8 @@ func TestRenderWindowsViewGroupsAntigravityFamilies(t *testing.T) {
 	if !strings.Contains(geminiBlock, "5 hour") || !strings.Contains(geminiBlock, "Weekly") {
 		t.Fatalf("Gemini block missing window rows: %q", geminiBlock)
 	}
-	if strings.Count(geminiBlock, "\n") != 4 {
-		t.Fatalf("Gemini block rows = %d, want header + 2 rows + group separator\n%q", strings.Count(geminiBlock, "\n"), geminiBlock)
+	if strings.Count(geminiBlock, "\n") != 5 {
+		t.Fatalf("Gemini block rows = %d, want header + 2 rows + row separator + group separator\n%q", strings.Count(geminiBlock, "\n"), geminiBlock)
 	}
 }
 

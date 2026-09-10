@@ -7,13 +7,19 @@ export const IpcChannel = {
   integrationApply: 'prism:integration-apply',
   integrationRollback: 'prism:integration-rollback',
   integrationStatus: 'prism:integration-status',
+  hostsList: 'prism:hosts-list',
   agentInstall: 'prism:agent-install',
   agentUpdate: 'prism:agent-update',
   agentJob: 'prism:agent-job',
   agentStatus: 'prism:agent-status',
+
   shellOpenExternal: 'prism:shell-open-external',
   clipboardWrite: 'prism:clipboard-write',
   windowSetTheme: 'prism:window-set-theme',
+  updaterStatusEvent: 'prism:updater-status-event',
+  updaterGetStatus: 'prism:updater-get-status',
+  updaterCheck: 'prism:updater-check',
+  updaterInstall: 'prism:updater-install',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

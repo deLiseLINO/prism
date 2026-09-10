@@ -250,6 +250,37 @@ func TestAccountLabelFallsBackToShortID(t *testing.T) {
 	}
 }
 
+func TestIntegrationsHostSwitchAndStaleDrop(t *testing.T) {
+	m := testModel(newFakeClient())
+	m.IntegrationsVisible = true
+	m.HostsView = []hostView{
+		{ID: managementHostLocal, Local: true, Status: "ok"},
+		{ID: "workmac", Status: "ok"},
+	}
+	m.HostsCursor = 0
+	m.ActiveHost = managementHostLocal
+
+	next, _ := m.Update(IntegrationsMsg{Host: managementHostLocal, Integrations: []integrationStatus{{ID: "codex", Installed: true}}})
+	updated := next.(Model)
+	if len(updated.Integrations) != 1 {
+		t.Fatalf("local integrations dropped: %+v", updated.Integrations)
+	}
+
+	next, _ = updated.Update(HostsMsg{Hosts: m.HostsView})
+	updated = next.(Model)
+
+	next, _ = updated.Update(IntegrationsMsg{Host: "workmac", Integrations: []integrationStatus{{ID: "grok"}}})
+	stale := next.(Model)
+	if stale.Integrations[0].ID != "codex" {
+		t.Fatalf("stale integrations from another host overwritten the view: %+v", stale.Integrations)
+	}
+
+	stale.cycleActiveHost()
+	if stale.ActiveHost != "workmac" {
+		t.Fatalf("host switch landed on %q, want workmac", stale.ActiveHost)
+	}
+}
+
 func batchMsgs(cmd tea.Cmd) []tea.Msg {
 	if cmd == nil {
 		return nil

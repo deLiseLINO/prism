@@ -20,7 +20,8 @@ type ErrorBody struct {
 }
 
 type HealthResponse struct {
-	Status string `json:"status"`
+	Status  string `json:"status"`
+	Version string `json:"version,omitempty"`
 }
 
 type Caps struct {

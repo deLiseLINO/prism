@@ -14,6 +14,7 @@ import (
 
 	"prism/internal/account"
 	"prism/internal/auth"
+	"prism/internal/buildinfo"
 	"prism/internal/canon"
 	"prism/internal/config"
 	"prism/internal/execution"
@@ -266,6 +267,9 @@ func TestHealthReturnsOK(t *testing.T) {
 	got := decodeBody[HealthResponse](t, rec)
 	if got.Status != "ok" {
 		t.Fatalf("status = %q, want ok", got.Status)
+	}
+	if got.Version != buildinfo.Version {
+		t.Fatalf("version = %q, want %q", got.Version, buildinfo.Version)
 	}
 }
 

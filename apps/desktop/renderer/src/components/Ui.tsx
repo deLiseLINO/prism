@@ -305,7 +305,7 @@ export function SearchInput({ id, value, onChange, placeholder, ariaLabel, hotke
   useEffect(() => {
     if (!hotkey) return
     const onKey = (event: globalThis.KeyboardEvent): void => {
-      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.code !== 'Slash' || event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target as HTMLElement | null
       if (target !== null && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
       const input = inputRef.current

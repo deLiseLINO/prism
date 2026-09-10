@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import type { DaemonStatus } from '@prism/contracts'
+import type { DaemonStatus, UpdaterStatus } from '@prism/contracts'
 import { ThemeToggle } from './components/Ui'
 import { useTheme } from './useTheme'
 import { SECTIONS, VIEWS, hashFor, navigateTo, readCurrentView, type View } from './routing'
@@ -7,8 +7,10 @@ import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
 import { LogsView } from './views/LogsView'
 import { OverviewView } from './views/OverviewView'
+import { MachinesView } from './views/MachinesView'
 import { ProvidersView } from './views/ProvidersView'
 import { StatsView } from './views/StatsView'
+import { UpdateView } from './views/UpdateView'
 import { UsagePanel } from './views/UsageView'
 
 const VIEW_ICONS: Record<View, string> = {
@@ -17,8 +19,11 @@ const VIEW_ICONS: Record<View, string> = {
   stats: '#i-usage',
   providers: '#i-plug',
   daemon: '#i-daemon',
-  logs: '#i-logs',
   integrations: '#i-puzzle',
+  machines: '#i-cube',
+  logs: '#i-logs',
+  update: '#i-refresh',
+
 }
 function IconSprite(): JSX.Element {
   return (
@@ -55,6 +60,11 @@ function renderView(view: View): JSX.Element {
       return <LogsView />
     case 'integrations':
       return <IntegrationsView />
+    case 'machines':
+      return <MachinesView />
+    case 'update':
+      return <UpdateView />
+
   }
 }
 
@@ -62,6 +72,7 @@ export function App(): JSX.Element {
   const [view, setView] = useState<View>(readCurrentView())
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null)
   const [daemonUnreachable, setDaemonUnreachable] = useState(false)
+  const [updater, setUpdater] = useState<UpdaterStatus | null>(null)
   const mainRef = useRef<HTMLElement | null>(null)
   const viewRef = useRef(view)
   const { mode, cycle } = useTheme()
@@ -101,6 +112,12 @@ export function App(): JSX.Element {
       cancelled = true
       unsubscribe()
     }
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.prism.updater.onStatus(setUpdater)
+    void window.prism.updater.status().then(setUpdater, () => {})
+    return unsubscribe
   }, [])
 
   return (
@@ -145,7 +162,22 @@ export function App(): JSX.Element {
         </div>
       </aside>
       <main className="app" id="main" ref={mainRef} tabIndex={-1}>
-        <div className="wrap">{renderView(view)}</div>
+        <div className="wrap">
+          {updater !== null && updater.state === 'downloaded' ? (
+            <div className="banner banner--ok" role="status" style={{ marginBottom: 14 }}>
+              <div>
+                <p className="banner__title">Update ready</p>
+                <p className="banner__detail">Prism {updater.downloadedVersion} downloaded — restart to install.</p>
+              </div>
+              <div className="banner__action">
+                <button type="button" className="btn btn--primary" onClick={() => void window.prism.updater.install()}>
+                  Restart to update
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {renderView(view)}
+        </div>
       </main>
     </>
   )

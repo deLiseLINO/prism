@@ -386,6 +386,7 @@ export function UsagePanel(): JSX.Element {
             value={query}
             onChange={setQuery}
             placeholder="Filter by account, email, provider, or state"
+            hotkey
           />
         </div>
       </div>

@@ -10,8 +10,8 @@ func codexProbe(configPath string) Probe {
 		func(crash bool) WriteOutcome {
 			return WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort, CrashBeforeRename: crash})
 		},
-		func() WriteOutcome { return StripCodexConfig(configPath) },
-		func() bool { return RecoverCodexConfig(configPath) },
+		func() WriteOutcome { return StripCodexConfig(LocalIO{}, configPath) },
+		func() bool { return RecoverCodexConfig(LocalIO{}, configPath) },
 	)
 }
 
@@ -20,18 +20,18 @@ func grokProbe(configPath string) Probe {
 		func(crash bool) WriteOutcome {
 			return WriteGrokConfig(GrokOptions{ConfigPath: configPath, Port: testPort, Models: grokTestModels, CrashBeforeRename: crash})
 		},
-		func() WriteOutcome { return StripGrokConfig(configPath) },
-		func() bool { return RecoverGrokConfig(configPath) },
+		func() WriteOutcome { return StripGrokConfig(LocalIO{}, configPath) },
+		func() bool { return RecoverGrokConfig(LocalIO{}, configPath) },
 	)
 }
 
 func ompProbeFor(modelsPath string) Probe {
 	return OmpProbe(
 		func(crash bool) WriteOutcome {
-			return WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels, CrashBeforeRename: crash})
+			return WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels, CrashBeforeRename: crash})
 		},
-		func() WriteOutcome { return StripOmpConfig(modelsPath) },
-		func() bool { return RecoverOmpConfig(modelsPath) },
+		func() WriteOutcome { return StripOmpConfig(LocalIO{}, modelsPath) },
+		func() bool { return RecoverOmpConfig(LocalIO{}, modelsPath) },
 		ProviderBaseUrl(testPort),
 	)
 }
