@@ -1,7 +1,9 @@
 import type { DaemonStatus } from './daemon'
-import type { IntegrationApplyResult, IntegrationRequest, IntegrationStatus } from './integrations'
 import type { AgentJob, AgentJobReply, AgentJobRequest, AgentStatus } from './agents'
+import type { HostsView, IntegrationApplyResult, IntegrationRequest, IntegrationStatus } from './integrations'
+
 import type { ManagementCall, ManagementReply } from './management'
+import type { UpdaterStatus } from './updater'
 
 export type Unsubscribe = () => void
 
@@ -18,7 +20,8 @@ export interface PrismBridge {
   readonly integrations: {
     readonly apply: (request: IntegrationRequest) => Promise<IntegrationApplyResult>
     readonly rollback: (request: IntegrationRequest) => Promise<IntegrationApplyResult>
-    readonly status: () => Promise<readonly IntegrationStatus[]>
+    readonly status: (host?: string) => Promise<readonly IntegrationStatus[]>
+    readonly hosts: () => Promise<HostsView>
   }
   readonly agents: {
     readonly install: (request: AgentJobRequest) => Promise<AgentJobReply>
@@ -32,5 +35,11 @@ export interface PrismBridge {
   }
   readonly window: {
     readonly setTheme: (theme: 'dark' | 'light') => Promise<void>
+  }
+  readonly updater: {
+    readonly status: () => Promise<UpdaterStatus>
+    readonly check: () => Promise<void>
+    readonly install: () => Promise<void>
+    readonly onStatus: (listener: (status: UpdaterStatus) => void) => Unsubscribe
   }
 }

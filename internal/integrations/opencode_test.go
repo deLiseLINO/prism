@@ -19,10 +19,15 @@ func TestOpencodePathResolution(t *testing.T) {
 	}
 }
 
+var opencodeWindowModels = []Model{
+	{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", ContextWindow: 400000},
+	{ID: "gemini-3-pro", Name: "Gemini 3 Pro"},
+}
+
 func TestOpencodeApplyWritesPrismProvider(t *testing.T) {
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
-	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: ompTestModels, ConfigPath: path})
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: opencodeWindowModels, ConfigPath: path})
 	if result := integration.Apply(); !result.OK {
 		t.Fatalf("apply: %+v", result)
 	}
@@ -42,6 +47,25 @@ func TestOpencodeApplyWritesPrismProvider(t *testing.T) {
 	}
 	if strings.Contains(got, `"providers"`) {
 		t.Fatalf("v1 apply must not touch the v2 providers key:\n%s", got)
+	}
+}
+
+// A model with a known context window renders a limit pair; the comma between
+// name and limit is load-bearing for the file to stay valid JSON.
+func TestOpencodeApplyWithContextWindowStaysValidJSON(t *testing.T) {
+	dir := tempDir(t)
+	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: []Model{
+		{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", ContextWindow: 400000},
+		{ID: "gemini-3-pro", Name: "Gemini 3 Pro"},
+	}, ConfigPath: path})
+	if result := integration.Apply(); !result.OK {
+		t.Fatalf("apply: %+v", result)
+	}
+	got := readText(t, path)
+	assertValidJSON(t, got)
+	if !strings.Contains(got, `"name": "GPT-5.2 Codex",`) {
+		t.Fatalf("name line must carry the comma before limit:\n%s", got)
 	}
 }
 
@@ -81,20 +105,20 @@ func TestOpencodeVerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
 	probe := JSONBlockProbe(Opencode, "provider", "opencode.json", "baseURL", ProviderBaseUrl(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencodeTransform(testPort, ompTestModels), crash)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencodeTransform(testPort, ompTestModels), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode apply", err)}
 			}
 			return outcome
 		},
 		func() WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencodeRollbackTransform(), false)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencodeRollbackTransform(), false)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode rollback", err)}
 			}
 			return outcome
 		},
-		func() bool { return RecoverOpencodeConfig(path) },
+		func() bool { return RecoverOpencodeConfig(LocalIO{}, path) },
 	)
 	for _, check := range VerifyIntegration(probe, path, opencodeUserSeed) {
 		if !check.OK {
@@ -106,12 +130,15 @@ func TestOpencodeVerifierSemantics(t *testing.T) {
 func TestOpencode2ApplyWritesPrismProvider(t *testing.T) {
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencode2UserSeed)
-	integration := NewOpencode2(Opencode2Options{Port: testPort, Models: ompTestModels, ConfigPath: path})
+	integration := NewOpencode2(Opencode2Options{Port: testPort, Models: opencodeWindowModels, ConfigPath: path})
 	if result := integration.Apply(); !result.OK {
 		t.Fatalf("apply: %+v", result)
 	}
 	got := readText(t, path)
 	assertValidJSON(t, got)
+	if !strings.Contains(got, `"gpt-5.2-codex": {`) {
+		t.Fatalf("v2 model entry missing:\n%s", got)
+	}
 	if !strings.Contains(got, `"package": "@opencode-ai/ai/providers/openai-compatible"`) {
 		t.Fatalf("package adapter missing:\n%s", got)
 	}
@@ -126,6 +153,24 @@ func TestOpencode2ApplyWritesPrismProvider(t *testing.T) {
 	}
 	if strings.Contains(got, `"npm"`) {
 		t.Fatalf("v2 apply must not emit v1 npm wiring:\n%s", got)
+	}
+}
+
+// The v2 leaf rides the same models renderer, so the comma bug regresses both
+// generations; pin it here too.
+func TestOpencode2ApplyWithContextWindowStaysValidJSON(t *testing.T) {
+	dir := tempDir(t)
+	path := tempFile(t, dir, "opencode.json", opencode2UserSeed)
+	integration := NewOpencode2(Opencode2Options{Port: testPort, Models: []Model{
+		{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", ContextWindow: 400000},
+	}, ConfigPath: path})
+	if result := integration.Apply(); !result.OK {
+		t.Fatalf("apply: %+v", result)
+	}
+	got := readText(t, path)
+	assertValidJSON(t, got)
+	if !strings.Contains(got, `"name": "GPT-5.2 Codex",`) {
+		t.Fatalf("name line must carry the comma before limit:\n%s", got)
 	}
 }
 
@@ -149,20 +194,20 @@ func TestOpencode2VerifierSemantics(t *testing.T) {
 	path := tempFile(t, dir, "opencode.json", opencode2UserSeed)
 	probe := JSONBlockProbe(Opencode2, "providers", "opencode.json", "baseURL", ProviderBaseUrl(testPort),
 		func(crash bool) WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencode2Transform(testPort, ompTestModels), crash)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencode2Transform(testPort, ompTestModels), crash)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode2 apply", err)}
 			}
 			return outcome
 		},
 		func() WriteOutcome {
-			outcome, err := ApplyConfigTransform(path, opencode2RollbackTransform(), false)
+			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencode2RollbackTransform(), false)
 			if err != nil {
 				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode2 rollback", err)}
 			}
 			return outcome
 		},
-		func() bool { return RecoverOpencode2Config(path) },
+		func() bool { return RecoverOpencode2Config(LocalIO{}, path) },
 	)
 	for _, check := range VerifyIntegration(probe, path, opencode2UserSeed) {
 		if !check.OK {

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -24,9 +25,14 @@ func (m Model) renderWindowsView() string {
 		if gi > 0 {
 			s.WriteString("\n")
 		}
-		s.WriteString(m.renderGroupHeader(group.Title))
-		s.WriteString("\n")
-		for _, window := range group.Windows {
+		if group.Title != "" {
+			s.WriteString(m.renderGroupHeader(group.Title))
+			s.WriteString("\n")
+		}
+		for wi, window := range group.Windows {
+			if wi > 0 {
+				s.WriteString("\n")
+			}
 			s.WriteString(m.renderWindowRow(window))
 			s.WriteString("\n")
 		}
@@ -44,8 +50,8 @@ func groupQuotaWindows(windows []quotaWindow) []quotaWindowGroup {
 	index := map[string]int{}
 	for _, w := range windows {
 		title := windowGroupTitle(w.Label)
-		if title == "" {
-			continue
+		if title == "" && len(windows) > 0 {
+			title = defaultGroupTitle
 		}
 		gi, ok := index[title]
 		if !ok {
@@ -74,6 +80,8 @@ func windowGroupOrder(title string) int {
 	return 2
 }
 
+const defaultGroupTitle = ""
+
 func windowGroupTitle(label string) string {
 	switch {
 	case strings.Contains(label, "Gemini"):
@@ -81,7 +89,7 @@ func windowGroupTitle(label string) string {
 	case strings.Contains(label, "Claude"):
 		return "Claude and GPT models"
 	}
-	return "Antigravity"
+	return defaultGroupTitle
 }
 
 func sortWindowRows(windows []quotaWindow) []quotaWindow {
@@ -125,8 +133,15 @@ func (m Model) renderGroupHeader(title string) string {
 			rightPad = 0
 		}
 	}
-	headerStyle := GroupHeaderStyle.Copy().MarginTop(0)
+	headerStyle := groupHeaderStyle(title).MarginTop(0)
 	return strings.Repeat(" ", leadOffset+start) + headerStyle.Render(title) + strings.Repeat(" ", rightPad)
+}
+
+func groupHeaderStyle(title string) lipgloss.Style {
+	if title == "Claude and GPT models" {
+		return ClaudeGroupHeaderStyle
+	}
+	return GeminiGroupHeaderStyle
 }
 
 func (m Model) renderWindowsLoadingSkeleton() string {

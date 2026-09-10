@@ -4,10 +4,8 @@ import { api } from '../api'
 import { useAsync } from '../useAsync'
 import { AsyncBoundary, Button, Empty, SearchInput, Stat } from '../components/Ui'
 
-const AUTO_REFRESH_ACTIVE_MS = 5_000
+const AUTO_REFRESH_ACTIVE_MS = 1_000
 const AUTO_REFRESH_BACKGROUND_MS = 30_000
-const AUTO_REFRESH_TICK_MS = 1_000
-
 const STATUS_FILTERS = [
   { value: 'all', label: 'all' },
   { value: 'open', label: 'open' },
@@ -77,13 +75,6 @@ export function LogsView(): JSX.Element {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [expandedSeq, setExpandedSeq] = useState<number | null>(null)
   const [copiedSeq, setCopiedSeq] = useState<number | null>(null)
-  const [, setTick] = useState(0)
-
-  useEffect(() => {
-    const bump = (): void => setTick((n) => n + 1)
-    const timer = window.setInterval(bump, AUTO_REFRESH_TICK_MS)
-    return () => window.clearInterval(timer)
-  }, [])
 
   useEffect(() => {
     const refresh = (): void => logs.refresh()

@@ -236,6 +236,9 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
         {models.length > 0 ? (
           <div className="prov-mlist">
             {[...models].sort((a, b) => {
+              const oa = disabledModels.includes(a) ? 1 : 0
+              const ob = disabledModels.includes(b) ? 1 : 0
+              if (oa !== ob) return oa - ob
               const fa = freshModels.includes(a) ? 0 : 1
               const fb = freshModels.includes(b) ? 0 : 1
               return fa - fb

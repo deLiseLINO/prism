@@ -6,11 +6,13 @@ import { AgentsApi, parseAgentJobRequest } from './agents'
 import { ManagementProxy, validateManagementCall } from './management'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
+import type { UpdaterService } from './updater/updater'
 
 export interface IpcWiring {
   readonly supervisor: DaemonSupervisor
   readonly management: ManagementProxy
   readonly integrations: IntegrationApi
+  readonly updater: UpdaterService
   readonly agents: AgentsApi
 }
 
@@ -66,9 +68,16 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.integrations.rollback(parseIntegrationRequest(input))
   })
-  ipcMain.handle(IpcChannel.integrationStatus, (event) => {
+  ipcMain.handle(IpcChannel.integrationStatus, (event, host: unknown) => {
     trustedSender(event)
-    return wiring.integrations.status()
+    if (host !== undefined && typeof host !== 'string') {
+      throw new Error('prism: integration host must be a string')
+    }
+    return wiring.integrations.status(host)
+  })
+  ipcMain.handle(IpcChannel.hostsList, (event) => {
+    trustedSender(event)
+    return wiring.integrations.hosts()
   })
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {
     trustedSender(event)
@@ -105,5 +114,17 @@ export function registerIpc(wiring: IpcWiring): void {
     const window = BrowserWindow.fromWebContents(sender)
     const overlay = titleBarOptions(input).titleBarOverlay
     if (overlay !== undefined && window !== null && !window.isDestroyed()) window.setTitleBarOverlay(overlay)
+  })
+  ipcMain.handle(IpcChannel.updaterGetStatus, (event) => {
+    trustedSender(event)
+    return wiring.updater.status
+  })
+  ipcMain.handle(IpcChannel.updaterCheck, (event) => {
+    trustedSender(event)
+    return wiring.updater.check()
+  })
+  ipcMain.handle(IpcChannel.updaterInstall, (event) => {
+    trustedSender(event)
+    wiring.updater.install()
   })
 }

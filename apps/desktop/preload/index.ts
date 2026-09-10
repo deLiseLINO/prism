@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { IpcChannel, type DaemonStatus, type PrismBridge } from '@prism/contracts'
+import { IpcChannel, type DaemonStatus, type PrismBridge, type UpdaterStatus } from '@prism/contracts'
 
 const bridge: PrismBridge = {
   daemon: {
@@ -20,7 +20,8 @@ const bridge: PrismBridge = {
   integrations: {
     apply: (request) => ipcRenderer.invoke(IpcChannel.integrationApply, request),
     rollback: (request) => ipcRenderer.invoke(IpcChannel.integrationRollback, request),
-    status: () => ipcRenderer.invoke(IpcChannel.integrationStatus),
+    status: (host) => ipcRenderer.invoke(IpcChannel.integrationStatus, host),
+    hosts: () => ipcRenderer.invoke(IpcChannel.hostsList),
   },
   agents: {
     install: (request) => ipcRenderer.invoke(IpcChannel.agentInstall, request),
@@ -34,6 +35,18 @@ const bridge: PrismBridge = {
   },
   window: {
     setTheme: (theme) => ipcRenderer.invoke(IpcChannel.windowSetTheme, theme),
+  },
+  updater: {
+    status: () => ipcRenderer.invoke(IpcChannel.updaterGetStatus),
+    check: () => ipcRenderer.invoke(IpcChannel.updaterCheck),
+    install: () => ipcRenderer.invoke(IpcChannel.updaterInstall),
+    onStatus: (listener) => {
+      const handler = (_event: IpcRendererEvent, status: UpdaterStatus) => listener(status)
+      ipcRenderer.on(IpcChannel.updaterStatusEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.updaterStatusEvent, handler)
+      }
+    },
   },
 }
 

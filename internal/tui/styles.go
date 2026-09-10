@@ -16,9 +16,14 @@ var (
 	TabInactiveStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))
 
-	GroupHeaderStyle = lipgloss.NewStyle().
+	GeminiGroupHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("39")).
+				MarginTop(1)
+
+	ClaudeGroupHeaderStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("135")).
 				MarginTop(1)
 
 	LabelStyle = lipgloss.NewStyle().

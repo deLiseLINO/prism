@@ -3,6 +3,9 @@ import type {
   AccountsView,
   AuthStartView,
   AuthStatusView,
+  HostMutationResponse,
+  HostsView,
+  HostWrite,
   ManagementReply,
   ModelView,
   PoolSettingsView,
@@ -123,6 +126,15 @@ export const api = {
   usage(): Promise<UsageView> {
     return call('GET', '/api/v1/usage')
   },
+  hosts(): Promise<HostsView> {
+    return call('GET', '/api/v1/hosts')
+  },
+  createHost(body: HostWrite): Promise<HostMutationResponse> {
+    return call('POST', '/api/v1/hosts', body)
+  },
+  deleteHost(id: string, expectedGeneration: number): Promise<{ generation: number }> {
+    return call('DELETE', `/api/v1/hosts/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`)
+  },
   stats(range: StatsRange): Promise<StatsResponseView> {
     return call('GET', `/api/v1/stats?range=${encodeURIComponent(range)}`)
   },
@@ -130,6 +142,7 @@ export const api = {
     const query = limit === undefined ? '' : `?limit=${limit}`
     return call('GET', `/api/v1/requests${query}`)
   },
+
   authStart(provider: string): Promise<AuthStartView> {
     return call('POST', `/api/v1/auth/${encodeURIComponent(provider)}/start`)
   },
