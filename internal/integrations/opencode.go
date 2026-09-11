@@ -17,6 +17,7 @@ func RenderOpencodeModels(models []Model, inner string, item string, field strin
 			comma = ""
 		}
 		nameLine := field + `"name": ` + jsonString(model.Name)
+
 		if model.ContextWindow > 0 {
 			// opencode's schema takes the limit pair together or not at all;
 			// an unknown window keeps the client's own defaults.
@@ -95,6 +96,7 @@ type OpencodeOptions struct {
 	ConfigPath        string
 	Env               Env
 	Home              string
+	IO                FileIO
 	CrashBeforeRename bool
 }
 
@@ -103,6 +105,7 @@ type OpencodeIntegration struct {
 	port       int
 	models     []Model
 	modelsSrc  func() []Model
+	io         FileIO
 	configPath string
 	env        Env
 	home       string
@@ -116,7 +119,7 @@ func (o *OpencodeIntegration) paths() string {
 }
 
 func NewOpencode(options OpencodeOptions) *OpencodeIntegration {
-	return &OpencodeIntegration{id: Opencode, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, configPath: options.ConfigPath, env: options.Env, home: options.Home}
+	return &OpencodeIntegration{id: Opencode, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, io: withLocalIO(options.IO), configPath: options.ConfigPath, env: options.Env, home: options.Home}
 }
 
 func (o *OpencodeIntegration) ID() ID { return o.id }
@@ -126,7 +129,7 @@ func (o *OpencodeIntegration) Apply() ApplyResult {
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: o.id, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(o.paths(), opencodeTransform(o.port, models), false)
+	outcome, err := ApplyConfigTransform(o.io, o.paths(), opencodeTransform(o.port, models), false)
 	if err != nil {
 		return ToApplyResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode apply", err)})
 	}
@@ -134,8 +137,8 @@ func (o *OpencodeIntegration) Apply() ApplyResult {
 }
 
 func (o *OpencodeIntegration) Status() Status {
-	return ObservedIntegrationStatus(o.id, o.paths(), []string{OpencodeConfigDir(o.env, o.home)}, func(path string) ManagedRead {
-		content, ok := ReadTextIfExists(path)
+	return ObservedIntegrationStatus(o.io, o.id, o.paths(), []string{OpencodeConfigDir(o.env, o.home)}, func(path string) ManagedRead {
+		content, ok := o.io.ReadTextIfExists(path)
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -144,13 +147,13 @@ func (o *OpencodeIntegration) Status() Status {
 }
 
 func (o *OpencodeIntegration) Rollback() ApplyResult {
-	outcome, err := ApplyConfigTransform(o.paths(), opencodeRollbackTransform(), false)
+	outcome, err := ApplyConfigTransform(o.io, o.paths(), opencodeRollbackTransform(), false)
 	if err != nil {
 		return ToRollbackResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode rollback", err)})
 	}
 	return ToRollbackResult(o.id, outcome)
 }
 
-func RecoverOpencodeConfig(configPath string) bool {
-	return RecoverStaged(configPath)
+func RecoverOpencodeConfig(io FileIO, configPath string) bool {
+	return io.RecoverStaged(configPath)
 }

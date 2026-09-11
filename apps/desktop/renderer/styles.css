@@ -600,6 +600,11 @@ body::before {
 .log-box .log-lines { padding: 0 22px 18px; }
 
 .int-screen { display: flex; flex-direction: column; gap: 14px; }
+.int-host { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
+.int-host__label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-subtle); }
+.int-host .select { min-width: 150px; }
+.machine-add { display: flex; align-items: flex-end; gap: 12px; padding: 0 2px; flex-wrap: wrap; }
+.machine-add .field { min-width: 180px; }
 .int-strip { display: flex; align-items: center; gap: 14px; padding: 0 2px; flex-wrap: wrap; }
 .int-stats { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .int-stat { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-subtle); }

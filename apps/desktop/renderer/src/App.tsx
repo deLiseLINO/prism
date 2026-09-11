@@ -1,17 +1,24 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react'
+
 import type { DaemonStatus, UpdaterStatus } from '@prism/contracts'
+import { ActiveHostProvider, useActiveHost } from './ActiveHost'
 import { ThemeToggle } from './components/Ui'
+
 import { useTheme } from './useTheme'
+import { ExperimentalFlagsProvider, useExperimentalFlags } from './experimental'
 import { SECTIONS, VIEWS, hashFor, navigateTo, readCurrentView, type View } from './routing'
+
 import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
 import { LogsView } from './views/LogsView'
 import { OverviewView } from './views/OverviewView'
+import { MachinesView } from './views/MachinesView'
 import { ProvidersView } from './views/ProvidersView'
 import { StatsView } from './views/StatsView'
 import { UpdateView } from './views/UpdateView'
 import { UsagePanel } from './views/UsageView'
 import { bridge } from './bridge'
+import { ExperimentalView } from './views/ExperimentalView'
 
 const VIEW_ICONS: Record<View, string> = {
   overview: '#i-gauge',
@@ -20,9 +27,12 @@ const VIEW_ICONS: Record<View, string> = {
   providers: '#i-plug',
   daemon: '#i-daemon',
   integrations: '#i-puzzle',
+  machines: '#i-cube',
   logs: '#i-logs',
   update: '#i-refresh',
+  experimental: '#i-flask',
 }
+
 function IconSprite(): JSX.Element {
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
@@ -35,7 +45,10 @@ function IconSprite(): JSX.Element {
         <symbol id="i-puzzle" viewBox="0 0 20 20"><path d="M7.3 3.5a1.7 1.7 0 1 1 3.4 0V5h2.8a1 1 0 0 1 1 1v2.8h1.5a1.7 1.7 0 1 1 0 3.4H14.5v2.8a1 1 0 0 1-1 1h-3v-1.6a1.7 1.7 0 1 0-3.4 0v1.6h-3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.2V3.5Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
         <symbol id="i-sun" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.6"/><path d="M10 1.8V4M10 16v2.2M18.2 10H16M4 10H1.8M15.7 4.3l-1.6 1.6M5.9 14.1l-1.6 1.6M15.7 15.7l-1.6-1.6M5.9 5.9 4.3 4.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
         <symbol id="i-moon" viewBox="0 0 20 20"><path d="M15.5 12.6A6.8 6.8 0 0 1 7.4 4.5a6.8 6.8 0 1 0 8.1 8.1Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
+        <symbol id="i-usage" viewBox="0 0 20 20"><path d="M3.5 4.5v11M10 2.5v13M16.5 6.5v9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></symbol>
+        <symbol id="i-cube" viewBox="0 0 20 20"><path d="M10 2.2 17 6v8L10 18 3 14V6l7-3.8Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M3 6l7 3.8L17 6M10 9.8V18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></symbol>
         <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M16 8.5A6.5 6.5 0 1 0 15.4 13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/><path d="M16.2 3.6v5h-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></symbol>
+        <symbol id="i-flask" viewBox="0 0 20 20"><path d="M8 2.5h4M9.5 2.5v5.2L4.6 15a2.2 2.2 0 0 0 1.9 3.4h7a2.2 2.2 0 0 0 1.9-3.4L10.5 7.7V2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 13h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
         <symbol id="i-logs" viewBox="0 0 20 20"><path d="M4 3.5h12v13H4z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M7 7h6M7 10h6M7 13h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></symbol>
       </defs>
     </svg>
@@ -58,13 +71,30 @@ function renderView(view: View): JSX.Element {
       return <LogsView />
     case 'integrations':
       return <IntegrationsView />
+    case 'machines':
+      return <MachinesView />
     case 'update':
       return <UpdateView />
+    case 'experimental':
+      return <ExperimentalView />
+
   }
 }
 
 export function App(): JSX.Element {
+  return (
+    <ExperimentalFlagsProvider>
+      <ActiveHostProvider>
+        <AppShell />
+      </ActiveHostProvider>
+    </ExperimentalFlagsProvider>
+  )
+}
+
+function AppShell(): JSX.Element {
   const [view, setView] = useState<View>(readCurrentView())
+  const { flags } = useExperimentalFlags()
+  const machinesVisible = flags.remoteInstall
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null)
   const [daemonUnreachable, setDaemonUnreachable] = useState(false)
   const [updater, setUpdater] = useState<UpdaterStatus | null>(null)
@@ -82,10 +112,16 @@ export function App(): JSX.Element {
     window.addEventListener('resize', apply)
     return () => window.removeEventListener('resize', apply)
   }, [])
+  const { host } = useActiveHost()
+
+  useEffect(() => {
+    if (!machinesVisible && view === 'machines') navigateTo('overview', true)
+  }, [machinesVisible, view])
 
   useEffect(() => {
     const onChange = (): void => {
       const next = readCurrentView()
+
       if (next === viewRef.current) return
       viewRef.current = next
       setView(next)
@@ -141,7 +177,7 @@ export function App(): JSX.Element {
             <div className="nav-section" key={section}>
               <p className="nav-section__title">{section}</p>
               <div className="nav">
-                {VIEWS.filter((entry) => entry.section === section).map((entry) => {
+                {VIEWS.filter((entry) => entry.section === section && (entry.view !== 'machines' || machinesVisible)).map((entry) => {
                   const isActive = entry.view === view
                   return (
                     <button
@@ -169,6 +205,7 @@ export function App(): JSX.Element {
       </aside>
       <main className="app" id="main" ref={mainRef} tabIndex={-1}>
         <div className="wrap">
+          <RemoteBanner />
           {updater !== null && updater.state === 'downloaded' ? (
             <div className="banner banner--ok" role="status" style={{ marginBottom: 14 }}>
               <div>
@@ -182,12 +219,33 @@ export function App(): JSX.Element {
               </div>
             </div>
           ) : null}
-          {renderView(view)}
+          <Fragment key={host}>
+            {renderView(view)}
+          </Fragment>
         </div>
       </main>
     </>
   )
 }
+
+
+function RemoteBanner(): JSX.Element {
+  const { host, setHost } = useActiveHost()
+
+  if (host === 'local') return <></>
+  return (
+    <div className="banner" role="status" style={{ marginBottom: 14 }}>
+      <div>
+        <p className="banner__title">Managing {host}</p>
+        <p className="banner__detail">Views and actions go to that machine's daemon over SSH.</p>
+      </div>
+      <div className="banner__action">
+        <button type="button" className="btn" onClick={() => setHost('local')}>Back to this machine</button>
+      </div>
+    </div>
+  )
+}
+
 
 function DaemonMini({
   status,

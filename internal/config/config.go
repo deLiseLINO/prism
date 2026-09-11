@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
 )
+
 
 const SchemaVersion = 1
 
@@ -72,8 +74,16 @@ type Document struct {
 	Combos        map[string]Combo      `json:"combos"`
 	Routes        map[string]string     `json:"routes"`
 	Aliases       map[string]string     `json:"aliases"`
+	Hosts         map[string]Host       `json:"hosts,omitempty"`
 	VisionSidecar VisionSidecarSettings `json:"visionSidecar,omitempty"`
 }
+
+type Host struct {
+	Address    string `json:"address"`
+	DaemonPort int    `json:"daemonPort,omitempty"`
+}
+
+
 
 type Daemon struct {
 	Listen string `json:"listen"`
@@ -226,6 +236,17 @@ func (d Document) validate() error {
 			return fmt.Errorf("aliases.%s: %w", k, err)
 		}
 	}
+	for id, h := range d.Hosts {
+		if id == "" {
+			return fmt.Errorf("%w: host id", ErrEmptyField)
+		}
+		if strings.TrimSpace(h.Address) == "" {
+			return fmt.Errorf("%w: hosts.%s.address", ErrEmptyField, id)
+		}
+		if h.DaemonPort < 0 || h.DaemonPort > 65535 {
+			return fmt.Errorf("%w: hosts.%s.daemonPort", ErrInvalidValue, id)
+		}
+	}
 	return nil
 }
 
@@ -234,12 +255,14 @@ func (p Provider) validateModelSettings(providerID string) error {
 		if model == "" {
 			return fmt.Errorf("%w: providers.%s.modelSettings model key", ErrEmptyField, providerID)
 		}
-		if s.ContextWindow < 0 {
-			return fmt.Errorf("%w: providers.%s.modelSettings[%s].contextWindow %d", ErrInvalidValue, providerID, model, s.ContextWindow)
-		}
-		if len(p.Models) > 0 && !contains(p.Models, model) {
+		if len(p.Models) > 0 && !slices.Contains(p.Models, model) {
 			return fmt.Errorf("%w: providers.%s.modelSettings[%s] does not name a configured model", ErrInvalidValue, providerID, model)
 		}
+
+		if s.ContextWindow < 0 {
+			return fmt.Errorf("%w: providers.%s.modelSettings[%s].contextWindow", ErrInvalidValue, providerID, model)
+		}
+
 		for _, e := range s.ReasoningEfforts {
 			if !validReasoningEffort(e) {
 				return fmt.Errorf("%w: providers.%s.modelSettings[%s].reasoningEfforts %q", ErrInvalidValue, providerID, model, e)
@@ -251,7 +274,7 @@ func (p Provider) validateModelSettings(providerID string) error {
 
 func validReasoningEffort(e string) bool {
 	switch e {
-	case "minimal", "low", "medium", "high", "xhigh":
+	case "minimal", "low", "medium", "high", "xhigh", "max":
 		return true
 	}
 	return false

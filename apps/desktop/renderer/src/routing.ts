@@ -8,7 +8,11 @@ export type View =
   | 'stats'
   | 'logs'
   | 'integrations'
+  | 'machines'
   | 'update'
+  | 'experimental'
+
+
 export interface ViewEntry {
   readonly view: View
   readonly label: string
@@ -24,7 +28,9 @@ const VIEW_HASHES: Record<View, string> = {
   stats: '#/stats',
   logs: '#/logs',
   integrations: '#/integrations',
+  machines: '#/machines',
   update: '#/update',
+  experimental: '#/experimental',
 }
 
 const VIEW_BY_HASH: Record<string, View> = {
@@ -35,7 +41,9 @@ const VIEW_BY_HASH: Record<string, View> = {
   '#/stats': 'stats',
   '#/logs': 'logs',
   '#/integrations': 'integrations',
+  '#/machines': 'machines',
   '#/update': 'update',
+  '#/experimental': 'experimental',
 }
 
 
@@ -47,7 +55,9 @@ export const VIEWS: readonly ViewEntry[] = [
   { view: 'logs', label: 'Logs', tagline: 'Model requests and failover history', section: 'Operate' },
   { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials', section: 'Configure' },
   { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback', section: 'System' },
+  { view: 'machines', label: 'Machines', tagline: 'Remote hosts over SSH', section: 'System' },
   { view: 'update', label: 'Update', tagline: 'App updates and channel status', section: 'System' },
+  { view: 'experimental', label: 'Experimental', tagline: 'Unfinished features, off by default', section: 'System' },
 ]
 
 export const SECTIONS: readonly Section[] = ['Overview', 'Operate', 'Configure', 'System']

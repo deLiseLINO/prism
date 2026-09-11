@@ -77,6 +77,7 @@ type GrokOptions struct {
 	ConfigPath        string
 	Env               Env
 	Home              string
+	IO                FileIO
 	CrashBeforeRename bool
 }
 
@@ -447,23 +448,23 @@ func writeGrokConfig(options GrokOptions, force bool) WriteOutcome {
 	if refusal != "" {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(options.ConfigPath, grokTransform(models, options.Port, force), options.CrashBeforeRename)
+	outcome, err := ApplyConfigTransform(withLocalIO(options.IO), options.ConfigPath, grokTransform(models, options.Port, force), options.CrashBeforeRename)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok apply", err)}
 	}
 	return outcome
 }
 
-func StripGrokConfig(configPath string) WriteOutcome {
-	outcome, err := ApplyConfigTransform(configPath, grokRollbackTransform(), false)
+func StripGrokConfig(io FileIO, configPath string) WriteOutcome {
+	outcome, err := ApplyConfigTransform(io, configPath, grokRollbackTransform(), false)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok rollback", err)}
 	}
 	return outcome
 }
 
-func RecoverGrokConfig(configPath string) bool {
-	return RecoverStaged(configPath)
+func RecoverGrokConfig(io FileIO, configPath string) bool {
+	return io.RecoverStaged(configPath)
 }
 
 type GrokIntegration struct {
@@ -471,31 +472,32 @@ type GrokIntegration struct {
 	port       int
 	models     []Model
 	modelsSrc  func() []Model
+	io         FileIO
 	configPath string
 	env        Env
 	home       string
 }
 
 func (g *GrokIntegration) Apply() ApplyResult {
-	return ToApplyResult(g.id, WriteGrokConfig(GrokOptions{Port: g.port, Models: g.models, ModelsSource: g.modelsSrc, ConfigPath: g.configPath}))
+	return ToApplyResult(g.id, WriteGrokConfig(GrokOptions{Port: g.port, Models: g.models, ModelsSource: g.modelsSrc, ConfigPath: g.configPath, IO: g.io}))
 }
 
 func (g *GrokIntegration) ApplyForced() ApplyResult {
-	return ToApplyResult(g.id, WriteGrokConfigForced(GrokOptions{Port: g.port, Models: g.models, ModelsSource: g.modelsSrc, ConfigPath: g.configPath}))
+	return ToApplyResult(g.id, WriteGrokConfigForced(GrokOptions{Port: g.port, Models: g.models, ModelsSource: g.modelsSrc, ConfigPath: g.configPath, IO: g.io}))
 }
 
 func NewGrok(options GrokOptions) *GrokIntegration {
 	if options.ConfigPath == "" {
 		options.ConfigPath = GrokConfigPath(options.Env, options.Home)
 	}
-	return &GrokIntegration{id: Grok, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, configPath: options.ConfigPath, env: options.Env, home: options.Home}
+	return &GrokIntegration{id: Grok, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, io: withLocalIO(options.IO), configPath: options.ConfigPath, env: options.Env, home: options.Home}
 }
 
 func (g *GrokIntegration) ID() ID { return g.id }
 
 func (g *GrokIntegration) Status() Status {
-	return ObservedIntegrationStatus(g.id, g.configPath, []string{GrokHome(g.env, g.home)}, func(path string) ManagedRead {
-		content, ok := ReadTextIfExists(path)
+	return ObservedIntegrationStatus(g.io, g.id, g.configPath, []string{GrokHome(g.env, g.home)}, func(path string) ManagedRead {
+		content, ok := g.io.ReadTextIfExists(path)
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -504,5 +506,5 @@ func (g *GrokIntegration) Status() Status {
 }
 
 func (g *GrokIntegration) Rollback() ApplyResult {
-	return ToRollbackResult(g.id, StripGrokConfig(g.configPath))
+	return ToRollbackResult(g.id, StripGrokConfig(g.io, g.configPath))
 }

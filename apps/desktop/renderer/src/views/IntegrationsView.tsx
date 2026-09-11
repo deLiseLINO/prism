@@ -3,8 +3,11 @@ import type { CSSProperties } from 'react'
 import type { AgentStatus, IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
 import { AsyncBoundary, Button, Confirm, Empty } from '../components/Ui'
 import { InstallCell } from '../components/InstallCell'
+import { useActiveHost } from '../ActiveHost'
+import { api } from '../api'
 import { useAsync, useTask, describeError } from '../useAsync'
-import { bridge } from '../bridge'
+
+
 
 type RowState = 'managed' | 'unmanaged' | 'uninstalled' | 'drift' | 'damaged'
 
@@ -28,6 +31,8 @@ interface IntegrationRowProps {
   readonly onChanged: () => void
 }
 function IntegrationRow({ status, agent, onChanged }: IntegrationRowProps): JSX.Element {
+
+
   const applyTask = useTask()
   const rollbackTask = useTask()
   const busy = applyTask.running || rollbackTask.running
@@ -38,8 +43,10 @@ function IntegrationRow({ status, agent, onChanged }: IntegrationRowProps): JSX.
   const damaged = state === 'damaged'
 
   async function apply(id: IntegrationId, force: boolean): Promise<void> {
-    const result = await applyTask.run(() => bridge.integrations.apply({ id, ...(force ? { force: true as const } : {}) }))
+    const result = await applyTask.run(() => api.integrationApply(id, force))
+
     if (result === undefined) return
+
     if (!result.ok) {
       if (result.retryable === true && !force) {
         setPendingTakeover(result)
@@ -56,7 +63,8 @@ function IntegrationRow({ status, agent, onChanged }: IntegrationRowProps): JSX.
   }
 
   async function rollback(id: IntegrationId): Promise<void> {
-    const result = await rollbackTask.run(() => bridge.integrations.rollback({ id }))
+    const result = await rollbackTask.run(() => api.integrationRollback(id))
+
     if (result === undefined) return
     if (!result.ok) {
       setActionError(result.reason === '' ? 'reason not reported' : result.reason)
@@ -157,9 +165,15 @@ function StatsStrip({ list }: { readonly list: readonly IntegrationStatus[] }): 
 }
 
 export function IntegrationsView(): JSX.Element {
-  const statuses = useAsync<readonly IntegrationStatus[]>(() => bridge.integrations.status(), [])
-  const agents = useAsync<readonly AgentStatus[]>(() => bridge.agents.status(), [])
+  const { host: selected } = useActiveHost()
+  const statuses = useAsync<readonly IntegrationStatus[]>(async () => (await api.integrationsStatus()).integrations, [selected])
+  const agents = useAsync<readonly AgentStatus[]>(
+    () => selected === 'local' ? window.prism.agents.status() : Promise.resolve([]),
+    [selected],
+  )
   const byAgent = new Map((agents.state.kind === 'ready' ? agents.state.value : []).map((a) => [a.id, a]))
+
+
   return (
     <section className="screen" aria-labelledby="h-integrations">
       <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
@@ -173,9 +187,10 @@ export function IntegrationsView(): JSX.Element {
           <p className="sub">config apply and rollback for each CLI Prism manages</p>
         </div>
       </div>
+
       <AsyncBoundary<readonly IntegrationStatus[]>
         state={statuses.state}
-        loadingLabel="Loading integrations…"
+        loadingLabel={`Loading integrations on ${selected}…`}
         empty={<Empty title="No integrations reported." />}
         onRetry={() => statuses.refresh()}
       >
@@ -188,11 +203,13 @@ export function IntegrationsView(): JSX.Element {
                   key={status.id}
                   status={status}
                   agent={byAgent.get(status.id)}
+
                   onChanged={() => {
                     statuses.refresh()
                     agents.refresh()
                   }}
                 />
+
               ))}
             </div>
           </div>

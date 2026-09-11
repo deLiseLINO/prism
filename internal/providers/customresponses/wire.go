@@ -211,7 +211,9 @@ func effortWire(e canon.ReasoningEffort) string {
 	case canon.EffortHigh:
 		return "high"
 	case canon.EffortXHigh:
-		return "high"
+		return "xhigh"
+	case canon.EffortMax:
+		return "max"
 	default:
 		return ""
 	}

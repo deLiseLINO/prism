@@ -4,23 +4,28 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 const pkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
-const prismdBinary = path.join('resources', 'prismd', 'prismd')
-execFileSync(
-  'go',
-  [
-    'build',
-    '-ldflags',
-    `-X prism/internal/buildinfo.Version=${pkg.version}`,
-    '-o',
-    prismdBinary,
-    '../../cmd/prismd',
-  ],
-  {
-    cwd: new URL('.', import.meta.url).pathname,
-    stdio: 'inherit',
-  },
-)
+const prismdDir = path.join('resources', 'prismd')
+const prismdBinary = path.join(prismdDir, 'prismd')
+const versionFlag = `-X prism/internal/buildinfo.Version=${pkg.version}`
+const buildCwd = new URL('.', import.meta.url).pathname
+execFileSync('go', ['build', '-ldflags', versionFlag, '-o', prismdBinary, '../../cmd/prismd'], {
+  cwd: buildCwd,
+  stdio: 'inherit',
+})
+for (const { GOOS, GOARCH } of [{ GOOS: 'linux', GOARCH: 'amd64' }, { GOOS: 'linux', GOARCH: 'arm64' }]) {
+  execFileSync(
+    'go',
+    ['build', '-ldflags', versionFlag, '-o', path.join(prismdDir, `prismd-${GOOS}-${GOARCH}`), '../../cmd/prismd'],
+    {
+      cwd: buildCwd,
+      stdio: 'inherit',
+      env: { ...process.env, CGO_ENABLED: '0', GOOS, GOARCH },
+    },
+  )
+}
 
+
+await mkdir(path.join('dist', 'renderer'), { recursive: true })
 await mkdir(path.join('dist', 'webui'), { recursive: true })
 await Promise.all([
   build({

@@ -2,6 +2,8 @@ import { app, nativeImage, type BrowserWindow } from 'electron'
 import { readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
+import type { HostView } from '@prism/contracts'
+import { HostProxyRegistry } from './hosts/registry'
 import { loadDesktopConfig } from './config'
 import { DaemonSupervisor } from './daemon/supervisor'
 import { registerIpc } from './ipc'
@@ -48,6 +50,8 @@ async function bootstrap(): Promise<void> {
     stabilityWindowMs: STABILITY_WINDOW_MS,
   })
   const management = new ManagementProxy(endpoint)
+  const proxies = new HostProxyRegistry(management, { fetchHosts: () => fetchDaemonHosts(management) })
+
   const updater = new UpdaterService(
     { currentVersion: appVersion(), updateUrl: config.updateUrl },
     {
@@ -55,6 +59,7 @@ async function bootstrap(): Promise<void> {
       quitApp: () => app.quit(),
     },
   )
+
   const integrations = new IntegrationApi(management)
   const agents = new AgentsApi(management)
   const showWindow = (): void => {
@@ -80,20 +85,26 @@ async function bootstrap(): Promise<void> {
     if (quitting) return
     event.preventDefault()
     quitting = true
+    proxies.dispose()
     void supervisor.stopForQuit().finally(() => {
       if (updater.pendingInstall) updater.performInstall()
       else app.quit()
     })
   })
 
+
   void app.whenReady().then(() => {
-    registerIpc({ supervisor, management, integrations, updater, agents })
+    registerIpc({ supervisor, proxies, integrations, updater, agents, hostInstaller: { management, onRegistered: () => { void proxies.sync() } } })
+
+
+    proxies.start()
     updater.subscribe((status) => {
       if (mainWindow !== null && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IpcChannel.updaterStatusEvent, status)
       }
     })
     supervisor.subscribe((status) => {
+
       if (!config.headless) tray.update(status)
       if (mainWindow !== null && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IpcChannel.daemonStatusEvent, status)
@@ -124,3 +135,18 @@ function appVersion(): string {
     return app.getVersion()
   }
 }
+
+async function fetchDaemonHosts(management: ManagementProxy): Promise<readonly HostView[]> {
+  const reply = await management.call({ method: 'GET', path: '/api/v1/hosts' })
+  if (!reply.ok || typeof reply.body !== 'object' || reply.body === null || !('hosts' in reply.body)) {
+    return []
+  }
+  const hosts = (reply.body as { hosts: unknown }).hosts
+  if (!Array.isArray(hosts)) return []
+  return hosts.filter((host): host is HostView => {
+    if (typeof host !== 'object' || host === null) return false
+    const record: Record<string, unknown> = host
+    return typeof record['id'] === 'string' && typeof record['local'] === 'boolean' && typeof record['status'] === 'string'
+  })
+}
+

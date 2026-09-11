@@ -35,6 +35,18 @@ func TestValidateAcceptsWellFormedDocument(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsHostWithEmptyAddress(t *testing.T) {
+	d := validDoc()
+	d.Hosts = map[string]Host{"workmac": {Address: "  "}}
+	if err := d.validate(); !errors.Is(err, ErrEmptyField) {
+		t.Fatalf("want ErrEmptyField, got %v", err)
+	}
+	d.Hosts = map[string]Host{"workmac": {Address: "user@host"}}
+	if err := d.validate(); err != nil {
+		t.Fatalf("valid host address rejected: %v", err)
+	}
+}
+
 func TestValidateRejectsUnknownWire(t *testing.T) {
 	d := validDoc()
 	p := d.Providers["codex-main"]
@@ -223,6 +235,13 @@ func TestValidateRejectsBadContextWindows(t *testing.T) {
 	doc.Providers["codex"] = p
 	if err := doc.validate(); err != nil {
 		t.Fatalf("valid model override rejected: %v", err)
+	}
+	doc = base()
+	p = doc.Providers["codex"]
+	p.ModelSettings = map[string]ModelSettings{"gpt-5.2": {ReasoningEfforts: []string{"max"}}}
+	doc.Providers["codex"] = p
+	if err := doc.validate(); err != nil {
+		t.Fatalf("max reasoning effort rejected: %v", err)
 	}
 }
 
