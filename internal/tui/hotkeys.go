@@ -108,7 +108,7 @@ func (m Model) handleIntegrationsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 		case "enter":
 			id := m.IntegrationConfirm
 			m.IntegrationConfirm = ""
-			return m, ApplyIntegrationCmd(m.api, id)
+			return m, ApplyHostIntegrationCmd(m.api, m.activeHostID(), id)
 		}
 		return m, nil
 	}
@@ -130,6 +130,9 @@ func (m Model) handleIntegrationsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 			m.IntegrationsCursor = (m.IntegrationsCursor + 1) % len(m.Integrations)
 		}
 		return m, nil
+	case "H":
+		m.cycleActiveHost()
+		return m, FetchHostIntegrationsCmd(m.api, m.activeHostID())
 	case "enter":
 		if m.IntegrationsCursor < 0 || m.IntegrationsCursor >= len(m.Integrations) {
 			return m, nil

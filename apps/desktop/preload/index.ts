@@ -20,8 +20,11 @@ const bridge: PrismBridge = {
   integrations: {
     apply: (request) => ipcRenderer.invoke(IpcChannel.integrationApply, request),
     rollback: (request) => ipcRenderer.invoke(IpcChannel.integrationRollback, request),
-    status: () => ipcRenderer.invoke(IpcChannel.integrationStatus),
+    status: (host) => ipcRenderer.invoke(IpcChannel.integrationStatus, host),
+    hosts: () => ipcRenderer.invoke(IpcChannel.hostsList),
+    installDaemon: (request) => ipcRenderer.invoke(IpcChannel.hostsInstall, request),
   },
+
   agents: {
     install: (request) => ipcRenderer.invoke(IpcChannel.agentInstall, request),
     update: (request) => ipcRenderer.invoke(IpcChannel.agentUpdate, request),

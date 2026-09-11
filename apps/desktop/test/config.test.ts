@@ -23,12 +23,27 @@ describe('loadDesktopConfig', () => {
     expect(config.port).toBe(12345)
   })
 
-  it('selects the first free port for auto', async () => {
+  it('selects the next free port when the first auto candidate is taken', async () => {
     process.env[PRISM_PORT_ENV] = 'auto'
+    const canBind = (port: number) => new Promise<boolean>((resolve) => {
+      const probe = net.createServer()
+      probe.once('error', () => resolve(false))
+      probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)))
+    })
+    let blocked = -1
+    for (let candidate = 10201; candidate < 10250; candidate++) {
+      if (await canBind(candidate) && await canBind(candidate + 1)) {
+        blocked = candidate
+        break
+      }
+    }
+    if (blocked === -1) {
+      throw new Error('no adjacent free port pair in the auto range for this test')
+    }
     const blocker = net.createServer()
-    await new Promise<void>((resolve) => blocker.listen(10201, '127.0.0.1', resolve))
+    await new Promise<void>((resolve) => blocker.listen(blocked, '127.0.0.1', resolve))
     const config = await loadDesktopConfig()
-    expect(config.port).toBe(10202)
+    expect(config.port).toBe(blocked + 1)
     await new Promise<void>((resolve) => blocker.close(() => resolve()))
   })
 })

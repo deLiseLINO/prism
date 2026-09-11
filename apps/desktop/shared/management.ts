@@ -3,6 +3,7 @@ import type { ManagementCall, ManagementMethod, ManagementReply } from '@prism/c
 const MANAGEMENT_METHODS: readonly ManagementMethod[] = ['GET', 'POST', 'PUT', 'DELETE']
 const MANAGEMENT_PATH_PREFIX = '/api/v1/'
 const MANAGEMENT_PATH_SEGMENT = /^[A-Za-z0-9_{}.%+-]+$/
+const MANAGEMENT_HOST_PATTERN = /^[A-Za-z0-9_.-]+$/
 const MANAGEMENT_QUERY_KEYS: Record<string, true> = {
   expectedGeneration: true,
   session: true,
@@ -10,6 +11,7 @@ const MANAGEMENT_QUERY_KEYS: Record<string, true> = {
   range: true,
   limit: true,
 }
+
 const MANAGEMENT_TIMEOUT_MS = 10_000
 
 export class ManagementProxy {
@@ -45,6 +47,7 @@ export function validateManagementCall(input: unknown): ManagementCall {
   const method = record['method']
   const path = record['path']
   const body = record['body']
+  const host = record['host']
   if (typeof method !== 'string' || !MANAGEMENT_METHODS.includes(method as ManagementMethod)) {
     throw new Error(`prism: management method must be one of ${MANAGEMENT_METHODS.join(', ')}`)
   }
@@ -57,11 +60,16 @@ export function validateManagementCall(input: unknown): ManagementCall {
   if (body !== undefined && !isJsonSerializable(body)) {
     throw new Error('prism: management body must be JSON-serializable')
   }
+  if (host !== undefined && (typeof host !== 'string' || !MANAGEMENT_HOST_PATTERN.test(host))) {
+    throw new Error('prism: management host must be a safe host identifier')
+  }
   return {
     method: method as ManagementMethod,
     path,
     ...(body === undefined ? {} : { body }),
+    ...(host === undefined || host === '' || host === 'local' ? {} : { host }),
   }
+
 }
 
 function isManagementPath(path: string): boolean {

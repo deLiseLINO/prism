@@ -79,6 +79,7 @@ var referenceBudgets = budgetRow{
 	canon.EffortMedium:  8192,
 	canon.EffortHigh:    16384,
 	canon.EffortXHigh:   24576,
+	canon.EffortMax:     28672,
 }
 
 var budgetTable = map[string]budgetRow{

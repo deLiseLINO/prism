@@ -4,17 +4,23 @@ import type { DaemonSupervisor } from './daemon/supervisor'
 import { IntegrationApi, parseIntegrationRequest } from '../shared/integrations'
 import { AgentsApi, parseAgentJobRequest } from '../shared/agents'
 import { ManagementProxy, validateManagementCall } from '../shared/management'
+import type { HostProxyRegistry } from './hosts/registry'
+import { installHostDaemon, parseHostInstallRequest, type HostInstallDeps } from './hosts/install'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
 import type { UpdaterService } from './updater/updater'
 
+
 export interface IpcWiring {
   readonly supervisor: DaemonSupervisor
-  readonly management: ManagementProxy
+  readonly proxies: HostProxyRegistry
   readonly integrations: IntegrationApi
   readonly updater: UpdaterService
   readonly agents: AgentsApi
+  readonly hostInstaller: HostInstallDeps
 }
+
+export type { HostInstallDeps } from './hosts/install'
 
 function openExternal(url: unknown): Promise<void> {
   if (typeof url !== 'string' || url === '') {
@@ -56,10 +62,13 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.supervisor.stop()
   })
-  ipcMain.handle(IpcChannel.managementRequest, (event, input: unknown) => {
+  ipcMain.handle(IpcChannel.managementRequest, async (event, input: unknown) => {
     trustedSender(event)
-    return wiring.management.call(validateManagementCall(input))
+    const call = validateManagementCall(input)
+    const target = await wiring.proxies.route(call.host)
+    return target.call(call)
   })
+
   ipcMain.handle(IpcChannel.integrationApply, (event, input: unknown) => {
     trustedSender(event)
     return wiring.integrations.apply(parseIntegrationRequest(input))
@@ -68,10 +77,22 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.integrations.rollback(parseIntegrationRequest(input))
   })
-  ipcMain.handle(IpcChannel.integrationStatus, (event) => {
+  ipcMain.handle(IpcChannel.integrationStatus, (event, host: unknown) => {
     trustedSender(event)
-    return wiring.integrations.status()
+    if (host !== undefined && typeof host !== 'string') {
+      throw new Error('prism: integration host must be a string')
+    }
+    return wiring.integrations.status(host)
   })
+  ipcMain.handle(IpcChannel.hostsList, (event) => {
+    trustedSender(event)
+    return wiring.integrations.hosts()
+  })
+  ipcMain.handle(IpcChannel.hostsInstall, async (event, input: unknown) => {
+    trustedSender(event)
+    return installHostDaemon(wiring.hostInstaller, parseHostInstallRequest(input))
+  })
+
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {
     trustedSender(event)
     return openExternal(input)

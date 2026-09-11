@@ -113,7 +113,7 @@ func TestOmpModelsConfigPathFallback(t *testing.T) {
 func TestOmpApplyCreatesLeafInFreshDocument(t *testing.T) {
 	dir := t.TempDir()
 	modelsPath := tempFile(t, dir, "models.yml", "")
-	if outcome := WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeWritten {
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeWritten {
 		t.Fatalf("apply: %+v", outcome)
 	}
 	want := "providers:\n" + ompLeaf(testPort) + "\n"
@@ -125,7 +125,7 @@ func TestOmpApplyCreatesLeafInFreshDocument(t *testing.T) {
 func TestOmpApplyPatchesOnlyPrismLeaf(t *testing.T) {
 	dir := t.TempDir()
 	modelsPath := tempFile(t, dir, "models.yml", userModelYaml)
-	if outcome := WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeWritten {
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeWritten {
 		t.Fatalf("apply: %+v", outcome)
 	}
 	want := userModelYaml + ompLeaf(testPort) + "\n"
@@ -151,9 +151,9 @@ func TestOmpIntegrationAppliesLiveModelsSource(t *testing.T) {
 func TestOmpApplyIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	modelsPath := tempFile(t, dir, "models.yml", userModelYaml)
-	WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
+	WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
 	afterFirst := readFile(t, modelsPath)
-	if outcome := WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeUnchanged {
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeUnchanged {
 		t.Fatalf("second apply: %+v", outcome)
 	}
 	if got := readFile(t, modelsPath); got != afterFirst {
@@ -164,12 +164,12 @@ func TestOmpApplyIsIdempotent(t *testing.T) {
 func TestOmpReapplyRewritesOwnPrismLeaf(t *testing.T) {
 	dir := t.TempDir()
 	modelsPath := tempFile(t, dir, "models.yml", userModelYaml)
-	WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
+	WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
 	// Any content difference in the prism leaf — user edit or prism's own newer
 	// output — is rewritten in place; the leaf is prism-owned.
 	edited := replaceOne(readFile(t, modelsPath), "baseUrl: http://127.0.0.1:8787/v1", "baseUrl: http://127.0.0.1:8787/v1-mutated")
 	writeFileOrDie(t, modelsPath, edited)
-	outcome := WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
+	outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
 	if outcome.Kind != OutcomeWritten {
 		t.Fatalf("apply over edit: %+v", outcome)
 	}
@@ -186,7 +186,7 @@ func TestOmpApplyIsFailClosed(t *testing.T) {
 	dir := t.TempDir()
 
 	flow := tempFile(t, dir, "flow.yml", "providers: {}\n")
-	if outcome := WriteOmpConfig(OmpOptions{ModelsPath: flow, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeRefused {
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: flow, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeRefused {
 		t.Fatalf("flow-style providers: %+v", outcome)
 	}
 	if got := readFile(t, flow); got != "providers: {}\n" {
@@ -194,12 +194,12 @@ func TestOmpApplyIsFailClosed(t *testing.T) {
 	}
 
 	duplicate := tempFile(t, dir, "duplicate.yml", "providers:\n  a: {}\n---\nproviders:\n  b: {}\n")
-	if outcome := WriteOmpConfig(OmpOptions{ModelsPath: duplicate, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeRefused {
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: duplicate, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeRefused {
 		t.Fatalf("duplicate top-level providers: %+v", outcome)
 	}
 
 	tabs := tempFile(t, dir, "tabs.yml", "providers:\n\topenai:\n\t\t models: []\n")
-	if outcome := WriteOmpConfig(OmpOptions{ModelsPath: tabs, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeRefused {
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: tabs, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeRefused {
 		t.Fatalf("tab indentation: %+v", outcome)
 	}
 	if got := readFile(t, tabs); got != "providers:\n\topenai:\n\t\t models: []\n" {
@@ -210,8 +210,8 @@ func TestOmpApplyIsFailClosed(t *testing.T) {
 func TestOmpRollbackRemovesLeafAndPrunesEmptyContainer(t *testing.T) {
 	dir := t.TempDir()
 	modelsPath := tempFile(t, dir, "models.yml", userModelYaml)
-	WriteOmpConfig(OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
-	if outcome := StripOmpConfig(modelsPath); outcome.Kind != OutcomeWritten {
+	WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
+	if outcome := StripOmpConfig(LocalIO{}, modelsPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback: %+v", outcome)
 	}
 	if got := readFile(t, modelsPath); got != userModelYaml {
@@ -219,8 +219,8 @@ func TestOmpRollbackRemovesLeafAndPrunesEmptyContainer(t *testing.T) {
 	}
 
 	fresh := tempFile(t, dir, "fresh.yml", "")
-	WriteOmpConfig(OmpOptions{ModelsPath: fresh, Port: testPort, Models: ompTestModels})
-	if outcome := StripOmpConfig(fresh); outcome.Kind != OutcomeWritten {
+	WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: fresh, Port: testPort, Models: ompTestModels})
+	if outcome := StripOmpConfig(LocalIO{}, fresh); outcome.Kind != OutcomeWritten {
 		t.Fatalf("fresh rollback: %+v", outcome)
 	}
 	if got := readFile(t, fresh); got != "" {

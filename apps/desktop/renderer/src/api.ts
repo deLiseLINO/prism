@@ -1,13 +1,20 @@
+import { currentHost } from './ActiveHost'
 import type {
   AccountView,
   AccountsView,
   AuthStartView,
   AuthStatusView,
+  HostMutationResponse,
+  HostsView,
+  HostWrite,
+  IntegrationApplyResult,
+  IntegrationStatus,
   ManagementReply,
   ModelView,
   PoolSettingsView,
   ProviderMutationResponse,
   ProvidersView,
+
   QuotaResponse,
   StatsRange,
   StatsResponseView,
@@ -53,13 +60,16 @@ async function call<T>(
   body?: unknown,
   expectedStatus = 200,
 ): Promise<T> {
+  const host = currentHost()
   const reply = await bridge.management.call({
     method,
     path,
     ...(body === undefined ? {} : { body }),
+    ...(host !== 'local' ? { host } : {}),
   })
   return unwrap<T>(reply, expectedStatus)
 }
+
 
 interface AccountMutationWrite {
   readonly version: number
@@ -128,6 +138,15 @@ export const api = {
   usage(): Promise<UsageView> {
     return call('GET', '/api/v1/usage')
   },
+  hosts(): Promise<HostsView> {
+    return call('GET', '/api/v1/hosts')
+  },
+  createHost(body: HostWrite): Promise<HostMutationResponse> {
+    return call('POST', '/api/v1/hosts', body)
+  },
+  deleteHost(id: string, expectedGeneration: number): Promise<{ generation: number }> {
+    return call('DELETE', `/api/v1/hosts/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`)
+  },
   stats(range: StatsRange): Promise<StatsResponseView> {
     return call('GET', `/api/v1/stats?range=${encodeURIComponent(range)}`)
   },
@@ -135,6 +154,7 @@ export const api = {
     const query = limit === undefined ? '' : `?limit=${limit}`
     return call('GET', `/api/v1/requests${query}`)
   },
+
   authStart(provider: string): Promise<AuthStartView> {
     return call('POST', `/api/v1/auth/${encodeURIComponent(provider)}/start`)
   },
@@ -142,7 +162,42 @@ export const api = {
     const query = session === '' ? '' : `?session=${encodeURIComponent(session)}`
     return call('GET', `/api/v1/auth/${encodeURIComponent(provider)}/status${query}`)
   },
+
+  integrationsStatus(): Promise<{ integrations: readonly IntegrationStatus[] }> {
+    return call('GET', '/api/v1/integrations')
+  },
+
+  integrationApply(id: string, force: boolean): Promise<IntegrationApplyResult> {
+    return call('POST', `/api/v1/integrations/${encodeURIComponent(id)}/apply${force ? '?force=true' : ''}`)
+  },
+  integrationRollback(id: string): Promise<IntegrationApplyResult> {
+    return call('POST', `/api/v1/integrations/${encodeURIComponent(id)}/rollback`)
+  },
+  localHosts(): Promise<HostsView> {
+    return localCall('GET', '/api/v1/hosts')
+  },
+
+  localProviders(): Promise<ProvidersView> {
+    return localCall('GET', '/api/v1/providers')
+  },
+
+  localCreateHost(body: HostWrite): Promise<HostMutationResponse> {
+    return localCall('POST', '/api/v1/hosts', body)
+  },
+
+  localDeleteHost(id: string, expectedGeneration: number): Promise<{ generation: number }> {
+    return localCall('DELETE', `/api/v1/hosts/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`)
+  },
 }
+
+
+async function localCall<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, expectedStatus = 200): Promise<T> {
+  const reply = await window.prism.management.call({ method, path, ...(body === undefined ? {} : { body }) })
+  return unwrap<T>(reply, expectedStatus)
+}
+
+
+
 
 // DTOs the renderer ships to the daemon. Mirrors internal/management/schema.go shapes.
 // Optional `| null` variants are deliberate: the daemon treats a JSON null exactly like an

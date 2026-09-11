@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Prism · chrome 2 · inset titlebar</title>
+<style>
+:root {
+  --font-ui: 'Outfit', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  --radius-lg: 20px; --radius-md: 12px;
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --canvas: #edf0f3;
+  --surface: rgba(251,252,253,.85); --surface-2: #eef1f4;
+  --fg: #1c232b; --fg-muted: #3f4a56; --fg-subtle: #66717e;
+  --border: #d7dde3; --border-strong: #c6ced6;
+  --inset-hi: inset 0 1px 0 rgba(255,255,255,.65);
+  --panel-shadow: 0 1px 2px rgba(23,32,43,.04), 0 18px 44px -22px rgba(23,32,43,.28);
+  --row-hover: rgba(28,35,43,.035);
+  --accent: #3d6f9e; --accent-fg: #f7fafc; --ok: #39795b;
+  --btn-bg: #fbfcfd; --btn-bg-hover: #eef1f4; --select-bg: #fbfcfd;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input { font: inherit; }
+body { font-family: var(--font-ui); font-size: 14px; line-height: 1.45; color: var(--fg); background: #e7e2da; min-height: 100vh; padding: 28px; display: flex; justify-content: center; }
+.win { width: 980px; border-radius: 22px; overflow: hidden; background: var(--canvas); border: 1px solid #d0d5db; box-shadow: 0 30px 80px -30px rgba(23,32,43,.35); padding-top: 12px; }
+
+.dots { display: flex; gap: 8px; padding: 0 20px 10px; }
+.dots i { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.dots i:nth-child(1) { background: #ec6a5f; } .dots i:nth-child(2) { background: #f4bf4f; } .dots i:nth-child(3) { background: #61c454; }
+
+.content { display: flex; gap: 14px; align-items: stretch; padding: 0 16px 18px; }
+.rail { width: 208px; flex: none; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--inset-hi); padding: 14px 10px 10px; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 2px 6px 11px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.brand svg { color: var(--accent); }
+.brand-name { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; padding: 2px; }
+.nav-sec { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-subtle); padding: 8px 8px 5px; }
+.nav-sec:first-child { padding-top: 2px; }
+.nav-btn { display: flex; align-items: center; width: 100%; text-align: left; padding: 7px 10px; border-radius: 9px; color: var(--fg-muted); font-size: 12.5px; transition: background .2s ease, color .2s ease; }
+.nav-btn:hover { color: var(--fg); background: var(--row-hover); }
+.nav-btn[aria-current] { color: var(--fg); background: color-mix(in oklab, var(--accent) 15%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent); }
+.rail-foot { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 8px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg-subtle); padding-left: 6px; }
+.rail-foot .d { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+
+.main { flex: 1; min-width: 0; }
+.title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
+h1 { font-size: 22px; font-weight: 620; letter-spacing: -.015em; display: flex; align-items: center; gap: 9px; }
+h1 svg { color: var(--accent); }
+.sub { color: var(--fg-subtle); font-size: 12.5px; margin-top: 3px; }
+.sub .num { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-muted); }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 6px 13px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--btn-bg); font-size: 12.5px; font-weight: 540; transition: transform .25s var(--ease-spring), background .18s ease; }
+.btn:hover { transform: translateY(-1px); background: var(--btn-bg-hover); }
+.btn:active { transform: translateY(1px) scale(.98); }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.search { position: relative; display: flex; align-items: center; flex: 1 1 240px; min-width: 0; }
+.search .glyph { position: absolute; left: 10px; font-family: var(--font-mono); font-size: 12px; color: var(--fg-subtle); pointer-events: none; }
+.search input { appearance: none; width: 100%; padding: 7px 12px 7px 26px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--select-bg); font-size: 12.5px; color: var(--fg); transition: border-color .2s ease; }
+.search input::placeholder { color: var(--fg-subtle); }
+.search input:hover, .search input:focus { border-color: color-mix(in oklab, var(--accent) 50%, var(--border-strong)); outline: none; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 11px; border: 1px solid var(--border); background: var(--surface-2); box-shadow: var(--inset-hi); }
+.seg-btn { padding: 5px 11px; border-radius: 8px; font-size: 12px; font-weight: 530; color: var(--fg-muted); white-space: nowrap; transition: all .25s var(--ease-spring); }
+.seg-btn:active { transform: scale(.95); }
+.seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--inset-hi), var(--panel-shadow); margin-top: 16px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.stat { padding: 15px 18px 13px; border-left: 1px solid var(--border); }
+.stat:first-child { border-left: 0; }
+.stat .label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-subtle); }
+.stat .value { font-family: var(--font-mono); font-size: 20px; font-weight: 600; letter-spacing: -.02em; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="dots"><i></i><i></i><i></i></div>
+  <div class="content">
+    <aside class="rail">
+      <div class="brand">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2 L16 15.5 H2 Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span class="brand-name">Prism</span>
+      </div>
+      <nav class="nav">
+        <div class="nav-sec">Overview</div>
+        <button class="nav-btn">Overview</button>
+        <div class="nav-sec">Operate</div>
+        <button class="nav-btn" aria-current="page">Logs</button>
+        <button class="nav-btn">Usage</button>
+        <button class="nav-btn">Stats</button>
+        <div class="nav-sec">Configure</div>
+        <button class="nav-btn">Providers</button>
+        <div class="nav-sec">System</div>
+        <button class="nav-btn">Integrations</button>
+        <button class="nav-btn">Update</button>
+      </nav>
+      <div class="rail-foot"><span class="d"></span> prismd running</div>
+    </aside>
+    <main class="main">
+      <div class="title-row">
+        <div>
+          <h1>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 2.5h7l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M6 8h6M6 11.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            Logs
+          </h1>
+          <p class="sub">model requests and failover history, newest first · <span class="num">183</span> in ring</p>
+        </div>
+        <button class="btn">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M11 6.5A4.5 4.5 0 1 1 6.5 2c1.8 0 3.3 1 4.1 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10.9 1.6v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Refresh
+        </button>
+      </div>
+      <div class="toolbar">
+        <div class="search">
+          <span class="glyph">/</span>
+          <input type="text" placeholder="Filter by request id, model, or provider">
+        </div>
+        <div class="seg" role="group" aria-label="Status">
+          <button class="seg-btn" aria-pressed="true">all</button>
+          <button class="seg-btn">open</button>
+          <button class="seg-btn">completed</button>
+          <button class="seg-btn">incomplete</button>
+          <button class="seg-btn">failed</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="stats">
+          <div class="stat"><div class="label">Requests</div><div class="value">183</div></div>
+          <div class="stat"><div class="label">Failed</div><div class="value">0</div></div>
+          <div class="stat"><div class="label">Tokens</div><div class="value">4,735,894</div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<script>
+document.querySelectorAll('.seg').forEach(seg => {
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('.seg-btn'); if (!b) return;
+    seg.querySelectorAll('.seg-btn').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+  });
+});
+window.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'setWinWidth') {
+    document.querySelector('.win').style.width = e.data.width;
+  }
+});
+</script>
+</body>
+</html>

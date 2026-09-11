@@ -329,8 +329,15 @@ func (m Model) renderAuthLoginModal() string {
 }
 
 func (m Model) renderIntegrationsModal() string {
+	hostLine := "Host: " + m.activeHostLabel()
+	for _, h := range m.HostsView {
+		if h.ID == m.activeHostID() && h.Status != "ok" {
+			hostLine += " (" + h.Status + ": " + h.Detail + ")"
+		}
+	}
 	lines := []string{
 		InfoTitleStyle.Render("Integrations"),
+		InfoValueStyle.Render(hostLine),
 		"",
 	}
 	if len(m.Integrations) == 0 {
@@ -356,12 +363,12 @@ func (m Model) renderIntegrationsModal() string {
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, ActionMenuHintStyle.Render("[↑/↓] Move   [enter] Apply   [o/esc] Close"))
+	lines = append(lines, ActionMenuHintStyle.Render("[↑/↓] Move   [enter] Apply   [H] Switch host   [o/esc] Close"))
 	return InfoBoxStyle.Copy().Width(modalWidthForLines(lines, 56)).Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) renderIntegrationConfirmModal() string {
-	message := fmt.Sprintf("Apply prism integration to %s?\n[enter] Confirm   [esc] Cancel", m.IntegrationConfirm)
+	message := fmt.Sprintf("Apply prism integration to %s on %s?\n[enter] Confirm   [esc] Cancel", m.IntegrationConfirm, m.activeHostLabel())
 	return renderMessageModal("Apply integration", message, WarningStyle, m.Width)
 }
 

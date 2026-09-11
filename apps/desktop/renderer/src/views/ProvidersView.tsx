@@ -49,6 +49,7 @@ interface DetailProps {
   readonly provider: ProviderView
   readonly generation: number
   readonly globalContextWindow: number
+  readonly modelFilter: string
   readonly onOptimistic: (id: string, patch: Partial<ProviderView>) => void
   readonly onMutated: () => void
   readonly onEdit: () => void
@@ -56,7 +57,7 @@ interface DetailProps {
   readonly onToggleProvider: (provider: ProviderView) => void
 }
 
-function ProviderDetail({ provider, generation, globalContextWindow, onOptimistic, onMutated, onEdit, onDelete, onToggleProvider }: DetailProps): JSX.Element {
+function ProviderDetail({ provider, generation, globalContextWindow, modelFilter, onOptimistic, onMutated, onEdit, onDelete, onToggleProvider }: DetailProps): JSX.Element {
   const [confirming, setConfirming] = useState(false)
   const [addModel, setAddModel] = useState('')
   const [modalModel, setModalModel] = useState<string | null>(null)
@@ -66,6 +67,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
   const [syncError, setSyncError] = useState<Error | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [freshModels, setFreshModels] = useState<readonly string[]>([])
+  const [sortDisabled, setSortDisabled] = useState<readonly string[]>(provider.disabledModels ?? [])
   const task = useTask()
   const models = provider.models ?? []
   const disabledModels = provider.disabledModels ?? []
@@ -112,6 +114,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
     try {
       const before = new Set(models)
       const result = await api.syncProviderModels(provider.id, generation)
+      setSortDisabled(result.provider.disabledModels ?? [])
       setFreshModels((result.provider.models ?? []).filter((m) => !before.has(m)))
     } catch (err: unknown) {
       setSyncError(err instanceof Error ? err : new Error(String(err)))
@@ -175,6 +178,8 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
 
   const credentialTone = provider.credential.state === 'set' ? 'ok' : 'muted'
   const settings = provider.modelSettings ?? {}
+  const needle = modelFilter.trim().toLowerCase()
+  const visibleModels = needle === '' ? models : models.filter((m) => m.toLowerCase().includes(needle))
 
   return (
     <section className="panel card prov-detail" style={{ '--i': 1 } as CSSProperties}>
@@ -198,7 +203,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
       <div className="prov-detail-body">
         <div className="prov-detail-label">
           models
-          <span className="num">{models.length}</span>
+          <span className="num">{needle === '' ? models.length : visibleModels.length + ' of ' + models.length}</span>
           <span className="prov-detail-acts">
             <button
               type="button"
@@ -233,11 +238,11 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
             <span className="num">{disabledModels.length} off</span>
           </span>
         </div>
-        {models.length > 0 ? (
+        {visibleModels.length > 0 ? (
           <div className="prov-mlist">
-            {[...models].sort((a, b) => {
-              const oa = disabledModels.includes(a) ? 1 : 0
-              const ob = disabledModels.includes(b) ? 1 : 0
+            {visibleModels.slice().sort((a, b) => {
+              const oa = sortDisabled.includes(a) ? 1 : 0
+              const ob = sortDisabled.includes(b) ? 1 : 0
               if (oa !== ob) return oa - ob
               const fa = freshModels.includes(a) ? 0 : 1
               const fb = freshModels.includes(b) ? 0 : 1
@@ -308,7 +313,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, onOptimisti
             })}
           </div>
         ) : (
-          <p className="meta">No models listed.</p>
+          <p className="meta">{needle === '' ? 'No models listed.' : 'No models match the current filter.'}</p>
         )}
         <div className="prov-addline">
           <input
@@ -421,10 +426,22 @@ export function ProvidersView(): JSX.Element {
       providers: providers.state.value.providers.map((p) => (p.id === id ? { ...p, ...patch } : p)),
     })
   }
+  const needle = query.trim().toLowerCase()
+  const filtered = useMemo(
+    () =>
+      list.filter(
+        (provider) =>
+          needle === '' ||
+          provider.id.toLowerCase().includes(needle) ||
+          wireLabel(provider.wire).toLowerCase().includes(needle) ||
+          (provider.models ?? []).some((model) => model.toLowerCase().includes(needle)),
+      ),
+    [list, needle],
+  )
   const activeId = useMemo(() => {
-    if (selected !== null && list.some((p) => p.id === selected)) return selected
-    return list[0]?.id ?? null
-  }, [list, selected])
+    if (selected !== null && filtered.some((p) => p.id === selected)) return selected
+    return filtered[0]?.id ?? null
+  }, [filtered, selected])
   const active = activeId === null ? null : list.find((p) => p.id === activeId) ?? null
 
   async function remove(id: string, generation: number): Promise<void> {
@@ -474,14 +491,6 @@ export function ProvidersView(): JSX.Element {
         onRetry={() => providers.refresh()}
       >
         {(all) => {
-          const needle = query.trim().toLowerCase()
-          const filtered = all.providers.filter(
-            (provider) =>
-              needle === '' ||
-              provider.id.toLowerCase().includes(needle) ||
-              wireLabel(provider.wire).toLowerCase().includes(needle) ||
-              (provider.models ?? []).some((model) => model.toLowerCase().includes(needle)),
-          )
           if (filtered.length === 0) {
             return <Empty title={all.providers.length === 0 ? 'No providers configured.' : 'No providers match the current filter.'} />
           }
@@ -491,6 +500,7 @@ export function ProvidersView(): JSX.Element {
                 provider={active}
                 generation={all.generation}
                 globalContextWindow={all.contextWindow}
+                modelFilter={query}
                 onOptimistic={applyOptimistic}
                 onMutated={() => providers.refresh()}
                 onEdit={() => setEditing(active.id)}

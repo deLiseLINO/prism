@@ -4,7 +4,9 @@ export interface ManagementCall {
   readonly method: ManagementMethod
   readonly path: string
   readonly body?: unknown
+  readonly host?: string
 }
+
 
 export interface ManagementReply {
   readonly ok: boolean

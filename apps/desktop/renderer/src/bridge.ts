@@ -1,4 +1,4 @@
-import type { PrismBridge, ManagementCall, ManagementReply, DaemonStatus, UpdaterStatus, Unsubscribe } from '@prism/contracts'
+import type { PrismBridge, ManagementCall, ManagementReply, DaemonStatus, HostsView, UpdaterStatus, Unsubscribe } from '@prism/contracts'
 import { DAEMON_HEALTH_PATH } from '@prism/contracts'
 import { AgentsApi } from '../../shared/agents'
 import { IntegrationApi } from '../../shared/integrations'
@@ -55,7 +55,15 @@ const webManagement: PrismBridge['management'] = {
 const webIntegrations: PrismBridge['integrations'] = {
   apply: (request) => integrationsApi.apply(request),
   rollback: (request) => integrationsApi.rollback(request),
-  status: () => integrationsApi.status(),
+  status: (host) => integrationsApi.status(host),
+  hosts: async (): Promise<HostsView> => {
+    const reply = await proxy.call({ method: 'GET', path: '/api/v1/hosts' })
+    if (!reply.ok || reply.status !== 200) {
+      throw new Error(`prism: hosts list failed with status ${reply.status}`)
+    }
+    return reply.body as HostsView
+  },
+  installDaemon: () => Promise.reject(new Error('prism: daemon install is only available in the desktop app')),
 }
 
 const webAgents: PrismBridge['agents'] = {
