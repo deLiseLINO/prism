@@ -38,8 +38,6 @@ async function healthAsDaemonStatus(): Promise<DaemonStatus> {
 
 const webDaemon: PrismBridge['daemon'] = {
   status: healthAsDaemonStatus,
-  start: () => Promise.reject(new Error('prism: daemon start is not available in web mode; manage the daemon from the desktop app')),
-  stop: () => Promise.reject(new Error('prism: daemon stop is not available in web mode; manage the daemon from the desktop app')),
   onStatus: (listener: (status: DaemonStatus) => void): Unsubscribe => {
     const timer = window.setInterval(() => {
       void healthAsDaemonStatus().then(listener, () => undefined)

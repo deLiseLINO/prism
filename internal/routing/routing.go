@@ -201,7 +201,7 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 				_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 				return fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: untyped runner error: %v", err)})
 			}
-			logAttempt(attemptOutcome(re), runErrorMessage(re))
+			logAttempt(attemptOutcome(re), re.Error())
 			if o, mappable := outcomeFor(re, target.Policy); mappable {
 				_ = r.pool.Record(ctx, lease, o)
 			} else {
@@ -233,18 +233,7 @@ func runErrorOf(err error) (provider.RunError, bool) {
 	if errors.As(err, &re) {
 		return re, true
 	}
-	var ptr *provider.RunError
-	if errors.As(err, &ptr) && ptr != nil {
-		return *ptr, true
-	}
 	return provider.RunError{}, false
-}
-
-func runErrorMessage(re provider.RunError) string {
-	if re.Cause != nil {
-		return re.Cause.Error()
-	}
-	return re.Error()
 }
 
 func outcomeFor(re provider.RunError, policy account.SelectionPolicy) (account.Outcome, bool) {
@@ -350,7 +339,7 @@ func runErrorTerminal(re provider.RunError, capture *captureSink, attempts int, 
 	if capture.hasFailed {
 		return TurnResult{Terminal: Failed{Event: capture.failed}, Attempts: attempts, Trace: trace}
 	}
-	return turnFailed(canon.Failure{Reason: failureReason(re.Class), Message: runErrorMessage(re)}, attempts, trace)
+	return turnFailed(canon.Failure{Reason: failureReason(re.Class), Message: re.Error()}, attempts, trace)
 }
 
 func turnFailed(f canon.Failure, attempts int, trace []AttemptTrace) TurnResult {

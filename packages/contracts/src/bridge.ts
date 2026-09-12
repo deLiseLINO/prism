@@ -11,8 +11,6 @@ export type Unsubscribe = () => void
 export interface PrismBridge {
   readonly daemon: {
     readonly status: () => Promise<DaemonStatus>
-    readonly start: () => Promise<DaemonStatus>
-    readonly stop: () => Promise<DaemonStatus>
     readonly onStatus: (listener: (status: DaemonStatus) => void) => Unsubscribe
   }
   readonly management: {

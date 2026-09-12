@@ -17,8 +17,6 @@ function setReply(reply: ManagementReply): void {
 const fakeBridge = {
   daemon: {
     status: vi.fn(),
-    start: vi.fn(),
-    stop: vi.fn(),
     onStatus: vi.fn(),
   },
   management: {

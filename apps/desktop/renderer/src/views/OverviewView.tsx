@@ -1,9 +1,8 @@
 import type { CSSProperties, ReactNode } from 'react'
 import type { DaemonStatus, ProvidersView, ProviderView } from '@prism/contracts'
 import { AsyncBoundary, Banner, Empty, Toggle } from '../components/Ui'
-import { useAsync, useTask, describeError, type AsyncState, type UseAsyncResult } from '../useAsync'
+import { useAsync, useTask, describeError, type UseAsyncResult } from '../useAsync'
 import { api } from '../api'
-import { bridge } from '../bridge'
 
 const CONTEXT_PRESETS: readonly { readonly value: number; readonly label: string }[] = [
   { value: 32000, label: '32k' },
@@ -13,63 +12,22 @@ const CONTEXT_PRESETS: readonly { readonly value: number; readonly label: string
   { value: 1000000, label: '1M' },
 ]
 
-function formatClock(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  return `${date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}Z`
-}
-
-function daemonChip(status: AsyncState<DaemonStatus>): {
+function daemonChip(
+  status: DaemonStatus | null,
+  unreachable: boolean,
+): {
   readonly tone: 'ok' | 'warn' | 'danger' | 'muted'
   readonly label: string
   readonly pulse: boolean
 } {
-  if (status.kind !== 'ready')
-    return { tone: 'muted', label: 'checking…', pulse: false }
-  const state = status.value.state
-  if (state === 'ready')
-    return { tone: 'ok', label: 'operational', pulse: true }
-  if (state === 'failed')
-    return { tone: 'danger', label: 'failed', pulse: false }
+  if (unreachable) return { tone: 'danger', label: 'unreachable', pulse: false }
+  if (status === null) return { tone: 'muted', label: 'checking…', pulse: false }
+  const state = status.state
+  if (state === 'ready') return { tone: 'ok', label: 'operational', pulse: true }
+  if (state === 'failed') return { tone: 'danger', label: 'failed', pulse: false }
   if (state === 'idle' || state === 'stopped' || state === 'quitting')
     return { tone: 'muted', label: state, pulse: false }
   return { tone: 'warn', label: state, pulse: false }
-}
-
-function daemonSub(status: AsyncState<DaemonStatus>): JSX.Element {
-  if (status.kind === 'error')
-    return <>daemon status unavailable, retry from the Daemon view</>
-  if (status.kind !== 'ready') return <>reading daemon status…</>
-  const value = status.value
-  if (value.state !== 'ready') {
-    return (
-      <>
-        daemon {value.state}, attempt{' '}
-        <span className="num">{value.attempt}</span>
-      </>
-    )
-  }
-  return (
-    <>
-      daemon ready
-      {value.endpoint === null ? (
-        ''
-      ) : (
-        <>
-          {' '}
-          at <span className="num">{value.endpoint}</span>
-        </>
-      )}
-      , attempt <span className="num">{value.attempt}</span>
-      {value.startedAt === null ? (
-        ''
-      ) : (
-        <>
-          , up since <span className="num">{formatClock(value.startedAt)}</span>
-        </>
-      )}
-    </>
-  )
 }
 
 function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
@@ -82,6 +40,54 @@ function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
     }
   }
   return ids.sort((a, b) => a.localeCompare(b))
+}
+
+function DaemonCard({
+  status,
+  unreachable,
+}: {
+  readonly status: DaemonStatus | null
+  readonly unreachable: boolean
+}): ReactNode {
+  const chip = daemonChip(status, unreachable)
+  return (
+    <section className="panel card ov-card" style={{ '--i': 1, gridColumn: '1 / -1' } as CSSProperties}>
+      <div className="ov-head">
+        <div className="ov-head-l">
+          <span className="ov-ic">
+            <svg width="18" height="18"><use href="#i-daemon" /></svg>
+          </span>
+          <div>
+            <div className="ov-title">Daemon</div>
+            <p className="ov-sub">
+              local prismd supervised by the desktop app
+            </p>
+          </div>
+        </div>
+        <span className={`chip chip-${chip.tone}`}>
+          <span
+            className={`dot dot-${chip.tone}${chip.pulse ? ' dot-pulse' : ''}`}
+            aria-hidden="true"
+          />
+          {chip.label}
+        </span>
+      </div>
+      <div className="ov-body">
+        <div className="kv">
+          <div className="kv-row">
+            <span className="kv-k">state</span>
+            <span className="kv-v num">{status !== null ? status.state : chip.label}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-k">endpoint</span>
+            <span className="kv-v num">
+              {status === null ? 'unknown' : status.endpoint ?? 'not listening'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 function VisionSidecarCard({
@@ -104,7 +110,7 @@ function VisionSidecarCard({
   }
 
   return (
-    <section className="panel card ov-card" style={{ '--i': 1 } as CSSProperties}>
+    <section className="panel card ov-card" style={{ '--i': 2 } as CSSProperties}>
       <div className="ov-head">
         <div className="ov-head-l">
           <span className="ov-ic">
@@ -214,7 +220,7 @@ function ContextWindowCard({
   }
 
   return (
-    <section className="panel card ov-card" style={{ '--i': 2 } as CSSProperties}>
+    <section className="panel card ov-card" style={{ '--i': 3 } as CSSProperties}>
       <div className="ov-head">
         <div className="ov-head-l">
           <span className="ov-ic">
@@ -283,11 +289,14 @@ function ContextWindowCard({
   )
 }
 
-export function OverviewView(): JSX.Element {
-  const status = useAsync<DaemonStatus>(() => bridge.daemon.status(), [])
+export function OverviewView({
+  daemon,
+  daemonUnreachable,
+}: {
+  readonly daemon: DaemonStatus | null
+  readonly daemonUnreachable: boolean
+}): JSX.Element {
   const providers = useAsync<ProvidersView>(() => api.providers(), [])
-
-  const chip = daemonChip(status.state)
 
   return (
     <section className="screen" aria-labelledby="h-overview">
@@ -299,19 +308,11 @@ export function OverviewView(): JSX.Element {
             </svg>
             Overview
           </h1>
-          <p className="sub">{daemonSub(status.state)}</p>
-        </div>
-        <div className="head-actions">
-          <span className={`chip chip-${chip.tone}`}>
-            <span
-              className={`dot dot-${chip.tone}${chip.pulse ? ' dot-pulse' : ''}`}
-              aria-hidden="true"
-            />
-            {chip.label}
-          </span>
+          <p className="sub">daemon state, default context window and vision sidecar</p>
         </div>
       </div>
       <div className="ov-grid">
+        <DaemonCard status={daemon} unreachable={daemonUnreachable} />
         <VisionSidecarCard providers={providers} />
         <ContextWindowCard providers={providers} />
       </div>
