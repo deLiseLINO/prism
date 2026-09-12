@@ -400,6 +400,23 @@ describe('renderer api wrapper', () => {
     })
   })
 
+  it('writes the default context window through the bridge seam with CAS generation', async () => {
+    const { api } = await loadApi()
+    setReply({
+      ok: true,
+      status: 200,
+      body: { contextWindow: 400000, expectedGeneration: 8 },
+    })
+    const out = await api.contextWindow({ contextWindow: 400000, expectedGeneration: 7 })
+    expect(out.contextWindow).toBe(400000)
+    expect(out.expectedGeneration).toBe(8)
+    expect(recorded[0]).toMatchObject({
+      method: 'PUT',
+      path: '/api/v1/context-window',
+      body: { contextWindow: 400000, expectedGeneration: 7 },
+    })
+  })
+
   it('treats an unexpected 200 reply to account delete as an error, not empty success', async () => {
     const { api, ApiError } = await loadApi()
     setReply({ ok: true, status: 200, body: { account: 'codex:abc' } })

@@ -84,8 +84,6 @@ func effortFrom(label string) (canon.ReasoningEffort, bool) {
 		return canon.EffortHigh, true
 	case "xhigh":
 		return canon.EffortXHigh, true
-	case "max":
-		return canon.EffortMax, true
 	default:
 		return 0, false
 	}

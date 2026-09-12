@@ -258,11 +258,9 @@ func (g *Ingress) reasoningFrom(root map[string]any) (canon.ReasoningConfig, err
 			rc.Effort = canon.EffortHigh
 		case "xhigh":
 			rc.Effort = canon.EffortXHigh
-		case "max":
-			rc.Effort = canon.EffortMax
-		case "ultra":
-			rc.Effort = canon.EffortMax
-			g.warnOf(WarnUnmappedField, "reasoning.effort=ultra")
+		case "max", "ultra":
+			rc.Effort = canon.EffortXHigh
+			g.warnOf(WarnUnmappedField, "reasoning.effort="+e)
 		default:
 			return rc, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "reasoning.effort"}
 		}

@@ -189,6 +189,8 @@ func (m *Manager) jobOf(key string) Job {
 	return Job{Key: key, State: StateIdle}
 }
 
+func (m *Manager) snapshot(job *Job) Job { return *job }
+
 func (m *Manager) begin(def Definition, op string) (*Job, context.Context, func(), error) {
 	guard := def.guardBinary()
 	m.mu.Lock()
@@ -221,10 +223,7 @@ func (m *Manager) finish(def Definition, cancel func()) {
 	m.wg.Done()
 }
 
-// transition mutates a job under the manager lock and returns the post-write
-// copy, so the launching goroutine can hand back a consistent snapshot while
-// the runner goroutine is already live.
-func (m *Manager) transition(job *Job, state JobState, method, command, output, errMsg string) Job {
+func (m *Manager) transition(job *Job, state JobState, method, command, output, errMsg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
@@ -242,7 +241,6 @@ func (m *Manager) transition(job *Job, state JobState, method, command, output, 
 	if errMsg != "" {
 		job.Error = errMsg
 	}
-	return *job
 }
 
 // Install launches an install job for the agent behind id. It returns the
@@ -332,10 +330,10 @@ func (m *Manager) launchArgv(def Definition, op, method string, argv []string) (
 		return Job{}, err
 	}
 	command := strings.Join(argv, " ")
-	snapshot := m.transition(job, StateInstalling, method, command, "", "")
+	m.transition(job, StateInstalling, method, command, "", "")
 	m.wg.Add(1)
 	go m.runJob(def, job, ctx, cancel, argv)
-	return snapshot, nil
+	return m.snapshot(job), nil
 }
 
 // launchScript starts a job that fetches the script to a temp file and runs
@@ -347,10 +345,10 @@ func (m *Manager) launchScript(def Definition, op, method string, script *Script
 	if err != nil {
 		return Job{}, err
 	}
-	snapshot := m.transition(job, StateInstalling, method, script.Interpreter+" "+script.URL, "", "")
+	m.transition(job, StateInstalling, method, script.Interpreter+" "+script.URL, "", "")
 	m.wg.Add(1)
 	go m.runScriptJob(def, job, ctx, cancel, script)
-	return snapshot, nil
+	return m.snapshot(job), nil
 }
 
 func (m *Manager) runJob(def Definition, job *Job, ctx context.Context, cancel func(), argv []string) {

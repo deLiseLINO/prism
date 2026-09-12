@@ -424,8 +424,7 @@ func clientName(c execution.Client) string {
 }
 
 type AgentsResponse struct {
-	Agents         []agentinstall.AgentStatus `json:"agents"`
-	ActionsEnabled bool                       `json:"actionsEnabled"`
+	Agents []agentinstall.AgentStatus `json:"agents"`
 }
 
 type AgentJobResponse struct {

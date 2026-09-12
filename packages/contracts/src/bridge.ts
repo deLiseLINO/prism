@@ -1,5 +1,5 @@
 import type { DaemonStatus } from './daemon'
-import type { AgentJob, AgentJobReply, AgentJobRequest, AgentsView } from './agents'
+import type { AgentJob, AgentJobReply, AgentJobRequest, AgentStatus } from './agents'
 import type { HostsView, IntegrationApplyResult, IntegrationRequest, IntegrationStatus } from './integrations'
 
 import type { ManagementCall, ManagementReply } from './management'
@@ -30,7 +30,7 @@ export interface PrismBridge {
     readonly install: (request: AgentJobRequest) => Promise<AgentJobReply>
     readonly update: (request: AgentJobRequest) => Promise<AgentJobReply>
     readonly job: (request: AgentJobRequest) => Promise<AgentJob>
-    readonly status: () => Promise<AgentsView>
+    readonly status: () => Promise<readonly AgentStatus[]>
   }
   readonly shell: {
     readonly openExternal: (url: string) => Promise<void>

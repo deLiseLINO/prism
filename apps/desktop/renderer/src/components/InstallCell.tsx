@@ -3,7 +3,6 @@ import type { AgentJob, AgentJobRequest, AgentStatus } from '@prism/contracts'
 import { Button } from '../components/Ui'
 import { useTask, describeError } from '../useAsync'
 import { bridge } from '../bridge'
-import { useExperimentalFlags } from '../experimental'
 
 const LIVE_STATES: ReadonlySet<string> = new Set(['running', 'installing', 'verifying'])
 const POLL_MS = 700
@@ -18,7 +17,6 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
   const [actionError, setActionError] = useState<string | null>(null)
   const installTask = useTask()
   const updateTask = useTask()
-  const { flags } = useExperimentalFlags()
   const busy = installTask.running || updateTask.running || LIVE_STATES.has(job.state)
   const taskError = installTask.error ?? updateTask.error
 
@@ -91,27 +89,23 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
         </span>
       )}
       <span className="int-install__actions">
-        {flags.agentActions ? (
-          <>
-            <Button
-              tone={status.installed ? 'ghost' : 'primary'}
-              size="sm"
-              onClick={() => void install()}
-              disabled={busy}
-            >
-              {status.installed ? 'Reinstall' : 'Install'}
-            </Button>
-            <Button
-              tone="ghost"
-              size="sm"
-              onClick={() => void update()}
-              disabled={busy || !status.canUpdate}
-              title={status.installed && !status.canUpdate ? (status.reason ?? 'update unavailable') : undefined}
-            >
-              Update
-            </Button>
-          </>
-        ) : null}
+        <Button
+          tone={status.installed ? 'ghost' : 'primary'}
+          size="sm"
+          onClick={() => void install()}
+          disabled={busy}
+        >
+          {status.installed ? 'Reinstall' : 'Install'}
+        </Button>
+        <Button
+          tone="ghost"
+          size="sm"
+          onClick={() => void update()}
+          disabled={busy || !status.canUpdate}
+          title={status.installed && !status.canUpdate ? (status.reason ?? 'update unavailable') : undefined}
+        >
+          Update
+        </Button>
       </span>
       {taskError !== null ? (
         <span className="int-install__err" role="alert">{describeError(taskError)}</span>

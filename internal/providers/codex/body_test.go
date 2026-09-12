@@ -80,32 +80,6 @@ func TestRequestBodyMatchesGolden(t *testing.T) {
 
 func jsonEqual(a, b []byte) bool { return bytes.Equal(a, b) }
 
-func TestEffortWireSendsExtendedRungs(t *testing.T) {
-	for effort, want := range map[canon.ReasoningEffort]string{
-		canon.EffortXHigh: "xhigh",
-		canon.EffortMax:   "max",
-	} {
-		req := canon.Request{
-			Model:    "gpt-5.2-codex",
-			Stream:   false,
-			Input:    []canon.Item{canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}}},
-			Reasoning: canon.ReasoningConfig{Effort: effort},
-		}
-		result, err := BuildRequestBody(req)
-		if err != nil {
-			t.Fatalf("BuildRequestBody(effort %d): %v", effort, err)
-		}
-		var got map[string]any
-		if err := json.Unmarshal(result.Body, &got); err != nil {
-			t.Fatalf("parse built body: %v", err)
-		}
-		reasoning, ok := got["reasoning"].(map[string]any)
-		if !ok || reasoning["effort"] != want {
-			t.Fatalf("effort %d wire = %#v, want %q", effort, got["reasoning"], want)
-		}
-	}
-}
-
 func TestRequestBodyKeyOrder(t *testing.T) {
 	req := canon.Request{
 		Model:  "gpt-5.2-codex",

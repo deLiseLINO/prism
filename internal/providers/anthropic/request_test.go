@@ -309,7 +309,6 @@ func TestBudgetTablePerModel(t *testing.T) {
 		{"claude-sonnet-4-5", canon.EffortMedium, 8192},
 		{"claude-sonnet-4-5", canon.EffortHigh, 16384},
 		{"claude-sonnet-4-5", canon.EffortXHigh, 24576},
-		{"claude-sonnet-4-5", canon.EffortMax, 28672},
 		{"claude-opus-4-1", canon.EffortHigh, 16384},
 		{"claude-haiku-4-5", canon.EffortLow, 4096},
 		{"claude-fable-2", canon.EffortMedium, 8192},

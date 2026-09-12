@@ -1008,8 +1008,6 @@ func TestAgentsStatusListAndSingle(t *testing.T) {
 }
 
 func TestAgentsInstallJobLifecycleThroughCLI(t *testing.T) {
-	management.AgentActions = true
-	t.Cleanup(func() { management.AgentActions = false })
 	env := newDaemonEnv(t, nil)
 	code, _, errOut := env.runCLI(t, "agents", "install", "codex")
 	if code != exitOK {
@@ -1042,8 +1040,6 @@ func TestAgentsInstallJobLifecycleThroughCLI(t *testing.T) {
 }
 
 func TestAgentsUpdateRunsSelfUpdate(t *testing.T) {
-	management.AgentActions = true
-	t.Cleanup(func() { management.AgentActions = false })
 	env := newDaemonEnv(t, nil)
 	code, _, errOut := env.runCLI(t, "agents", "update", "codex")
 	if code != exitOK {
