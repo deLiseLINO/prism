@@ -178,8 +178,6 @@ func reasoningFrom(effort *string) canon.ReasoningConfig {
 		return canon.ReasoningConfig{Effort: canon.EffortHigh}
 	case "xhigh":
 		return canon.ReasoningConfig{Effort: canon.EffortXHigh}
-	case "max":
-		return canon.ReasoningConfig{Effort: canon.EffortMax}
 	}
 	return canon.ReasoningConfig{}
 }

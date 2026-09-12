@@ -11,7 +11,7 @@ const CONTEXT_PRESETS: readonly { readonly value: number; readonly label: string
   { value: 1000000, label: '1M' },
 ]
 
-const EFFORTS: readonly string[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const EFFORTS: readonly string[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
 
 function fmt(n: number): string {
   return n.toLocaleString('en-US')

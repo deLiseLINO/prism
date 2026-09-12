@@ -229,7 +229,6 @@ const (
 	EffortMedium
 	EffortHigh
 	EffortXHigh
-	EffortMax
 	EffortOff
 )
 

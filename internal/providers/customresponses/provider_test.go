@@ -51,29 +51,6 @@ func jsonRaw(s string) []byte {
 	return []byte(s)
 }
 
-func TestExtendedEffortsReachResponsesWire(t *testing.T) {
-	for effort, want := range map[canon.ReasoningEffort]string{
-		canon.EffortXHigh: "xhigh",
-		canon.EffortMax:   "max",
-	} {
-		req := testRequest(false)
-		req.Reasoning = canon.ReasoningConfig{Effort: effort}
-		r := New(staticKey, Options{})
-		up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", req)
-		if err != nil {
-			t.Fatalf("buildUpstream(effort %d): %v", effort, err)
-		}
-		var got map[string]any
-		if err := json.Unmarshal(up.Body, &got); err != nil {
-			t.Fatalf("parse body: %v", err)
-		}
-		reasoning, ok := got["reasoning"].(map[string]any)
-		if !ok || reasoning["effort"] != want {
-			t.Fatalf("effort %d wire = %#v, want %q", effort, got["reasoning"], want)
-		}
-	}
-}
-
 func TestBuildUpstreamRequest(t *testing.T) {
 	r := New(staticKey, Options{ExtraHeaders: []Header{{Name: "X-Custom", Value: "v1"}}})
 	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", testRequest(true))

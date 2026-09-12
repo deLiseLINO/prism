@@ -89,28 +89,6 @@ func eventKinds(events []canon.Event) []string {
 	return out
 }
 
-func TestExtendedEffortsReachChatWire(t *testing.T) {
-	for effort, want := range map[canon.ReasoningEffort]string{
-		canon.EffortXHigh: "xhigh",
-		canon.EffortMax:   "max",
-	} {
-		req := testRequest(false)
-		req.Reasoning = canon.ReasoningConfig{Effort: effort}
-		r := New(staticKey, Options{})
-		up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", req)
-		if err != nil {
-			t.Fatalf("buildUpstream(effort %d): %v", effort, err)
-		}
-		var got map[string]any
-		if err := json.Unmarshal(up.Body, &got); err != nil {
-			t.Fatalf("parse body: %v", err)
-		}
-		if got["reasoning_effort"] != want {
-			t.Fatalf("effort %d wire = %#v, want %q", effort, got["reasoning_effort"], want)
-		}
-	}
-}
-
 func TestChatURLVariants(t *testing.T) {
 	cases := map[string]string{
 		"https://example.com":                      "https://example.com/v1/chat/completions",

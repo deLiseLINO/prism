@@ -382,6 +382,21 @@ body::before {
 .prov-detail-body { padding: 16px 22px 20px; display: flex; flex-direction: column; gap: 12px; }
 .prov-detail-label { font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--fg-subtle); display: flex; align-items: center; gap: 8px; }
 .prov-detail-acts { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.ov-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; }
+.ov-card { padding: 0; overflow: hidden; }
+.ov-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 22px 0; border-bottom: 1px solid var(--border); }
+.ov-head-l { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ov-ic { color: var(--accent); display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in oklab, var(--accent) 12%, transparent); flex: none; }
+.ov-title { font-size: 14.5px; font-weight: 620; letter-spacing: -0.01em; }
+.ov-sub { color: var(--fg-subtle); font-size: 12px; margin-top: 2px; }
+.ov-body { padding: 16px 22px 20px; display: flex; flex-direction: column; gap: 12px; }
+.ov-body .msm-seg { display: grid; grid-template-columns: repeat(5, 1fr); }
+.ov-body .msm-seg .msm-seg-btn { text-align: center; }
+@media (max-width: 860px) {
+  .ov-grid { grid-template-columns: 1fr; }
+  .ov-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .ov-head-l { flex: none; }
+}
 .prov-mlist { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
 .prov-mline { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); transition: background-color 0.16s ease; }
 .prov-mline:last-child { border-bottom: 0; }

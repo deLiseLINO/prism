@@ -107,8 +107,7 @@ func TestAgentsListRendersStatuses(t *testing.T) {
 		t.Fatalf("status %d", res.StatusCode)
 	}
 	var body struct {
-		Agents         []agentinstall.AgentStatus `json:"agents"`
-		ActionsEnabled bool                       `json:"actionsEnabled"`
+		Agents []agentinstall.AgentStatus `json:"agents"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -118,42 +117,6 @@ func TestAgentsListRendersStatuses(t *testing.T) {
 	}
 	if body.Agents[0].ID != integrations.Codex {
 		t.Fatalf("expected first agent codex, got %s", body.Agents[0].ID)
-	}
-	if body.ActionsEnabled {
-		t.Fatal("actionsEnabled should be false by default")
-	}
-}
-
-func TestAgentsListReportsActionsEnabled(t *testing.T) {
-	AgentActions = true
-	t.Cleanup(func() { AgentActions = false })
-	ts := agentsEnv(t, &fakeInstaller{statuses: allAgentStatuses()})
-	res := agentsGet(t, ts, "/api/v1/agents")
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status %d", res.StatusCode)
-	}
-	var body struct {
-		ActionsEnabled bool `json:"actionsEnabled"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		t.Fatal(err)
-	}
-	if !body.ActionsEnabled {
-		t.Fatal("actionsEnabled should mirror the switch")
-	}
-}
-
-func TestParseAgentActionsEnv(t *testing.T) {
-	for _, raw := range []string{"1", "true"} {
-		if !ParseAgentActionsEnv(raw) {
-			t.Fatalf("ParseAgentActionsEnv(%q) should be true", raw)
-		}
-	}
-	for _, raw := range []string{"", "0", "false", "yes", "TRUE", "on"} {
-		if ParseAgentActionsEnv(raw) {
-			t.Fatalf("ParseAgentActionsEnv(%q) should be false", raw)
-		}
 	}
 }
 
@@ -180,8 +143,6 @@ func TestAgentGetKnownAndUnknown(t *testing.T) {
 }
 
 func TestAgentInstallAcceptedAndForceForwarded(t *testing.T) {
-	AgentActions = true
-	t.Cleanup(func() { AgentActions = false })
 	installer := &fakeInstaller{statuses: allAgentStatuses()}
 	ts := agentsEnv(t, installer)
 	res := agentsPost(t, ts, "/api/v1/agents/codex/install")
@@ -200,8 +161,6 @@ func TestAgentInstallAcceptedAndForceForwarded(t *testing.T) {
 }
 
 func TestAgentInstallConflictAndUnsupported(t *testing.T) {
-	AgentActions = true
-	t.Cleanup(func() { AgentActions = false })
 	installer := &fakeInstaller{
 		statuses:  allAgentStatuses(),
 		installOK: map[integrations.ID]error{integrations.Omp: agentinstall.ErrInstallActive},
@@ -245,8 +204,6 @@ func TestAgentInstallConflictAndUnsupported(t *testing.T) {
 }
 
 func TestAgentUpdateNotInstalledAndConflict(t *testing.T) {
-	AgentActions = true
-	t.Cleanup(func() { AgentActions = false })
 	installer := &fakeInstaller{
 		statuses: allAgentStatuses(),
 		updateOK: map[integrations.ID]error{
@@ -284,44 +241,5 @@ func TestAgentJobIdleWhenNeverRan(t *testing.T) {
 	}
 	if body.Job.State != agentinstall.StateIdle {
 		t.Fatalf("expected idle, got %s", body.Job.State)
-	}
-}
-
-func TestAgentMutationsDisabledByDefault(t *testing.T) {
-	installer := &fakeInstaller{statuses: allAgentStatuses()}
-	ts := agentsEnv(t, installer)
-
-	for _, path := range []string{
-		"/api/v1/agents/codex/install",
-		"/api/v1/agents/codex/update",
-	} {
-		res := agentsPost(t, ts, path)
-		defer res.Body.Close()
-		if res.StatusCode != http.StatusNotImplemented {
-			t.Fatalf("%s: expected 501, got %d", path, res.StatusCode)
-		}
-		var body struct {
-			Error struct {
-				Code string `json:"code"`
-			} `json:"error"`
-		}
-		if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body.Error.Code != "agent_actions_disabled" {
-			t.Fatalf("%s: expected agent_actions_disabled, got %s", path, body.Error.Code)
-		}
-	}
-
-	// Read routes stay open while the flag is off.
-	status := agentsGet(t, ts, "/api/v1/agents/codex")
-	defer status.Body.Close()
-	if status.StatusCode != http.StatusOK {
-		t.Fatalf("status route should stay open, got %d", status.StatusCode)
-	}
-	job := agentsGet(t, ts, "/api/v1/agents/codex/job")
-	defer job.Body.Close()
-	if job.StatusCode != http.StatusOK {
-		t.Fatalf("job route should stay open, got %d", job.StatusCode)
 	}
 }

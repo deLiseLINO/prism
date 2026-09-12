@@ -71,19 +71,12 @@ describe('agents api over the management seam', () => {
     await expect(new AgentsApi(broken).job({ id: 'codex' })).rejects.toThrow('malformed')
   })
 
-  it('lists agent statuses and the daemon actions switch from the collection route', async () => {
+  it('lists agent statuses from the collection route', async () => {
     const agents = [{ id: 'codex', key: 'codex', installed: true, source: 'npm', canUpdate: true, job: { agent: 'codex', op: '', state: 'idle' } }]
-    const proxy = fakeProxy({ ok: true, status: 200, body: { agents, actionsEnabled: true } })
+    const proxy = fakeProxy({ ok: true, status: 200, body: { agents } })
     const api = new AgentsApi(proxy)
-    expect(await api.status()).toEqual({ agents, actionsEnabled: true })
+    expect(await api.status()).toEqual(agents)
     expect(proxy.calls).toEqual([{ method: 'GET', path: '/api/v1/agents' }])
-
-    const off = fakeProxy({ ok: true, status: 200, body: { agents, actionsEnabled: false } })
-    expect(await new AgentsApi(off).status()).toEqual({ agents, actionsEnabled: false })
-
-    // Missing actionsEnabled is treated as off, not as an error.
-    const absent = fakeProxy({ ok: true, status: 200, body: { agents } })
-    expect((await new AgentsApi(absent).status()).actionsEnabled).toBe(false)
 
     const broken = fakeProxy({ ok: true, status: 200, body: { integrations: [] } })
     await expect(new AgentsApi(broken).status()).rejects.toThrow('malformed')

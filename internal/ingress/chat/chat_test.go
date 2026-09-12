@@ -240,24 +240,6 @@ func TestSamplingAndToolsMapping(t *testing.T) {
 	}
 }
 
-func TestReasoningEffortLadder(t *testing.T) {
-	cases := map[string]canon.ReasoningEffort{
-		"minimal": canon.EffortMinimal,
-		"low":     canon.EffortLow,
-		"medium":  canon.EffortMedium,
-		"high":    canon.EffortHigh,
-		"xhigh":   canon.EffortXHigh,
-		"max":     canon.EffortMax,
-	}
-	for label, want := range cases {
-		body := `{"model":"openrouter/minimax/minimax-m3","messages":[{"role":"user","content":"x"}],"reasoning_effort":"` + label + `"}`
-		req := mustParse(t, body)
-		if req.Reasoning.Effort != want {
-			t.Errorf("reasoning_effort %q = %d, want %d", label, req.Reasoning.Effort, want)
-		}
-	}
-}
-
 func TestMaxCompletionTokensPrecedence(t *testing.T) {
 	tests := []struct {
 		name string
