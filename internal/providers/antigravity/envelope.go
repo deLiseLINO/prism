@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"prism/internal/canon"
@@ -135,7 +136,7 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]b
 		body.Contents = append(body.Contents, geminiContent{Role: "user", Parts: []geminiPart{{Text: continueNudge}}})
 	}
 	env := envelope{
-		Model:       wireModel(string(req.Model)),
+		Model:       resolveWireModel(string(req.Model), resolvedEffort(req), presenceSnapshot()),
 		UserAgent:   EnvelopeUserAgent,
 		RequestType: RequestType,
 		Project:     project,
@@ -471,13 +472,112 @@ func generationConfig(req canon.Request) *geminiGenerationConfig {
 	if req.MaxOutputTokens > 0 {
 		gc.MaxOutputTokens = req.MaxOutputTokens
 	}
-	if req.Reasoning.Effort != 0 {
-		gc.ThinkingConfig = json.RawMessage(`{"includeThoughts":true,"thinkingLevel":"high"}`)
-	}
+	gc.ThinkingConfig = thinkingConfig(req)
 	if gc.MaxOutputTokens == 0 && gc.Temperature == nil && gc.TopP == nil && len(gc.StopSequences) == 0 && len(gc.ThinkingConfig) == 0 {
 		return nil
 	}
 	return gc
+}
+
+// thinkingConfig emits the family-aware thinkingConfig for a request, or nil
+// when no config is called for (the request is non-family or carries no
+// reasoning and no suppression surface). Omitting thinkingConfig on family
+// models would re-apply the per-id baked server default, so off is emitted
+// explicitly whenever the family can suppress.
+func thinkingConfig(req canon.Request) json.RawMessage {
+	present := presenceSnapshot()
+	f := familyForLogical(string(req.Model), present)
+	if f == nil {
+		return nil
+	}
+	ef := resolvedEffort(req)
+	if ef == effortOff {
+		if !f.suppressWhenOff {
+			return nil
+		}
+		if f.thinking == "google-level" {
+			return json.RawMessage(`{"includeThoughts":false,"thinkingLevel":"MINIMAL"}`)
+		}
+		return json.RawMessage(`{"includeThoughts":false,"thinkingBudget":0}`)
+	}
+	switch f.thinking {
+	case "google-level":
+		return json.RawMessage(`{"includeThoughts":true,"thinkingLevel":"` + googleThinkingLevel(ef, f) + `"}`)
+	case "budget":
+		return json.RawMessage(`{"includeThoughts":true,"thinkingBudget":` + strconv.Itoa(googleThinkingBudget(ef, f)) + `}`)
+	}
+	return nil
+}
+
+// resolvedEffort maps the request effort onto the antigravity effort domain.
+// An unset effort on a requiresEffort family clamps to the family's lowest
+// supported effort — those endpoints reject omitted thinking outright, and
+// the clamp keeps the wire request valid without inventing a default the
+// caller never chose. prism carries no effort surface for non-family models,
+// so this never rewrites a bare id's request.
+func resolvedEffort(req canon.Request) effort {
+	switch req.Reasoning.Effort {
+	case canon.EffortMinimal:
+		return effortMinimal
+	case canon.EffortLow:
+		return effortLow
+	case canon.EffortMedium:
+		return effortMedium
+	case canon.EffortHigh:
+		return effortHigh
+	case canon.EffortXHigh:
+		return effortXHigh
+	case canon.EffortMax:
+		return effortMax
+	case canon.EffortOff:
+		return effortOff
+	}
+	f := familyForLogical(string(req.Model), presenceSnapshot())
+	if f != nil && f.requiresEffort && len(f.efforts) > 0 {
+		return f.efforts[0]
+	}
+	return ""
+}
+
+// googleThinkingLevel maps an effort to Google's thinkingLevel enum. A
+// collapsed family that routes minimal onto the same wire id as low must emit
+// LOW — the -low SKUs reject MINIMAL.
+func googleThinkingLevel(ef effort, f *family) string {
+	if ef == effortMinimal && f.routing[effortMinimal] == f.routing[effortLow] {
+		return "LOW"
+	}
+	switch ef {
+	case effortMinimal:
+		return "MINIMAL"
+	case effortLow:
+		return "LOW"
+	case effortMedium:
+		return "MEDIUM"
+	default:
+		return "HIGH"
+	}
+}
+
+// googleThinkingBudget resolves the budget-ladder token count for an effort,
+// with the family's own effortBudgets overriding the generic ladder.
+func googleThinkingBudget(ef effort, f *family) int {
+	if budget, ok := f.effortBudgets[ef]; ok {
+		return budget
+	}
+	switch ef {
+	case effortMinimal:
+		return 1024
+	case effortLow:
+		return 4096
+	case effortMedium:
+		return 8192
+	case effortHigh:
+		return 16384
+	case effortXHigh:
+		return 24575
+	default:
+		return 32768
+	}
 }
 
 func sanitizeSignatures(contents []geminiContent) {
@@ -501,15 +601,4 @@ func sanitizeSignatures(contents []geminiContent) {
 
 func invalidRequestf(format string, args ...any) error {
 	return fmt.Errorf("antigravity: "+format, args...)
-}
-
-var wireModelRenames = map[string]string{
-	"gemini-3.7-flash": "gemini-3.7-flash-tiered",
-}
-
-func wireModel(model string) string {
-	if renamed, ok := wireModelRenames[model]; ok {
-		return renamed
-	}
-	return model
 }

@@ -2,6 +2,7 @@ export type Section = 'Overview' | 'Operate' | 'Configure' | 'System'
 
 export type View =
   | 'overview'
+  | 'daemon'
   | 'providers'
   | 'usage'
   | 'stats'
@@ -20,6 +21,7 @@ export interface ViewEntry {
 
 const VIEW_HASHES: Record<View, string> = {
   overview: '#/overview',
+  daemon: '#/daemon',
   providers: '#/providers',
   usage: '#/usage',
   stats: '#/stats',
@@ -31,6 +33,7 @@ const VIEW_HASHES: Record<View, string> = {
 
 const VIEW_BY_HASH: Record<string, View> = {
   '#/overview': 'overview',
+  '#/daemon': 'daemon',
   '#/providers': 'providers',
   '#/usage': 'usage',
   '#/stats': 'stats',
@@ -42,7 +45,8 @@ const VIEW_BY_HASH: Record<string, View> = {
 
 
 export const VIEWS: readonly ViewEntry[] = [
-  { view: 'overview', label: 'Overview', tagline: 'Daemon state, default context window and vision sidecar', section: 'Overview' },
+  { view: 'overview', label: 'Overview', tagline: 'Fleet health at a glance', section: 'Overview' },
+  { view: 'daemon', label: 'Daemon', tagline: 'Supervisor state and lifecycle', section: 'System' },
   { view: 'usage', label: 'Accounts', tagline: 'Per-account quota, pinning and login', section: 'Operate' },
   { view: 'stats', label: 'Stats', tagline: 'Request and token statistics', section: 'Operate' },
   { view: 'logs', label: 'Logs', tagline: 'Model requests and failover history', section: 'Operate' },

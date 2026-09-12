@@ -29,7 +29,7 @@ func TestEnvelopeKeyOrderAndValues(t *testing.T) {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
 	got := string(body)
-	const want = `{"model":"gemini-3.7-flash-tiered","userAgent":"antigravity","requestType":"agent","project":"proj-1","requestId":"agent-abc",` +
+	const want = `{"model":"gemini-3.7-flash","userAgent":"antigravity","requestType":"agent","project":"proj-1","requestId":"agent-abc",` +
 		`"request":{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],` +
 		`"systemInstruction":{"parts":[{"text":"You are helpful."}]},"generationConfig":{"maxOutputTokens":512,"temperature":0.7},"sessionId":"-123"}}`
 	if got != want {
@@ -231,5 +231,171 @@ func TestEnvelopeGeminiThinkingWithoutSignatureDropped(t *testing.T) {
 	}
 	if strings.Contains(string(body), `"thought":true`) {
 		t.Fatalf("unsigned thinking part must be dropped in the no-cache path: %s", body)
+	}
+}
+
+// seedPresence installs a discovery snapshot for family-aware envelope tests
+// and restores the prior snapshot on cleanup, so envelope tests stay
+// independent of each other and of models_test.go's FetchModels runs.
+func seedPresence(t *testing.T, raw ...string) {
+	t.Helper()
+	previous := presenceSnapshot()
+	recordDiscovery(raw)
+	t.Cleanup(func() {
+		if previous == nil {
+			discoverySnapshot.Lock()
+			discoverySnapshot.present = nil
+			discoverySnapshot.Unlock()
+			return
+		}
+		recordDiscovery(keysOf(previous))
+	})
+}
+
+func keysOf(present map[string]bool) []string {
+	ids := make([]string, 0, len(present))
+	for id := range present {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func envelopeJSON(t *testing.T, req canon.Request) string {
+	t.Helper()
+	body, err := BuildEnvelope(req, "p", "r", "-1")
+	if err != nil {
+		t.Fatalf("BuildEnvelope: %v", err)
+	}
+	return string(body)
+}
+
+func TestEnvelopeGoogleLevelFamilyPerEffort(t *testing.T) {
+	seedPresence(t, "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered")
+	cases := []struct {
+		effort  canon.ReasoningEffort
+		model   string
+		think   string
+	}{
+		{canon.EffortMinimal, "gemini-3.7-flash-low", `{"includeThoughts":true,"thinkingLevel":"LOW"}`},
+		{canon.EffortLow, "gemini-3.7-flash-low", `{"includeThoughts":true,"thinkingLevel":"LOW"}`},
+		{canon.EffortMedium, "gemini-3.7-flash-medium", `{"includeThoughts":true,"thinkingLevel":"MEDIUM"}`},
+		{canon.EffortHigh, "gemini-3.7-flash-high", `{"includeThoughts":true,"thinkingLevel":"HIGH"}`},
+	}
+	for _, tc := range cases {
+		req := baseRequest()
+		req.Instructions = nil
+		req.MaxOutputTokens = 0
+		req.Sampling = canon.Sampling{}
+		req.Reasoning = canon.ReasoningConfig{Effort: tc.effort}
+		req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+		got := envelopeJSON(t, req)
+		if want := `"model":"` + tc.model + `"`; !strings.Contains(got, want) {
+			t.Fatalf("effort %d: missing %s in %s", tc.effort, want, got)
+		}
+		if !strings.Contains(got, `"thinkingConfig":`+tc.think) {
+			t.Fatalf("effort %d: missing thinkingConfig %s in %s", tc.effort, tc.think, got)
+		}
+	}
+}
+
+func TestEnvelopeBudgetFamilyPerEffort(t *testing.T) {
+	seedPresence(t, "gemini-3.5-flash-extra-low", "gemini-3.5-flash-low", "gemini-3-flash-agent")
+	cases := []struct {
+		effort canon.ReasoningEffort
+		model  string
+		think  string
+	}{
+		{canon.EffortMinimal, "gemini-3.5-flash-extra-low", `{"includeThoughts":true,"thinkingBudget":1000}`},
+		{canon.EffortLow, "gemini-3.5-flash-extra-low", `{"includeThoughts":true,"thinkingBudget":1000}`},
+		{canon.EffortMedium, "gemini-3.5-flash-low", `{"includeThoughts":true,"thinkingBudget":4000}`},
+		{canon.EffortHigh, "gemini-3-flash-agent", `{"includeThoughts":true,"thinkingBudget":10000}`},
+	}
+	for _, tc := range cases {
+		req := baseRequest()
+		req.Model = "gemini-3.5-flash"
+		req.Instructions = nil
+		req.MaxOutputTokens = 0
+		req.Sampling = canon.Sampling{}
+		req.Reasoning = canon.ReasoningConfig{Effort: tc.effort}
+		req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+		got := envelopeJSON(t, req)
+		if want := `"model":"` + tc.model + `"`; !strings.Contains(got, want) {
+			t.Fatalf("effort %d: missing %s in %s", tc.effort, want, got)
+		}
+		if !strings.Contains(got, `"thinkingConfig":`+tc.think) {
+			t.Fatalf("effort %d: missing thinkingConfig %s in %s", tc.effort, tc.think, got)
+		}
+	}
+}
+
+func TestEnvelopeOffOnSuppressWhenOffFamily(t *testing.T) {
+	seedPresence(t, "gemini-3.5-flash-extra-low", "gemini-3.5-flash-low", "gemini-3-flash-agent")
+	req := baseRequest()
+	req.Model = "gemini-3.5-flash"
+	req.Instructions = nil
+	req.MaxOutputTokens = 0
+	req.Sampling = canon.Sampling{}
+	req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortOff}
+	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+	got := envelopeJSON(t, req)
+	if !strings.Contains(got, `"model":"gemini-3.5-flash-extra-low"`) {
+		t.Fatalf("off must route to the off wire id: %s", got)
+	}
+	if !strings.Contains(got, `"thinkingConfig":{"includeThoughts":false,"thinkingBudget":0}`) {
+		t.Fatalf("off on a suppressWhenOff budget family must emit explicit suppression: %s", got)
+	}
+}
+
+func TestEnvelopeOffOnSuppressWhenOffGoogleLevelFamily(t *testing.T) {
+	seedPresence(t, "gemini-3-pro-low", "gemini-3-pro-high")
+	req := baseRequest()
+	req.Model = "gemini-3-pro"
+	req.Instructions = nil
+	req.MaxOutputTokens = 0
+	req.Sampling = canon.Sampling{}
+	req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortOff}
+	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+	got := envelopeJSON(t, req)
+	if !strings.Contains(got, `"model":"gemini-3-pro-low"`) {
+		t.Fatalf("off must route to the off wire id: %s", got)
+	}
+	if !strings.Contains(got, `"thinkingConfig":{"includeThoughts":false,"thinkingLevel":"MINIMAL"}`) {
+		t.Fatalf("off on a suppressWhenOff google-level family must emit MINIMAL suppression: %s", got)
+	}
+}
+
+func TestEnvelopeUnsetEffortClampsOnRequiresEffortFamily(t *testing.T) {
+	seedPresence(t, "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered")
+	req := baseRequest()
+	req.Instructions = nil
+	req.MaxOutputTokens = 0
+	req.Sampling = canon.Sampling{}
+	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+	got := envelopeJSON(t, req)
+	if !strings.Contains(got, `"model":"gemini-3.7-flash-low"`) {
+		t.Fatalf("unset effort on a requiresEffort family must clamp to the lowest effort's wire id: %s", got)
+	}
+	if !strings.Contains(got, `"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"LOW"}`) {
+		t.Fatalf("clamped minimal effort on gemini-{rev}-flash must emit LOW (minimal routes to the -low wire id): %s", got)
+	}
+}
+
+func TestEnvelopeUnsetEffortOnNonFamilyModelUnchanged(t *testing.T) {
+	seedPresence(t, "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered")
+	req := baseRequest()
+	req.Model = "claude-opus-4"
+	req.Instructions = nil
+	req.MaxOutputTokens = 0
+	req.Sampling = canon.Sampling{}
+	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+	got := envelopeJSON(t, req)
+	if !strings.Contains(got, `"model":"claude-opus-4"`) {
+		t.Fatalf("non-family model must pass through unchanged: %s", got)
+	}
+	if strings.Contains(got, "thinkingConfig") {
+		t.Fatalf("non-family model with unset effort must not emit thinkingConfig: %s", got)
+	}
+	if strings.Contains(got, "generationConfig") {
+		t.Fatalf("no sampling and no thinking means no generationConfig: %s", got)
 	}
 }

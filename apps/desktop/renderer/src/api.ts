@@ -22,7 +22,6 @@ import type {
   UsageAccountView,
   UsageView,
   VisionSidecarWrite,
-  ContextWindowWrite,
 } from '@prism/contracts'
 import { bridge } from './bridge'
 
@@ -111,9 +110,6 @@ export const api = {
   },
   visionSidecar(body: VisionSidecarWrite): Promise<VisionSidecarWrite> {
     return call('PUT', '/api/v1/vision-sidecar', body)
-  },
-  contextWindow(body: ContextWindowWrite): Promise<ContextWindowWrite> {
-    return call('PUT', '/api/v1/context-window', body)
   },
   accounts(): Promise<AccountsView> {
     return call('GET', '/api/v1/accounts')
