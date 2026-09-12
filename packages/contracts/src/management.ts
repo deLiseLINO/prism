@@ -68,13 +68,6 @@ export interface VisionSidecarWrite {
   readonly expectedGeneration: number
 }
 
-// Mirrors internal/management/schema.go ContextWindowWrite (PUT /api/v1/context-window).
-// A value of 0 resets to the daemon default (256k).
-export interface ContextWindowWrite {
-  readonly contextWindow: number
-  readonly expectedGeneration: number
-}
-
 export interface ModelSettingsView {
   readonly contextWindow?: number
   readonly imageInput?: boolean

@@ -1,6 +1,8 @@
 export const IpcChannel = {
   daemonStatusEvent: 'prism:daemon-status-event',
   daemonGetStatus: 'prism:daemon-get-status',
+  daemonStart: 'prism:daemon-start',
+  daemonStop: 'prism:daemon-stop',
   managementRequest: 'prism:management-request',
   integrationApply: 'prism:integration-apply',
   integrationRollback: 'prism:integration-rollback',

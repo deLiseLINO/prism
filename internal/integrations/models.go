@@ -143,7 +143,6 @@ type Status struct {
 	ID         ID      `json:"id"`
 	Installed  bool    `json:"installed"`
 	Managed    bool    `json:"managed"`
-	Enabled    bool    `json:"enabled"`
 	TargetPath *string `json:"targetPath"`
 	Endpoint   *string `json:"endpoint"`
 	Drift      bool    `json:"drift"`

@@ -16,10 +16,9 @@ type Snapshot struct {
 }
 
 type Manager struct {
-	mu     sync.Mutex
-	path   string
-	snap   Snapshot
-	notify chan struct{}
+	mu   sync.Mutex
+	path string
+	snap Snapshot
 }
 
 type fileFormat struct {
@@ -29,7 +28,7 @@ type fileFormat struct {
 }
 
 func Open(path string) (*Manager, error) {
-	m := &Manager{path: path, notify: make(chan struct{}, 1)}
+	m := &Manager{path: path}
 	snap, err := loadSnapshot(path)
 	if err != nil {
 		return nil, err
@@ -86,7 +85,6 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 	if disk, err := readGeneration(m.path); err == nil && disk != m.snap.Generation {
 		if snap, err := loadSnapshot(m.path); err == nil {
 			m.snap = snap
-			m.notifyChanged()
 		}
 		return Snapshot{}, fmt.Errorf("%w: file advanced to %d", ErrStaleGeneration, disk)
 	}
@@ -95,19 +93,7 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	m.snap = Snapshot{Config: cloneDocument(next), Generation: gen}
-	m.notifyChanged()
 	return cloneSnapshot(m.snap), nil
-}
-
-func (m *Manager) notifyChanged() {
-	select {
-	case m.notify <- struct{}{}:
-	default:
-	}
-}
-
-func (m *Manager) Changes() <-chan struct{} {
-	return m.notify
 }
 
 func writeAtomic(path string, f fileFormat) error {
@@ -157,7 +143,6 @@ func cloneDocument(d Document) Document {
 		Routes:        cloneMap(d.Routes),
 		Aliases:       cloneMap(d.Aliases),
 		Hosts:         cloneMap(d.Hosts),
-		Integrations:  cloneMap(d.Integrations),
 		VisionSidecar: d.VisionSidecar,
 	}
 	for id, p := range d.Providers {

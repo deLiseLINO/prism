@@ -17,6 +17,8 @@ function setReply(reply: ManagementReply): void {
 const fakeBridge = {
   daemon: {
     status: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
     onStatus: vi.fn(),
   },
   management: {
@@ -395,23 +397,6 @@ describe('renderer api wrapper', () => {
       method: 'PUT',
       path: '/api/v1/vision-sidecar',
       body: { enabled: true, target: 'router/gpt-5.6-luna', expectedGeneration: 7 },
-    })
-  })
-
-  it('writes the default context window through the bridge seam with CAS generation', async () => {
-    const { api } = await loadApi()
-    setReply({
-      ok: true,
-      status: 200,
-      body: { contextWindow: 400000, expectedGeneration: 8 },
-    })
-    const out = await api.contextWindow({ contextWindow: 400000, expectedGeneration: 7 })
-    expect(out.contextWindow).toBe(400000)
-    expect(out.expectedGeneration).toBe(8)
-    expect(recorded[0]).toMatchObject({
-      method: 'PUT',
-      path: '/api/v1/context-window',
-      body: { contextWindow: 400000, expectedGeneration: 7 },
     })
   })
 
