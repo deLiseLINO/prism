@@ -2,9 +2,9 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 const STORAGE_KEY = 'prism-experimental'
 
-export type ExperimentalFlag = 'remoteInstall'
+export type ExperimentalFlag = 'remoteInstall' | 'agentActions'
 
-const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall']
+const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions']
 
 export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: string; description: string }[] = [
   {
@@ -14,9 +14,18 @@ export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: strin
   },
 ]
 
+// agentActions is described separately: the Experimental screen only shows it
+// when the daemon reports agent actions as available (PRISM_AGENT_ACTIONS at
+// daemon start). End users never see it.
+export const AGENT_ACTIONS_FLAG: { flag: ExperimentalFlag; label: string; description: string } = {
+  flag: 'agentActions',
+  label: 'Agent install and update',
+  description: 'Install, reinstall, and update agent binaries (codex, grok, omp, …) from the Integrations tab. Requires the daemon started with PRISM_AGENT_ACTIONS=1.',
+}
+
 type ExperimentalState = Record<ExperimentalFlag, boolean>
 
-const DISABLED: ExperimentalState = { remoteInstall: false }
+const DISABLED: ExperimentalState = { remoteInstall: false, agentActions: false }
 
 function readFlags(): ExperimentalState {
   try {

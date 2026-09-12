@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { ModelSettingsView, ProviderView, ProvidersView as ProvidersViewData } from '@prism/contracts'
 import { AsyncBoundary, Banner, Button, Confirm, Empty, Row, SearchInput, Toggle } from '../components/Ui'
 import { useAsync, useTask, describeError } from '../useAsync'
@@ -43,6 +43,15 @@ function stripRemovedModels(
     if (allowed.has(model)) next[model] = { ...value }
   }
   return next
+}
+
+export function sortProviders(list: readonly ProviderView[], disabledSnapshot: Readonly<Record<string, boolean>>): ProviderView[] {
+  return list.slice().sort((a, b) => {
+    const oa = disabledSnapshot[a.id] ? 1 : 0
+    const ob = disabledSnapshot[b.id] ? 1 : 0
+    if (oa !== ob) return oa - ob
+    return 0
+  })
 }
 
 interface DetailProps {
@@ -417,8 +426,23 @@ export function ProvidersView(): JSX.Element {
   const [selected, setSelected] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const deleteTask = useTask()
-
+  // Ordering snapshot mirrors the model list: taken when the rail first gets
+  // data, never on toggles. Toggling a provider only flips its switch; the
+  // order updates when the view next mounts (tab switch).
+  const [sortDisabled, setSortDisabled] = useState<Readonly<Record<string, boolean>>>({})
+  const snapshotTakenRef = useRef(false)
+  const takeSortSnapshot = useCallback((list: readonly ProviderView[]): void => {
+    const next: Record<string, boolean> = {}
+    for (const provider of list) next[provider.id] = !(provider.enabled ?? true)
+    setSortDisabled(next)
+  }, [])
   const list = providers.state.kind === 'ready' ? providers.state.value.providers : []
+  useEffect(() => {
+    if (providers.state.kind !== 'ready' || snapshotTakenRef.current) return
+    snapshotTakenRef.current = true
+    takeSortSnapshot(providers.state.value.providers)
+  }, [providers.state, takeSortSnapshot])
+
   function applyOptimistic(id: string, patch: Partial<ProviderView>): void {
     if (providers.state.kind !== 'ready') return
     providers.set({
@@ -513,7 +537,7 @@ export function ProvidersView(): JSX.Element {
             <div className="prov-split">
               <aside className="panel card prov-rail" aria-label="Provider list">
                 <div className="prov-rail-label">providers <span className="num">{filtered.length}</span></div>
-                {filtered.map((provider) => {
+                {sortProviders(filtered, sortDisabled).map((provider) => {
                   const isActive = provider.id === activeId
                   const disabledCount = (provider.disabledModels ?? []).length
                   const credentialTone = provider.credential.state === 'set' ? 'ok' : 'muted'

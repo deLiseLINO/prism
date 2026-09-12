@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { AgentStatus, IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
+import type { AgentStatus, AgentsView, IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
 import { AsyncBoundary, Button, Confirm, Empty } from '../components/Ui'
 import { InstallCell } from '../components/InstallCell'
 import { useActiveHost } from '../ActiveHost'
+import { bridge } from '../bridge'
 import { api } from '../api'
 import { useAsync, useTask, describeError } from '../useAsync'
 
@@ -167,11 +168,12 @@ function StatsStrip({ list }: { readonly list: readonly IntegrationStatus[] }): 
 export function IntegrationsView(): JSX.Element {
   const { host: selected } = useActiveHost()
   const statuses = useAsync<readonly IntegrationStatus[]>(async () => (await api.integrationsStatus()).integrations, [selected])
-  const agents = useAsync<readonly AgentStatus[]>(
-    () => selected === 'local' ? window.prism.agents.status() : Promise.resolve([]),
+  const agents = useAsync<AgentsView>(
+    () => selected === 'local' ? bridge.agents.status() : Promise.resolve({ agents: [], actionsEnabled: false }),
     [selected],
   )
-  const byAgent = new Map((agents.state.kind === 'ready' ? agents.state.value : []).map((a) => [a.id, a]))
+  const agentList = agents.state.kind === 'ready' ? agents.state.value.agents : []
+  const byAgent = new Map(agentList.map((a) => [a.id, a]))
 
 
   return (
