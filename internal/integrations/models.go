@@ -46,14 +46,15 @@ var DefaultPrismModels = []Model{
 // chatEffortVocabulary is the reasoning-effort set the daemon's chat
 // completions ingress honors; any other value silently no-ops there, so it is
 // never advertised to a chat-wire client.
-var chatEffortVocabulary = []string{"off", "minimal", "low", "medium", "high", "xhigh"}
+var chatEffortVocabulary = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 // responsesEffortVocabulary is the set the responses ingress honors, which
-// grok's api_backend = "responses" tables ride; max steers to xhigh there.
+// grok's api_backend = "responses" tables ride.
 var responsesEffortVocabulary = []string{"off", "low", "medium", "high", "xhigh", "max"}
 
 // ompThinkingEfforts is the effort ladder omp's thinking block accepts: the
-// chat-honored rungs minus off (a thinking level, not an effort) and max.
+// chat-honored rungs minus off (a thinking level, not an effort) and max
+// (omp's schema rejects rungs beyond xhigh).
 var ompThinkingEfforts = []string{"minimal", "low", "medium", "high", "xhigh"}
 
 // piThinkingLevels are the picker levels pi's thinkingLevelMap keys; each

@@ -8,6 +8,18 @@ import (
 	"prism/internal/integrations"
 )
 
+// AgentActions is the kill switch for agent binary install and update jobs.
+// Status and job reads stay open; only mutations are gated. Off unless the
+// daemon is started with PRISM_AGENT_ACTIONS set to 1/true — the escape hatch
+// for the operator, invisible to end users.
+var AgentActions = false
+
+// ParseAgentActionsEnv maps the PRISM_AGENT_ACTIONS value onto the switch.
+// Anything but 1/true keeps actions off.
+func ParseAgentActionsEnv(raw string) bool {
+	return raw == "1" || raw == "true"
+}
+
 // Installer is the daemon's agent install/update manager as the routes see
 // it: derived statuses, job launches, and job snapshots.
 type Installer interface {
@@ -29,7 +41,7 @@ func agentID(w http.ResponseWriter, r *http.Request) (integrations.ID, bool) {
 }
 
 func (s *Server) agentsList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, AgentsResponse{Agents: s.installer.StatusAll()})
+	writeJSON(w, http.StatusOK, AgentsResponse{Agents: s.installer.StatusAll(), ActionsEnabled: AgentActions})
 }
 
 func (s *Server) agentGet(w http.ResponseWriter, r *http.Request) {
@@ -46,6 +58,10 @@ func (s *Server) agentGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) agentInstall(w http.ResponseWriter, r *http.Request) {
+	if !AgentActions {
+		writeError(w, http.StatusNotImplemented, "agent_actions_disabled", "agent install and update are disabled until the feature flag is turned on")
+		return
+	}
 	id, ok := agentID(w, r)
 	if !ok {
 		return
@@ -68,6 +84,10 @@ func (s *Server) agentInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) agentUpdate(w http.ResponseWriter, r *http.Request) {
+	if !AgentActions {
+		writeError(w, http.StatusNotImplemented, "agent_actions_disabled", "agent install and update are disabled until the feature flag is turned on")
+		return
+	}
 	id, ok := agentID(w, r)
 	if !ok {
 		return

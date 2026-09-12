@@ -236,6 +236,13 @@ func TestValidateRejectsBadContextWindows(t *testing.T) {
 	if err := doc.validate(); err != nil {
 		t.Fatalf("valid model override rejected: %v", err)
 	}
+	doc = base()
+	p = doc.Providers["codex"]
+	p.ModelSettings = map[string]ModelSettings{"gpt-5.2": {ReasoningEfforts: []string{"max"}}}
+	doc.Providers["codex"] = p
+	if err := doc.validate(); err != nil {
+		t.Fatalf("max reasoning effort rejected: %v", err)
+	}
 }
 
 func TestCloneDocumentKeepsVisionSidecar(t *testing.T) {
