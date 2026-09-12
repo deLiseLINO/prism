@@ -202,6 +202,23 @@ func (c catalog) Models(ctx context.Context) ([]provider.Model, error) {
 // integrationModels is the live model source for the grok and omp managed
 // blocks: every enabled provider model in the daemon config, custom providers
 // included, namespaced as "<provider>/<model>".
+// defaultReasoningEffort pins the rung a client config advertises as its
+// starting selection: medium when the ladder carries it, else high, else the
+// first rung.
+func defaultReasoningEffort(efforts []string) string {
+	for _, want := range []string{"medium", "high"} {
+		for _, effort := range efforts {
+			if effort == want {
+				return effort
+			}
+		}
+	}
+	if len(efforts) > 0 {
+		return efforts[0]
+	}
+	return ""
+}
+
 func integrationModels(m *config.Manager) func() []integrations.Model {
 	return func() []integrations.Model {
 		out := make([]integrations.Model, 0)
@@ -216,10 +233,12 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 				}
 				settings := p.ModelSettings[model]
 				out = append(out, integrations.Model{
-					ID:            id + "/" + model,
-					Name:          id + "/" + model,
-					ContextWindow: snap.Config.ResolveContextWindow(id, model),
-					ImageInput:    settings.ImageInput || snap.Config.VisionSidecar.Enabled,
+					ID:                     id + "/" + model,
+					Name:                   id + "/" + model,
+					ContextWindow:          snap.Config.ResolveContextWindow(id, model),
+					ImageInput:             settings.ImageInput || snap.Config.VisionSidecar.Enabled,
+					ReasoningEfforts:       settings.ReasoningEfforts,
+					DefaultReasoningEffort: defaultReasoningEffort(settings.ReasoningEfforts),
 				})
 			}
 		}
@@ -566,8 +585,11 @@ func run(opts options) error {
 		}
 	}
 
-
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
+	management.AgentActions = management.ParseAgentActionsEnv(os.Getenv("PRISM_AGENT_ACTIONS"))
+	if management.AgentActions {
+		log.Printf("prismd: agent install and update actions enabled via PRISM_AGENT_ACTIONS")
+	}
 	planner := server.NewConfigPlanner(cfg)
 	usageStore, err := usage.Open(filepath.Join(opts.credentialPath, "usage.db"))
 	if err != nil {

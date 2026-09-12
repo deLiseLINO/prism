@@ -4,8 +4,9 @@ import "strconv"
 
 const opencodeProviderNPM = "@ai-sdk/openai-compatible"
 
-// RenderOpencodeModels renders the shared `models` map both opencode
-// generations read: one entry per prism model, keyed by the model id.
+// RenderOpencodeModels renders the v1 `models` map: one entry per prism model,
+// keyed by the model id, with a reasoning-effort variant map when the model
+// declares one.
 func RenderOpencodeModels(models []Model, inner string, item string, field string) []string {
 	if len(models) == 0 {
 		return []string{inner + `"models": {}`}
@@ -16,11 +17,11 @@ func RenderOpencodeModels(models []Model, inner string, item string, field strin
 		if i == len(models)-1 {
 			comma = ""
 		}
+		efforts := effortsFor(model, chatEffortVocabulary)
+		hasReasoning := len(efforts) > 0
 		nameLine := field + `"name": ` + jsonString(model.Name)
 
-		if model.ContextWindow > 0 {
-			// opencode's schema takes the limit pair together or not at all;
-			// an unknown window keeps the client's own defaults.
+		if model.ContextWindow > 0 || hasReasoning {
 			nameLine += ","
 		}
 		lines = append(lines,
@@ -28,17 +29,50 @@ func RenderOpencodeModels(models []Model, inner string, item string, field strin
 			nameLine,
 		)
 		if model.ContextWindow > 0 {
+			// opencode's schema takes the limit pair together or not at all;
+			// an unknown window keeps the client's own defaults.
+			limitClose := field + `}`
+			if hasReasoning {
+				limitClose += ","
+			}
 			lines = append(lines,
 				field+`"limit": {`,
 				field+`  "context": `+strconv.Itoa(model.ContextWindow)+`,`,
 				field+`  "output": `+strconv.Itoa(maxTokensFor(model.ContextWindow)),
-				field+`}`,
+				limitClose,
 			)
+		}
+		if hasReasoning {
+			// v1 surfaces the effort picker as per-model variants; each value
+			// names an AI SDK model option the openai-compatible package
+			// lowers to a reasoning_effort wire field.
+			lines = append(lines, renderOpencodeReasoningV1(efforts, field)...)
 		}
 		lines = append(lines, item+`}`+comma)
 	}
 	lines = append(lines, inner+`}`)
 	return lines
+}
+
+// renderOpencodeReasoningV1 emits the capability flag and the variant map the
+// openai-compatible npm path reads.
+func renderOpencodeReasoningV1(efforts []string, field string) []string {
+	lines := []string{
+		field + `"reasoning": true,`,
+		field + `"variants": {`,
+	}
+	for i, effort := range efforts {
+		comma := ","
+		if i == len(efforts)-1 {
+			comma = ""
+		}
+		lines = append(lines,
+			field+`  `+jsonString(effort)+`: {`,
+			field+`    "reasoningEffort": `+jsonString(effort),
+			field+`  }`+comma,
+		)
+	}
+	return append(lines, field+`}`)
 }
 
 // RenderOpencodeLeaf renders the `provider.prism` member (singular key) of
