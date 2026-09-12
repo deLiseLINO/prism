@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
-)
 
+	"prism/internal/integrations"
+)
 
 const SchemaVersion = 1
 
@@ -67,23 +68,26 @@ var (
 )
 
 type Document struct {
-	Version       int                   `json:"version"`
-	Daemon        Daemon                `json:"daemon"`
-	ContextWindow int                   `json:"contextWindow,omitempty"`
-	Providers     map[string]Provider   `json:"providers"`
-	Combos        map[string]Combo      `json:"combos"`
-	Routes        map[string]string     `json:"routes"`
-	Aliases       map[string]string     `json:"aliases"`
-	Hosts         map[string]Host       `json:"hosts,omitempty"`
-	VisionSidecar VisionSidecarSettings `json:"visionSidecar,omitempty"`
+	Version       int                            `json:"version"`
+	Daemon        Daemon                         `json:"daemon"`
+	ContextWindow int                            `json:"contextWindow,omitempty"`
+	Providers     map[string]Provider            `json:"providers"`
+	Combos        map[string]Combo               `json:"combos"`
+	Routes        map[string]string              `json:"routes"`
+	Aliases       map[string]string              `json:"aliases"`
+	Hosts         map[string]Host                `json:"hosts,omitempty"`
+	Integrations  map[string]IntegrationSettings `json:"integrations,omitempty"`
+	VisionSidecar VisionSidecarSettings          `json:"visionSidecar,omitempty"`
+}
+
+type IntegrationSettings struct {
+	Enabled bool `json:"enabled"`
 }
 
 type Host struct {
 	Address    string `json:"address"`
 	DaemonPort int    `json:"daemonPort,omitempty"`
 }
-
-
 
 type Daemon struct {
 	Listen string `json:"listen"`
@@ -245,6 +249,14 @@ func (d Document) validate() error {
 		}
 		if h.DaemonPort < 0 || h.DaemonPort > 65535 {
 			return fmt.Errorf("%w: hosts.%s.daemonPort", ErrInvalidValue, id)
+		}
+	}
+	for id := range d.Integrations {
+		if id == "" {
+			return fmt.Errorf("%w: integration id", ErrEmptyField)
+		}
+		if _, ok := integrations.ValidID(id); !ok {
+			return fmt.Errorf("%w: integrations.%s", ErrInvalidValue, id)
 		}
 	}
 	return nil

@@ -41,7 +41,7 @@ describe('renderer routing', () => {
   let locationStub: LocationStub
 
   beforeEach(async () => {
-    const installed = installLocation('#/daemon')
+    const installed = installLocation('#/overview')
     locationStub = installed.location
     // `window` is reassigned per-test so the module reads the fresh stub.
     routing = await import('../renderer/src/routing')
@@ -59,14 +59,12 @@ describe('renderer routing', () => {
 
   it('hashes each view distinctly', () => {
     expect(routing.hashFor('overview')).toBe('#/overview')
-    expect(routing.hashFor('daemon')).toBe('#/daemon')
     expect(routing.hashFor('providers')).toBe('#/providers')
     expect(routing.hashFor('usage')).toBe('#/usage')
     expect(routing.hashFor('integrations')).toBe('#/integrations')
     expect(routing.hashFor('machines')).toBe('#/machines')
     expect(routing.hashFor('stats')).toBe('#/stats')
     expect(routing.hashFor('logs')).toBe('#/logs')
-
   })
 
   it('falls back to overview for unknown hashes', () => {
@@ -77,6 +75,11 @@ describe('renderer routing', () => {
   it('falls back to overview for the removed #/update hash', () => {
     expect(routing.viewFromHash('#/update')).toBe('overview')
     expect(routing.VIEWS.some((entry) => entry.view === 'update')).toBe(false)
+  })
+
+  it('falls back to overview for the removed #/daemon hash', () => {
+    expect(routing.viewFromHash('#/daemon')).toBe('overview')
+    expect(routing.VIEWS.some((entry) => entry.view === 'daemon')).toBe(false)
   })
 
   it('reads the current view from location.hash', () => {
@@ -92,7 +95,6 @@ describe('renderer routing', () => {
         seen.add(entry.view)
     }
     expect(seen.has('overview')).toBe(true)
-    expect(seen.has('daemon')).toBe(true)
     expect(seen.has('providers')).toBe(true)
     expect(seen.has('usage')).toBe(true)
     expect(seen.has('integrations')).toBe(true)

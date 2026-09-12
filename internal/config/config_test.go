@@ -126,6 +126,48 @@ func TestValidateRejectsWrongSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestValidateIntegrationKeys(t *testing.T) {
+	for id := range map[string]bool{"codex": true, "grok": true, "omp": true, "claude": true, "pi": true, "opencode": true, "opencode2": true, "hermes": true} {
+		d := validDoc()
+		d.Integrations = map[string]IntegrationSettings{id: {Enabled: true}}
+		if err := d.validate(); err != nil {
+			t.Fatalf("integration %s rejected: %v", id, err)
+		}
+	}
+	d := validDoc()
+	d.Integrations = map[string]IntegrationSettings{"codexx": {Enabled: true}}
+	if err := d.validate(); !errors.Is(err, ErrInvalidValue) {
+		t.Fatalf("unknown integration id: want ErrInvalidValue, got %v", err)
+	}
+	d = validDoc()
+	d.Integrations = map[string]IntegrationSettings{"": {Enabled: true}}
+	if err := d.validate(); !errors.Is(err, ErrEmptyField) {
+		t.Fatalf("empty integration id: want ErrEmptyField, got %v", err)
+	}
+}
+
+func TestIntegrationSectionOmittedWhenEmpty(t *testing.T) {
+	d := validDoc()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"integrations"`) {
+		t.Fatalf("empty integrations section serialized: %s", b)
+	}
+	d.Integrations = map[string]IntegrationSettings{"codex": {Enabled: false}}
+	b, err = json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"integrations"`) {
+		t.Fatalf("populated integrations section omitted: %s", b)
+	}
+	if !strings.Contains(string(b), `"enabled":false`) {
+		t.Fatalf("toggle-off integration lost its enabled:false key: %s", b)
+	}
+}
+
 func TestDocumentHasNoSecretFields(t *testing.T) {
 	d := validDoc()
 	p := d.Providers["codex-main"]

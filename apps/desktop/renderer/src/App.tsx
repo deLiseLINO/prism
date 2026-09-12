@@ -8,7 +8,6 @@ import { useTheme } from './useTheme'
 import { ExperimentalFlagsProvider, useExperimentalFlags } from './experimental'
 import { SECTIONS, VIEWS, hashFor, navigateTo, readCurrentView, type View } from './routing'
 
-import { DaemonView } from './views/DaemonView'
 import { IntegrationsView } from './views/IntegrationsView'
 import { LogsView } from './views/LogsView'
 import { OverviewView } from './views/OverviewView'
@@ -25,7 +24,6 @@ const VIEW_ICONS: Record<View, string> = {
   usage: '#i-heart',
   stats: '#i-usage',
   providers: '#i-plug',
-  daemon: '#i-daemon',
   integrations: '#i-puzzle',
   machines: '#i-cube',
   logs: '#i-logs',
@@ -47,7 +45,6 @@ function IconSprite(): JSX.Element {
         <symbol id="i-moon" viewBox="0 0 20 20"><path d="M15.5 12.6A6.8 6.8 0 0 1 7.4 4.5a6.8 6.8 0 1 0 8.1 8.1Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
         <symbol id="i-usage" viewBox="0 0 20 20"><path d="M3.5 4.5v11M10 2.5v13M16.5 6.5v9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></symbol>
         <symbol id="i-cube" viewBox="0 0 20 20"><path d="M10 2.2 17 6v8L10 18 3 14V6l7-3.8Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M3 6l7 3.8L17 6M10 9.8V18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></symbol>
-        <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M16 8.5A6.5 6.5 0 1 0 15.4 13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/><path d="M16.2 3.6v5h-5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></symbol>
         <symbol id="i-flask" viewBox="0 0 20 20"><path d="M8 2.5h4M9.5 2.5v5.2L4.6 15a2.2 2.2 0 0 0 1.9 3.4h7a2.2 2.2 0 0 0 1.9-3.4L10.5 7.7V2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 13h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
         <symbol id="i-logs" viewBox="0 0 20 20"><path d="M4 3.5h12v13H4z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M7 7h6M7 10h6M7 13h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></symbol>
       </defs>
@@ -55,12 +52,14 @@ function IconSprite(): JSX.Element {
   )
 }
 
-function renderView(view: View): JSX.Element {
+function renderView(
+  view: View,
+  daemon: DaemonStatus | null,
+  daemonUnreachable: boolean,
+): JSX.Element {
   switch (view) {
     case 'overview':
-      return <OverviewView />
-    case 'daemon':
-      return <DaemonView />
+      return <OverviewView daemon={daemon} daemonUnreachable={daemonUnreachable} />
     case 'providers':
       return <ProvidersView />
     case 'usage':
@@ -206,7 +205,7 @@ function AppShell(): JSX.Element {
         <div className="wrap">
           <RemoteBanner />
           <Fragment key={host}>
-            {renderView(view)}
+            {renderView(view, daemon, daemonUnreachable)}
           </Fragment>
         </div>
       </main>
