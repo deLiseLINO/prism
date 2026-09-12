@@ -87,11 +87,77 @@ func (d durableAccountStore) DeleteDurable(ctx context.Context, id account.Accou
 }
 
 type modelSyncer struct {
-	creds  credentialStore
-	client *http.Client
+	creds     credentialStore
+	pool      account.Pool
+	refresher credentialRefresher
+	client    *http.Client
 }
 
 func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]string, error) {
+	switch p.Wire {
+	case config.WireCodex, config.WireAntigravity:
+		return m.remoteModelsPooled(ctx, id, p)
+	}
+	return m.remoteModelsCustom(ctx, id, p)
+}
+
+// remoteModelsPooled serves the native wires. Their model listings live on
+// provider-owned endpoints keyed to a real account, not the config baseURL.
+func (m modelSyncer) remoteModelsPooled(ctx context.Context, id string, p config.Provider) ([]string, error) {
+	lease, ok := m.leaseFor(id, p)
+	if !ok {
+		return nil, fmt.Errorf("provider %s has no active account to list models for", id)
+	}
+	if m.refresher == nil {
+		return nil, fmt.Errorf("provider %s model sync is not wired: no credential refresher", id)
+	}
+	cred, err := m.refresher.Credential(ctx, lease)
+	if err != nil {
+		return nil, fmt.Errorf("credential for %s: %w", lease.Account, err)
+	}
+	switch p.Wire {
+	case config.WireCodex:
+		return codex.FetchModels(ctx, m.client, p.BaseURL, codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID})
+	case config.WireAntigravity:
+		return antigravity.FetchModels(ctx, m.client, p.BaseURL, antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID})
+	}
+	return nil, fmt.Errorf("provider %s wire %q does not support model listing", id, p.Wire)
+}
+
+// leaseFor picks the account a model listing would run through: the pinned
+// account when one is configured and usable, else the best active account
+// by the pool's own ordering.
+func (m modelSyncer) leaseFor(id string, p config.Provider) (account.Lease, bool) {
+	if m.pool == nil {
+		return account.Lease{}, false
+	}
+	snap := m.pool.Snapshot()
+	providerID := account.ProviderID(id)
+	if p.Pool != nil && p.Pool.PinnedAccount != "" {
+		for _, a := range snap.Accounts {
+			if a.Provider != providerID || string(a.ID) != p.Pool.PinnedAccount || a.State != account.Active {
+				continue
+			}
+			return account.Lease{Provider: providerID, Account: a.ID, CredGen: a.CredGen}, true
+		}
+	}
+	var best *account.Account
+	for i := range snap.Accounts {
+		a := &snap.Accounts[i]
+		if a.Provider != providerID || a.State != account.Active {
+			continue
+		}
+		if best == nil || a.Priority > best.Priority || (a.Priority == best.Priority && string(a.ID) < string(best.ID)) {
+			best = a
+		}
+	}
+	if best == nil {
+		return account.Lease{}, false
+	}
+	return account.Lease{Provider: providerID, Account: best.ID, CredGen: best.CredGen}, true
+}
+
+func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config.Provider) ([]string, error) {
 	if p.BaseURL == "" {
 		return nil, fmt.Errorf("provider %s has no baseURL to list models from", id)
 	}
@@ -202,6 +268,23 @@ func (c catalog) Models(ctx context.Context) ([]provider.Model, error) {
 // integrationModels is the live model source for the grok and omp managed
 // blocks: every enabled provider model in the daemon config, custom providers
 // included, namespaced as "<provider>/<model>".
+// defaultReasoningEffort pins the rung a client config advertises as its
+// starting selection: medium when the ladder carries it, else high, else the
+// first rung.
+func defaultReasoningEffort(efforts []string) string {
+	for _, want := range []string{"medium", "high"} {
+		for _, effort := range efforts {
+			if effort == want {
+				return effort
+			}
+		}
+	}
+	if len(efforts) > 0 {
+		return efforts[0]
+	}
+	return ""
+}
+
 func integrationModels(m *config.Manager) func() []integrations.Model {
 	return func() []integrations.Model {
 		out := make([]integrations.Model, 0)
@@ -216,10 +299,12 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 				}
 				settings := p.ModelSettings[model]
 				out = append(out, integrations.Model{
-					ID:            id + "/" + model,
-					Name:          id + "/" + model,
-					ContextWindow: snap.Config.ResolveContextWindow(id, model),
-					ImageInput:    settings.ImageInput || snap.Config.VisionSidecar.Enabled,
+					ID:                     id + "/" + model,
+					Name:                   id + "/" + model,
+					ContextWindow:          snap.Config.ResolveContextWindow(id, model),
+					ImageInput:             settings.ImageInput || snap.Config.VisionSidecar.Enabled,
+					ReasoningEfforts:       settings.ReasoningEfforts,
+					DefaultReasoningEffort: defaultReasoningEffort(settings.ReasoningEfforts),
 				})
 			}
 		}
@@ -566,8 +651,11 @@ func run(opts options) error {
 		}
 	}
 
-
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
+	management.AgentActions = management.ParseAgentActionsEnv(os.Getenv("PRISM_AGENT_ACTIONS"))
+	if management.AgentActions {
+		log.Printf("prismd: agent install and update actions enabled via PRISM_AGENT_ACTIONS")
+	}
 	planner := server.NewConfigPlanner(cfg)
 	usageStore, err := usage.Open(filepath.Join(opts.credentialPath, "usage.db"))
 	if err != nil {
@@ -575,7 +663,7 @@ func run(opts options) error {
 	}
 	defer usageStore.Close()
 	rlog := requestlog.New(500, time.Now)
-	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, client: client}, installer)
+	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, pool: pool, refresher: refresher, client: client}, installer)
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
 	mgmt.SetHostRegistries(hostTable)
 	mgmt.SetHostLifecycle(supervisor)

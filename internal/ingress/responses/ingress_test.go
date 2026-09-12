@@ -254,6 +254,23 @@ func TestClientClassification(t *testing.T) {
 	}
 }
 
+func TestReasoningEffortMaxParses(t *testing.T) {
+	req, _, sink := mustParse(t, `{"model": "gpt-5.3", "input": "hi", "reasoning": {"effort": "max"}}`, nil)
+	if req.Reasoning.Effort != canon.EffortMax {
+		t.Fatalf("max effort = %d, want EffortMax", req.Reasoning.Effort)
+	}
+	if len(sink.warnings) != 0 {
+		t.Fatalf("max effort must not warn: %v", sink.warnings)
+	}
+	req, _, sink = mustParse(t, `{"model": "gpt-5.3", "input": "hi", "reasoning": {"effort": "ultra"}}`, nil)
+	if req.Reasoning.Effort != canon.EffortMax {
+		t.Fatalf("ultra effort = %d, want EffortMax", req.Reasoning.Effort)
+	}
+	if len(sink.warnings) == 0 {
+		t.Fatal("ultra effort must warn")
+	}
+}
+
 func TestEffortCapsFromPolicyHeaders(t *testing.T) {
 	g, _ := newTestIngress()
 	hr, err := http.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))

@@ -15,8 +15,8 @@ import { OverviewView } from './views/OverviewView'
 import { MachinesView } from './views/MachinesView'
 import { ProvidersView } from './views/ProvidersView'
 import { StatsView } from './views/StatsView'
-import { UpdateView } from './views/UpdateView'
 import { UsagePanel } from './views/UsageView'
+import { UpdateMini } from './components/UpdateMini'
 import { bridge } from './bridge'
 import { ExperimentalView } from './views/ExperimentalView'
 
@@ -29,7 +29,6 @@ const VIEW_ICONS: Record<View, string> = {
   integrations: '#i-puzzle',
   machines: '#i-cube',
   logs: '#i-logs',
-  update: '#i-refresh',
   experimental: '#i-flask',
 }
 
@@ -74,8 +73,6 @@ function renderView(view: View): JSX.Element {
       return <IntegrationsView />
     case 'machines':
       return <MachinesView />
-    case 'update':
-      return <UpdateView />
     case 'experimental':
       return <ExperimentalView />
 
@@ -199,6 +196,7 @@ function AppShell(): JSX.Element {
         </nav>
         <div className="rail-foot">
           <DaemonMini status={daemon} unreachable={daemonUnreachable} />
+          <UpdateMini status={updater} />
           <div className="rail-toggles">
             <ThemeToggle mode={mode} onCycle={cycle} />
           </div>
@@ -207,19 +205,6 @@ function AppShell(): JSX.Element {
       <main className="app" id="main" ref={mainRef} tabIndex={-1}>
         <div className="wrap">
           <RemoteBanner />
-          {updater !== null && updater.state === 'downloaded' ? (
-            <div className="banner banner--ok" role="status" style={{ marginBottom: 14 }}>
-              <div>
-                <p className="banner__title">Update ready</p>
-                <p className="banner__detail">Prism {updater.downloadedVersion} downloaded — restart to install.</p>
-              </div>
-              <div className="banner__action">
-                <button type="button" className="btn btn--primary" onClick={() => void bridge.updater.install()}>
-                  Restart to update
-                </button>
-              </div>
-            </div>
-          ) : null}
           <Fragment key={host}>
             {renderView(view)}
           </Fragment>

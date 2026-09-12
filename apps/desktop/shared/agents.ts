@@ -1,4 +1,4 @@
-import type { AgentId, AgentJob, AgentJobReply, AgentJobRequest, AgentStatus, ManagementReply } from '@prism/contracts'
+import type { AgentsView, AgentId, AgentJob, AgentJobReply, AgentJobRequest, AgentStatus, ManagementReply } from '@prism/contracts'
 import type { ManagementProxy } from './management'
 
 const AGENT_IDS: readonly AgentId[] = ['codex', 'grok', 'omp', 'claude', 'pi', 'opencode', 'opencode2', 'hermes']
@@ -45,16 +45,19 @@ export class AgentsApi {
     return jobFromBody(reply.body)
   }
 
-  async status(): Promise<readonly AgentStatus[]> {
+  async status(): Promise<AgentsView> {
     const reply = await this.management.call({ method: 'GET', path: '/api/v1/agents' })
     if (!reply.ok || reply.status !== 200) {
       throw new Error(errorDetail(reply) ?? `prism: agents status failed with status ${reply.status}`)
     }
-    const body = reply.body as { agents?: unknown } | undefined
+    const body = reply.body as { agents?: unknown; actionsEnabled?: unknown } | undefined
     if (typeof body !== 'object' || body === null || !Array.isArray(body.agents)) {
       throw new Error('prism: agents status response is malformed')
     }
-    return body.agents as AgentStatus[]
+    return {
+      agents: body.agents as AgentStatus[],
+      actionsEnabled: body.actionsEnabled === true,
+    }
   }
 
   private reply(id: AgentId, raw: ManagementReply, accepted: readonly number[]): AgentJobReply {

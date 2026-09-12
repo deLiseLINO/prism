@@ -9,7 +9,6 @@ export type View =
   | 'logs'
   | 'integrations'
   | 'machines'
-  | 'update'
   | 'experimental'
 
 
@@ -29,7 +28,6 @@ const VIEW_HASHES: Record<View, string> = {
   logs: '#/logs',
   integrations: '#/integrations',
   machines: '#/machines',
-  update: '#/update',
   experimental: '#/experimental',
 }
 
@@ -42,7 +40,6 @@ const VIEW_BY_HASH: Record<string, View> = {
   '#/logs': 'logs',
   '#/integrations': 'integrations',
   '#/machines': 'machines',
-  '#/update': 'update',
   '#/experimental': 'experimental',
 }
 
@@ -56,7 +53,6 @@ export const VIEWS: readonly ViewEntry[] = [
   { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials', section: 'Configure' },
   { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback', section: 'System' },
   { view: 'machines', label: 'Machines', tagline: 'Remote hosts over SSH', section: 'System' },
-  { view: 'update', label: 'Update', tagline: 'App updates and channel status', section: 'System' },
   { view: 'experimental', label: 'Experimental', tagline: 'Unfinished features, off by default', section: 'System' },
 ]
 

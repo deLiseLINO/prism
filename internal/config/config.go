@@ -274,7 +274,7 @@ func (p Provider) validateModelSettings(providerID string) error {
 
 func validReasoningEffort(e string) bool {
 	switch e {
-	case "minimal", "low", "medium", "high", "xhigh":
+	case "minimal", "low", "medium", "high", "xhigh", "max":
 		return true
 	}
 	return false

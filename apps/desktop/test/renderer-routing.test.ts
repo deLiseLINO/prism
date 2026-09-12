@@ -74,6 +74,11 @@ describe('renderer routing', () => {
     expect(routing.viewFromHash('')).toBe('overview')
   })
 
+  it('falls back to overview for the removed #/update hash', () => {
+    expect(routing.viewFromHash('#/update')).toBe('overview')
+    expect(routing.VIEWS.some((entry) => entry.view === 'update')).toBe(false)
+  })
+
   it('reads the current view from location.hash', () => {
     locationStub.hash = '#/stats'
     expect(routing.readCurrentView()).toBe('stats')

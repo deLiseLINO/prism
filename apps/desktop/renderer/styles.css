@@ -152,6 +152,12 @@ body::before {
 .rail-foot { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
 .daemon-mini { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg-subtle); padding: 0 6px; }
 .daemon-mini .num { font-size: 11px; }
+.update-mini { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg-subtle); padding: 0 6px; min-width: 0; }
+.update-mini .num { font-size: 11px; }
+.update-mini .btn--sm { margin-left: auto; flex: none; }
+.update-mini__pct { margin-left: auto; }
+.update-mini--retry { border: 0; background: none; text-align: left; width: 100%; cursor: pointer; font: inherit; }
+.update-mini--retry:hover { color: var(--fg); }
 .rail .theme-toggle { width: 100%; justify-content: center; }
 
 .app { position: relative; z-index: 1; padding: calc(60px / var(--zoom, 1)) 18px 44px 272px; min-height: 100dvh; }
@@ -621,6 +627,7 @@ body::before {
 .machine-add { display: flex; align-items: flex-end; gap: 12px; padding: 0 2px; flex-wrap: wrap; }
 .machine-add .field { min-width: 180px; }
 .int-strip { display: flex; align-items: center; gap: 14px; padding: 0 2px; flex-wrap: wrap; }
+.int-strip__actions { margin-left: auto; display: flex; gap: 8px; flex: none; }
 .int-stats { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .int-stat { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-subtle); }
 .int-stat .dot { width: 7px; height: 7px; }
@@ -632,6 +639,7 @@ body::before {
 .int-cell { min-width: 0; }
 .int-row-wrap + .int-row-wrap .int-refusal { border-top: 1px solid var(--border); }
 .int-name { font-weight: 600; font-size: 13px; }
+.int-src { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .int-status { display: flex; align-items: center; gap: 7px; font-size: 12px; }
 .int-status .dot { width: 7px; height: 7px; }
 .int-status--managed { color: var(--ok); }
@@ -656,6 +664,37 @@ body::before {
 .int-refusal__msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .int-refusal__close { border: 0; background: transparent; color: var(--danger); font-size: 14px; line-height: 1; padding: 0 4px; cursor: pointer; opacity: 0.7; }
 .int-refusal__close:hover { opacity: 1; }
+
+/* Integration cards: one per CLI, auto-fill grid in the Usage card language. */
+.int-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.int-card {
+  padding: 18px 20px 16px;
+  display: flex; flex-direction: column; gap: 13px;
+  text-align: left; width: 100%;
+  transition: transform 0.3s var(--ease-out), border-color 0.2s ease;
+}
+.int-card:hover { transform: translateY(-2px); border-color: color-mix(in oklab, var(--accent) 45%, transparent); }
+.int-card--alert { border-color: color-mix(in oklab, var(--warn) 40%, transparent); }
+.int-card--alert:hover { border-color: color-mix(in oklab, var(--warn) 65%, transparent); }
+.int-card--down { border-color: color-mix(in oklab, var(--danger) 45%, transparent); }
+.int-card--down:hover { border-color: color-mix(in oklab, var(--danger) 70%, transparent); }
+.int-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.int-card .int-install { padding: 10px 12px; border-radius: 10px; background: color-mix(in oklab, var(--fg) 4%, transparent); flex-direction: column; align-items: flex-start; gap: 8px; }
+.int-card .int-install__actions { align-self: flex-start; }
+.int-card .int-install__err { flex-basis: auto; }
+.int-grid .int-card .int-refusal { border-top: 0; border-radius: 10px; padding: 10px 12px; }
+.int-card .confirm { margin-top: 0; border-radius: 10px; }
+.int-card-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border-top: 1px solid var(--border); padding-top: 12px; flex-wrap: wrap;
+  margin-top: auto;
+}
+.int-card-foot .int-src { flex: 1; min-width: 120px; }
+.int-card-foot .int-actions { flex: none; }
+
+/* Integration cards refresh without re-entering: apply, rollback, and binary
+   jobs update cards in place. */
+.screen .int-card { animation: none; }
 
 .empty { padding: 36px 20px; text-align: center; color: var(--fg-subtle); }
 .empty-title, .empty__title { font-weight: 600; font-size: 13px; color: var(--fg-muted); }
