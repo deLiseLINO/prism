@@ -31,6 +31,20 @@ func integrationEnv(t *testing.T) (*httptest.Server, *integrations.Registry) {
 	return ts, registry
 }
 
+func toggleEnv(t *testing.T) (*httptest.Server, *config.Manager, *integrations.Registry, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	m, err := config.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := integrations.NewRegistry()
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, registry, nil, nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, m, registry, path
+}
+
 func registerSandbox(t *testing.T, registry *integrations.Registry, dir string) {
 	t.Helper()
 	codexPath := filepath.Join(dir, "codex", "config.toml")
@@ -116,6 +130,245 @@ func TestIntegrationUnknownClient404(t *testing.T) {
 		res.Body.Close()
 		if res.StatusCode != http.StatusNotFound {
 			t.Errorf("POST %s: status %d, want 404", path, res.StatusCode)
+		}
+	}
+}
+
+func TestIntegrationToggleOnPersistsKeyAndAdvancesGeneration(t *testing.T) {
+	ts, m, registry, path := toggleEnv(t)
+	registerSandbox(t, registry, t.TempDir())
+	registry.SetEnabledSource(func() map[integrations.ID]bool {
+		out := make(map[integrations.ID]bool)
+		for id, settings := range m.Get().Config.Integrations {
+			if settings.Enabled {
+				out[integrations.ID(id)] = true
+			}
+		}
+		return out
+	})
+	gen := m.Get().Generation
+
+	res := putJSON(t, ts.URL+"/api/v1/integrations/codex/enabled",
+		fmt.Sprintf(`{"enabled":true,"expectedGeneration":%d}`, gen))
+	defer res.Body.Close()
+	var toggled IntegrationToggleResponse
+	if err := json.NewDecoder(res.Body).Decode(&toggled); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK || !toggled.Enabled {
+		t.Fatalf("toggle on: status %d, body %+v", res.StatusCode, toggled)
+	}
+	if toggled.Generation != gen+1 {
+		t.Fatalf("generation did not advance: %d", toggled.Generation)
+	}
+	if !m.Get().Config.Integrations["codex"].Enabled {
+		t.Fatal("toggle not persisted to the live manager")
+	}
+	reopened, err := config.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Get().Config.Integrations["codex"].Enabled {
+		t.Fatal("toggle not persisted to disk")
+	}
+
+	list, err := http.Get(ts.URL + "/api/v1/integrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer list.Body.Close()
+	var body IntegrationsResponse
+	if err := json.NewDecoder(list.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Generation != toggled.Generation {
+		t.Fatalf("list generation %d, want %d", body.Generation, toggled.Generation)
+	}
+	var codexStatus *integrations.Status
+	for i := range body.Integrations {
+		if body.Integrations[i].ID == integrations.Codex {
+			codexStatus = &body.Integrations[i]
+		}
+	}
+	if codexStatus == nil || !codexStatus.Enabled {
+		t.Fatalf("codex status not overlaid as enabled: %+v", codexStatus)
+	}
+}
+
+func TestIntegrationToggleOffKeepsKey(t *testing.T) {
+	ts, m, _, path := toggleEnv(t)
+	gen := m.Get().Generation
+
+	res := putJSON(t, ts.URL+"/api/v1/integrations/grok/enabled",
+		fmt.Sprintf(`{"enabled":true,"expectedGeneration":%d}`, gen))
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("toggle on: status %d", res.StatusCode)
+	}
+	gen = m.Get().Generation
+
+	res = putJSON(t, ts.URL+"/api/v1/integrations/grok/enabled",
+		fmt.Sprintf(`{"enabled":false,"expectedGeneration":%d}`, gen))
+	defer res.Body.Close()
+	var toggled IntegrationToggleResponse
+	if err := json.NewDecoder(res.Body).Decode(&toggled); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK || toggled.Enabled {
+		t.Fatalf("toggle off: status %d, body %+v", res.StatusCode, toggled)
+	}
+	settings, exists := m.Get().Config.Integrations["grok"]
+	if !exists || settings.Enabled {
+		t.Fatalf("toggle off dropped the key: %+v", m.Get().Config.Integrations)
+	}
+	reopened, err := config.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, exists = reopened.Get().Config.Integrations["grok"]
+	if !exists || settings.Enabled {
+		t.Fatalf("toggle off did not persist the kept key: %+v", reopened.Get().Config.Integrations)
+	}
+}
+
+func TestIntegrationToggleStaleGenerationConflicts(t *testing.T) {
+	ts, m, _, _ := toggleEnv(t)
+	if _, err := m.Update(config.Document{Version: config.SchemaVersion}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	res := putJSON(t, ts.URL+"/api/v1/integrations/codex/enabled", `{"enabled":true,"expectedGeneration":99}`)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("stale generation must conflict, got %d", res.StatusCode)
+	}
+	var body ErrorBody
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "stale_generation" {
+		t.Fatalf("error code %q, want stale_generation", body.Error.Code)
+	}
+	if _, exists := m.Get().Config.Integrations["codex"]; exists {
+		t.Fatal("refused toggle must not write config")
+	}
+}
+
+func TestIntegrationToggleUnknownClient404(t *testing.T) {
+	ts, m, _, _ := toggleEnv(t)
+	gen := m.Get().Generation
+
+	res := putJSON(t, ts.URL+"/api/v1/integrations/codexx/enabled",
+		fmt.Sprintf(`{"enabled":true,"expectedGeneration":%d}`, gen))
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown client: status %d, want 404", res.StatusCode)
+	}
+	var body ErrorBody
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "not_found" {
+		t.Fatalf("error code %q, want not_found", body.Error.Code)
+	}
+}
+
+func TestIntegrationsListUnregisteredNeverOverlayEnabled(t *testing.T) {
+	ts, m, registry, _ := toggleEnv(t)
+	registry.SetEnabledSource(func() map[integrations.ID]bool {
+		out := make(map[integrations.ID]bool)
+		for id, settings := range m.Get().Config.Integrations {
+			if settings.Enabled {
+				out[integrations.ID(id)] = true
+			}
+		}
+		return out
+	})
+	gen := m.Get().Generation
+
+	res := putJSON(t, ts.URL+"/api/v1/integrations/grok/enabled",
+		fmt.Sprintf(`{"enabled":true,"expectedGeneration":%d}`, gen))
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("toggle on: status %d", res.StatusCode)
+	}
+
+	list, err := http.Get(ts.URL + "/api/v1/integrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer list.Body.Close()
+	var body IntegrationsResponse
+	if err := json.NewDecoder(list.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range body.Integrations {
+		if status.Enabled {
+			t.Fatalf("unregistered %s overlaid as enabled: %+v", status.ID, status)
+		}
+	}
+}
+
+func TestHostScopedIntegrationsReportEnabledFalse(t *testing.T) {
+	ts, m, registry, _ := toggleEnv(t)
+	registerSandbox(t, registry, t.TempDir())
+	remote := integrations.NewRegistry()
+	registerSandbox(t, remote, t.TempDir())
+	registry.SetEnabledSource(func() map[integrations.ID]bool {
+		out := make(map[integrations.ID]bool)
+		for id, settings := range m.Get().Config.Integrations {
+			if settings.Enabled {
+				out[integrations.ID(id)] = true
+			}
+		}
+		return out
+	})
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, registry, nil, nil)
+	table := NewHostRegistries(registry)
+	table.SetRemote("workmac", remote)
+	srv.SetHostRegistries(table)
+	hostTS := httptest.NewServer(srv.Handler())
+	t.Cleanup(hostTS.Close)
+
+	gen := m.Get().Generation
+	res := putJSON(t, ts.URL+"/api/v1/integrations/codex/enabled",
+		fmt.Sprintf(`{"enabled":true,"expectedGeneration":%d}`, gen))
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("toggle on: status %d", res.StatusCode)
+	}
+
+	localRes, err := http.Get(hostTS.URL + "/api/v1/hosts/local/integrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var localBody IntegrationsResponse
+	if err := json.NewDecoder(localRes.Body).Decode(&localBody); err != nil {
+		t.Fatal(err)
+	}
+	localRes.Body.Close()
+	var codexEnabled bool
+	for _, status := range localBody.Integrations {
+		if status.ID == integrations.Codex {
+			codexEnabled = status.Enabled
+		}
+	}
+	if !codexEnabled {
+		t.Fatal("local host-scoped list did not overlay codex as enabled")
+	}
+
+	remoteRes, err := http.Get(hostTS.URL + "/api/v1/hosts/workmac/integrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remoteRes.Body.Close()
+	var remoteBody IntegrationsResponse
+	if err := json.NewDecoder(remoteRes.Body).Decode(&remoteBody); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range remoteBody.Integrations {
+		if status.Enabled {
+			t.Fatalf("remote %s overlaid as enabled: %+v", status.ID, status)
 		}
 	}
 }
@@ -691,6 +944,19 @@ func (e *applyError) Error() string {
 }
 
 func itoa2(n int) string { return strconv.Itoa(n) }
+
+func putJSON(t *testing.T, url, body string) *http.Response {
+	t.Helper()
+	res, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := http.DefaultClient.Do(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
 
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()

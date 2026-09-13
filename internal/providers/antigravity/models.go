@@ -140,3 +140,25 @@ func RawModels(logical string) []string {
 func ModelEfforts(logical string) []effort {
 	return effortsFor(logical)
 }
+
+// LogicalModel maps a raw wire id onto the logical model id it collapses
+// into, presence-free: concrete table members (retired included) map to
+// their family id, template-shaped member ids map to the instantiated
+// family id, and a family id maps to itself. Ids the reviewed table does
+// not own return "" — aliases pass through as their own rows under
+// collapseIds, and auto-pair variants are presence-derived, so neither is
+// statically remapped. The sync migration uses this to fold stale raw ids
+// in config state onto their logical id.
+func LogicalModel(raw string) string {
+	for _, f := range families {
+		if f.id == raw || containsString(f.members, raw) {
+			return f.id
+		}
+	}
+	if rev, ok := templateRevision(raw); ok {
+		if f := geminiFlashTemplate.instantiate(rev); f != nil && (f.id == raw || containsString(f.members, raw)) {
+			return f.id
+		}
+	}
+	return ""
+}

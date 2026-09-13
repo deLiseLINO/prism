@@ -17,8 +17,6 @@ function setReply(reply: ManagementReply): void {
 const fakeBridge = {
   daemon: {
     status: vi.fn(),
-    start: vi.fn(),
-    stop: vi.fn(),
     onStatus: vi.fn(),
   },
   management: {
@@ -398,6 +396,60 @@ describe('renderer api wrapper', () => {
       path: '/api/v1/vision-sidecar',
       body: { enabled: true, target: 'router/gpt-5.6-luna', expectedGeneration: 7 },
     })
+  })
+
+  it('writes the default context window through the bridge seam with CAS generation', async () => {
+    const { api } = await loadApi()
+    setReply({
+      ok: true,
+      status: 200,
+      body: { contextWindow: 400000, expectedGeneration: 8 },
+    })
+    const out = await api.contextWindow({ contextWindow: 400000, expectedGeneration: 7 })
+    expect(out.contextWindow).toBe(400000)
+    expect(out.expectedGeneration).toBe(8)
+    expect(recorded[0]).toMatchObject({
+      method: 'PUT',
+      path: '/api/v1/context-window',
+      body: { contextWindow: 400000, expectedGeneration: 7 },
+    })
+  })
+
+  it('toggles an integration through the bridge seam with CAS generation', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { generation: 11, enabled: true } })
+    const out = await api.integrationToggle('codex', { enabled: true, expectedGeneration: 10 })
+    expect(out).toEqual({ generation: 11, enabled: true })
+    expect(recorded[0]).toMatchObject({
+      method: 'PUT',
+      path: '/api/v1/integrations/codex/enabled',
+      body: { enabled: true, expectedGeneration: 10 },
+    })
+  })
+
+  it('surfaces a stale generation refusal from the toggle as a typed ApiError', async () => {
+    const { api } = await loadApi()
+    setReply({
+      ok: false,
+      status: 409,
+      body: { error: { code: 'stale_generation', message: 'config moved on' } },
+    })
+    await expect(api.integrationToggle('grok', { enabled: false, expectedGeneration: 3 })).rejects.toMatchObject({
+      status: 409,
+      code: 'stale_generation',
+    })
+  })
+
+  it('returns the widened integrations view with its generation', async () => {
+    const { api } = await loadApi()
+    const integrations = [
+      { id: 'codex', installed: true, managed: true, enabled: true, targetPath: '/c', endpoint: null, drift: false, detail: 'managed by prism' },
+    ]
+    setReply({ ok: true, status: 200, body: { generation: 9, integrations } })
+    const out = await api.integrationsStatus()
+    expect(out.generation).toBe(9)
+    expect(out.integrations).toEqual(integrations)
+    expect(recorded[0]).toMatchObject({ method: 'GET', path: '/api/v1/integrations' })
   })
 
   it('treats an unexpected 200 reply to account delete as an error, not empty success', async () => {

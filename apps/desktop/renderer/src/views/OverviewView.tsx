@@ -1,219 +1,35 @@
 import type { CSSProperties, ReactNode } from 'react'
-import type {
-  AccountView,
-  AccountsView,
-  DaemonStatus,
-  ProvidersView,
-  ProviderView,
-  UsageView,
-} from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Empty, Toggle } from '../components/Ui'
-import { useAsync, useTask, describeError, type AsyncState, type UseAsyncResult } from '../useAsync'
+import type { DaemonStatus, ProvidersView, ProviderView } from '@prism/contracts'
+import { AsyncBoundary, Banner, Empty, Toggle } from '../components/Ui'
+import { useAsync, useTask, describeError, type UseAsyncResult } from '../useAsync'
 import { api } from '../api'
-import { navigateTo } from '../routing'
-import { bridge } from '../bridge'
 
-interface StatContent {
-  readonly value: string
-  readonly hint: string
-  readonly small?: boolean
-}
+const CONTEXT_PRESETS: readonly { readonly value: number; readonly label: string }[] = [
+  { value: 32000, label: '32k' },
+  { value: 128000, label: '128k' },
+  { value: 256000, label: '256k' },
+  { value: 400000, label: '400k' },
+  { value: 1000000, label: '1M' },
+]
 
-interface StatCellProps<T> {
-  readonly label: string
-  readonly state: AsyncState<T>
-  readonly render: (value: T) => StatContent
-}
-
-function formatClock(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  return `${date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}Z`
-}
-
-function badgeTone(state: string): 'ok' | 'warn' | 'error' | 'muted' {
-  switch (state) {
-    case 'active':
-      return 'ok'
-    case 'needs_reauth':
-      return 'error'
-    case 'cooling_down':
-    case 'soft_avoid':
-      return 'warn'
-    default:
-      return 'muted'
-  }
-}
-
-function dotTone(state: string): 'ok' | 'warn' | 'danger' | 'muted' {
-  if (state === 'active') return 'ok'
-  if (state === 'needs_reauth') return 'danger'
-  if (state === 'cooling_down' || state === 'soft_avoid') return 'warn'
-  return 'muted'
-}
-
-function stateLabel(state: string): string {
-  if (state === 'cooling_down') return 'cooling down'
-  if (state === 'needs_reauth') return 'needs reauth'
-  if (state === 'soft_avoid') return 'soft avoid'
-  return state
-}
-
-function daemonChip(status: AsyncState<DaemonStatus>): {
+function daemonChip(
+  status: DaemonStatus | null,
+  unreachable: boolean,
+): {
   readonly tone: 'ok' | 'warn' | 'danger' | 'muted'
   readonly label: string
   readonly pulse: boolean
 } {
-  if (status.kind !== 'ready')
-    return { tone: 'muted', label: 'checking…', pulse: false }
-  const state = status.value.state
-  if (state === 'ready')
-    return { tone: 'ok', label: 'operational', pulse: true }
-  if (state === 'failed')
-    return { tone: 'danger', label: 'failed', pulse: false }
+  if (unreachable) return { tone: 'danger', label: 'unreachable', pulse: false }
+  if (status === null) return { tone: 'muted', label: 'checking…', pulse: false }
+  const state = status.state
+  if (state === 'ready') return { tone: 'ok', label: 'operational', pulse: true }
+  if (state === 'failed') return { tone: 'danger', label: 'failed', pulse: false }
   if (state === 'idle' || state === 'stopped' || state === 'quitting')
     return { tone: 'muted', label: state, pulse: false }
   return { tone: 'warn', label: state, pulse: false }
 }
 
-function daemonSub(status: AsyncState<DaemonStatus>): JSX.Element {
-  if (status.kind === 'error')
-    return <>daemon status unavailable, retry from the Daemon view</>
-  if (status.kind !== 'ready') return <>reading daemon status…</>
-  const value = status.value
-  if (value.state !== 'ready') {
-    return (
-      <>
-        daemon {value.state}, attempt{' '}
-        <span className="num">{value.attempt}</span>
-      </>
-    )
-  }
-  return (
-    <>
-      daemon ready
-      {value.endpoint === null ? (
-        ''
-      ) : (
-        <>
-          {' '}
-          at <span className="num">{value.endpoint}</span>
-        </>
-      )}
-      , attempt <span className="num">{value.attempt}</span>
-      {value.startedAt === null ? (
-        ''
-      ) : (
-        <>
-          , up since <span className="num">{formatClock(value.startedAt)}</span>
-        </>
-      )}
-    </>
-  )
-}
-
-function providerMix(list: UsageView): StatContent {
-  const totals = new Map<string, number>()
-  for (const row of list.accounts) {
-    const used = row.quota.used
-    totals.set(row.provider, (totals.get(row.provider) ?? 0) + used)
-  }
-  const sum = [...totals.values()].reduce((left, right) => left + right, 0)
-  if (sum === 0)
-    return { value: 'no usage yet', hint: 'by quota used', small: true }
-  const parts = [...totals.entries()]
-    .sort((left, right) => right[1] - left[1])
-    .map(([provider, used]) => `${provider} ${Math.round((used / sum) * 100)}%`)
-  return { value: parts.join(', '), hint: 'by quota used', small: true }
-}
-
-function StatCell<T>({ label, state, render }: StatCellProps<T>): JSX.Element {
-  const content = state.kind === 'ready' ? render(state.value) : null
-  const failed = state.kind === 'error'
-  return (
-    <div className="stat">
-      <div className="label">{label}</div>
-      {content === null ? (
-        failed ? (
-          <>
-            <div className="value num">—</div>
-            <div className="hint">unavailable</div>
-          </>
-        ) : (
-          <>
-            <div className="value">
-              <span className="skel skel-num" aria-hidden="true" />
-            </div>
-            <div className="hint">
-              <span className="skel skel-line" aria-hidden="true" />
-            </div>
-          </>
-        )
-      ) : (
-        <>
-          <div
-            className="value num"
-            style={
-              content.small === true
-                ? { fontSize: '12.5px', lineHeight: 1.7, letterSpacing: 0 }
-                : undefined
-            }
-          >
-            {content.value}
-          </div>
-          <div className="hint">{content.hint}</div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function attnDetail(account: AccountView): string {
-  if (account.state === 'needs_reauth')
-    return 'needs reauth, start the flow from the Auth view'
-  if (account.state === 'cooling_down') {
-    const quota =
-      account.quota.limit == null
-        ? `${account.quota.used} used`
-        : `${account.quota.used}/${account.quota.limit}`
-    const until =
-      account.cooldownUntil === undefined
-        ? '—'
-        : formatClock(account.cooldownUntil)
-    return `cooling down until ${until}, quota at ${quota}`
-  }
-  if (account.state === 'soft_avoid') {
-    const until =
-      account.softAvoidUntil === undefined
-        ? '—'
-        : formatClock(account.softAvoidUntil)
-    return `soft avoid until ${until}`
-  }
-  if (account.state === 'paused') return 'paused manually'
-  return 'state unknown, check the daemon logs'
-}
-
-function AttnRow({ account }: { readonly account: AccountView }): JSX.Element {
-  return (
-    <div className="attn">
-      <span
-        className={`dot dot-${dotTone(account.state)}`}
-        aria-hidden="true"
-      />
-      <div className="attn-main">
-        <div className="attn-name">{account.id}</div>
-        <div className="sub">{attnDetail(account)}</div>
-      </div>
-      <span className={`badge badge--${badgeTone(account.state)}`}>
-        {stateLabel(account.state)}
-      </span>
-      <span className="num">{account.priority}</span>
-      <Button tone="ghost" size="sm" onClick={() => navigateTo('usage')}>
-        Open accounts
-      </Button>
-    </div>
-  )
-}
 function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
   const ids: string[] = []
   for (const provider of providers) {
@@ -224,6 +40,54 @@ function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
     }
   }
   return ids.sort((a, b) => a.localeCompare(b))
+}
+
+function DaemonCard({
+  status,
+  unreachable,
+}: {
+  readonly status: DaemonStatus | null
+  readonly unreachable: boolean
+}): ReactNode {
+  const chip = daemonChip(status, unreachable)
+  return (
+    <section className="panel card ov-card" style={{ '--i': 1, gridColumn: '1 / -1' } as CSSProperties}>
+      <div className="ov-head">
+        <div className="ov-head-l">
+          <span className="ov-ic">
+            <svg width="18" height="18"><use href="#i-daemon" /></svg>
+          </span>
+          <div>
+            <div className="ov-title">Daemon</div>
+            <p className="ov-sub">
+              local prismd supervised by the desktop app
+            </p>
+          </div>
+        </div>
+        <span className={`chip chip-${chip.tone}`}>
+          <span
+            className={`dot dot-${chip.tone}${chip.pulse ? ' dot-pulse' : ''}`}
+            aria-hidden="true"
+          />
+          {chip.label}
+        </span>
+      </div>
+      <div className="ov-body">
+        <div className="kv">
+          <div className="kv-row">
+            <span className="kv-k">state</span>
+            <span className="kv-v num">{status !== null ? status.state : chip.label}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-k">endpoint</span>
+            <span className="kv-v num">
+              {status === null ? 'unknown' : status.endpoint ?? 'not listening'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 function VisionSidecarCard({
@@ -246,13 +110,18 @@ function VisionSidecarCard({
   }
 
   return (
-    <section className="panel card panel-pad" style={{ '--i': 2 } as CSSProperties}>
-      <div className="prov-detail-head">
-        <div>
-          <div className="panel-title">Vision sidecar</div>
-          <p className="panel-sub">
-            describes images with a vision model before they reach text-only models
-          </p>
+    <section className="panel card ov-card" style={{ '--i': 2 } as CSSProperties}>
+      <div className="ov-head">
+        <div className="ov-head-l">
+          <span className="ov-ic">
+            <svg width="18" height="18"><use href="#i-eye" /></svg>
+          </span>
+          <div>
+            <div className="ov-title">Vision sidecar</div>
+            <p className="ov-sub">
+              describes images with a vision model before they reach text-only models
+            </p>
+          </div>
         </div>
         <AsyncBoundary<ProvidersView>
           state={providers.state}
@@ -281,7 +150,7 @@ function VisionSidecarCard({
           const current = all.visionSidecar.target ?? ''
           const enabled = all.visionSidecar.enabled === true
           return (
-            <div className="divide" style={{ marginTop: 10 }}>
+            <div className="ov-body">
               {task.error !== null ? (
                 <Banner tone="error" title="Sidecar change failed">
                   {describeError(task.error)}
@@ -332,19 +201,102 @@ function VisionSidecarCard({
   )
 }
 
+function ContextWindowCard({
+  providers,
+}: {
+  readonly providers: UseAsyncResult<ProvidersView>
+}): ReactNode {
+  const task = useTask()
+  const save = async (value: number): Promise<void> => {
+    const ready = providers.state.kind === 'ready' ? providers.state.value : null
+    if (ready === null) return
+    await task.run(() =>
+      api.contextWindow({
+        contextWindow: value,
+        expectedGeneration: ready.generation,
+      }),
+    )
+    providers.refresh()
+  }
 
-export function OverviewView(): JSX.Element {
-  const status = useAsync<DaemonStatus>(() => bridge.daemon.status(), [])
-  const accounts = useAsync<AccountsView>(() => api.accounts(), [])
+  return (
+    <section className="panel card ov-card" style={{ '--i': 3 } as CSSProperties}>
+      <div className="ov-head">
+        <div className="ov-head-l">
+          <span className="ov-ic">
+            <svg width="18" height="18"><use href="#i-gauge" /></svg>
+          </span>
+          <div>
+            <div className="ov-title">Default context window</div>
+            <p className="ov-sub">
+              applies to every model without its own override
+            </p>
+          </div>
+        </div>
+      </div>
+      <AsyncBoundary<ProvidersView>
+        state={providers.state}
+        loadingLabel="Loading default…"
+        empty={null}
+        onRetry={providers.refresh}
+      >
+        {(all) => {
+          const current = all.contextWindow
+          const isPreset = CONTEXT_PRESETS.some((p) => p.value === current)
+          return (
+            <div className="ov-body">
+              {task.error !== null ? (
+                <Banner tone="error" title="Default window change failed">
+                  {describeError(task.error)}
+                </Banner>
+              ) : null}
+              <div className="msm-seg" role="group" aria-label="Default context window presets">
+                {CONTEXT_PRESETS.map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    className="msm-seg-btn num"
+                    aria-pressed={current === preset.value}
+                    disabled={task.running}
+                    onClick={() => void save(preset.value)}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <div className="msm-custom">
+                <span className="msm-custom-k">Custom</span>
+                <input
+                  key={current}
+                  className="msm-custom-input num"
+                  inputMode="numeric"
+                  defaultValue={isPreset ? '' : String(current)}
+                  placeholder={isPreset ? String(current) : ''}
+                  aria-label="Custom default context window"
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter') return
+                    const digits = (event.target as HTMLInputElement).value.replace(/[^0-9]/g, '')
+                    if (digits !== '' && Number(digits) !== current) void save(Number(digits))
+                  }}
+                />
+                <span className="msm-suffix">tokens</span>
+              </div>
+            </div>
+          )
+        }}
+      </AsyncBoundary>
+    </section>
+  )
+}
+
+export function OverviewView({
+  daemon,
+  daemonUnreachable,
+}: {
+  readonly daemon: DaemonStatus | null
+  readonly daemonUnreachable: boolean
+}): JSX.Element {
   const providers = useAsync<ProvidersView>(() => api.providers(), [])
-  const usage = useAsync<UsageView>(() => api.usage(), [])
-
-  const chip = daemonChip(status.state)
-  const busy = [
-    accounts.state,
-    providers.state,
-    usage.state,
-  ].some((entry) => entry.kind !== 'ready')
 
   return (
     <section className="screen" aria-labelledby="h-overview">
@@ -356,107 +308,14 @@ export function OverviewView(): JSX.Element {
             </svg>
             Overview
           </h1>
-          <p className="sub">{daemonSub(status.state)}</p>
-        </div>
-        <div className="head-actions">
-          <span className={`chip chip-${chip.tone}`}>
-            <span
-              className={`dot dot-${chip.tone}${chip.pulse ? ' dot-pulse' : ''}`}
-              aria-hidden="true"
-            />
-            {chip.label}
-          </span>
+          <p className="sub">daemon state, default context window and vision sidecar</p>
         </div>
       </div>
-      <section
-        className="panel card stats"
-        style={{ '--i': 1 } as CSSProperties}
-        aria-busy={busy}
-      >
-        <StatCell<AccountsView>
-          label="Accounts"
-          state={accounts.state}
-          render={(list) => {
-            const total = list.accounts.length
-            const active = list.accounts.filter(
-              (account) => account.state === 'active',
-            ).length
-            return {
-              value: `${active} / ${total}`,
-              hint: `${total - active} held back`,
-            }
-          }}
-        />
-        <StatCell<AccountsView>
-          label="In-flight"
-          state={accounts.state}
-          render={(list) => {
-            const sum = list.accounts.reduce(
-              (total, account) => total + account.inFlight,
-              0,
-            )
-            const spread = list.accounts.filter(
-              (account) => account.inFlight > 0,
-            ).length
-            return {
-              value: String(sum),
-              hint: `spread over ${spread} accounts`,
-            }
-          }}
-        />
-        <StatCell<ProvidersView>
-          label="Providers"
-          state={providers.state}
-          render={(list) => {
-            const total = list.providers.length
-            const enabled = list.providers.filter(
-              (provider) => provider.enabled !== false,
-            ).length
-            return {
-              value: `${enabled} / ${total}`,
-              hint: `${total - enabled} disabled`,
-            }
-          }}
-        />
-        <StatCell<UsageView>
-          label="Provider mix"
-          state={usage.state}
-          render={providerMix}
-        />
-      </section>
-      <VisionSidecarCard providers={providers} />
-      <section
-        className="panel card panel-pad"
-        style={{ '--i': 3 } as CSSProperties}
-      >
-        <div className="panel-title">Accounts needing attention</div>
-        <p className="panel-sub">
-          reauth, cooldowns and manual pauses across the pool
-        </p>
-        <div className="divide" style={{ marginTop: 10 }}>
-          <AsyncBoundary<AccountsView>
-            state={accounts.state}
-            loadingLabel="Loading accounts…"
-            empty={<Empty title="No accounts configured." />}
-            onRetry={accounts.refresh}
-          >
-            {(list) => {
-              const flagged = list.accounts
-                .filter((account) => account.state !== 'active')
-                .sort(
-                  (left, right) =>
-                    right.priority - left.priority ||
-                    left.id.localeCompare(right.id),
-                )
-              if (flagged.length === 0)
-                return <Empty title="All accounts active." />
-              return flagged.map((account) => (
-                <AttnRow key={account.id} account={account} />
-              ))
-            }}
-          </AsyncBoundary>
-        </div>
-      </section>
+      <div className="ov-grid">
+        <DaemonCard status={daemon} unreachable={daemonUnreachable} />
+        <VisionSidecarCard providers={providers} />
+        <ContextWindowCard providers={providers} />
+      </div>
     </section>
   )
 }

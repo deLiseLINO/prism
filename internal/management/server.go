@@ -16,6 +16,7 @@ import (
 	"prism/internal/config"
 	"prism/internal/integrations"
 	"prism/internal/provider"
+	"prism/internal/providers/antigravity"
 	"prism/internal/quota"
 	"prism/internal/requestlog"
 )
@@ -137,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/integrations/{client}", s.integrationGet)
 	mux.HandleFunc("POST /api/v1/integrations/{client}/apply", s.integrationApply)
 	mux.HandleFunc("POST /api/v1/integrations/{client}/rollback", s.integrationRollback)
+	mux.HandleFunc("PUT /api/v1/integrations/{client}/enabled", s.integrationToggle)
 	mux.HandleFunc("GET /api/v1/agents", s.agentsList)
 	mux.HandleFunc("GET /api/v1/agents/{id}", s.agentGet)
 	mux.HandleFunc("POST /api/v1/agents/{id}/install", s.agentInstall)
@@ -187,6 +189,7 @@ var routeTemplates = []string{
 	"/api/v1/integrations/{client}",
 	"/api/v1/integrations/{client}/apply",
 	"/api/v1/integrations/{client}/rollback",
+	"/api/v1/integrations/{client}/enabled",
 	"/api/v1/agents",
 	"/api/v1/agents/{id}",
 	"/api/v1/agents/{id}/install",
@@ -430,6 +433,53 @@ func (s *Server) providersDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, GenerationResponse{Generation: updated.Generation})
 }
 
+// foldRawModelSettings migrates a synced antigravity provider's state off raw
+// family member ids: settings keys and disabled entries naming a raw wire id
+// (say gemini-3.7-flash-low) fold onto the logical id (gemini-3.7-flash) the
+// sync now stores. Validation requires settings keys and disabled entries to
+// name configured models, and a synced logical id displacing its raw members
+// would strand them. Other wires never fold — their ids only look raw by
+// coincidence, and the logical target would not be in their Models list. An
+// existing logical-keyed settings entry wins over the folded raw one;
+// disabled entries dedupe after folding. Ids the reviewed family table does
+// not own stay untouched.
+func foldRawModelSettings(doc *config.Document, id string) {
+	p := doc.Providers[id]
+	if p.Wire != config.WireAntigravity {
+		return
+	}
+	if len(p.ModelSettings) == 0 && len(p.DisabledModels) == 0 {
+		return
+	}
+	if len(p.ModelSettings) > 0 {
+		settings := make(map[string]config.ModelSettings, len(p.ModelSettings))
+		for model, s := range p.ModelSettings {
+			if logical := antigravity.LogicalModel(model); logical != "" && logical != model {
+				if _, exists := settings[logical]; !exists {
+					settings[logical] = s
+				}
+				continue
+			}
+			settings[model] = s
+		}
+		p.ModelSettings = settings
+	}
+	if len(p.DisabledModels) > 0 {
+		disabled := make([]string, 0, len(p.DisabledModels))
+		for _, m := range p.DisabledModels {
+			if logical := antigravity.LogicalModel(m); logical != "" && logical != m {
+				m = logical
+			}
+			if !slices.Contains(disabled, m) {
+				disabled = append(disabled, m)
+			}
+		}
+		slices.Sort(disabled)
+		p.DisabledModels = disabled
+	}
+	doc.Providers[id] = p
+}
+
 func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	expected, ok := generationFromQuery(w, r)
@@ -464,6 +514,7 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	next.Models = merged
 	next.SyncedModels = remote
 	doc.Providers[id] = next
+	foldRawModelSettings(&doc, id)
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
 		writeConfigError(w, err)
@@ -494,11 +545,66 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 		Models:         p.Models,
 		DisabledModels: p.DisabledModels,
 		SyncedModels:   p.SyncedModels,
+		RawModels:      rawModelsForProvider(p),
+		ModelEfforts:   modelEffortsForProvider(p),
 		ModelSettings:  p.ModelSettings,
 		Enabled:        p.Enabled,
 		Pool:           p.Pool,
 		Credential:     ProviderCredential{State: state},
 	}, nil
+}
+
+// rawModelsForProvider flattens the raw wire ids behind a provider's logical
+// models. Only the antigravity wire carries families; every other wire leaves
+// the field empty so old clients see no change. The logical ids come from the
+// stored Models list, so the raw list reflects config state rather than the
+// last discovery alone.
+func rawModelsForProvider(p config.Provider) []string {
+	if p.Wire != config.WireAntigravity {
+		return nil
+	}
+	var out []string
+	for _, m := range p.Models {
+		for _, raw := range antigravity.RawModels(m) {
+			if !slices.Contains(out, raw) {
+				out = append(out, raw)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// modelEffortsForProvider maps each logical family id on the provider onto
+// its supported efforts, the rung ladders the desktop view renders as chips.
+// Wire-gated like rawModelsForProvider; families resolve presence-free from
+// the reviewed table, so no discovery is required for deterministic output.
+// Raw member leftovers in Models fold onto their family id first, so the map
+// carries one ladder per family rather than per-member duplicates.
+func modelEffortsForProvider(p config.Provider) map[string][]string {
+	if p.Wire != config.WireAntigravity {
+		return nil
+	}
+	var out map[string][]string
+	for _, m := range p.Models {
+		logical := antigravity.LogicalModel(m)
+		if logical == "" || out[logical] != nil {
+			continue
+		}
+		efforts := antigravity.ModelEfforts(logical)
+		if len(efforts) == 0 {
+			continue
+		}
+		if out == nil {
+			out = make(map[string][]string, len(p.Models))
+		}
+		rungs := make([]string, 0, len(efforts))
+		for _, e := range efforts {
+			rungs = append(rungs, string(e))
+		}
+		out[logical] = rungs
+	}
+	return out
 }
 
 func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {

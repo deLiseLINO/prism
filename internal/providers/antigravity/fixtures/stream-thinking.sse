@@ -1,0 +1,13 @@
+data: {"response":{"candidates":[{"content":{"parts":[{"text":""}],"role":"model"}}],"usageMetadata":{"promptTokenCount":43,"candidatesTokenCount":1,"totalTokenCount":44},"modelVersion":"claude-sonnet-4-6"}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"thought":true,"text":"budget"}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"thought":true,"text":"-ok"}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"thought":true,"thoughtSignature":"RW9BQ0NwUUJDQkVRQWhnQ0trQXhQY1pJekZHVndyZzl1WnBiZ0l0V1p0eFBJZVNLMndHTWhEYnJoNVZtUGdnL1prK1J6QVZSUVVTUFNZZldUbmNjSjlGT0dNODlqWmtnRU1pZmhlOVFNaEZqYkdGMVpHVXRjMjl1Ym1WMExUUXROamdBUWdoMGFHbHVhMmx1WjFvTU9EZzBNelUwT1RFNU1EVXljaEJoSEE2M3JOVmNoOXgwVzFlVDU2YllpQUVCcUFHZnY1ZlZCckFCQWhJTWlxYUNPQ3dONjJsM2Q4bThHZ3dQNStWWTFVbVZUampBSVFraU1HK0JNMnRwYStDV2JDR2tnZXNudmdlejhGajBCV1JaaHZFSzZ3WUNHd2daWmdVYjJFb2Z5MGlLUG5vVS8vMnJVaU9abXB5dWN4NXI2N242MjQrLzJxK21qZXozOHFpdUdEbmVXUmdC","text":""}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"text":"budget"}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"text":"-ok"}],"role":"model"}}]}}
+
+data: {"response":{"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":43,"candidatesTokenCount":17,"totalTokenCount":60},"modelVersion":"claude-sonnet-4-6"}}

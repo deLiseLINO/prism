@@ -639,6 +639,15 @@ func run(opts options) error {
 		return err
 	}
 	env.codex = codexIntegration
+	intg.SetEnabledSource(func() map[integrations.ID]bool {
+		out := make(map[integrations.ID]bool)
+		for id, settings := range cfg.Get().Config.Integrations {
+			if settings.Enabled {
+				out[integrations.ID(id)] = true
+			}
+		}
+		return out
+	})
 	hostTable := management.NewHostRegistries(intg)
 	supervisor := newHostSupervisor(ctx, daemonPortNum, modelsSrc, hostTable)
 	for id, hostCfg := range d.Hosts {
@@ -677,6 +686,7 @@ func run(opts options) error {
 	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, WebUI: webUI, Usage: usageStore, RequestLog: rlog}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)
+	go watchIntegrations(ctx, cfg, intg)
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
 	log.Printf("prismd: listening on %s config=%s credentials=%s", opts.listen, opts.configPath, opts.credentialPath)

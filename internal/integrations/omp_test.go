@@ -185,12 +185,27 @@ func TestOmpReapplyRewritesOwnPrismLeaf(t *testing.T) {
 func TestOmpApplyIsFailClosed(t *testing.T) {
 	dir := t.TempDir()
 
-	flow := tempFile(t, dir, "flow.yml", "providers: {}\n")
+	flow := tempFile(t, dir, "flow.yml", "providers: {openai: {api: x}}\n")
 	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: flow, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeRefused {
-		t.Fatalf("flow-style providers: %+v", outcome)
+		t.Fatalf("non-empty flow-style providers: %+v", outcome)
 	}
-	if got := readFile(t, flow); got != "providers: {}\n" {
-		t.Fatal("flow file changed")
+	if got := readFile(t, flow); got != "providers: {openai: {api: x}}\n" {
+		t.Fatal("refused flow file changed")
+	}
+
+	emptyFlow := tempFile(t, dir, "empty-flow.yml", "providers: {}\n")
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: emptyFlow, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeWritten {
+		t.Fatalf("empty flow providers should normalize: %+v", outcome)
+	}
+	got := readFile(t, emptyFlow)
+	if !strings.Contains(got, "prism:") || strings.Contains(got, "{}") {
+		t.Fatalf("empty flow not normalized:\n%s", got)
+	}
+	if outcome := StripOmpConfig(LocalIO{}, emptyFlow); outcome.Kind != OutcomeWritten {
+		t.Fatalf("rollback after normalization: %+v", outcome)
+	}
+	if got := readFile(t, emptyFlow); got != "" {
+		t.Fatalf("rollback should prune the empty container: %q", got)
 	}
 
 	duplicate := tempFile(t, dir, "duplicate.yml", "providers:\n  a: {}\n---\nproviders:\n  b: {}\n")

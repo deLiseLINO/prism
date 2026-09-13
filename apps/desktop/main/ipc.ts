@@ -54,14 +54,6 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.supervisor.status
   })
-  ipcMain.handle(IpcChannel.daemonStart, (event) => {
-    trustedSender(event)
-    return wiring.supervisor.start()
-  })
-  ipcMain.handle(IpcChannel.daemonStop, (event) => {
-    trustedSender(event)
-    return wiring.supervisor.stop()
-  })
   ipcMain.handle(IpcChannel.managementRequest, async (event, input: unknown) => {
     trustedSender(event)
     const call = validateManagementCall(input)

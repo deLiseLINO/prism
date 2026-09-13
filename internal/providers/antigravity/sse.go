@@ -79,8 +79,12 @@ type usageMetadata struct {
 type streamDecoder struct {
 	emit             func(canon.Event) error
 	messageID        canon.ItemID
+	reasoningID      canon.ItemID
 	seq              int
 	messageOpen      bool
+	reasoningOpen    bool
+	reasoningText    strings.Builder
+	reasoningSig     string
 	messageText      strings.Builder
 	pendingSig       string
 	usage            canon.Usage
@@ -93,7 +97,11 @@ type streamDecoder struct {
 }
 
 func DecodeStream(r io.Reader, emit func(canon.Event) error) error {
-	d := &streamDecoder{emit: emit, messageID: canon.ItemID("assistant-0")}
+	d := &streamDecoder{
+		emit:        emit,
+		messageID:   canon.ItemID("assistant-0"),
+		reasoningID: canon.ItemID("assistant-0-reasoning"),
+	}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEFrameBytes)
 	for scanner.Scan() {
@@ -173,6 +181,7 @@ func (d *streamDecoder) part(part responsePart) error {
 	}
 	if part.Thought && sig != "" && likelyRealSignature(sig) {
 		d.pendingSig = sig
+		d.reasoningSig = sig
 	}
 	if part.Text != "" {
 		if err := d.textDelta(part.Thought, part.Text); err != nil {
@@ -191,17 +200,52 @@ func (d *streamDecoder) part(part responsePart) error {
 }
 
 func (d *streamDecoder) textDelta(thought bool, text string) error {
+	if thought {
+		if !d.reasoningOpen {
+			if d.messageOpen {
+				if err := d.closeMessage(); err != nil {
+					return err
+				}
+			}
+			d.reasoningOpen = true
+			if err := d.emit(canon.ItemStarted{Item: canon.ReasoningItem{ID: d.reasoningID}}); err != nil {
+				return err
+			}
+		}
+		d.reasoningText.WriteString(text)
+		return d.emit(canon.ReasoningDelta{ItemID: d.reasoningID, Text: text})
+	}
 	if !d.messageOpen {
+		if d.reasoningOpen {
+			if err := d.closeReasoning(); err != nil {
+				return err
+			}
+		}
 		d.messageOpen = true
 		if err := d.emit(canon.ItemStarted{Item: canon.Message{ID: d.messageID, Role: canon.RoleAssistant}}); err != nil {
 			return err
 		}
 	}
-	if thought {
-		return d.emit(canon.ReasoningDelta{ItemID: d.messageID, Text: text})
-	}
 	d.messageText.WriteString(text)
 	return d.emit(canon.TextDelta{ItemID: d.messageID, Text: text})
+}
+
+func (d *streamDecoder) closeReasoning() error {
+	item := canon.ReasoningItem{ID: d.reasoningID, Content: d.reasoningText.String()}
+	if likelyRealSignature(d.reasoningSig) {
+		item.Signature = d.reasoningSig
+	}
+	d.reasoningOpen = false
+	return d.emit(canon.ItemFinished{Item: item})
+}
+
+func (d *streamDecoder) closeMessage() error {
+	d.messageOpen = false
+	return d.emit(canon.ItemFinished{Item: canon.Message{
+		ID:      d.messageID,
+		Role:    canon.RoleAssistant,
+		Content: []canon.Content{canon.TextContent{Text: d.messageText.String()}},
+	}})
 }
 
 func (d *streamDecoder) functionCall(part responsePart) error {
@@ -255,12 +299,13 @@ func (d *streamDecoder) finish() error {
 		return nil
 	}
 	d.finished = true
+	if d.reasoningOpen {
+		if err := d.closeReasoning(); err != nil {
+			return err
+		}
+	}
 	if d.messageOpen {
-		if err := d.emit(canon.ItemFinished{Item: canon.Message{
-			ID:      d.messageID,
-			Role:    canon.RoleAssistant,
-			Content: []canon.Content{canon.TextContent{Text: d.messageText.String()}},
-		}}); err != nil {
+		if err := d.closeMessage(); err != nil {
 			return err
 		}
 	}

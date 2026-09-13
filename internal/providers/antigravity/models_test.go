@@ -105,6 +105,36 @@ func TestFetchModelsCollapsesVariantFamilies(t *testing.T) {
 	}
 }
 
+func TestLogicalModelMapsTableOwnedIds(t *testing.T) {
+	cases := []struct{ raw, want string }{
+		{"gemini-3.7-flash-low", "gemini-3.7-flash"},
+		{"gemini-3.7-flash-tiered", "gemini-3.7-flash"},
+		{"gemini-3.7-flash", "gemini-3.7-flash"},
+		{"gemini-3.6-flash-high", "gemini-3.6-flash"},
+		{"gemini-3.5-flash-low", "gemini-3.5-flash"},
+		{"gemini-3-flash-agent", "gemini-3.5-flash"},
+		{"gemini-3-pro-low", "gemini-3-pro"},
+		{"claude-sonnet-4-6-thinking", "claude-sonnet-4-6"},
+		{"claude-sonnet-4-6", "claude-sonnet-4-6"},
+		{"claude-opus-4-5", "claude-opus-4-5"},
+		{"gemini-3-flash", ""},
+		{"grok-5-thinking", ""},
+		{"claude-opus-4", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := LogicalModel(tc.raw); got != tc.want {
+			t.Errorf("LogicalModel(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestLogicalModelBelowTemplateFloorUnmapped(t *testing.T) {
+	if got := LogicalModel("gemini-3.4-flash-low"); got != "" {
+		t.Fatalf("below-min revision must not map through the template: %q", got)
+	}
+}
+
 func TestFetchModelsSnapshotReplacedAcrossFetches(t *testing.T) {
 	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

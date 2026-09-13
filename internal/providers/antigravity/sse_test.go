@@ -64,6 +64,72 @@ func TestDecodeStreamTextFixture(t *testing.T) {
 	}
 }
 
+func TestDecodeStreamThinkingFixture(t *testing.T) {
+	events := decodeFixture(t, "stream-thinking.sse")
+	if countTerminals(events) != 1 {
+		t.Fatalf("expected exactly one terminal event, got %d: %v", countTerminals(events), events)
+	}
+	var reasoning, text strings.Builder
+	var reasoningItem, messageItem bool
+	for _, e := range events {
+		switch ev := e.(type) {
+		case canon.ItemStarted:
+			switch it := ev.Item.(type) {
+			case canon.ReasoningItem:
+				if it.ID != "assistant-0-reasoning" {
+					t.Fatalf("reasoning item id = %q", it.ID)
+				}
+				reasoningItem = true
+			case canon.Message:
+				if it.ID != "assistant-0" {
+					t.Fatalf("message item id = %q", it.ID)
+				}
+				messageItem = true
+			}
+		case canon.ReasoningDelta:
+			reasoning.WriteString(ev.Text)
+		case canon.TextDelta:
+			text.WriteString(ev.Text)
+		case canon.ItemFinished:
+			if it, ok := ev.Item.(canon.ReasoningItem); ok && it.Signature == "" {
+				t.Fatalf("reasoning item finished without signature")
+			}
+		}
+	}
+	if !reasoningItem || !messageItem {
+		t.Fatalf("missing reasoning or message item: %v %v", reasoningItem, messageItem)
+	}
+	if reasoning.String() != "budget-ok" {
+		t.Fatalf("reasoning deltas = %q", reasoning.String())
+	}
+	if text.String() != "budget-ok" {
+		t.Fatalf("text deltas = %q", text.String())
+	}
+	// reasoning must close before the message opens, so egress never sees a
+	// thinking delta against a text block
+	var sawMessageStart, sawReasoningFinish bool
+	for _, e := range events {
+		switch ev := e.(type) {
+		case canon.ItemStarted:
+			if _, ok := ev.Item.(canon.Message); ok {
+				if sawReasoningFinish != true {
+					t.Fatalf("message started before reasoning finished")
+				}
+				sawMessageStart = true
+			}
+		case canon.ItemFinished:
+			if _, ok := ev.Item.(canon.ReasoningItem); ok {
+				sawReasoningFinish = true
+			}
+		}
+	}
+	_ = sawMessageStart
+	last := events[len(events)-1].(canon.TurnFinished)
+	if last.Status.Kind() != canon.StatusCompleted {
+		t.Fatalf("status = %v, want completed", last.Status.Kind())
+	}
+}
+
 func TestDecodeStreamToolCallFixture(t *testing.T) {
 	events := decodeFixture(t, "stream-toolcall.sse")
 	if countTerminals(events) != 1 {
