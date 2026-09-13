@@ -18,6 +18,7 @@ import { UsagePanel } from './views/UsageView'
 import { UpdateMini } from './components/UpdateMini'
 import { bridge } from './bridge'
 import { ExperimentalView } from './views/ExperimentalView'
+import { BootScreen, useDaemonBoot } from './boot'
 
 const VIEW_ICONS: Record<View, string> = {
   overview: '#i-gauge',
@@ -97,6 +98,7 @@ function AppShell(): JSX.Element {
   const [updater, setUpdater] = useState<UpdaterStatus | null>(null)
   const mainRef = useRef<HTMLElement | null>(null)
   const viewRef = useRef(view)
+  const boot = useDaemonBoot(daemon, daemonUnreachable)
 
 
   const { mode, cycle } = useTheme()
@@ -203,10 +205,16 @@ function AppShell(): JSX.Element {
       </aside>
       <main className="app" id="main" ref={mainRef} tabIndex={-1}>
         <div className="wrap">
-          <RemoteBanner />
-          <Fragment key={host}>
-            {renderView(view, daemon, daemonUnreachable)}
-          </Fragment>
+          {boot.kind === 'booting' && host === 'local' ? (
+            <BootScreen phase={boot} />
+          ) : (
+            <>
+              <RemoteBanner />
+              <Fragment key={host}>
+                {renderView(view, daemon, daemonUnreachable)}
+              </Fragment>
+            </>
+          )}
         </div>
       </main>
     </>
