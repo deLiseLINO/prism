@@ -3,10 +3,12 @@ package management
 import (
 	"net/http"
 
+	"prism/internal/config"
 	"prism/internal/integrations"
 )
 
 type IntegrationsResponse struct {
+	Generation   uint64                `json:"generation"`
 	Integrations []integrations.Status `json:"integrations"`
 }
 
@@ -79,7 +81,8 @@ func (s *Server) hostIntegrationRollback(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) integrationsList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, IntegrationsResponse{Integrations: s.ints.Status()})
+	snap := s.cfg.Get()
+	writeJSON(w, http.StatusOK, IntegrationsResponse{Generation: snap.Generation, Integrations: s.ints.Status()})
 }
 
 func (s *Server) integrationGet(w http.ResponseWriter, r *http.Request) {
@@ -105,4 +108,24 @@ func (s *Server) integrationRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.ints.Rollback(id))
+}
+
+func (s *Server) integrationToggle(w http.ResponseWriter, r *http.Request) {
+	id, ok := integrationID(w, r)
+	if !ok {
+		return
+	}
+	body, ok := decodeJSON[IntegrationToggleWrite](w, r)
+	if !ok {
+		return
+	}
+	snap := s.cfg.Get()
+	doc := snap.Config
+	doc.Integrations[string(id)] = config.IntegrationSettings{Enabled: body.Enabled}
+	updated, err := s.cfg.Update(doc, body.ExpectedGeneration)
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, IntegrationToggleResponse{Generation: updated.Generation, Enabled: updated.Config.Integrations[string(id)].Enabled})
 }

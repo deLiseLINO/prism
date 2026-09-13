@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenMissingPathStartsEmpty(t *testing.T) {
@@ -169,5 +170,107 @@ func TestUpdatePersistsEverySection(t *testing.T) {
 		if !strings.Contains(string(b), section) {
 			t.Fatalf("persisted document missing %s", section)
 		}
+	}
+}
+
+func TestGetReturnsIsolatedIntegrationsMap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	m, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := validDoc()
+	d.Integrations = map[string]IntegrationSettings{"codex": {Enabled: true}, "grok": {Enabled: false}}
+	if _, err := m.Update(d, 0); err != nil {
+		t.Fatal(err)
+	}
+	s := m.Get()
+	s.Config.Integrations["codex"] = IntegrationSettings{Enabled: false}
+	s.Config.Integrations["intruder"] = IntegrationSettings{Enabled: true}
+	s2 := m.Get()
+	if got := s2.Config.Integrations["codex"]; !got.Enabled {
+		t.Fatalf("cloneDocument leaked integrations map: %+v", s2.Config.Integrations)
+	}
+	if _, ok := s2.Config.Integrations["intruder"]; ok {
+		t.Fatal("cloneDocument leaked added integrations key")
+	}
+	if got := s2.Config.Integrations["grok"]; got.Enabled {
+		t.Fatalf("grok enabled state not cloned: %+v", s2.Config.Integrations)
+	}
+}
+
+func TestChangesCoalescesBurstAndNeverBlocks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	m, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Update(validDoc(), 0); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := m.Update(validDoc(), uint64(i+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-m.Changes():
+	default:
+		t.Fatal("three updates left the channel empty")
+	}
+	select {
+	case <-m.Changes():
+		t.Fatal("buffered channel did not coalesce the burst")
+	default:
+	}
+	done := make(chan struct{})
+	go func() {
+		m.Update(validDoc(), 3)
+		m.Update(validDoc(), 4)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Update blocked on a full notify channel")
+	}
+}
+
+func TestChangesSignalsAfterAdoptedDiskReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	m, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Update(validDoc(), 0); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-m.Changes():
+	default:
+	}
+
+	other, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := validDoc()
+	foreign.Daemon.Listen = "127.0.0.1:4242"
+	if _, err := other.Update(foreign, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	next := validDoc()
+	next.Daemon.Listen = "127.0.0.1:9999"
+	if _, err := m.Update(next, 1); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("want ErrStaleGeneration, got %v", err)
+	}
+	select {
+	case <-m.Changes():
+	default:
+		t.Fatal("adopted disk reload left the change channel empty")
+	}
+	if got := m.Get().Config.Daemon.Listen; got != "127.0.0.1:4242" {
+		t.Fatalf("adopted snapshot: %q", got)
 	}
 }

@@ -4,8 +4,6 @@ import { IpcChannel, type DaemonStatus, type PrismBridge, type UpdaterStatus } f
 const bridge: PrismBridge = {
   daemon: {
     status: () => ipcRenderer.invoke(IpcChannel.daemonGetStatus),
-    start: () => ipcRenderer.invoke(IpcChannel.daemonStart),
-    stop: () => ipcRenderer.invoke(IpcChannel.daemonStop),
     onStatus: (listener) => {
       const handler = (_event: IpcRendererEvent, status: DaemonStatus) => listener(status)
       ipcRenderer.on(IpcChannel.daemonStatusEvent, handler)

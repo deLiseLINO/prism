@@ -58,10 +58,37 @@ func TestYamlLeafRewritesOwnRegion(t *testing.T) {
 	}
 }
 
-func TestYamlLeafRefusesFlow(t *testing.T) {
+func TestYamlLeafNormalizesEmptyFlowProviders(t *testing.T) {
 	res := UpsertProviderLeaf("providers: {}\n", "prism", NewOmpSpec(testPort, testModels()))
+	if res.Kind != "written" || !res.Changed {
+		t.Fatalf("expected written+changed for empty flow providers, got %+v", res)
+	}
+	if !strings.HasPrefix(res.Next, "providers:\n") || strings.Contains(res.Next, "{}") {
+		t.Fatalf("expected normalized block providers, got:\n%s", res.Next)
+	}
+	if !strings.Contains(res.Next, "  prism:\n") {
+		t.Fatalf("prism leaf missing:\n%s", res.Next)
+	}
+	again := UpsertProviderLeaf(res.Next, "prism", NewOmpSpec(testPort, testModels()))
+	if again.Kind != "written" || again.Changed {
+		t.Fatalf("normalization not idempotent: %+v", again)
+	}
+}
+
+func TestYamlLeafRefusesNonEmptyFlow(t *testing.T) {
+	res := UpsertProviderLeaf("providers: {openai: {api: x}}\n", "prism", NewOmpSpec(testPort, testModels()))
 	if res.Kind != "refused" || !strings.Contains(res.Reason, "flow-style value") {
-		t.Fatalf("expected flow refusal, got %+v", res)
+		t.Fatalf("expected flow refusal for non-empty mapping, got %+v", res)
+	}
+}
+
+func TestYamlLeafRemoveLeavesEmptyFlowUntouched(t *testing.T) {
+	res := RemoveProviderLeaf("providers: {}\n", "prism")
+	if res.Kind != "written" || res.Changed {
+		t.Fatalf("rollback must not touch user bytes, got %+v", res)
+	}
+	if res.Next != "providers: {}\n" {
+		t.Fatalf("rollback rewrote flow container: %q", res.Next)
 	}
 }
 

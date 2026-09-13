@@ -22,10 +22,17 @@ type ForcedModule interface {
 type Registry struct {
 	mu      sync.Mutex
 	modules map[ID]Module
+	enabled func() map[ID]bool
 }
 
 func NewRegistry() *Registry {
 	return &Registry{modules: make(map[ID]Module)}
+}
+
+func (r *Registry) SetEnabledSource(src func() map[ID]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.enabled = src
 }
 
 func (r *Registry) Register(module Module) error {
@@ -78,6 +85,32 @@ func (r *Registry) Rollback(id ID) ApplyResult {
 	return module.Rollback()
 }
 
+// ApplyEnabled applies every enabled registered module under the registry
+// mutex, mirroring Apply's serialization: overlapping callers never race a
+// staged write. Returns only the non-OK results.
+func (r *Registry) ApplyEnabled() []ApplyResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.enabled == nil {
+		return nil
+	}
+	enabled := r.enabled()
+	var refused []ApplyResult
+	for _, id := range IDs {
+		if !enabled[id] {
+			continue
+		}
+		module, ok := r.modules[id]
+		if !ok {
+			continue
+		}
+		if result := module.Apply(); !result.OK {
+			refused = append(refused, result)
+		}
+	}
+	return refused
+}
+
 func (r *Registry) Status() []Status {
 	out := make([]Status, 0, len(IDs))
 	for _, id := range IDs {
@@ -87,9 +120,15 @@ func (r *Registry) Status() []Status {
 }
 
 func (r *Registry) StatusOf(id ID) Status {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	module, ok := r.modules[id]
 	if !ok {
-		return Status{ID: id, Installed: false, Managed: false, TargetPath: nil, Endpoint: nil, Drift: false, Detail: UnregisteredDetail}
+		return Status{ID: id, Installed: false, Managed: false, Enabled: false, TargetPath: nil, Endpoint: nil, Drift: false, Detail: UnregisteredDetail}
 	}
-	return module.Status()
+	st := module.Status()
+	if r.enabled != nil && r.enabled()[id] {
+		st.Enabled = true
+	}
+	return st
 }

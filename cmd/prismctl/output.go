@@ -444,13 +444,29 @@ func (p printer) integrationApply(res integrations.ApplyResult, action string) e
 	}
 	if !res.OK {
 		// The refusal is printed verbatim; the typed exit happens at the
-		// command layer so --json still gets the structured body.
+		// command layer so --json still gets the structured body. Flow-style,
+		// tab, and duplicate refusals carry a hint because the fix is a
+		// one-line edit the user can make themselves.
 		if res.Retryable {
 			return p.text(action + " refused (retryable): " + res.Reason)
 		}
-		return p.text(action + " refused: " + res.Reason)
+		return p.text(action + " refused: " + res.Reason + refusalHint(res.Reason))
 	}
 	return p.text(action + " ok: " + string(res.ID))
+}
+
+// refusalHint appends a plain-language fix for the refusal reasons a user can
+// repair by hand; unknown reasons get no hint rather than a guess.
+func refusalHint(reason string) string {
+	switch {
+	case strings.Contains(reason, "flow-style value, not a block map"):
+		return "\nhint: rewrite the providers line in block style — put `providers:` alone on its line and each provider under it as `  name:` — then run the command again"
+	case strings.Contains(reason, "tab indentation"):
+		return "\nhint: models.yml indents with tabs; convert the indentation to spaces, then run the command again"
+	case strings.Contains(reason, "duplicate"):
+		return "\nhint: the file declares the same key twice; remove the duplicate entry, then run the command again"
+	}
+	return ""
 }
 
 func (p printer) agentsList(list []agentinstall.AgentStatus) error {

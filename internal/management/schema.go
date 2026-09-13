@@ -56,6 +56,8 @@ type Provider struct {
 	Models         []string                        `json:"models,omitempty"`
 	DisabledModels []string                        `json:"disabledModels,omitempty"`
 	SyncedModels   []string                        `json:"syncedModels,omitempty"`
+	RawModels      []string                        `json:"rawModels,omitempty"`
+	ModelEfforts   map[string][]string             `json:"modelEfforts,omitempty"`
 	ModelSettings  map[string]config.ModelSettings `json:"modelSettings,omitempty"`
 	Enabled        *bool                           `json:"enabled,omitempty"`
 	Pool           *config.PoolSettings            `json:"pool,omitempty"`
@@ -103,6 +105,16 @@ type VisionSidecarWrite struct {
 	Enabled            bool   `json:"enabled"`
 	Target             string `json:"target,omitempty"`
 	ExpectedGeneration uint64 `json:"expectedGeneration"`
+}
+
+type IntegrationToggleWrite struct {
+	Enabled            bool   `json:"enabled"`
+	ExpectedGeneration uint64 `json:"expectedGeneration"`
+}
+
+type IntegrationToggleResponse struct {
+	Generation uint64 `json:"generation"`
+	Enabled    bool   `json:"enabled"`
 }
 
 type QuotaView struct {

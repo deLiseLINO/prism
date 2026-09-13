@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1067,4 +1069,148 @@ func TestStatsJSONFieldsSnakeCase(t *testing.T) {
 	if strings.Contains(body, "inputTokens") || strings.Contains(body, "totalTokens") || strings.Contains(body, "reasoningTokens") {
 		t.Fatalf("body contains camelCase field: %s", body)
 	}
+}
+
+type fakeSyncer struct {
+	models map[string][]string
+}
+
+func (f *fakeSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]string, error) {
+	return f.models[id], nil
+}
+
+func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
+	m, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	seed := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"ag": {
+				Wire:           config.WireAntigravity,
+				Enabled:        &enabled,
+				Models:         []string{"gemini-3.7-flash-low", "gemini-3.7-flash-high", "claude-opus-4"},
+				DisabledModels: []string{"gemini-3.7-flash-low"},
+				ModelSettings: map[string]config.ModelSettings{
+					"gemini-3.7-flash-high": {ContextWindow: 12345},
+					"claude-opus-4":         {ImageInput: true},
+				},
+			},
+		},
+	}
+	snap, err := m.Update(seed, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}},
+		&fakeAuth{}, integrations.NewRegistry(), &fakeSyncer{models: map[string][]string{
+			"ag": {"gemini-3.7-flash", "claude-opus-4"},
+		}}, nil)
+	handler := srv.Handler()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/providers/ag/sync-models?expectedGeneration="+
+		strconv.FormatUint(snap.Generation, 10), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got := decodeBody[ProviderMutationResponse](t, rec)
+	p := got.Provider
+	if got.Generation != snap.Generation+1 {
+		t.Fatalf("generation = %d, want %d", got.Generation, snap.Generation+1)
+	}
+	wantModels := []string{"claude-opus-4", "gemini-3.7-flash", "gemini-3.7-flash-high", "gemini-3.7-flash-low"}
+	if !reflect.DeepEqual(p.Models, wantModels) {
+		t.Fatalf("models = %v, want %v", p.Models, wantModels)
+	}
+	if !reflect.DeepEqual(p.SyncedModels, []string{"gemini-3.7-flash", "claude-opus-4"}) {
+		t.Fatalf("syncedModels = %v", p.SyncedModels)
+	}
+	if !reflect.DeepEqual(p.DisabledModels, []string{"gemini-3.7-flash"}) {
+		t.Fatalf("disabledModels = %v, want [gemini-3.7-flash]", p.DisabledModels)
+	}
+	s, ok := p.ModelSettings["gemini-3.7-flash"]
+	if !ok || s.ContextWindow != 12345 {
+		t.Fatalf("settings folded = %+v, want contextWindow 12345", s)
+	}
+	if _, raw := p.ModelSettings["gemini-3.7-flash-high"]; raw {
+		t.Fatalf("raw settings key survived: %+v", p.ModelSettings)
+	}
+	if s, ok := p.ModelSettings["claude-opus-4"]; !ok || !s.ImageInput {
+		t.Fatalf("non-family settings entry must survive: %+v", p.ModelSettings)
+	}
+	wantRaw := []string{"gemini-3.7-flash-high", "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-tiered"}
+	if !reflect.DeepEqual(p.RawModels, wantRaw) {
+		t.Fatalf("rawModels = %v, want %v", p.RawModels, wantRaw)
+	}
+	wantEfforts := map[string][]string{
+		"gemini-3.7-flash": {"minimal", "low", "medium", "high"},
+	}
+	if !reflect.DeepEqual(p.ModelEfforts, wantEfforts) {
+		t.Fatalf("modelEfforts = %v, want %v", p.ModelEfforts, wantEfforts)
+	}
+
+	stored := m.Get()
+	storedP := stored.Config.Providers["ag"]
+	if _, raw := storedP.ModelSettings["gemini-3.7-flash-high"]; raw {
+		t.Fatalf("persisted raw settings key survived: %+v", storedP.ModelSettings)
+	}
+	if !reflect.DeepEqual(storedP.DisabledModels, []string{"gemini-3.7-flash"}) {
+		t.Fatalf("persisted disabledModels = %v", storedP.DisabledModels)
+	}
+}
+
+func TestFoldRawModelSettingsLeavesOtherWiresAndOwnedIdsAlone(t *testing.T) {
+	doc := config.Document{Version: config.SchemaVersion, Providers: map[string]config.Provider{
+		"anthropic": {
+			Wire:           config.WireAnthropicMessages,
+			Models:         []string{"claude-sonnet-4-6-thinking"},
+			DisabledModels: []string{"claude-sonnet-4-6-thinking"},
+			ModelSettings:  map[string]config.ModelSettings{"claude-sonnet-4-6-thinking": {ContextWindow: 500}},
+		},
+	}}
+	foldRawModelSettings(&doc, "anthropic")
+	p := doc.Providers["anthropic"]
+	if _, ok := p.ModelSettings["claude-sonnet-4-6"]; ok {
+		t.Fatalf("non-antigravity wire must not fold: %+v", p.ModelSettings)
+	}
+	if !reflect.DeepEqual(p.DisabledModels, []string{"claude-sonnet-4-6-thinking"}) {
+		t.Fatalf("non-antigravity disabled must not fold: %v", p.DisabledModels)
+	}
+
+	doc = config.Document{Version: config.SchemaVersion, Providers: map[string]config.Provider{
+		"ag": {
+			Wire:           config.WireAntigravity,
+			Models:         []string{"gemini-3.7-flash", "grok-5-thinking"},
+			DisabledModels: []string{"grok-5-thinking"},
+			ModelSettings: map[string]config.ModelSettings{
+				"grok-5-thinking": {ContextWindow: 900},
+				"gemini-3-flash":  {ContextWindow: 777},
+			},
+		},
+	}}
+	foldRawModelSettings(&doc, "ag")
+	p = doc.Providers["ag"]
+	if _, ok := p.ModelSettings["grok-5"]; ok {
+		t.Fatalf("auto-pair ids must not fold statically: %+v", p.ModelSettings)
+	}
+	if _, ok := p.ModelSettings["grok-5-thinking"]; !ok {
+		t.Fatalf("auto-pair id must keep its own entry: %+v", p.ModelSettings)
+	}
+	if _, ok := p.ModelSettings["gemini-3-flash"]; !ok {
+		t.Fatalf("alias id must keep its own entry: %+v", p.ModelSettings)
+	}
+	if !reflect.DeepEqual(p.DisabledModels, []string{"grok-5-thinking"}) {
+		t.Fatalf("table-unowned disabled entry must survive: %v", p.DisabledModels)
+	}
+}
+
+func TestSyncModelsWithoutSyncerStaysUnsupported(t *testing.T) {
+	env := newEnv(t)
+	env.cfg.Update(config.Document{Version: config.SchemaVersion, Providers: map[string]config.Provider{
+		"codex": {Wire: config.WireCodex, Models: []string{"gpt-5.3"}},
+	}}, 0)
+	rec := env.do(t, http.MethodPost, "/api/v1/providers/codex/sync-models?expectedGeneration=1", "")
+	assertErrorBody(t, rec, http.StatusNotImplemented, "unsupported")
 }

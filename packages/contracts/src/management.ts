@@ -41,6 +41,11 @@ export interface ProviderView {
   readonly models?: readonly string[]
   readonly disabledModels?: readonly string[]
   readonly syncedModels?: readonly string[]
+  // Antigravity-only extras: rawModels flattens the live family members behind each
+  // logical id; modelEfforts maps logical family ids to their effort rungs. Both stay
+  // absent for every other wire, so old daemons parse unchanged.
+  readonly rawModels?: readonly string[]
+  readonly modelEfforts?: Readonly<Record<string, readonly string[]>>
   readonly modelSettings?: Readonly<Record<string, ModelSettingsView>>
   readonly enabled?: boolean
   readonly pool?: PoolSettingsView
@@ -65,6 +70,13 @@ export interface VisionSidecarView {
 export interface VisionSidecarWrite {
   readonly enabled: boolean
   readonly target?: string
+  readonly expectedGeneration: number
+}
+
+// Mirrors internal/management/schema.go ContextWindowWrite (PUT /api/v1/context-window).
+// A value of 0 resets to the daemon default (256k).
+export interface ContextWindowWrite {
+  readonly contextWindow: number
   readonly expectedGeneration: number
 }
 

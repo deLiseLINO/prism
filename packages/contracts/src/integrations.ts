@@ -42,8 +42,24 @@ export interface IntegrationStatus {
   readonly id: IntegrationId
   readonly installed: boolean
   readonly managed: boolean
+  readonly enabled: boolean
   readonly targetPath: string | null
   readonly endpoint: string | null
   readonly drift: boolean
   readonly detail: string
+}
+
+export interface IntegrationsView {
+  readonly generation: number
+  readonly integrations: readonly IntegrationStatus[]
+}
+
+export interface IntegrationToggleWrite {
+  readonly enabled: boolean
+  readonly expectedGeneration: number
+}
+
+export interface IntegrationToggleResponse {
+  readonly generation: number
+  readonly enabled: boolean
 }

@@ -170,6 +170,31 @@ var families = []*family{
 	},
 }
 
+// wireOutputTokenCaps are the per-wire-id output ceilings the upstream
+// enforces: the real IDE
+// claude ids on daily-cloudcode-pa reject
+// maxOutputTokens > 64000.
+var wireOutputTokenCaps = map[string]int{
+	"gemini-3.5-flash-extra-low": 65536,
+	"gemini-3.5-flash-low":       65536,
+	"gemini-3-flash-agent":       65536,
+	"gemini-3.1-pro-low":         65535,
+	"gemini-pro-agent":           65535,
+	"claude-sonnet-4-6":          64000,
+	"claude-opus-4-6-thinking":   64000,
+}
+
+// outputCapWhenUnknown bounds maxOutputTokens for wire ids without a table
+// entry.
+const outputCapWhenUnknown = 64000
+
+func wireOutputTokenCap(wire string) int {
+	if ceiling, ok := wireOutputTokenCaps[wire]; ok {
+		return ceiling
+	}
+	return outputCapWhenUnknown
+}
+
 // templateFamily is the gemini-{rev}-flash revision template
 //  
 // One concrete family is instantiated per revision discovered.

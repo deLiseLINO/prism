@@ -114,12 +114,16 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]b
 	if err != nil {
 		return nil, err
 	}
+	present := presenceSnapshot()
+	f := familyForLogical(string(req.Model), present)
+	ef := resolvedEffort(req, f)
+	wire := resolveWireModel(string(req.Model), ef, present)
 	body := geminiRequest{
 		Contents:          b.contents,
 		SystemInstruction: system,
 		Tools:             tools,
 		ToolConfig:        toolConfig,
-		GenerationConfig:  generationConfig(req),
+		GenerationConfig:  generationConfig(req, f, ef, wire),
 		SessionID:         sessionID,
 	}
 	if b.claude && req.ToolChoice != nil {
@@ -136,7 +140,7 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]b
 		body.Contents = append(body.Contents, geminiContent{Role: "user", Parts: []geminiPart{{Text: continueNudge}}})
 	}
 	env := envelope{
-		Model:       resolveWireModel(string(req.Model), resolvedEffort(req), presenceSnapshot()),
+		Model:       wire,
 		UserAgent:   EnvelopeUserAgent,
 		RequestType: RequestType,
 		Project:     project,
@@ -463,7 +467,7 @@ func (b *envelopeBuilder) tools(tools []canon.Tool, choice canon.ToolChoice) ([]
 	return []geminiTool{{FunctionDeclarations: decls}}, config, nil
 }
 
-func generationConfig(req canon.Request) *geminiGenerationConfig {
+func generationConfig(req canon.Request, f *family, ef effort, wire string) *geminiGenerationConfig {
 	gc := &geminiGenerationConfig{
 		Temperature:   req.Sampling.Temperature,
 		TopP:          req.Sampling.TopP,
@@ -472,25 +476,63 @@ func generationConfig(req canon.Request) *geminiGenerationConfig {
 	if req.MaxOutputTokens > 0 {
 		gc.MaxOutputTokens = req.MaxOutputTokens
 	}
-	gc.ThinkingConfig = thinkingConfig(req)
-	if gc.MaxOutputTokens == 0 && gc.Temperature == nil && gc.TopP == nil && len(gc.StopSequences) == 0 && len(gc.ThinkingConfig) == 0 {
+	if budget, ok := budgetThinking(f, ef); ok {
+		maxTokens, wireBudget := accommodateBudget(req.MaxOutputTokens, budget, wireOutputTokenCap(wire))
+		gc.MaxOutputTokens = maxTokens
+		gc.ThinkingConfig = json.RawMessage(`{"includeThoughts":true,"thinkingBudget":` + strconv.Itoa(wireBudget) + `}`)
+	} else {
+		gc.ThinkingConfig = thinkingConfig(f, ef)
+	}
+	if gc.empty() {
 		return nil
 	}
 	return gc
 }
 
+// budgetThinking reports the thinking budget for a budget-family effort: the
+// one thinking mode whose tokens share the maxOutputTokens slot with output.
+func budgetThinking(f *family, ef effort) (int, bool) {
+	if f == nil || f.thinking != "budget" || ef == "" || ef == effortOff {
+		return 0, false
+	}
+	return googleThinkingBudget(ef, f), true
+}
+
+// minOutputTokens is the output floor the budget clamp keeps when a wire
+// ceiling leaves no room for the full budget.
+const minOutputTokens = 1024
+
+// accommodateBudget resolves the maxOutputTokens and thinkingBudget pair
+// that keeps a budget request valid on the upstream. The backend maps
+// thinkingBudget onto anthropic thinking.budget_tokens and maxOutputTokens
+// onto max_tokens, then rejects any request whose budget eats the whole
+// token slot. The caller's cap is desired output, so the budget rides on top
+// of it, bounded by the wire's ceiling; with no caller cap the flat unknown
+// ceiling stands in, which is the fixed cap the real IDE pins. A ceiling too
+// small for the budget shrinks the budget instead of the output floor.
+func accommodateBudget(callerCap, budget, ceiling int) (maxTokens, wireBudget int) {
+	maxTokens = outputCapWhenUnknown
+	if callerCap > 0 {
+		maxTokens = callerCap + budget
+	}
+	maxTokens = min(maxTokens, ceiling)
+	if maxTokens <= budget {
+		return maxTokens, max(0, maxTokens-minOutputTokens)
+	}
+	return maxTokens, budget
+}
+
 // thinkingConfig emits the family-aware thinkingConfig for a request, or nil
-// when no config is called for (the request is non-family or carries no
-// reasoning and no suppression surface). Omitting thinkingConfig on family
-// models would re-apply the per-id baked server default, so off is emitted
-// explicitly whenever the family can suppress.
-func thinkingConfig(req canon.Request) json.RawMessage {
-	present := presenceSnapshot()
-	f := familyForLogical(string(req.Model), present)
-	if f == nil {
+// when no config is called for (the request is non-family, carries no effort,
+// or carries no reasoning and no suppression surface). Omitting thinkingConfig
+// on family models would re-apply the per-id baked server default, so off is
+// emitted explicitly whenever the family can suppress. An unset effort on a
+// non-requiresEffort family stays unset too: resolvedEffort only clamps
+// requiresEffort families, whose endpoints reject omitted thinking outright.
+func thinkingConfig(f *family, ef effort) json.RawMessage {
+	if f == nil || ef == "" {
 		return nil
 	}
-	ef := resolvedEffort(req)
 	if ef == effortOff {
 		if !f.suppressWhenOff {
 			return nil
@@ -500,11 +542,8 @@ func thinkingConfig(req canon.Request) json.RawMessage {
 		}
 		return json.RawMessage(`{"includeThoughts":false,"thinkingBudget":0}`)
 	}
-	switch f.thinking {
-	case "google-level":
+	if f.thinking == "google-level" {
 		return json.RawMessage(`{"includeThoughts":true,"thinkingLevel":"` + googleThinkingLevel(ef, f) + `"}`)
-	case "budget":
-		return json.RawMessage(`{"includeThoughts":true,"thinkingBudget":` + strconv.Itoa(googleThinkingBudget(ef, f)) + `}`)
 	}
 	return nil
 }
@@ -515,7 +554,7 @@ func thinkingConfig(req canon.Request) json.RawMessage {
 // the clamp keeps the wire request valid without inventing a default the
 // caller never chose. prism carries no effort surface for non-family models,
 // so this never rewrites a bare id's request.
-func resolvedEffort(req canon.Request) effort {
+func resolvedEffort(req canon.Request, f *family) effort {
 	switch req.Reasoning.Effort {
 	case canon.EffortMinimal:
 		return effortMinimal
@@ -532,7 +571,6 @@ func resolvedEffort(req canon.Request) effort {
 	case canon.EffortOff:
 		return effortOff
 	}
-	f := familyForLogical(string(req.Model), presenceSnapshot())
 	if f != nil && f.requiresEffort && len(f.efforts) > 0 {
 		return f.efforts[0]
 	}

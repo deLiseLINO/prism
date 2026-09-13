@@ -305,10 +305,10 @@ func TestEnvelopeBudgetFamilyPerEffort(t *testing.T) {
 		model  string
 		think  string
 	}{
-		{canon.EffortMinimal, "gemini-3.5-flash-extra-low", `{"includeThoughts":true,"thinkingBudget":1000}`},
-		{canon.EffortLow, "gemini-3.5-flash-extra-low", `{"includeThoughts":true,"thinkingBudget":1000}`},
-		{canon.EffortMedium, "gemini-3.5-flash-low", `{"includeThoughts":true,"thinkingBudget":4000}`},
-		{canon.EffortHigh, "gemini-3-flash-agent", `{"includeThoughts":true,"thinkingBudget":10000}`},
+		{canon.EffortMinimal, "gemini-3.5-flash-extra-low", `"generationConfig":{"maxOutputTokens":64000,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":1000}}`},
+		{canon.EffortLow, "gemini-3.5-flash-extra-low", `"generationConfig":{"maxOutputTokens":64000,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":1000}}`},
+		{canon.EffortMedium, "gemini-3.5-flash-low", `"generationConfig":{"maxOutputTokens":64000,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":4000}}`},
+		{canon.EffortHigh, "gemini-3-flash-agent", `"generationConfig":{"maxOutputTokens":64000,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":10000}}`},
 	}
 	for _, tc := range cases {
 		req := baseRequest()
@@ -322,8 +322,83 @@ func TestEnvelopeBudgetFamilyPerEffort(t *testing.T) {
 		if want := `"model":"` + tc.model + `"`; !strings.Contains(got, want) {
 			t.Fatalf("effort %d: missing %s in %s", tc.effort, want, got)
 		}
-		if !strings.Contains(got, `"thinkingConfig":`+tc.think) {
-			t.Fatalf("effort %d: missing thinkingConfig %s in %s", tc.effort, tc.think, got)
+		if !strings.Contains(got, tc.think) {
+			t.Fatalf("effort %d: missing %s in %s", tc.effort, tc.think, got)
+		}
+	}
+}
+
+func TestEnvelopeBudgetAccommodatesCallerCap(t *testing.T) {
+	seedPresence(t, "claude-sonnet-4-6")
+	cases := []struct {
+		name   string
+		effort canon.ReasoningEffort
+		want   string
+	}{
+		{"low cap 64 raises to cap plus budget", canon.EffortLow,
+			`"generationConfig":{"maxOutputTokens":4160,"temperature":0,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":4096}}`},
+		{"minimal cap 64 raises to cap plus budget", canon.EffortMinimal,
+			`"generationConfig":{"maxOutputTokens":1088,"temperature":0,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":1024}}`},
+		{"high cap 64 raises cap plus budget", canon.EffortHigh,
+			`"generationConfig":{"maxOutputTokens":16448,"temperature":0,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":16384}}`},
+	}
+	for _, tc := range cases {
+		req := baseRequest()
+		req.Model = "claude-sonnet-4-6"
+		req.Instructions = nil
+		req.MaxOutputTokens = 64
+		temp := 0.0
+		req.Sampling = canon.Sampling{Temperature: &temp}
+		req.Reasoning = canon.ReasoningConfig{Effort: tc.effort}
+		req.Input = []canon.Item{textMessage(canon.RoleUser, "Reply with exactly: budget-ok")}
+		got := envelopeJSON(t, req)
+		if want := `"model":"claude-sonnet-4-6"`; !strings.Contains(got, want) {
+			t.Fatalf("%s: missing %s in %s", tc.name, want, got)
+		}
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("%s: missing %s in %s", tc.name, tc.want, got)
+		}
+	}
+}
+
+func TestEnvelopeBudgetUnprofiledWireUsesUnknownCeiling(t *testing.T) {
+	seedPresence(t, "gpt-oss-120b-medium")
+	req := baseRequest()
+	req.Model = "gpt-oss-120b"
+	req.Instructions = nil
+	req.MaxOutputTokens = 512
+	req.Sampling = canon.Sampling{}
+	req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortHigh}
+	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+	got := envelopeJSON(t, req)
+	if !strings.Contains(got, `"model":"gpt-oss-120b-medium"`) {
+		t.Fatalf("unprofiled family must route to its live member: %s", got)
+	}
+	if !strings.Contains(got, `"generationConfig":{"maxOutputTokens":16896,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":16384}}`) {
+		t.Fatalf("unprofiled wire must keep caller cap plus budget under the unknown ceiling: %s", got)
+	}
+}
+
+func TestAccommodateBudgetClamp(t *testing.T) {
+	cases := []struct {
+		name       string
+		callerCap  int
+		budget     int
+		ceiling    int
+		wantMax    int
+		wantBudget int
+	}{
+		{"cap plus budget fits", 64, 4096, 64000, 4160, 4096},
+		{"ceiling clamps the sum", 63999, 4096, 64000, 64000, 4096},
+		{"no caller cap uses the unknown ceiling", 0, 1000, 64000, 64000, 1000},
+		{"roomless ceiling shrinks the budget", 1200, 32768, 1225, 1225, 201},
+		{"floorless ceiling zeroes the budget", 0, 32768, 400, 400, 0},
+	}
+	for _, tc := range cases {
+		gotMax, gotBudget := accommodateBudget(tc.callerCap, tc.budget, tc.ceiling)
+		if gotMax != tc.wantMax || gotBudget != tc.wantBudget {
+			t.Fatalf("%s: accommodateBudget(%d, %d, %d) = (%d, %d), want (%d, %d)",
+				tc.name, tc.callerCap, tc.budget, tc.ceiling, gotMax, gotBudget, tc.wantMax, tc.wantBudget)
 		}
 	}
 }
@@ -377,6 +452,23 @@ func TestEnvelopeUnsetEffortClampsOnRequiresEffortFamily(t *testing.T) {
 	}
 	if !strings.Contains(got, `"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"LOW"}`) {
 		t.Fatalf("clamped minimal effort on gemini-{rev}-flash must emit LOW (minimal routes to the -low wire id): %s", got)
+	}
+}
+
+func TestEnvelopeUnsetEffortOnNonRequiresEffortFamilyOmitsThinking(t *testing.T) {
+	seedPresence(t, "claude-sonnet-4-6")
+	req := baseRequest()
+	req.Model = "claude-sonnet-4-6"
+	req.Instructions = nil
+	req.MaxOutputTokens = 0
+	req.Sampling = canon.Sampling{}
+	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+	got := envelopeJSON(t, req)
+	if !strings.Contains(got, `"model":"claude-sonnet-4-6"`) {
+		t.Fatalf("family model with unset effort must keep the logical wire id: %s", got)
+	}
+	if strings.Contains(got, "thinkingConfig") {
+		t.Fatalf("unset effort on a non-requiresEffort family must not invent a thinking budget: %s", got)
 	}
 }
 

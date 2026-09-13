@@ -54,6 +54,38 @@ export function sortProviders(list: readonly ProviderView[], disabledSnapshot: R
   })
 }
 
+// The antigravity family view: logical rows carry effort rungs, and a toggle
+// swaps the list onto the flat raw wire ids the daemon reports per provider.
+
+export function defaultEffort(efforts: readonly string[]): string {
+  if (efforts.includes('medium')) return 'medium'
+  if (efforts.includes('high')) return 'high'
+  return efforts[0] ?? ''
+}
+
+export interface RungChip {
+  readonly effort: string
+  readonly defaultRung: boolean
+}
+
+export function rungChips(model: string, modelEfforts: Readonly<Record<string, readonly string[]>> | undefined): readonly RungChip[] {
+  const efforts = modelEfforts?.[model]
+  if (efforts === undefined || efforts.length === 0) return []
+  const def = defaultEffort(efforts)
+  return efforts.map((effort) => ({ effort, defaultRung: effort === def }))
+}
+
+export function visibleModelRows(
+  models: readonly string[],
+  rawModels: readonly string[] | undefined,
+  needle: string,
+  showRaw: boolean,
+): readonly string[] {
+  const source = showRaw ? rawModels ?? [] : models
+  if (needle === '') return source
+  return source.filter((m) => m.toLowerCase().includes(needle))
+}
+
 interface DetailProps {
   readonly provider: ProviderView
   readonly generation: number
@@ -77,10 +109,14 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   const [syncing, setSyncing] = useState(false)
   const [freshModels, setFreshModels] = useState<readonly string[]>([])
   const [sortDisabled, setSortDisabled] = useState<readonly string[]>(provider.disabledModels ?? [])
+  const [showRaw, setShowRaw] = useState(false)
   const task = useTask()
   const models = provider.models ?? []
   const disabledModels = provider.disabledModels ?? []
   const syncedModels = provider.syncedModels ?? []
+  const rawModels = provider.rawModels ?? []
+  const modelEfforts = provider.modelEfforts
+  const hasFamilies = rawModels.length > 0
 
   async function mutate(patch: Partial<ProviderWrite>): Promise<void> {
     const ok = await task.run(() => api.replaceProvider(provider.id, buildWrite(provider, generation, patch)))
@@ -189,6 +225,10 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   const settings = provider.modelSettings ?? {}
   const needle = modelFilter.trim().toLowerCase()
   const visibleModels = needle === '' ? models : models.filter((m) => m.toLowerCase().includes(needle))
+  // A sync can empty rawModels mid-session; the raw view then falls back to
+  // logical rows instead of stranding an empty list with no toggle to exit.
+  const showRawList = showRaw && hasFamilies
+  const listedModels = visibleModelRows(models, rawModels, needle, showRawList)
 
   return (
     <section className="panel card prov-detail" style={{ '--i': 1 } as CSSProperties}>
@@ -212,8 +252,25 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
       <div className="prov-detail-body">
         <div className="prov-detail-label">
           models
-          <span className="num">{needle === '' ? models.length : visibleModels.length + ' of ' + models.length}</span>
+          <span className="num">
+            {showRawList
+              ? (needle === '' ? rawModels.length : listedModels.length + ' of ' + rawModels.length) + ' raw'
+              : needle === '' ? models.length : visibleModels.length + ' of ' + models.length}
+          </span>
           <span className="prov-detail-acts">
+            {hasFamilies ? (
+              <button
+                type="button"
+                className="pm-rawbtn"
+                onClick={() => setShowRaw((v) => !v)}
+                aria-pressed={showRawList}
+                aria-label={showRawList ? 'Show logical models' : 'Show raw models'}
+                title={showRawList ? 'Back to logical models' : 'Show the raw wire ids behind the logical models'}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/></svg>
+                <span>{showRawList ? 'logical models' : 'show raw models'}</span>
+              </button>
+            ) : null}
             <button
               type="button"
               className="ibtn"
@@ -247,9 +304,16 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
             <span className="num">{disabledModels.length} off</span>
           </span>
         </div>
-        {visibleModels.length > 0 ? (
+        {listedModels.length > 0 ? (
           <div className="prov-mlist">
-            {visibleModels.slice().sort((a, b) => {
+            {showRawList ? listedModels.map((raw) => (
+              <div className="prov-mline prov-mline--raw" key={raw}>
+                <div className="prov-mline-l">
+                  <span className="prov-mline-dot" aria-hidden="true" />
+                  <span className="pm-id">{raw}</span>
+                </div>
+              </div>
+            )) : listedModels.slice().sort((a, b) => {
               const oa = sortDisabled.includes(a) ? 1 : 0
               const ob = sortDisabled.includes(b) ? 1 : 0
               if (oa !== ob) return oa - ob
@@ -260,6 +324,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
               const off = disabledModels.includes(model)
               const manual = !syncedModels.includes(model)
               const fresh = freshModels.includes(model)
+              const rungs = rungChips(model, modelEfforts)
               return (
                 <div
                   className={`prov-mline${off ? ' prov-mline--off' : ''}${fresh ? ' prov-mline--new' : ''} prov-mline--click`}
@@ -274,11 +339,24 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
                   }}
                   aria-pressed={!off}
                 >
-                  <div className="prov-mline-l">
-                    <span className="prov-mline-dot" aria-hidden="true" />
-                    <span className="prov-mline-name num">{model}</span>
-                    {fresh ? <span className="badge badge--ok prov-mline-newbadge">new</span> : null}
-                    {manual ? <span className="badge badge--muted prov-mline-manual">manual</span> : null}
+                  <div className="pm-stack">
+                    <div className="pm-line1">
+                      <span className="prov-mline-dot" aria-hidden="true" />
+                      <span className="pm-name">{model}</span>
+                      {fresh ? <span className="badge badge--ok prov-mline-newbadge">new</span> : null}
+                      {manual ? <span className="badge badge--muted prov-mline-manual">manual</span> : null}
+                    </div>
+                    {rungs.length > 0 ? (
+                      <div className="pm-line2">
+                        <span className="pm-rungs" aria-label={`Efforts for ${model}`}>
+                          {rungs.map((rung) => (
+                            <span className={`pm-rung${rung.defaultRung ? ' pm-rung--def' : ''}`} key={rung.effort}>
+                              {rung.effort}
+                            </span>
+                          ))}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="prov-mline-acts model-toggles" aria-label={`Models for ${provider.id}`}>
                     <span

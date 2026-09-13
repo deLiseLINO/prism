@@ -58,7 +58,7 @@ func RemoveProviderLeaf(text string, providerID string) YamlLeafPatch {
 // difference rewrites the leaf in place (new model set, format change) rather
 // than refusing, matching the reference injector's rewrite-in-place semantics.
 func UpsertProviderLeafBody(text, providerID, fileLabel string, renderBody func(indent int) string) YamlLeafPatch {
-	scan, refused := scanProviderLeaf(text, providerID, fileLabel)
+	scan, refused := scanProviderLeaf(text, providerID, fileLabel, true)
 	if refused != "" {
 		return YamlLeafPatch{Kind: "refused", Reason: refused}
 	}
@@ -76,7 +76,7 @@ func UpsertProviderLeafBody(text, providerID, fileLabel string, renderBody func(
 }
 
 func RemoveProviderLeafBody(text, providerID, fileLabel string) YamlLeafPatch {
-	scan, refused := scanProviderLeaf(text, providerID, fileLabel)
+	scan, refused := scanProviderLeaf(text, providerID, fileLabel, false)
 	if refused != "" {
 		return YamlLeafPatch{Kind: "refused", Reason: refused}
 	}
@@ -108,7 +108,7 @@ func ReadProviderLeaf(text string, providerID string) ProviderLeafRead {
 }
 
 func ReadProviderLeafBody(text, providerID, fileLabel, endpointKey string) ProviderLeafRead {
-	scan, refused := scanProviderLeaf(text, providerID, fileLabel)
+	scan, refused := scanProviderLeaf(text, providerID, fileLabel, false)
 	if refused != "" {
 		return ProviderLeafRead{Kind: LeafRefused, Reason: refused}
 	}
@@ -184,16 +184,19 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 	return strings.Join(lines, "\n")
 }
 
-func scanProviderLeaf(text string, providerID string, fileLabel string) (patchContext, string) {
+func scanProviderLeaf(text string, providerID string, fileLabel string, normalizeEmptyFlow bool) (patchContext, string) {
 	lines := sourceLines(text)
 	for _, line := range lines {
 		if strings.HasPrefix(line.text, "\t") {
 			return patchContext{}, "prism: " + providerID + " patch refused — tab indentation in " + fileLabel + " is unsupported"
 		}
 	}
-	providersIndex, refused := findTopLevelKey(lines, "providers")
+	providersIndex, refused, normalize := findTopLevelKey(lines, "providers")
 	if refused != "" {
 		return patchContext{}, "prism: " + providerID + " patch refused — " + refused
+	}
+	if normalize != "" && normalizeEmptyFlow {
+		lines, providersIndex = normalizeEmptyFlowContainer(lines, providersIndex)
 	}
 	if providersIndex == -1 {
 		return patchContext{lines: lines, providersIndex: -1, containerEnd: len(lines), childIndent: -1, leafStart: -1, leafEnd: -1}, ""
@@ -247,7 +250,10 @@ func joinLines(lines []sourceLine) string {
 
 // findTopLevelKey returns the index of the single top-level `key:` block-map
 // line, or -1; a refused string names duplicates and flow-style values.
-func findTopLevelKey(lines []sourceLine, key string) (int, string) {
+// `providers: {}` is an empty flow mapping: no user bytes to preserve, so it is
+// reported as a recoverable rewrite to `key:` on its own line instead of a
+// refusal, letting the caller unblock the patch by normalizing that one line.
+func findTopLevelKey(lines []sourceLine, key string) (int, string, string) {
 	pattern := topLevelKeyRe(key)
 	index := -1
 	for position, line := range lines {
@@ -255,19 +261,42 @@ func findTopLevelKey(lines []sourceLine, key string) (int, string) {
 			continue
 		}
 		if index != -1 {
-			return -1, "duplicate top-level " + key + " keys"
+			return -1, "duplicate top-level " + key + " keys", ""
 		}
 		inline := strings.TrimSpace(line.text[len(key)+1:])
 		if inline != "" && !strings.HasPrefix(inline, "#") {
-			return -1, key + " is a flow-style value, not a block map"
+			if inline == "{}" {
+				return position, "", "{}"
+			}
+			return -1, key + " is a flow-style value, not a block map", ""
 		}
 		index = position
 	}
-	return index, ""
+	return index, "", ""
 }
 
 func topLevelKeyRe(key string) *regexp.Regexp {
 	return regexp.MustCompile("^" + key + ":(?:\\s.*)?$")
+}
+
+// normalizeEmptyFlowContainer rewrites a bare `providers: {}` line into
+// `providers:` (a block-map header with no children). It is the only byte
+// change allowed on a refusal path, and only on the apply path: `{}` carries
+// zero user data, so widening the line costs nothing, while any non-empty
+// flow mapping stays a refusal, and rollback/read never touch it.
+func normalizeEmptyFlowContainer(lines []sourceLine, providersIndex int) ([]sourceLine, int) {
+	if providersIndex == -1 {
+		return lines, providersIndex
+	}
+	normalized := make([]sourceLine, len(lines))
+	copy(normalized, lines)
+	normalized[providersIndex] = sourceLine{
+		text:    "providers:",
+		indent:  0,
+		blank:   false,
+		comment: false,
+	}
+	return normalized, providersIndex
 }
 
 // blockEnd returns the first line at or after `start` that a sibling or parent of the block would own.
