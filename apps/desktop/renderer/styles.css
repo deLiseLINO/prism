@@ -228,6 +228,27 @@ body::before {
 .stat--warn .stat__value { color: var(--warn); }
 .stat--error .stat__value { color: var(--danger); }
 
+/* App boot screen: shown while the local daemon has not reached ready yet. */
+.boot {
+  min-height: calc(100dvh - 220px);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  color: var(--fg-muted); animation: panel-in 0.5s var(--ease-out) backwards;
+}
+.boot-mark { color: var(--accent); animation: boot-spin 3.2s linear infinite; transform-origin: center; }
+.boot-name { font-size: 17px; font-weight: 640; letter-spacing: 0.01em; color: var(--fg); margin-top: 4px; }
+.boot-status {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--fg-subtle);
+}
+.boot-line { height: 10px; width: 190px; margin-top: 8px; }
+.dot-boot-pulse { animation: boot-dot-pulse 1.6s ease-out infinite; }
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+@keyframes boot-dot-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--fg-subtle) 55%, transparent); }
+  75% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
 .skel { position: relative; display: block; overflow: hidden; background: var(--skel-a); border-radius: 6px; }
 .skel::after, .state__skeleton::after {
   content: ""; position: absolute; inset: 0; transform: translateX(-100%);
