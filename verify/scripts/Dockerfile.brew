@@ -1,0 +1,12 @@
+FROM ubuntu:24.04
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates curl jq git sudo file procps build-essential \
+    && rm -rf /var/lib/apt/lists/*
+ARG CELL_UID
+RUN useradd -m -u "${CELL_UID}" cell \
+    && echo "cell ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cell \
+    && chmod 0440 /etc/sudoers.d/cell
+USER cell
+ENV HOME=/home/cell
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
