@@ -11,8 +11,8 @@
     "build": "npm run build --workspace @prism/desktop",
     "dev": "npm run dev --workspace @prism/desktop",
     "test:desktop": "npm run test --workspace @prism/desktop",
-    "verify": "bash scripts/verify/scripts/quality-gate.sh local",
-    "verify:live": "bash scripts/verify/scripts/quality-gate.sh live"
+    "verify": "bash verify/scripts/quality-gate.sh local",
+    "verify:live": "bash verify/scripts/quality-gate.sh live"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

@@ -1,8 +1,10 @@
 .audit/
 node_modules/
 dist/
-scripts/verify/evidence/
+verify/evidence/
 .run/
 apps/desktop/resources/prismd/
 apps/desktop/resources/webui/
+notes/
+verify/scripts/dist/
 
