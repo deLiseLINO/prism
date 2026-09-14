@@ -20,10 +20,10 @@ func TestClaudePathResolution(t *testing.T) {
 }
 
 func TestClaudeAlias(t *testing.T) {
-	if got := ClaudeAlias("codex/gpt-5.2-codex"); got != "claude-prism-codex--gpt-5.2-codex" {
+	if got := ClaudeAlias("codex/gpt-5.2-codex"); got != "claude-codex--gpt-5.2-codex" {
 		t.Fatalf("alias: %s", got)
 	}
-	if got := ClaudeAlias("bare-model"); got != "claude-prism-codex--bare-model" {
+	if got := ClaudeAlias("bare-model"); got != "claude-codex--bare-model" {
 		t.Fatalf("bare alias: %s", got)
 	}
 }
@@ -42,7 +42,7 @@ func TestClaudeApplyWritesEnvSlots(t *testing.T) {
 	if !strings.Contains(got, `"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"`) {
 		t.Fatalf("base url missing:\n%s", got)
 	}
-	if !strings.Contains(got, `"ANTHROPIC_MODEL": "claude-prism-ag--gemini-3-pro"`) {
+	if !strings.Contains(got, `"ANTHROPIC_MODEL": "claude-ag--gemini-3-pro"`) {
 		t.Fatalf("default model alias missing (deterministic smallest id):\n%s", got)
 	}
 	if !strings.Contains(got, `"permissions"`) {
@@ -195,7 +195,7 @@ func TestClaudeApplySeedsGatewayCache(t *testing.T) {
 	if parsed.BaseURL != "http://127.0.0.1:8787" || parsed.FetchedAt != now {
 		t.Fatalf("cache header = %+v", parsed)
 	}
-	if len(parsed.Models) != 1 || parsed.Models[0].ID != "claude-prism-codex--gpt-5.2-codex" || parsed.Models[0].DisplayName != "GPT-5.2 Codex" {
+	if len(parsed.Models) != 1 || parsed.Models[0].ID != "claude-codex--gpt-5.2-codex" || parsed.Models[0].DisplayName != "GPT-5.2 Codex" {
 		t.Fatalf("cache models = %+v", parsed.Models)
 	}
 

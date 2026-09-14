@@ -6,8 +6,7 @@ import (
 )
 
 const (
-	PrismAliasPrefix    = "prism-"
-	ClaudeAliasPrefix = "claude-prism-"
+	ClaudeAliasPrefix = "claude-"
 	ClaudeSeparator   = "--"
 )
 
@@ -28,21 +27,6 @@ func Sanitize(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func PrismAlias(name string) (string, error) {
-	s := Sanitize(name)
-	if s == "" {
-		return "", fmt.Errorf("%w: empty sanitized name %q", ErrMalformedAlias, name)
-	}
-	return PrismAliasPrefix + s, nil
-}
-
-func ParsePrismAlias(alias string) (string, error) {
-	rest, ok := strings.CutPrefix(alias, PrismAliasPrefix)
-	if !ok || !isSanitized(rest) {
-		return "", fmt.Errorf("%w: %q", ErrMalformedAlias, alias)
-	}
-	return rest, nil
-}
 
 func ClaudeAlias(provider, model string) (string, error) {
 	p, m := Sanitize(provider), Sanitize(model)

@@ -229,7 +229,7 @@ func jsonEnvEntries() []JSONScalarEntry {
 	return []JSONScalarEntry{
 		{Key: "ANTHROPIC_BASE_URL", Value: "http://127.0.0.1:8787"},
 		{Key: "ANTHROPIC_AUTH_TOKEN", Value: "prism-loopback"},
-		{Key: "ANTHROPIC_MODEL", Value: "claude-prism-codex--gpt-5.2-codex"},
+		{Key: "ANTHROPIC_MODEL", Value: "claude-codex--gpt-5.2-codex"},
 	}
 }
 
@@ -293,13 +293,13 @@ func TestJSONScalarKeysPreserveSiblingEnvEntries(t *testing.T) {
 }
 
 func TestJSONScalarKeysRewritePrismOwnedValuesInPlace(t *testing.T) {
-	seed := "{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:8787\",\n    \"ANTHROPIC_MODEL\": \"claude-prism-codex--stale\"\n  }\n}\n"
+	seed := "{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:8787\",\n    \"ANTHROPIC_MODEL\": \"claude-codex--stale\"\n  }\n}\n"
 	patch := upsertTestEnvKeys(seed)
 	if patch.Kind != "written" || !patch.Changed {
 		t.Fatalf("expected healing rewrite, got %+v", patch)
 	}
 	assertValidJSON(t, patch.Next)
-	if !strings.Contains(patch.Next, `"ANTHROPIC_MODEL": "claude-prism-codex--gpt-5.2-codex"`) {
+	if !strings.Contains(patch.Next, `"ANTHROPIC_MODEL": "claude-codex--gpt-5.2-codex"`) {
 		t.Fatalf("stale model survived:\n%s", patch.Next)
 	}
 	if !strings.Contains(patch.Next, `"ANTHROPIC_AUTH_TOKEN": "prism-loopback"`) {

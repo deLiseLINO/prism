@@ -77,7 +77,7 @@ func (Ingress) Parse(_ context.Context, hr *http.Request) (canon.Request, execut
 		return canon.Request{}, execution.Facts{}, missing("model")
 	}
 	if !validModelSlug(b.Model) {
-		return canon.Request{}, execution.Facts{}, invalid("model", fmt.Errorf("model %q is not <provider>/<model> or prism-<sanitized>", b.Model))
+		return canon.Request{}, execution.Facts{}, invalid("model", fmt.Errorf("model %q is not <provider>/<model>", b.Model))
 	}
 	if len(b.Messages) == 0 {
 		return canon.Request{}, execution.Facts{}, missing("messages")
@@ -124,16 +124,8 @@ func factsFrom(hr *http.Request) (execution.Facts, error) {
 }
 
 func validModelSlug(model string) bool {
-	if provider, rest, ok := strings.Cut(model, "/"); ok {
-		return provider != "" && rest != ""
-	}
-	alias, ok := strings.CutPrefix(model, "prism-")
-	if !ok || alias == "" {
-		return false
-	}
-	return strings.IndexFunc(alias, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-')
-	}) < 0
+	provider, rest, ok := strings.Cut(model, "/")
+	return ok && provider != "" && rest != ""
 }
 
 func maxTokensFrom(b body) int {

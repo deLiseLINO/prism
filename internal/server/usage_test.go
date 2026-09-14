@@ -180,12 +180,12 @@ func TestUsageRecordProtocolAndIncomplete(t *testing.T) {
 		},
 	}}}
 	store := &fakeUsageStore{}
-	h := newTestServerWithUsage(t, nil, map[canon.ModelID]routing.Plan{"claude-prism-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
+	h := newTestServerWithUsage(t, nil, map[canon.ModelID]routing.Plan{"claude-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", runner); err != nil {
 			t.Fatal(err)
 		}
 	}, store)
-	rec := postJSON(t, h, "/v1/messages", `{"model":"claude-prism-p1--m1","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	rec := postJSON(t, h, "/v1/messages", `{"model":"claude-p1--m1","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}

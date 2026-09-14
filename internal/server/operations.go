@@ -55,7 +55,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	// Claude Code discovers routed models through this endpoint when gateway
 	// model discovery is on: every enabled provider/model pair is listed under
-	// its claude-prism alias so the native model picker accepts them.
+	// its claude alias so the native model picker accepts them.
 	for providerName, p := range d.Providers {
 		if !p.IsEnabled() {
 			continue
@@ -64,7 +64,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			if slices.Contains(p.DisabledModels, model) {
 				continue
 			}
-			alias := "claude-prism-" + providerName + "--" + model
+			alias := "claude-" + providerName + "--" + model
 			if keyBlocked(d, alias) {
 				continue
 			}

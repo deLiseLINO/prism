@@ -106,7 +106,7 @@ describe('renderer api wrapper', () => {
   it('maps host create and delete to the host routes', async () => {
     const { api } = await loadApi()
     setReply({ ok: true, status: 200, body: { generation: 2, host: { id: 'workmac', local: false, status: 'ok' } } })
-    const created = await api.createHost({ id: 'workmac', address: 'user@host', expectedGeneration: 1 })
+    const created = await api.createHost({ id: 'workmac', address: 'user@10.0.0.4', expectedGeneration: 1 })
     expect(created.host.status).toBe('ok')
     expect(recorded[0]).toMatchObject({ method: 'POST', path: '/api/v1/hosts' })
     setReply({ ok: true, status: 200, body: { generation: 3 } })

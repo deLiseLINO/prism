@@ -14,7 +14,7 @@ import (
 	"prism/internal/reasonenv"
 )
 
-const aliasPrefix = "claude-prism-"
+const aliasPrefix = "claude-"
 
 var forwardableHeaders = map[string]bool{
 	"x-session-id": true,

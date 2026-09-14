@@ -186,12 +186,12 @@ func TestMessagesRouteHappyPath(t *testing.T) {
 			canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}},
 		},
 	}}}
-	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"claude-prism-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"claude-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", runner); err != nil {
 			t.Fatal(err)
 		}
 	})
-	rec := postJSON(t, h, "/v1/messages", `{"model":"claude-prism-p1--m1","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	rec := postJSON(t, h, "/v1/messages", `{"model":"claude-p1--m1","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -273,7 +273,7 @@ func TestIngressParseErrors(t *testing.T) {
 		t.Fatalf("chat error body = %s", body)
 	}
 
-	rec = postJSON(t, h, "/v1/messages", `{"model":"claude-prism-p1--m1","messages":[{"role":"user","content":"hi"}]}`)
+	rec = postJSON(t, h, "/v1/messages", `{"model":"claude-p1--m1","messages":[{"role":"user","content":"hi"}]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("messages status = %d body %s", rec.Code, rec.Body.String())
 	}
