@@ -24,19 +24,15 @@ export function locateDaemon(env: NodeJS.ProcessEnv = process.env): DaemonBinary
 }
 
 function bundledDaemonPath(): string {
-  const suffix = process.platform === 'win32' ? '.exe' : ''
-  const dir = app.isPackaged
-    ? path.join(process.resourcesPath, 'prismd')
-    : path.join(app.getAppPath(), 'resources', 'prismd')
-  const plain = path.join(dir, `prismd${suffix}`)
-  if (!app.isPackaged || process.platform !== 'linux') {
-    return plain
+  let binary: string
+  if (process.platform === 'win32') {
+    binary = app.isPackaged ? `prismd-windows-${process.arch}.exe` : 'prismd.exe'
+  } else {
+    binary = 'prismd'
   }
-  // Cross-built linux bundles ship arch-suffixed binaries (prismd-linux-amd64 / prismd-linux-arm64);
-  // the plain `prismd` may be a foreign-OS binary, so prefer the suffixed one for the current arch.
-  const archSuffix = process.arch === 'arm64' ? 'linux-arm64' : 'linux-amd64'
-  const suffixed = path.join(dir, `prismd-${archSuffix}`)
-  return existsSync(suffixed) ? suffixed : plain
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'prismd', binary)
+    : path.join(app.getAppPath(), 'resources', 'prismd', binary)
 }
 
 export function locateWebui(configured: string | null): string | null {

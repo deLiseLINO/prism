@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -288,7 +287,7 @@ func simulateForeignProcess(t *testing.T, path string, backdate bool) *os.File {
 	if err != nil {
 		t.Fatalf("foreign process open: %v", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := tryLockNonBlocking(f); err != nil {
 		f.Close()
 		t.Fatalf("foreign process flock: %v", err)
 	}
@@ -304,7 +303,7 @@ func simulateForeignProcess(t *testing.T, path string, backdate bool) *os.File {
 
 func releaseForeignProcess(t *testing.T, f *os.File) {
 	t.Helper()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+	if err := unlock(f); err != nil {
 		f.Close()
 		t.Fatalf("foreign unlock: %v", err)
 	}

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 
 	"prism/internal/account"
@@ -188,7 +187,7 @@ func (s *FileCredentialStore) AcquireRefreshLock(ctx context.Context, fingerprin
 		if err != nil {
 			return nil, err
 		}
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err = tryLockNonBlocking(f)
 		if err == nil && sameInode(f, path) {
 			if err := stampLock(f, s.now()); err != nil {
 				f.Close()
@@ -196,7 +195,7 @@ func (s *FileCredentialStore) AcquireRefreshLock(ctx context.Context, fingerprin
 			}
 			return &RefreshLock{path: path, f: f}, nil
 		}
-		if err != nil && !errors.Is(err, syscall.EWOULDBLOCK) {
+		if err != nil && !wouldBlock(err) {
 			f.Close()
 			return nil, err
 		}
@@ -221,7 +220,7 @@ func (s *FileCredentialStore) AcquireRefreshLock(ctx context.Context, fingerprin
 }
 
 func (l *RefreshLock) Release() error {
-	err := syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
+	err := unlock(l.f)
 	if cerr := l.f.Close(); err == nil {
 		err = cerr
 	}
@@ -248,15 +247,4 @@ func stampLock(f *os.File, now time.Time) error {
 	}
 	_, err := f.WriteString("pid=" + strconv.Itoa(os.Getpid()) + " ts=" + strconv.FormatInt(now.UnixNano(), 10) + "\n")
 	return err
-}
-
-func sameInode(f *os.File, path string) bool {
-	var fStat, pStat syscall.Stat_t
-	if err := syscall.Fstat(int(f.Fd()), &fStat); err != nil {
-		return false
-	}
-	if err := syscall.Stat(path, &pStat); err != nil {
-		return false
-	}
-	return fStat.Ino == pStat.Ino
 }

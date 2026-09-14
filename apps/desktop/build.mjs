@@ -5,17 +5,31 @@ import { execFileSync } from 'node:child_process'
 
 const pkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
 const prismdDir = path.join('resources', 'prismd')
-const prismdBinary = path.join(prismdDir, 'prismd')
+const prismdBinary = path.join(prismdDir, process.platform === 'win32' ? 'prismd.exe' : 'prismd')
 const versionFlag = `-X prism/internal/buildinfo.Version=${pkg.version}`
 const buildCwd = new URL('.', import.meta.url).pathname
 execFileSync('go', ['build', '-trimpath', '-ldflags', versionFlag, '-o', prismdBinary, '../../cmd/prismd'], {
   cwd: buildCwd,
   stdio: 'inherit',
 })
-for (const { GOOS, GOARCH } of [{ GOOS: 'linux', GOARCH: 'amd64' }, { GOOS: 'linux', GOARCH: 'arm64' }]) {
+for (const { GOOS, GOARCH } of [
+  { GOOS: 'linux', GOARCH: 'amd64' },
+  { GOOS: 'linux', GOARCH: 'arm64' },
+  { GOOS: 'windows', GOARCH: 'amd64' },
+  { GOOS: 'windows', GOARCH: 'arm64' },
+]) {
+  const suffix = GOOS === 'windows' ? '.exe' : ''
   execFileSync(
     'go',
-    ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, `prismd-${GOOS}-${GOARCH}`), '../../cmd/prismd'],
+    [
+      'build',
+      '-trimpath',
+      '-ldflags',
+      versionFlag,
+      '-o',
+      path.join(prismdDir, `prismd-${GOOS}-${GOARCH}${suffix}`),
+      '../../cmd/prismd',
+    ],
     {
       cwd: buildCwd,
       stdio: 'inherit',
