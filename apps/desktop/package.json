@@ -8,8 +8,8 @@
     "build": "node build.mjs",
     "dev": "npm run build && electron .",
     "test": "vitest run",
-    "verify": "bash ../../verify/scripts/quality-gate.sh local",
-    "verify:live": "bash ../../verify/scripts/quality-gate.sh live"
+    "verify": "bash ../../scripts/verify/scripts/quality-gate.sh local",
+    "verify:live": "bash ../../scripts/verify/scripts/quality-gate.sh live"
   },
   "dependencies": {
     "@prism/contracts": "*",
