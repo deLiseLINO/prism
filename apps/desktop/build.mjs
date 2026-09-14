@@ -5,23 +5,24 @@ import { execFileSync } from 'node:child_process'
 
 const pkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
 const prismdDir = path.join('resources', 'prismd')
-const prismdBinary = path.join(prismdDir, 'prismd')
 const versionFlag = `-X prism/internal/buildinfo.Version=${pkg.version}`
 const buildCwd = new URL('.', import.meta.url).pathname
-execFileSync('go', ['build', '-trimpath', '-ldflags', versionFlag, '-o', prismdBinary, '../../cmd/prismd'], {
-  cwd: buildCwd,
-  stdio: 'inherit',
-})
-for (const { GOOS, GOARCH } of [{ GOOS: 'linux', GOARCH: 'amd64' }, { GOOS: 'linux', GOARCH: 'arm64' }]) {
-  execFileSync(
-    'go',
-    ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, `prismd-${GOOS}-${GOARCH}`), '../../cmd/prismd'],
-    {
-      cwd: buildCwd,
-      stdio: 'inherit',
-      env: { ...process.env, CGO_ENABLED: '0', GOOS, GOARCH },
-    },
-  )
+// Bundled daemon matrix: every supported platform/arch gets its own binary so
+// the packaged app works on any build host (e.g. an arm64 mac producing an
+// x64 dmg). The main process picks the right one via process.platform/arch
+// (see main/daemon/locate.ts and main/hosts/install.ts).
+const daemonTargets = [
+  { GOOS: 'darwin', GOARCH: 'arm64', name: 'prismd-darwin-arm64' },
+  { GOOS: 'darwin', GOARCH: 'amd64', name: 'prismd-darwin-amd64' },
+  { GOOS: 'linux', GOARCH: 'amd64', name: 'prismd-linux-amd64' },
+  { GOOS: 'linux', GOARCH: 'arm64', name: 'prismd-linux-arm64' },
+]
+for (const { GOOS, GOARCH, name } of daemonTargets) {
+  execFileSync('go', ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, name), '../../cmd/prismd'], {
+    cwd: buildCwd,
+    stdio: 'inherit',
+    env: { ...process.env, CGO_ENABLED: '0', GOOS, GOARCH },
+  })
 }
 
 
