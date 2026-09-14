@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DaemonStatus, ProvidersView, ProviderView } from '@prism/contracts'
 import { AsyncBoundary, Banner, Empty, Toggle } from '../components/Ui'
 import { useAsync, useTask, describeError, type UseAsyncResult } from '../useAsync'
@@ -40,6 +40,117 @@ function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
     }
   }
   return ids.sort((a, b) => a.localeCompare(b))
+}
+
+export function ModelSelect({
+  ids,
+  selected,
+  onSelect,
+  placeholder,
+  disabled = false,
+}: {
+  readonly ids: readonly string[]
+  readonly selected: string
+  readonly onSelect: (id: string) => void
+  readonly placeholder: string
+  readonly disabled?: boolean
+}): ReactNode {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const effectiveOpen = open && !disabled
+
+  useEffect(() => {
+    if (!effectiveOpen) return
+    const onPointerDown = (event: PointerEvent): void => {
+      const root = rootRef.current
+      if (root !== null && !root.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      btnRef.current?.focus()
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [effectiveOpen])
+
+  const focusOption = (from: EventTarget | null, delta: 1 | -1): void => {
+    const options = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>('.vsd__opt') ?? [],
+    )
+    if (options.length === 0) return
+    const index = options.findIndex((option) => option === from)
+    const next =
+      index === -1
+        ? Math.max(0, options.findIndex((option) => option.dataset.id === selected))
+        : Math.min(options.length - 1, Math.max(0, index + delta))
+    options[next === -1 ? 0 : next]?.focus()
+  }
+
+  return (
+    <div className={`vsd${effectiveOpen ? ' vsd--open' : ''}`} ref={rootRef}>
+      <button
+        ref={btnRef}
+        type="button"
+        className="vsd__btn"
+        aria-haspopup="listbox"
+        aria-expanded={effectiveOpen}
+        disabled={disabled}
+        onClick={() => {
+          setOpen((wasOpen) => !wasOpen)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          if (!effectiveOpen) setOpen(true)
+          focusOption(event.currentTarget, event.key === 'ArrowDown' ? 1 : -1)
+        }}
+      >
+        <span className="vsd__cur">{selected !== '' ? selected : placeholder}</span>
+        <svg
+          className="vsd__chev"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      <div className="vsd__menu" role="listbox" ref={menuRef}>
+        {ids.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className="vsd__opt"
+            role="option"
+            aria-selected={id === selected}
+            data-id={id}
+            onClick={() => {
+              setOpen(false)
+              btnRef.current?.focus()
+              onSelect(id)
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+              event.preventDefault()
+              focusOption(event.currentTarget, event.key === 'ArrowDown' ? 1 : -1)
+            }}
+          >
+            <span className="vsd__opt-dot" aria-hidden="true" />
+            <span className="vsd__opt-name">{id}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function DaemonCard({
@@ -161,32 +272,16 @@ function VisionSidecarCard({
                   Enable image input on a model in Providers to make it eligible.
                 </Empty>
               ) : (
-                <div className="prov-mlist">
-                  {eligible.map((id) => {
-                    const selected = id === current
-                    return (
-                      <div
-                        key={id}
-                        className={`prov-mline prov-mline--click${selected ? ' prov-prow--sel' : ''}`}
-                        role="button"
-                        tabIndex={0}
-                        aria-pressed={selected}
-                        onClick={() => void save(true, id)}
-                        onKeyDown={(event) => {
-                          if (event.key !== 'Enter' && event.key !== ' ') return
-                          event.preventDefault()
-                          void save(true, id)
-                        }}
-                      >
-                        <div className="prov-mline-l">
-                          <span className="prov-mline-dot" aria-hidden="true" />
-                          <span className="prov-mline-name num">{id}</span>
-                        </div>
-                        {selected ? <span className="badge badge--ok">sidecar</span> : null}
-                      </div>
-                    )
-                  })}
-                </div>
+                <>
+                  <ModelSelect
+                    ids={eligible}
+                    selected={current}
+                    onSelect={(id) => void save(true, id)}
+                    placeholder="pick a vision model"
+                    disabled={task.running}
+                  />
+                  <p className="ov-sub">pick the model that describes images for text-only models</p>
+                </>
               )}
               {enabled && current !== '' && !eligible.includes(current) ? (
                 <Banner tone="warn" title="Configured target is no longer eligible.">
