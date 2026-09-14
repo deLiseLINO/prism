@@ -23,22 +23,20 @@ export function locateDaemon(env: NodeJS.ProcessEnv = process.env): DaemonBinary
   return { path: bundled, source: 'bundled' }
 }
 
-// Maps the running Electron process to the bundled prismd binary name.
-// build.mjs compiles one binary per supported platform/arch so a packaged app
-// works regardless of the machine that produced the dmg.
-export function bundledDaemonBinary(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
-  if (platform === 'win32') return 'prismd.exe' // future windows support
-  const goarch = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : ''
-  if (!goarch) {
-    throw new Error(`prism: unsupported architecture ${arch}`)
+function bundledDaemonPath(): string {
+  const suffix = process.platform === 'win32' ? '.exe' : ''
+  const dir = app.isPackaged
+    ? path.join(process.resourcesPath, 'prismd')
+    : path.join(app.getAppPath(), 'resources', 'prismd')
+  const plain = path.join(dir, `prismd${suffix}`)
+  if (!app.isPackaged || process.platform !== 'linux') {
+    return plain
   }
-  return `prismd-${platform === 'darwin' ? 'darwin' : String(platform)}-${goarch}`
-}
-
-function bundledDaemonPath(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'prismd', bundledDaemonBinary(platform, arch))
-    : path.join(app.getAppPath(), 'resources', 'prismd', bundledDaemonBinary(platform, arch))
+  // Cross-built linux bundles ship arch-suffixed binaries (prismd-linux-amd64 / prismd-linux-arm64);
+  // the plain `prismd` may be a foreign-OS binary, so prefer the suffixed one for the current arch.
+  const archSuffix = process.arch === 'arm64' ? 'linux-arm64' : 'linux-amd64'
+  const suffixed = path.join(dir, `prismd-${archSuffix}`)
+  return existsSync(suffixed) ? suffixed : plain
 }
 
 export function locateWebui(configured: string | null): string | null {

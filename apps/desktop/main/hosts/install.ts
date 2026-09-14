@@ -5,7 +5,6 @@ import path from 'node:path'
 import { DAEMON_DEFAULT_PORT, DAEMON_HEALTH_PATH } from '@prism/contracts'
 import type { HostInstallReply } from '@prism/contracts'
 import type { ManagementProxy } from '../../shared/management'
-import { bundledDaemonBinary } from '../daemon/locate'
 import { spawnForward, type SshForward } from './forward'
 
 export interface HostInstallDeps {
@@ -141,7 +140,7 @@ function remoteBinaryPath(platform: Platform): string | null {
   const dir = app.isPackaged
     ? path.join(process.resourcesPath, 'prismd')
     : path.join(app.getAppPath(), 'resources', 'prismd')
-  if (platform === 'darwin-same') return path.join(dir, bundledDaemonBinary())
+  if (platform === 'darwin-same') return path.join(dir, 'prismd')
   return path.join(dir, `prismd-${platform}`)
 }
 
