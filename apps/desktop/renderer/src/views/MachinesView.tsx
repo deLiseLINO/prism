@@ -206,7 +206,7 @@ export function MachinesView(): JSX.Element {
             type="text"
             value={address}
             onChange={setAddress}
-            placeholder="user@host"
+            placeholder="user@192.168.1.20"
             disabled={busy}
           />
         </Field>

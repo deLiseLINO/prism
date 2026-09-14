@@ -8,14 +8,14 @@ const prismdDir = path.join('resources', 'prismd')
 const prismdBinary = path.join(prismdDir, 'prismd')
 const versionFlag = `-X prism/internal/buildinfo.Version=${pkg.version}`
 const buildCwd = new URL('.', import.meta.url).pathname
-execFileSync('go', ['build', '-ldflags', versionFlag, '-o', prismdBinary, '../../cmd/prismd'], {
+execFileSync('go', ['build', '-trimpath', '-ldflags', versionFlag, '-o', prismdBinary, '../../cmd/prismd'], {
   cwd: buildCwd,
   stdio: 'inherit',
 })
 for (const { GOOS, GOARCH } of [{ GOOS: 'linux', GOARCH: 'amd64' }, { GOOS: 'linux', GOARCH: 'arm64' }]) {
   execFileSync(
     'go',
-    ['build', '-ldflags', versionFlag, '-o', path.join(prismdDir, `prismd-${GOOS}-${GOARCH}`), '../../cmd/prismd'],
+    ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, `prismd-${GOOS}-${GOARCH}`), '../../cmd/prismd'],
     {
       cwd: buildCwd,
       stdio: 'inherit',

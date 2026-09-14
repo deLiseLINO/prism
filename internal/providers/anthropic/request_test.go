@@ -14,7 +14,7 @@ func f64(v float64) *float64 { return &v }
 
 func baseRequest() canon.Request {
 	return canon.Request{
-		Model:           "claude-prism-anthropic--claude-sonnet-4-5",
+		Model:           "claude-anthropic--claude-sonnet-4-5",
 		Stream:          true,
 		MaxOutputTokens: 512,
 		Instructions:    []canon.Content{canon.TextContent{Text: "be brief"}},
@@ -42,7 +42,7 @@ func TestRequestBuild(t *testing.T) {
 	runner := New(Options{})
 	out, err := runner.buildRequest(provider.RunRequest{
 		Request: baseRequest(),
-		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
 	})
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
@@ -66,7 +66,7 @@ func TestRequestBuild(t *testing.T) {
 		t.Fatalf("anthropic-version = %q %t", v, ok)
 	}
 	body := decodeBody(t, out.body)
-	if body["model"] != "claude-prism-anthropic--claude-sonnet-4-5" {
+	if body["model"] != "claude-anthropic--claude-sonnet-4-5" {
 		t.Fatalf("model = %v", body["model"])
 	}
 	if body["max_tokens"] != float64(512) {
@@ -119,7 +119,7 @@ func TestImageDataBase64Encoded(t *testing.T) {
 	}
 	out, err := runner.buildRequest(provider.RunRequest{
 		Request: request,
-		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
 	})
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
@@ -150,7 +150,7 @@ func TestEmptyTextBlocksSkipped(t *testing.T) {
 	}
 	out, err := runner.buildRequest(provider.RunRequest{
 		Request: request,
-		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
 	})
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
@@ -174,7 +174,7 @@ func TestToolResultKeepsImageContent(t *testing.T) {
 	}
 	out, err := runner.buildRequest(provider.RunRequest{
 		Request: request,
-		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
 	})
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
@@ -208,7 +208,7 @@ func TestEmptyToolResultFailsLoud(t *testing.T) {
 	}
 	_, err := runner.buildRequest(provider.RunRequest{
 		Request: request,
-		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-prism-anthropic--claude-sonnet-4-5"},
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
 	})
 	if err == nil {
 		t.Fatal("buildRequest with empty tool result: want error, got nil")

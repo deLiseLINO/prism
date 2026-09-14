@@ -66,7 +66,7 @@ func TestRoleMapping(t *testing.T) {
 		{
 			name:      "system message",
 			checkRole: canon.RoleSystem,
-			body:      `{"model":"prism-gpt-5-6-luna","messages":[{"role":"system","content":"be terse"}]}`,
+			body:      `{"model":"codex/gpt-5-6-luna","messages":[{"role":"system","content":"be terse"}]}`,
 			wantItems: func(t *testing.T, items []canon.Item) {
 				want := []canon.Content{canon.TextContent{Text: "be terse"}}
 				if diff := contentDiff(want, contentOf(items[0])); diff != "" {
@@ -407,9 +407,6 @@ func TestModelSlugGrammar(t *testing.T) {
 		"antigravity/gemini-3.7-flash",
 		"openrouter/minimax/minimax-m3",
 		"prism/auto",
-		"prism-antigravity-gemini-3-7-flash",
-		"prism-gpt-5-6-luna",
-		"prism-123",
 	}
 	for _, model := range valid {
 		t.Run("valid "+model, func(t *testing.T) {
@@ -421,9 +418,8 @@ func TestModelSlugGrammar(t *testing.T) {
 	}
 	invalid := []string{
 		"just-a-name",
-		"prism-",
+		"prism-gpt-5-6-luna",
 		"prism-GPT",
-		"prism-underscore_1",
 		"/model",
 		"provider/",
 	}

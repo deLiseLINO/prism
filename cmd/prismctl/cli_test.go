@@ -899,20 +899,20 @@ func TestRoutesListSetRemove(t *testing.T) {
 	if !strings.Contains(out, "gpt-5.3") {
 		t.Fatalf("routes table: %q", out)
 	}
-	code, _, errOut := env.runCLI(t, "routes", "set", "claude-opus", "codex/gpt-5.3")
+	code, _, errOut := env.runCLI(t, "routes", "set", "claude-p--opus", "codex/gpt-5.3")
 	if code != exitOK {
 		t.Fatalf("set code=%d stderr=%s", code, errOut)
 	}
 	doc := env.cfg.Get().Config
-	if doc.Routes["claude-opus"] != "codex/gpt-5.3" {
+	if doc.Routes["claude-p--opus"] != "codex/gpt-5.3" {
 		t.Fatalf("route not written: %+v", doc.Routes)
 	}
-	code, _, errOut = env.runCLI(t, "routes", "remove", "claude-opus")
+	code, _, errOut = env.runCLI(t, "routes", "remove", "claude-p--opus")
 	if code != exitOK {
 		t.Fatalf("remove code=%d stderr=%s", code, errOut)
 	}
 	doc = env.cfg.Get().Config
-	if _, ok := doc.Routes["claude-opus"]; ok {
+	if _, ok := doc.Routes["claude-p--opus"]; ok {
 		t.Fatal("route still present")
 	}
 }

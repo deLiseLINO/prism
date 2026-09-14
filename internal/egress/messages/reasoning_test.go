@@ -22,7 +22,7 @@ func TestIdlePingKeepsWireWarm(t *testing.T) {
 	rec := &flushRecorder{}
 	eg := New(rec, true)
 	enc := eg.(*streamEncoder)
-	if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "claude-prism-codex--gpt-5"}); err != nil {
+	if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "claude-codex--gpt-5"}); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
 	written := func() string {
@@ -53,7 +53,7 @@ func (f *flushRecorder) Flush() { f.flushes++ }
 func TestPerFrameFlush(t *testing.T) {
 	rec := &flushRecorder{}
 	eg := New(rec, true)
-	if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "claude-prism-codex--gpt-5"}); err != nil {
+	if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "claude-codex--gpt-5"}); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
 	afterStart := rec.flushes
@@ -80,7 +80,7 @@ func TestPerFrameFlush(t *testing.T) {
 func TestRedactedThinkingBlockEmitted(t *testing.T) {
 	sig := reasonenv.EncodeRedacted([]string{"opaque-blob"})
 	out, _ := runStream(t,
-		ResponseHeader{ID: "msg_1", Model: "claude-prism-codex--gpt-5"},
+		ResponseHeader{ID: "msg_1", Model: "claude-codex--gpt-5"},
 		[]canon.Event{
 			canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1", Signature: sig}},
 			canon.ItemFinished{Item: canon.ReasoningItem{ID: "r1", Signature: sig}},

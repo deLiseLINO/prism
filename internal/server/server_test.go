@@ -52,7 +52,7 @@ func TestModelsEndpoint(t *testing.T) {
 			"p1": {Wire: config.WireOpenAIResponses, BaseURL: "http://example.invalid"},
 		},
 		Routes:  map[string]string{"prism-auto": "p1/m1"},
-		Aliases: map[string]string{"prism-flash": "p1/m2"},
+		Aliases: map[string]string{"flash": "p1/m2"},
 		Combos: map[string]config.Combo{
 			"fast-pair": {Targets: []config.Target{{Provider: "p1", Model: "m1"}}, Strategy: config.ComboFailover},
 		},
@@ -68,7 +68,7 @@ func TestModelsEndpoint(t *testing.T) {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"prism-auto", "prism-flash", "fast-pair"} {
+	for _, want := range []string{"prism-auto", "flash", "fast-pair"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("models missing %q: %s", want, body)
 		}
@@ -76,12 +76,12 @@ func TestModelsEndpoint(t *testing.T) {
 }
 
 func TestCountTokensLocalEstimateDeterministic(t *testing.T) {
-	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"claude-prism-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"claude-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", &fakeRunner{}); err != nil {
 			t.Fatal(err)
 		}
 	})
-	body := `{"model":"claude-prism-p1--m1","max_tokens":64,"messages":[{"role":"user","content":"count my tokens please"}]}`
+	body := `{"model":"claude-p1--m1","max_tokens":64,"messages":[{"role":"user","content":"count my tokens please"}]}`
 	rec1 := postJSON(t, h, "/v1/messages/count_tokens", body)
 	rec2 := postJSON(t, h, "/v1/messages/count_tokens", body)
 	if rec1.Code != http.StatusOK || rec2.Code != http.StatusOK {
@@ -106,12 +106,12 @@ func TestCountTokensLocalEstimateDeterministic(t *testing.T) {
 
 func TestCountTokensAnswersLocallyWithoutDispatch(t *testing.T) {
 	counter := &countingRunner{fakeRunner: &fakeRunner{}, tokens: 42}
-	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"claude-prism-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"claude-p1--m1": singlePlan("p1")}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", counter); err != nil {
 			t.Fatal(err)
 		}
 	})
-	rec := postJSON(t, h, "/v1/messages/count_tokens", `{"model":"claude-prism-p1--m1","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
+	rec := postJSON(t, h, "/v1/messages/count_tokens", `{"model":"claude-p1--m1","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -185,7 +185,7 @@ func TestConfigPlanner(t *testing.T) {
 			"p2": {Wire: config.WireAnthropicMessages, BaseURL: "http://example.invalid"},
 		},
 		Routes:  map[string]string{"routed": "p1/m1"},
-		Aliases: map[string]string{"claude-prism-p2--m2": "p2/m2"},
+		Aliases: map[string]string{"claude-p2--m2": "p2/m2"},
 		Combos: map[string]config.Combo{
 			"pair": {Targets: []config.Target{{Provider: "p1", Model: "m1"}, {Provider: "p2", Model: "m3"}}, Strategy: config.ComboFailover},
 		},
@@ -198,7 +198,7 @@ func TestConfigPlanner(t *testing.T) {
 	if !ok || len(plan.Targets) != 1 || plan.Targets[0].Provider != "p1" || plan.Targets[0].Model != "m1" {
 		t.Fatalf("routed plan = %+v ok=%t", plan, ok)
 	}
-	plan, ok = planner.Plan("claude-prism-p2--m2")
+	plan, ok = planner.Plan("claude-p2--m2")
 	if !ok || len(plan.Targets) != 1 || plan.Targets[0].Wire != provider.WireMessages {
 		t.Fatalf("alias plan = %+v ok=%t", plan, ok)
 	}
@@ -210,11 +210,11 @@ func TestConfigPlanner(t *testing.T) {
 	if !ok || len(plan.Targets) != 1 || plan.Targets[0].Model != "direct" {
 		t.Fatalf("direct plan = %+v ok=%t", plan, ok)
 	}
-	plan, ok = planner.Plan("claude-prism-p1--derived")
+	plan, ok = planner.Plan("claude-p1--derived")
 	if !ok || len(plan.Targets) != 1 || plan.Targets[0].Provider != "p1" || plan.Targets[0].Model != "derived" {
 		t.Fatalf("derived alias plan = %+v ok=%t", plan, ok)
 	}
-	if _, ok := planner.Plan("claude-prism-p2--m2"); !ok {
+	if _, ok := planner.Plan("claude-p2--m2"); !ok {
 		t.Fatal("explicit alias should win over derived")
 	}
 	if _, ok := planner.Plan("missing"); ok {

@@ -2,3 +2,6 @@
 node_modules/
 dist/
 .run/
+apps/desktop/resources/prismd/
+apps/desktop/resources/webui/
+

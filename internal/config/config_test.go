@@ -25,7 +25,7 @@ func validDoc() Document {
 			},
 		},
 		Routes:  map[string]string{"primary": "primary", "gpt-5.2": "codex-main/gpt-5.2"},
-		Aliases: map[string]string{"prism-primary": "primary", "claude-prism-codex-main--gpt-5-2-codex": "codex-main/gpt-5.2-codex"},
+		Aliases: map[string]string{"flash": "primary", "claude-codex-main--gpt-5-2-codex": "codex-main/gpt-5.2-codex"},
 	}
 }
 
@@ -41,7 +41,7 @@ func TestValidateRejectsHostWithEmptyAddress(t *testing.T) {
 	if err := d.validate(); !errors.Is(err, ErrEmptyField) {
 		t.Fatalf("want ErrEmptyField, got %v", err)
 	}
-	d.Hosts = map[string]Host{"workmac": {Address: "user@host"}}
+	d.Hosts = map[string]Host{"workmac": {Address: "user@workmac"}}
 	if err := d.validate(); err != nil {
 		t.Fatalf("valid host address rejected: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestValidateRejectsUnknownPoolStrategy(t *testing.T) {
 }
 
 func TestValidateRejectsMalformedAliasFamily(t *testing.T) {
-	for _, key := range []string{"prism-", "prism-A_B", "prism-a--b", "claude-prism-prov", "claude-prism--model", "claude-prism-p--m--x"} {
+	for _, key := range []string{"claude-prov", "claude--model", "claude-p--m--x"} {
 		d := validDoc()
 		d.Aliases[key] = "primary"
 		if err := d.validate(); !errors.Is(err, ErrMalformedAlias) {

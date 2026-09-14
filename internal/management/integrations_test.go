@@ -493,7 +493,7 @@ func TestHostsCreatePersistsAndTriggersLifecycle(t *testing.T) {
 	gen := m.Get().Generation
 
 	res, err := http.Post(ts.URL+"/api/v1/hosts", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"id":"workmac","address":"user@host","expectedGeneration":%d}`, gen)))
+		strings.NewReader(fmt.Sprintf(`{"id":"workmac","address":"user@10.0.0.4","expectedGeneration":%d}`, gen)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func TestHostsCreatePersistsAndTriggersLifecycle(t *testing.T) {
 	if created.Generation != gen+1 {
 		t.Fatalf("generation did not advance: %d", created.Generation)
 	}
-	if len(lifecycle.ensured) != 1 || lifecycle.ensured[0] != "workmac=user@host" {
+	if len(lifecycle.ensured) != 1 || lifecycle.ensured[0] != "workmac=user@10.0.0.4" {
 		t.Fatalf("lifecycle not triggered: %+v", lifecycle.ensured)
 	}
 	if _, exists := m.Get().Config.Hosts["workmac"]; !exists {

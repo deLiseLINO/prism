@@ -9,7 +9,7 @@ import (
 
 func TestRedactedThinkingResentBecomesReasoningItem(t *testing.T) {
 	const body = `{
-		"model":"claude-prism-antigravity--gemini-3-pro",
+		"model":"claude-antigravity--gemini-3-pro",
 		"max_tokens":100,
 		"messages":[
 			{"role":"assistant","content":[
@@ -34,7 +34,7 @@ func TestRedactedThinkingResentBecomesReasoningItem(t *testing.T) {
 
 func TestServerToolUseAndSearchHistoryRenderAsText(t *testing.T) {
 	const body = `{
-		"model":"claude-prism-antigravity--gemini-3-pro",
+		"model":"claude-antigravity--gemini-3-pro",
 		"max_tokens":100,
 		"messages":[
 			{"role":"assistant","content":[
@@ -74,7 +74,7 @@ func TestServerToolUseAndSearchHistoryRenderAsText(t *testing.T) {
 
 func TestEmptyThinkingBlockDropped(t *testing.T) {
 	const body = `{
-		"model":"claude-prism-antigravity--gemini-3-pro",
+		"model":"claude-antigravity--gemini-3-pro",
 		"max_tokens":100,
 		"messages":[
 			{"role":"assistant","content":[
@@ -99,7 +99,7 @@ func TestEmptyThinkingBlockDropped(t *testing.T) {
 
 func TestMalformedEnvelopeSignatureRejected(t *testing.T) {
 	const body = `{
-		"model":"claude-prism-antigravity--gemini-3-pro",
+		"model":"claude-antigravity--gemini-3-pro",
 		"max_tokens":100,
 		"messages":[
 			{"role":"assistant","content":[

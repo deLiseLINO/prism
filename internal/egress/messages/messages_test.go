@@ -71,7 +71,7 @@ func runStream(t *testing.T, h ResponseHeader, evs []canon.Event) (string, Egres
 
 func TestStrictSequenceAndIndexing(t *testing.T) {
 	out, _ := runStream(t,
-		ResponseHeader{ID: "msg_1", Model: "claude-prism-codex--gpt-5"},
+		ResponseHeader{ID: "msg_1", Model: "claude-codex--gpt-5"},
 		[]canon.Event{
 			canon.ItemStarted{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant, Content: []canon.Content{}}},
 			canon.TextDelta{ItemID: "t1", Text: "Hello"},
@@ -129,7 +129,7 @@ func TestStrictSequenceAndIndexing(t *testing.T) {
 
 func TestEventMapping(t *testing.T) {
 	out, _ := runStream(t,
-		ResponseHeader{ID: "msg_1", Model: "claude-prism-antigravity--gemini-3-pro"},
+		ResponseHeader{ID: "msg_1", Model: "claude-antigravity--gemini-3-pro"},
 		[]canon.Event{
 			canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1"}},
 			canon.ReasoningDelta{ItemID: "r1", Text: "deep"},
@@ -148,7 +148,7 @@ func TestEventMapping(t *testing.T) {
 		byName[f.name] = append(byName[f.name], f.data)
 	}
 	start := frames[0].data["message"].(map[string]any)
-	if start["id"] != "msg_1" || start["role"] != "assistant" || start["model"] != "claude-prism-antigravity--gemini-3-pro" {
+	if start["id"] != "msg_1" || start["role"] != "assistant" || start["model"] != "claude-antigravity--gemini-3-pro" {
 		t.Fatalf("message_start message = %v", start)
 	}
 	if start["type"] != "message" {
@@ -554,7 +554,7 @@ func mustFrameErr(t *testing.T, err error) *FrameError {
 func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 	var buf bytes.Buffer
 	eg := New(&buf, false)
-	if err := eg.Begin(ResponseHeader{ID: "msg_9", Model: "claude-prism-codex--gpt-5"}); err != nil {
+	if err := eg.Begin(ResponseHeader{ID: "msg_9", Model: "claude-codex--gpt-5"}); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
 	evs := []canon.Event{
@@ -617,7 +617,7 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 func TestNonStreamingFailedEmitsErrorJSON(t *testing.T) {
 	var buf bytes.Buffer
 	eg := New(&buf, false)
-	if err := eg.Begin(ResponseHeader{ID: "msg_e", Model: "claude-prism-codex--gpt-5"}); err != nil {
+	if err := eg.Begin(ResponseHeader{ID: "msg_e", Model: "claude-codex--gpt-5"}); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
 	if err := eg.Frame(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: "upstream down"}}); err != nil {

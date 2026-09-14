@@ -21,13 +21,13 @@ func ClaudeBaseURL(port int) string {
 var claudeGatewayModelIDRe = regexp.MustCompile(`^(?i:claude|anthropic)`)
 
 // ClaudeAlias maps a prism "<provider>/<model>" id onto the messages wire's
-// claude-prism-<provider>--<model> alias shape.
+// claude-<provider>--<model> alias shape.
 func ClaudeAlias(modelID string) string {
 	provider, model, _ := strings.Cut(modelID, "/")
 	if model == "" {
 		provider, model = "codex", modelID
 	}
-	return "claude-prism-" + provider + "--" + model
+	return "claude-" + provider + "--" + model
 }
 
 // ClaudeDefaultModel picks the deterministic default: the lexicographically
@@ -49,7 +49,7 @@ func ClaudeDefaultModel(models []Model) (Model, bool) {
 // discovery switch that makes Claude Code accept prism aliases by listing
 // them on the daemon's /v1/models endpoint.
 func ClaudeEnvEntries(port int, models []Model) []JSONScalarEntry {
-	alias := "claude-prism-codex--gpt-5.2-codex"
+	alias := "claude-codex--gpt-5.2-codex"
 	if defaultModel, ok := ClaudeDefaultModel(models); ok {
 		alias = ClaudeAlias(defaultModel.ID)
 	}
@@ -318,7 +318,7 @@ func restoreDisplacedEnv(content string, displaced map[string]string) string {
 }
 
 // seedGatewayCache writes Claude Code's gateway model discovery cache when it
-// is absent: without it the CLI fatals on prism's claude-prism model aliases in
+// is absent: without it the CLI fatals on prism's claude model aliases in
 // print mode before it ever fetches /v1/models itself. A cache belonging to
 // another endpoint is a named refusal; one already pointing here is left
 // alone so the CLI's own refreshes survive re-applies.

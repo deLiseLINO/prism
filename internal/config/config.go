@@ -301,10 +301,6 @@ func (d Document) validateAliasKey(k string) error {
 		if _, _, err := ParseClaudeAlias(k); err != nil {
 			return fmt.Errorf("%w: %q", ErrMalformedAlias, k)
 		}
-	case strings.HasPrefix(k, PrismAliasPrefix):
-		if _, err := ParsePrismAlias(k); err != nil {
-			return fmt.Errorf("%w: %q", ErrMalformedAlias, k)
-		}
 	}
 	return nil
 }
