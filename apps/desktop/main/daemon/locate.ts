@@ -23,11 +23,22 @@ export function locateDaemon(env: NodeJS.ProcessEnv = process.env): DaemonBinary
   return { path: bundled, source: 'bundled' }
 }
 
-function bundledDaemonPath(): string {
-  const binary = process.platform === 'win32' ? 'prismd.exe' : 'prismd'
+// Maps the running Electron process to the bundled prismd binary name.
+// build.mjs compiles one binary per supported platform/arch so a packaged app
+// works regardless of the machine that produced the dmg.
+export function bundledDaemonBinary(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
+  if (platform === 'win32') return 'prismd.exe' // future windows support
+  const goarch = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : ''
+  if (!goarch) {
+    throw new Error(`prism: unsupported architecture ${arch}`)
+  }
+  return `prismd-${platform === 'darwin' ? 'darwin' : String(platform)}-${goarch}`
+}
+
+function bundledDaemonPath(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'prismd', binary)
-    : path.join(app.getAppPath(), 'resources', 'prismd', binary)
+    ? path.join(process.resourcesPath, 'prismd', bundledDaemonBinary(platform, arch))
+    : path.join(app.getAppPath(), 'resources', 'prismd', bundledDaemonBinary(platform, arch))
 }
 
 export function locateWebui(configured: string | null): string | null {
