@@ -1,5 +1,6 @@
 appId: sh.prism.desktop
 productName: Prism
+electronVersion: 38.8.6
 directories:
   output: release
 files:
@@ -19,17 +20,18 @@ mac:
   target:
     - dmg
 win:
+  icon: resources/icon.ico
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Prism
 linux:
-  icon: resources/icon.png
-  category: Utility
-  maintainer: Prism Team <team@prism.sh>
-  desktop:
-    entry:
-      Comment: Prism — local-first AI workbench
-  executableName: prism-desktop
-  executableArgs:
-    - --no-sandbox
   target:
     - AppImage
