@@ -155,6 +155,29 @@ func TestModelSyncerCustomWireStillUsesBaseURL(t *testing.T) {
 	}
 }
 
+func TestModelSyncerCustomWireWorksWithoutCredential(t *testing.T) {
+	var auth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"m1"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	syncer := modelSyncer{creds: credentialStore{file: store.NewFileCredentialStore(t.TempDir())}, client: server.Client()}
+
+	models, err := syncer.RemoteModels(context.Background(), "buddy", config.Provider{Wire: config.WireOpenAIChat, BaseURL: server.URL + "/v1"})
+	if err != nil {
+		t.Fatalf("RemoteModels: %v", err)
+	}
+	if len(models) != 1 || models[0] != "m1" {
+		t.Fatalf("models = %v, want [m1]", models)
+	}
+	if auth != "" {
+		t.Fatalf("Authorization = %q, want none", auth)
+	}
+}
+
 // newSyncFileStore builds a credential store holding one custom-provider key.
 func newSyncFileStore(t *testing.T, provider, secret string) *store.FileCredentialStore {
 	t.Helper()

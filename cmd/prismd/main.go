@@ -161,7 +161,7 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	if p.BaseURL == "" {
 		return nil, fmt.Errorf("provider %s has no baseURL to list models from", id)
 	}
-	blob, err := m.creds.blob(ctx, account.ProviderID(id), account.AccountID(id+":default"), 1)
+	blob, ok, err := m.creds.file.Get(ctx, account.ProviderID(id), account.AccountID(id+":default"), 1)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,9 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+string(blob))
+	if ok {
+		req.Header.Set("Authorization", "Bearer "+string(blob))
+	}
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return nil, err
