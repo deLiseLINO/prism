@@ -23,11 +23,7 @@ publish:
   - provider: generic
     url: "https://releases.prism.sh/desktop"
 mac:
-  # No signing or notarization (no Apple Developer account). identity: null is
-  # an explicit signal to electron-builder not to look for a signing identity.
-  # Once an account exists: drop identity, set CSC_NAME / identity and
-  # an afterSign hook for notarization (see apps/desktop/BUILD-MACOS.md).
-  identity: null
+  identity: "-"
   category: Utilities
   icon: resources/icon.icns
   # Arch-suffixed artifact names shared by GitHub Releases and the cask.
