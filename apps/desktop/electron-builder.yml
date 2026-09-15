@@ -17,8 +17,23 @@ publish:
   - provider: generic
     url: "https://releases.prism.sh/desktop"
 mac:
+  # No signing or notarization (no Apple Developer account). identity: null is
+  # an explicit signal to electron-builder not to look for a signing identity.
+  # Once an account exists: drop identity, set CSC_NAME / identity and
+  # an afterSign hook for notarization (see apps/desktop/BUILD-MACOS.md).
+  identity: null
+  category: Utilities
+  icon: resources/icon.icns
+  # Arch-suffixed artifact names shared by GitHub Releases and the cask.
+  artifactName: ${productName}-${version}-${arch}.dmg
+  # Two arch-specific dmgs instead of universal: each file is half the size
+  # (Electron and the Go daemon are not duplicated), and release artifacts
+  # and the brew cask work naturally with arch-specific dmgs.
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - arm64
+        - x64
 win:
   icon: resources/icon.ico
   target:
@@ -33,5 +48,14 @@ nsis:
   createDesktopShortcut: true
   shortcutName: Prism
 linux:
+  icon: resources/icon.png
+  category: Utility
+  maintainer: Prism Team <team@prism.sh>
+  desktop:
+    entry:
+      Comment: Prism — local-first AI workbench
+  executableName: prism-desktop
+  executableArgs:
+    - --no-sandbox
   target:
     - AppImage
