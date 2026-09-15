@@ -3,6 +3,11 @@ import { cp, copyFile, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 
+// node's spawnSync does not resolve go.exe through PATHEXT on win32 in all
+// environments (observed on GitHub's windows runners inside npm lifecycle
+// scripts), so the executable name carries the extension there.
+const goCommand = process.platform === 'win32' ? 'go.exe' : 'go'
+
 const pkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
 const prismdDir = path.join('resources', 'prismd')
 const versionFlag = `-X prism/internal/buildinfo.Version=${pkg.version}`
@@ -20,7 +25,7 @@ const daemonTargets = [
   { GOOS: 'windows', GOARCH: 'arm64', name: 'prismd-windows-arm64.exe' },
 ]
 for (const { GOOS, GOARCH, name } of daemonTargets) {
-  execFileSync('go', ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, name), '../../cmd/prismd'], {
+  execFileSync(goCommand, ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, name), '../../cmd/prismd'], {
     cwd: buildCwd,
     stdio: 'inherit',
     env: { ...process.env, CGO_ENABLED: '0', GOOS, GOARCH },

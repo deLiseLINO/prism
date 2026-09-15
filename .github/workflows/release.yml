@@ -1,25 +1,108 @@
 name: Release
 
-# Tag-driven desktop release (codex-quota style): push a v* tag and every
-# platform job builds its installer with electron-builder, then uploads into
-# one GitHub Release. The daemon matrix is cross-compiled by build.mjs inside
-# each job, so every artifact carries all bundled binaries.
+# Desktop release for mac dmg / linux AppImage / windows nsis.
+# Practices distilled from several production release pipelines:
+# - dry_run defaults to true; the irreversible publish is opt-in
+# - preflight refuses an already-published tag/release and validates the
+#   version against package.json (prism)
+# - minimal top-level permissions; only the publish job escalates (all three)
+# - publish gates on every build job result; artifacts are uploaded with
+#   if-no-files-found: error
+# - SHA256SUMS is computed in the publish job from the downloaded bytes that
+#   users will actually get
+# - release runs serialize under one concurrency group and are never
+#   cancelled mid-flight
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release — must equal apps/desktop/package.json (e.g. 0.1.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run (build everything, publish nothing)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
+env:
+  DRY_RUN: ${{ github.event_name == 'push' && 'false' || (github.event.inputs.dry_run || 'true') }}
+  RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
+
 jobs:
-  linux:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      dry_run: ${{ steps.dryrun.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve dry-run
+        id: dryrun
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Validate version
+        id: version
+        run: |
+          version="${RELEASE_VERSION}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version '$version' is not semver (strip the leading v)"
+            exit 1
+          fi
+          pkg_version=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "$version" != "$pkg_version" ]; then
+            echo "::error::version $version does not equal apps/desktop/package.json $pkg_version"
+            exit 1
+          fi
+          if [[ "$version" =~ - ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Refuse to clobber an existing tag or release
+        run: |
+          tag="v${RELEASE_VERSION}"
+          if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::notice::tag $tag already exists (dry run: continuing)"
+            else
+              echo "::error::tag $tag already exists; refusing to move an immutable release"
+              exit 1
+            fi
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::notice::release $tag already exists (dry run: continuing)"
+            else
+              echo "::error::release $tag already exists; refusing to mutate it"
+              exit 1
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build-linux:
     name: Linux AppImage
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -42,10 +125,12 @@ jobs:
           path: apps/desktop/release/*.AppImage
           if-no-files-found: error
 
-  windows:
+  build-windows:
     name: Windows NSIS
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    needs: preflight
+    # nsis cross-built from linux needs wine; the native runner does not.
+    runs-on: windows-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,7 +143,6 @@ jobs:
           cache: true
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
-      # nsis targets are cross-buildable from Linux in electron-builder >= 26.
       - run: npx --workspace @prism/desktop electron-builder --win nsis --x64 --arm64 --publish never
         working-directory: apps/desktop
       - uses: actions/upload-artifact@v4
@@ -67,8 +151,9 @@ jobs:
           path: apps/desktop/release/*.exe
           if-no-files-found: error
 
-  macos:
+  build-macos:
     name: macOS dmg
+    needs: preflight
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -93,27 +178,54 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [linux, windows, macos]
+    needs: [preflight, build-linux, build-windows, build-macos]
+    if: >-
+      !failure() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.build-linux.result == 'success' &&
+      needs.build-windows.result == 'success' &&
+      needs.build-macos.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist-release
           merge-multiple: true
-      - name: Compute checksums
+      - name: Verify and checksum the artifacts users will download
         run: |
           cd dist-release
-          shopt -s extglob
+          rm -f -- *.blockmap
+          found=0
           for f in *; do
-            case "$f" in *.blockmap) rm -f "$f";; esac
+            case "$f" in
+              *.AppImage|*.exe|*.dmg) found=$((found+1));;
+            esac
           done
-          shasum -a 256 * > checksums.txt
-          cat checksums.txt
-      - uses: softprops/action-gh-release@v2
+          if [ "$found" -lt 5 ]; then
+            echo "::error::expected at least 5 installers (AppImage, 2x exe, 2x dmg), found $found"
+            exit 1
+          fi
+          shasum -a 256 * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish (skipped on dry run)
+        if: needs.preflight.outputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          tag_name: v${{ needs.preflight.outputs.version }}
+          prerelease: ${{ needs.preflight.outputs.prerelease == 'true' }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             dist-release/*
+      - name: Dry run summary
+        if: needs.preflight.outputs.dry_run == 'true'
+        run: |
+          echo "### Release dry run — everything built, nothing published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat dist-release/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
