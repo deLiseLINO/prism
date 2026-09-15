@@ -329,6 +329,7 @@ func TestOutcomeStringRoundTrip(t *testing.T) {
 	names := map[Outcome]string{
 		AttemptSucceeded:      "succeeded",
 		AttemptUnauthorized:   "unauthorized",
+		AttemptForbidden:      "forbidden",
 		AttemptRateLimited:    "rate_limited",
 		AttemptQuotaExhausted: "quota_exhausted",
 		AttemptNotFound:       "not_found",

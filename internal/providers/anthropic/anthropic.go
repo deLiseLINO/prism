@@ -213,8 +213,10 @@ func errorClassForStatus(status int) provider.ErrorClass {
 	switch status {
 	case http.StatusBadRequest:
 		return provider.ClassInvalidRequest
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		return provider.ClassUnauthorized
+	case http.StatusForbidden:
+		return provider.ClassForbidden
 	case http.StatusNotFound:
 		return provider.ClassNotFound
 	case http.StatusRequestTimeout:

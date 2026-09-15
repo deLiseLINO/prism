@@ -842,7 +842,7 @@ func TestUpstreamHTTPErrorMapping(t *testing.T) {
 		accepted   bool
 	}{
 		{"unauthorized", 401, `{"error":{"message":"bad key","code":"invalid_api_key"}}`, "", provider.ClassUnauthorized, 0, false},
-		{"forbidden", 403, `{"error":{"message":"denied"}}`, "", provider.ClassUnauthorized, 0, false},
+		{"forbidden", 403, `{"error":{"message":"denied"}}`, "", provider.ClassForbidden, 0, false},
 		{"rate limited", 429, `{"error":{"message":"slow down","code":"rate_limit_exceeded"}}`, "7", provider.ClassRateLimited, 7 * time.Second, false},
 		{"context length", 400, `{"error":{"message":"too long","code":"context_length_exceeded"}}`, "", provider.ClassContextLength, 0, false},
 		{"invalid request", 400, `{"error":{"message":"bad"}}`, "", provider.ClassInvalidRequest, 0, false},
