@@ -481,8 +481,10 @@ func failureCode(r canon.FailureReason) string {
 
 func errorType(r canon.FailureReason) string {
 	switch r {
-	case canon.FailUnauthorized, canon.FailForbidden:
+	case canon.FailUnauthorized:
 		return "authentication_error"
+	case canon.FailForbidden:
+		return "permission_error"
 	case canon.FailRateLimited, canon.FailQuotaExhausted:
 		return "rate_limit_error"
 	case canon.FailInvalidRequest, canon.FailContextLength, canon.FailToolUndeclared, canon.FailToolArgsMalformed:

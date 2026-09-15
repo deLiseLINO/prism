@@ -56,6 +56,7 @@ type ErrorClass uint8
 
 const (
 	ClassUnauthorized ErrorClass = iota + 1
+	ClassForbidden
 	ClassRateLimited
 	ClassQuotaExhausted
 	ClassNotFound
@@ -111,7 +112,7 @@ func (k RunErrorKind) FailoverAllowed() bool {
 
 func (c ErrorClass) FailoverAllowed() bool {
 	switch c {
-	case ClassInvalidRequest, ClassContextLength:
+	case ClassForbidden, ClassInvalidRequest, ClassContextLength:
 		return false
 	default:
 		return true

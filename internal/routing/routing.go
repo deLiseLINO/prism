@@ -261,6 +261,8 @@ func outcomeFor(re provider.RunError, policy account.SelectionPolicy) (account.O
 	switch re.Class {
 	case provider.ClassUnauthorized:
 		return account.AuthRejected{}, true
+	case provider.ClassForbidden:
+		return nil, false
 	case provider.ClassRateLimited:
 		return account.RateLimited{RetryAfter: cooldown(re.RetryAfter)}, true
 	case provider.ClassQuotaExhausted:
@@ -282,6 +284,8 @@ func failureReason(c provider.ErrorClass) canon.FailureReason {
 	switch c {
 	case provider.ClassUnauthorized:
 		return canon.FailUnauthorized
+	case provider.ClassForbidden:
+		return canon.FailForbidden
 	case provider.ClassRateLimited:
 		return canon.FailRateLimited
 	case provider.ClassQuotaExhausted:
@@ -325,6 +329,8 @@ func attemptOutcome(re provider.RunError) requestlog.Outcome {
 	switch re.Class {
 	case provider.ClassUnauthorized:
 		return requestlog.AttemptUnauthorized
+	case provider.ClassForbidden:
+		return requestlog.AttemptForbidden
 	case provider.ClassRateLimited:
 		return requestlog.AttemptRateLimited
 	case provider.ClassQuotaExhausted:

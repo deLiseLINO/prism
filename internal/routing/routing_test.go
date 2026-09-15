@@ -1026,3 +1026,31 @@ func TestTurnPointerRunErrorFailsOver(t *testing.T) {
 		t.Fatalf("terminal is %T, want Finished", res.Terminal)
 	}
 }
+
+func TestForbiddenKeepsAccountUsableAndSurfacesCause(t *testing.T) {
+	cause := errors.New("upstream: model_access_denied")
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassForbidden, ReplaySafe: true, Cause: cause}
+	pool := poolWith("custom", 3)
+	runners := fakeRunners{"custom": failRunner(runErr)}
+	planner := singlePlan("custom", 3, TurnPolicy{})
+	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
+	if res.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", res.Attempts)
+	}
+	f, ok := res.Terminal.(Failed)
+	if !ok {
+		t.Fatalf("terminal is %T, want Failed", res.Terminal)
+	}
+	if f.Event.Failure.Reason != canon.FailForbidden {
+		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailForbidden)
+	}
+	if f.Event.Failure.Message != "upstream: model_access_denied" {
+		t.Fatalf("failure message = %q, want upstream cause", f.Event.Failure.Message)
+	}
+	if len(pool.records) != 1 {
+		t.Fatalf("pool records = %d, want 1", len(pool.records))
+	}
+	if _, ok := pool.records[0].outcome.(account.RequestRejected); !ok {
+		t.Fatalf("recorded outcome is %T, want RequestRejected", pool.records[0].outcome)
+	}
+}

@@ -26,6 +26,7 @@ type Outcome uint8
 const (
 	AttemptSucceeded Outcome = iota + 1
 	AttemptUnauthorized
+	AttemptForbidden
 	AttemptRateLimited
 	AttemptQuotaExhausted
 	AttemptNotFound
@@ -45,6 +46,8 @@ func (o Outcome) String() string {
 		return "succeeded"
 	case AttemptUnauthorized:
 		return "unauthorized"
+	case AttemptForbidden:
+		return "forbidden"
 	case AttemptRateLimited:
 		return "rate_limited"
 	case AttemptQuotaExhausted:
@@ -186,10 +189,10 @@ func (j *Journal) nowTime() time.Time {
 }
 
 type Turn struct {
-	j       *Journal
-	entry   *Entry
-	now     func() time.Time
-	closed  bool
+	j      *Journal
+	entry  *Entry
+	now    func() time.Time
+	closed bool
 }
 
 func (t *Turn) Now() time.Time {

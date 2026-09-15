@@ -62,8 +62,10 @@ func HTTPError(resp *http.Response, runner string) error {
 
 func ClassForStatus(status int, code string) provider.ErrorClass {
 	switch {
-	case status == 401 || status == 403:
+	case status == 401:
 		return provider.ClassUnauthorized
+	case status == 403:
+		return provider.ClassForbidden
 	case status == 404:
 		return provider.ClassNotFound
 	case status == 408:

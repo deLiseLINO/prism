@@ -23,7 +23,7 @@ func TestHTTPErrorMapping(t *testing.T) {
 	}{
 		{"bad request", http.StatusBadRequest, provider.ClassInvalidRequest},
 		{"unauthorized", http.StatusUnauthorized, provider.ClassUnauthorized},
-		{"forbidden", http.StatusForbidden, provider.ClassUnauthorized},
+		{"forbidden", http.StatusForbidden, provider.ClassForbidden},
 		{"not found", http.StatusNotFound, provider.ClassNotFound},
 		{"request timeout", http.StatusRequestTimeout, provider.ClassTimeout},
 		{"too large", http.StatusRequestEntityTooLarge, provider.ClassContextLength},
