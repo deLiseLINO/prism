@@ -4,8 +4,8 @@ name: Release
 # Practices distilled from several production release pipelines:
 # - dry_run defaults to true; the irreversible publish is opt-in
 # - preflight refuses an already-published tag/release and validates the
-#   version against package.json (prism)
-# - minimal top-level permissions; only the publish job escalates (all three)
+#   version against package.json
+# - minimal top-level permissions; only the publish job escalates
 # - publish gates on every build job result; artifacts are uploaded with
 #   if-no-files-found: error
 # - SHA256SUMS is computed in the publish job from the downloaded bytes that
