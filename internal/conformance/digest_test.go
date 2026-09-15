@@ -48,7 +48,7 @@ func TestRequestShapeFixtureDigest(t *testing.T) {
 	if bytes == "" {
 		t.Fatal("request-shape case not found")
 	}
-	want := "ccc7549e8bcfe4e28d0d4a87c14e622ecfb75973600b5eef830d83620c5bd0f8"
+	want := "26da2159122e8ebb263222dc1251abdbfa5b9fbb36ebad1516e94253229703a0"
 	if got := FixtureDigest([]byte(bytes)); got != want {
 		t.Fatalf("request-shape digest: got %s want %s", got, want)
 	}
@@ -56,7 +56,7 @@ func TestRequestShapeFixtureDigest(t *testing.T) {
 
 func TestScenarioManifestDigest(t *testing.T) {
 	s := testScenario()
-	want := "17e73872dc2f8f7cfd8df560495e1748f9f963138404c614a529e6b4d2cf5a2c"
+	want := "1d3d86666015517ca26a4b020e4135cc9f8d4ee527a776fecc879ad0bfba1d72"
 	if got := ScenarioManifestDigest(s); got != want {
 		t.Fatalf("scenario digest: got %s want %s", got, want)
 	}
@@ -64,7 +64,7 @@ func TestScenarioManifestDigest(t *testing.T) {
 
 func TestSuiteManifestDigest(t *testing.T) {
 	s := testSuiteManifest()
-	want := "254ffd232a57240f0d89bbf6162fa13ce449a64a15a36d99bbc20b48ddedbd6b"
+	want := "9be187dfee9503fba6a69df52eb3f23191e0e70fbce40a352ce98d4774daad3f"
 	if got := SuiteManifestDigest(s); got != want {
 		t.Fatalf("suite digest: got %s want %s", got, want)
 	}

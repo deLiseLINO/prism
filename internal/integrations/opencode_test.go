@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-var opencodeUserSeed = "{\n  \"theme\": \"dark\",\n  \"provider\": {\n    \"prism\": {\n      \"name\": \"Router\",\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"
+var opencodeUserSeed = "{\n  \"theme\": \"dark\",\n  \"provider\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"
 
-var opencode2UserSeed = "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"prism\": {\n      \"name\": \"Router\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"
+var opencode2UserSeed = "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"
 
 func TestOpencodePathResolution(t *testing.T) {
 	if got := OpencodeConfigPath(Env{}, "/home/u"); got != "/home/u/.config/opencode/opencode.json" {
@@ -116,7 +116,7 @@ func TestOpencodeApplyWritesPrismProvider(t *testing.T) {
 	if !strings.Contains(got, `"gpt-5.2-codex": {`) {
 		t.Fatalf("model entry missing:\n%s", got)
 	}
-	if !strings.Contains(got, `"prism"`) || !strings.Contains(got, `"theme"`) {
+	if !strings.Contains(got, `"acme"`) || !strings.Contains(got, `"theme"`) {
 		t.Fatalf("user members lost:\n%s", got)
 	}
 	if strings.Contains(got, `"providers"`) {
@@ -255,7 +255,7 @@ func TestOpencode2ApplyWritesPrismProvider(t *testing.T) {
 	if !strings.Contains(got, `"settings": {`) {
 		t.Fatalf("settings block missing:\n%s", got)
 	}
-	if !strings.Contains(got, `"prism"`) || !strings.Contains(got, `"theme"`) {
+	if !strings.Contains(got, `"acme"`) || !strings.Contains(got, `"theme"`) {
 		t.Fatalf("user members lost:\n%s", got)
 	}
 	if strings.Contains(got, `"npm"`) {

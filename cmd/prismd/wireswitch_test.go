@@ -26,7 +26,7 @@ func wireSwitchDoc(baseURL string, wire config.Wire) config.Document {
 	}}
 }
 
-func runAstraTurn(t *testing.T, env *daemonEnv, wire provider.Wire, baseURL string) error {
+func runRouterTurn(t *testing.T, env *daemonEnv, wire provider.Wire, baseURL string) error {
 	t.Helper()
 	runner, ok := env.registry.Lookup("router")
 	if !ok {
@@ -74,7 +74,7 @@ func TestWireSwitchSwapsRunnerWithoutRestart(t *testing.T) {
 		t.Fatalf("ensure responses: %v", err)
 	}
 
-	err := runAstraTurn(t, env, provider.WireResponses, srv.URL+"/v1")
+	err := runRouterTurn(t, env, provider.WireResponses, srv.URL+"/v1")
 	var runErr provider.RunError
 	if !errors.As(err, &runErr) || responsesHits != 1 {
 		t.Fatalf("responses-wire run: err=%v hits=%d, want upstream 400 contact", err, responsesHits)
@@ -87,7 +87,7 @@ func TestWireSwitchSwapsRunnerWithoutRestart(t *testing.T) {
 	}
 	env.reconcileOnce(ctx)
 
-	if err := runAstraTurn(t, env, provider.WireChat, srv.URL+"/v1"); err != nil {
+	if err := runRouterTurn(t, env, provider.WireChat, srv.URL+"/v1"); err != nil {
 		t.Fatalf("chat-wire run after hot switch: %v (chatHits=%d)", err, chatHits)
 	}
 	if chatHits != 1 {

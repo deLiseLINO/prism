@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const SyntheticMarker = "prism-synthetic-v1"
+const SyntheticMarker = "prism-lab-synthetic-v1"
 
 const AuthorityFile = "022_protocol_v1_cases.json"
 

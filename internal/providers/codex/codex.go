@@ -25,11 +25,7 @@ const (
 	ContentTypeJSON         = "application/json"
 )
 
-const (
-	reasoningStoreNative = "codex"
-	reasoningStorePRISMR1  = "prismr1"
-	prismReasoningPrefix   = "prismr1:"
-)
+const reasoningStoreNative = "codex"
 
 var forwardHeaders = []string{
 	"authorization",

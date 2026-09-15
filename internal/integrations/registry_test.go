@@ -26,9 +26,9 @@ func newRegistryFixture(t *testing.T) registryFixture {
 		omp:       tempFile(t, dir, "models.yml", userModelYaml),
 		claude:    tempFile(t, dir, "settings.json", "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash\"\n    ]\n  }\n}\n"),
 		pi:        tempFile(t, dir, "pi-models.json", "{\n  \"providers\": {\n    \"acme-edge\": {\n      \"baseUrl\": \"http://127.0.0.1:9797/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"user-key\",\n      \"models\": []\n    }\n  }\n}\n"),
-		opencode:  tempFile(t, dir, "opencode-v1.json", "{\n  \"theme\": \"dark\",\n  \"provider\": {\n    \"prism\": {\n      \"name\": \"Router\",\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"),
-		opencode2: tempFile(t, dir, "opencode-v2.json", "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"prism\": {\n      \"name\": \"Router\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"),
-		hermes:    tempFile(t, dir, "hermes-config.yaml", "model:\n  default: nous/ox-alpha\nproviders:\n  prism:\n    api: http://localhost:8080/v1\n    api_key: user-key\n    api_mode: chat_completions\n    discover_models: true\n"),
+		opencode:  tempFile(t, dir, "opencode-v1.json", "{\n  \"theme\": \"dark\",\n  \"provider\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"),
+		opencode2: tempFile(t, dir, "opencode-v2.json", "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"),
+		hermes:    tempFile(t, dir, "hermes-config.yaml", "model:\n  default: nous/ox-alpha\nproviders:\n  acme:\n    api: http://localhost:8080/v1\n    api_key: user-key\n    api_mode: chat_completions\n    discover_models: true\n"),
 	}
 }
 

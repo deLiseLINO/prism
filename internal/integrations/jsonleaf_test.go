@@ -362,7 +362,7 @@ func TestJSONScalarKeysRemoveStripsPrecedingComma(t *testing.T) {
 }
 
 func TestJSONBlockLeafRemoveStripsPrecedingComma(t *testing.T) {
-	seed := "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"prism\": {\n      \"baseUrl\": \"http://localhost:8080/v1\"\n    }\n  }\n}\n"
+	seed := "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"acme\": {\n      \"baseUrl\": \"http://localhost:8080/v1\"\n    }\n  }\n}\n"
 	applied := UpsertJSONBlockLeaf(seed, "providers", "prism", "models.json", func(leafIndent int) string {
 		pad := strings.Repeat(" ", leafIndent)
 		return pad + `"prism": {` + "\n" +

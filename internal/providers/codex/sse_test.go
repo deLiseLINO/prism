@@ -125,11 +125,11 @@ func TestSSEFailedTerminal(t *testing.T) {
 	}
 }
 
-func TestSSEPrismR1EnvelopeContinuation(t *testing.T) {
-	envelope := prismReasoningPrefix + "eyJzaWciOiJzaWctMSIsInR4dCI6ImhpZGRlbiJ9"
+func TestSSEReasoningOpaqueStateRoundTrip(t *testing.T) {
+	blob := "opaque-native-blob"
 	sse := joinFrames(
 		`{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"s"}]}}`,
-		`{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs-1","encrypted_content":"`+envelope+`"}}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs-1","encrypted_content":"`+blob+`"}}`,
 		`{"type":"response.completed","response":{"id":"r-1"}}`,
 	)
 	events, dec := decodeStream(t, sse)
@@ -140,15 +140,12 @@ func TestSSEPrismR1EnvelopeContinuation(t *testing.T) {
 	if state.ItemID != "rs-1" {
 		t.Fatalf("state item = %q", state.ItemID)
 	}
-	if state.State.Store != reasoningStorePRISMR1 {
-		t.Fatalf("state store = %q want prismr1", state.State.Store)
-	}
-	if !strings.Contains(state.State.Key, `"sig":"sig-1"`) || !strings.Contains(state.State.Key, `"txt":"hidden"`) {
-		t.Fatalf("envelope payload = %q", state.State.Key)
+	if state.State.Store != reasoningStoreNative || state.State.Key != blob {
+		t.Fatalf("state = %+v want opaque passthrough", state.State)
 	}
 	finished := events[2].(canon.ItemFinished)
 	item := finished.Item.(canon.ReasoningItem)
-	if item.State.Store != reasoningStorePRISMR1 {
+	if item.State.Store != reasoningStoreNative || item.State.Key != blob {
 		t.Fatalf("finished item state = %+v", item.State)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-var hermesUserSeed = "model:\n  default: nous/ox-alpha\nproviders:\n  prism:\n    api: http://localhost:8080/v1\n    api_key: user-key\n    api_mode: chat_completions\n    discover_models: true\n"
+var hermesUserSeed = "model:\n  default: nous/ox-alpha\nproviders:\n  acme:\n    api: http://localhost:8080/v1\n    api_key: user-key\n    api_mode: chat_completions\n    discover_models: true\n"
 
 func TestHermesPathResolution(t *testing.T) {
 	if got := HermesConfigPath(Env{}, "/home/u"); got != "/home/u/.hermes/config.yaml" {
@@ -40,7 +40,7 @@ func TestHermesApplyWritesPrismProvider(t *testing.T) {
 	if !strings.Contains(got, "- gpt-5.2-codex") {
 		t.Fatalf("model entry missing:\n%s", got)
 	}
-	if !strings.Contains(got, "prism:") || !strings.Contains(got, "default: nous/ox-alpha") {
+	if !strings.Contains(got, "acme:") || !strings.Contains(got, "default: nous/ox-alpha") {
 		t.Fatalf("user members lost:\n%s", got)
 	}
 }
