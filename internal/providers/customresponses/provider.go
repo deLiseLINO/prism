@@ -11,6 +11,7 @@ import (
 
 	"prism/internal/account"
 	"prism/internal/canon"
+	"prism/internal/execution"
 	"prism/internal/provider"
 	"prism/internal/providers/openaierr"
 )
@@ -48,7 +49,25 @@ type upstreamRequest struct {
 	Body    []byte
 }
 
-func (r *Runner) buildUpstream(target provider.Target, key string, req canon.Request) (*upstreamRequest, error) {
+func forwardHeaders(facts execution.Facts) []Header {
+	order := []struct {
+		wire string
+		name execution.ForwardName
+	}{
+		{"x-session-id", execution.ForwardSessionID},
+		{"originator", execution.ForwardOriginator},
+		{"user-agent", execution.ForwardUserAgent},
+	}
+	var out []Header
+	for _, p := range order {
+		if v, ok := facts.Forward.Get(p.name); ok {
+			out = append(out, Header{Name: p.wire, Value: v})
+		}
+	}
+	return out
+}
+
+func (r *Runner) buildUpstream(target provider.Target, key string, req canon.Request, facts execution.Facts) (*upstreamRequest, error) {
 	raw, err := buildBody(req)
 	if err != nil {
 		return nil, err
@@ -60,6 +79,7 @@ func (r *Runner) buildUpstream(target provider.Target, key string, req canon.Req
 		headers = append(headers, Header{Name: "Authorization", Value: "Bearer " + key})
 	}
 	headers = append(headers, r.extra...)
+	headers = append(headers, forwardHeaders(facts)...)
 	return &upstreamRequest{
 		URL:     responsesURL(target.BaseURL),
 		Headers: headers,
@@ -83,7 +103,7 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 				fmt.Errorf("apiKeyRef %q on provider %s resolved to an empty credential", req.Target.APIKeyRef, req.Target.Provider))
 		}
 	}
-	up, err := r.buildUpstream(req.Target, key, req.Request)
+	up, err := r.buildUpstream(req.Target, key, req.Request, req.Facts)
 	if err != nil {
 		return runError(provider.TerminalOmitted, provider.ClassInvalidRequest, false, false, 0, err)
 	}

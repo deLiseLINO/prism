@@ -17,6 +17,7 @@ import (
 	"prism/internal/account"
 	"prism/internal/canon"
 	egresschat "prism/internal/egress/chat"
+	"prism/internal/execution"
 	ingresschat "prism/internal/ingress/chat"
 	"prism/internal/provider"
 	"prism/internal/stream"
@@ -97,7 +98,7 @@ func TestExtendedEffortsReachChatWire(t *testing.T) {
 		req := testRequest(false)
 		req.Reasoning = canon.ReasoningConfig{Effort: effort}
 		r := New(staticKey, Options{})
-		up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", req)
+		up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", req, execution.Facts{})
 		if err != nil {
 			t.Fatalf("buildUpstream(effort %d): %v", effort, err)
 		}
@@ -129,7 +130,7 @@ func TestChatURLVariants(t *testing.T) {
 
 func TestBuildUpstreamRequest(t *testing.T) {
 	r := New(staticKey, Options{ExtraHeaders: []Header{{Name: "X-Custom", Value: "v1"}}})
-	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", testRequest(true))
+	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", testRequest(true), execution.Facts{})
 	if err != nil {
 		t.Fatalf("buildUpstream: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestBuildUpstreamRequestFullMapping(t *testing.T) {
 		ToolChoice: canon.ToolNamed{Name: "get_weather"},
 	}
 	r := New(staticKey, Options{})
-	up, err := r.buildUpstream(testTarget("https://example.com"), "sk-test", req)
+	up, err := r.buildUpstream(testTarget("https://example.com"), "sk-test", req, execution.Facts{})
 	if err != nil {
 		t.Fatalf("buildUpstream: %v", err)
 	}
@@ -220,7 +221,7 @@ func TestBuildUpstreamAssistantToolCallsWithoutText(t *testing.T) {
 		},
 	}
 	r := New(staticKey, Options{})
-	up, err := r.buildUpstream(testTarget("https://example.com"), "sk-test", req)
+	up, err := r.buildUpstream(testTarget("https://example.com"), "sk-test", req, execution.Facts{})
 	if err != nil {
 		t.Fatalf("buildUpstream: %v", err)
 	}
@@ -1200,11 +1201,46 @@ func TestToolCallIDRoundTrip(t *testing.T) {
 		t.Fatalf("next-turn tool_call_id = %q, want wire id %q", output.CallID, wireID)
 	}
 
-	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", parsed)
+	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", parsed, execution.Facts{})
 	if err != nil {
 		t.Fatalf("buildUpstream: %v", err)
 	}
 	if !strings.Contains(string(up.Body), `"id":`+strconv.Quote(wireID)) || !strings.Contains(string(up.Body), `"tool_call_id":`+strconv.Quote(wireID)) {
 		t.Fatalf("upstream next-turn body lost the pairing id %q: %s", wireID, up.Body)
+	}
+}
+
+func TestForwardHeadersReachChatUpstream(t *testing.T) {
+	h := http.Header{}
+	h.Set("x-session-id", "sess-1")
+	h.Set("originator", "omp")
+	h.Set("user-agent", "pi/1.0")
+	fwd, err := execution.NewForwardSet(h)
+	if err != nil {
+		t.Fatalf("NewForwardSet: %v", err)
+	}
+	r := New(staticKey, Options{})
+	up, err := r.buildUpstream(testTarget("https://example.com/v1/"), "sk-test", testRequest(true), execution.Facts{Forward: fwd})
+	if err != nil {
+		t.Fatalf("buildUpstream: %v", err)
+	}
+	want := map[string]string{
+		"x-session-id": "sess-1",
+		"originator":   "omp",
+		"user-agent":   "pi/1.0",
+	}
+	for name, v := range want {
+		found := false
+		for _, h := range up.Headers {
+			if h.Name == name {
+				found = true
+				if h.Value != v {
+					t.Fatalf("header %s = %q, want %q", name, h.Value, v)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("header %s missing from %v", name, up.Headers)
+		}
 	}
 }
