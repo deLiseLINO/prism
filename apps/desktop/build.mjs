@@ -10,6 +10,12 @@ import { execFileSync } from 'node:child_process'
 const goCommand = process.platform === 'win32' ? 'go.exe' : 'go'
 
 const pkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
+// RC/beta tags stamp their full tag version (0.1.0-rc4) into artifact names,
+// embedded versions, and updater identity, so an rc can never be
+// byte-different-but-name-identical to the final release of the same base.
+// Unset (local dev, plain CI) keeps the package.json version.
+const releaseTag = process.env.PRISM_RELEASE_TAG
+const releaseVersion = releaseTag ? releaseTag.replace(/^v/, '') : pkg.version
 // fileURLToPath handles win32 drive letters and percent-encoding; a raw URL
 // pathname is a POSIX-ified path that breaks as a cwd on windows.
 const scriptDir = fileURLToPath(new URL('.', import.meta.url))
@@ -19,7 +25,7 @@ const scriptDir = fileURLToPath(new URL('.', import.meta.url))
 // to the wrong tree).
 const prismdDir = path.join(scriptDir, 'resources', 'prismd')
 const distDir = path.join(scriptDir, 'dist')
-const versionFlag = `-X prism/internal/buildinfo.Version=${pkg.version}`
+const versionFlag = `-X prism/internal/buildinfo.Version=${releaseVersion}`
 const buildCwd = scriptDir
 // Bundled daemon matrix: every supported platform/arch gets its own binary so
 // the packaged app works on any build host (e.g. an arm64 mac producing an

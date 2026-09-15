@@ -418,8 +418,8 @@ func TestModelSlugGrammar(t *testing.T) {
 	}
 	invalid := []string{
 		"just-a-name",
-		"prism-gpt-5-6-luna",
-		"prism-GPT",
+		"prefix-gpt-5-6-luna",
+		"prefix-GPT",
 		"/model",
 		"provider/",
 	}

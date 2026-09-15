@@ -16,7 +16,7 @@ var CodexFence = Fence{
 }
 
 // prismRoutingMarker names the root openai_base_url pair prism owns, in the
-// same comment-above-key shape other config managers use for their injections, so
+// comment-above-key shape other config managers use for their injections, so
 // each tool recognizes the other's bytes and backs off instead of
 // overwriting them. A takeover journals the displaced pair inside the fence
 // and rollback restores it verbatim.
@@ -337,7 +337,7 @@ func lastNonBlankLine(lines []string) int {
 
 // upsertCodexRootRouting owns the root openai_base_url pair, the built-in
 // override that points codex's default openai provider at the daemon. In
-// routing mode a foreign pair under an prism marker is displaced and
+// routing mode a foreign pair under another manager's marker is displaced and
 // journaled; a prism pair is rewritten in place; a missing pair is inserted
 // before the first table header. providerOnly (model_provider = "prism")
 // removes a journaled prism pair instead, restoring any displaced bytes. A
@@ -393,7 +393,7 @@ func upsertCodexRootRouting(content string, port int, journal codexRoutingJourna
 				lines[i+1] = keyLine
 			}
 			next.displaced = journal.displaced
-		case strings.Contains(strings.ToLower(comment), "prism"):
+		case strings.Contains(comment, "Managed by"):
 			next.displaced = []string{comment, lines[i]}
 			lines[i-1] = prismRoutingMarker
 			lines[i] = keyLine
@@ -596,7 +596,7 @@ type codexCatalogEntry struct {
 	ContextWindow                  int                   `json:"context_window"`
 	MaxContextWindow               int                   `json:"max_context_window"`
 	AutoCompactTokenLimit          int                   `json:"auto_compact_token_limit"`
-	PrismCapabilityProvenance  codexProvenance       `json:"prism_capability_provenance"`
+	CapabilityProvenance           codexProvenance       `json:"capability_provenance"`
 	MultiAgentVersion              *string               `json:"multi_agent_version"`
 	AutoReviewModelOverride        any                   `json:"auto_review_model_override"`
 }
@@ -618,7 +618,7 @@ var codexCatalogReasoningLevels = []codexReasoningLevel{
 
 // RenderCodexCatalog renders the catalog file codex's model picker reads via
 // the root model_catalog_json key, in the entry shape codex's strict catalog
-// parser accepts (mirrors the routed-model rows prism writes).
+// parser accepts.
 func RenderCodexCatalog(models []Model) string {
 	entries := make([]codexCatalogEntry, 0, len(models))
 	for _, model := range models {
@@ -674,7 +674,7 @@ func RenderCodexCatalog(models []Model) string {
 			ContextWindow:              window,
 			MaxContextWindow:           window,
 			AutoCompactTokenLimit:      window * 9 / 10,
-			PrismCapabilityProvenance: codexProvenance{
+			CapabilityProvenance: codexProvenance{
 				Provider: provider,
 				ModelID:  strings.TrimPrefix(model.ID, provider+"/"),
 			},

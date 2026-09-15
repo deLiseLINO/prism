@@ -86,9 +86,9 @@ func TestEffortWireSendsExtendedRungs(t *testing.T) {
 		canon.EffortMax:   "max",
 	} {
 		req := canon.Request{
-			Model:    "gpt-5.2-codex",
-			Stream:   false,
-			Input:    []canon.Item{canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}}},
+			Model:     "gpt-5.2-codex",
+			Stream:    false,
+			Input:     []canon.Item{canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}}},
 			Reasoning: canon.ReasoningConfig{Effort: effort},
 		}
 		result, err := BuildRequestBody(req)
@@ -147,33 +147,6 @@ func TestRequestBodyDropsUnsupportedParamsWithWarnings(t *testing.T) {
 		if result.Warnings[i] != want[i] {
 			t.Fatalf("warning[%d] = %q want %q", i, result.Warnings[i], want[i])
 		}
-	}
-}
-
-func TestRequestBodyStripsPrismR1EnvelopeFromReplay(t *testing.T) {
-	envelope := prismReasoningPrefix + "eyJzaWciOiJzaWctYnl0ZXMifQ"
-	req := canon.Request{
-		Model:  "gpt-5.2-codex",
-		Stream: true,
-		Input: []canon.Item{
-			canon.ReasoningItem{ID: "rs-1", State: canon.OpaqueRef{Store: reasoningStorePRISMR1, Key: envelope}},
-		},
-	}
-	result, err := BuildRequestBody(req)
-	if err != nil {
-		t.Fatalf("BuildRequestBody: %v", err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(result.Body, &raw); err != nil {
-		t.Fatalf("parse body: %v", err)
-	}
-	input, ok := raw["input"].([]any)
-	if !ok || len(input) != 1 {
-		t.Fatalf("input = %v", raw["input"])
-	}
-	item, _ := input[0].(map[string]any)
-	if _, present := item["encrypted_content"]; present {
-		t.Fatalf("prismr1 envelope must be stripped for the native backend, got %v", item["encrypted_content"])
 	}
 }
 

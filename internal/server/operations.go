@@ -177,14 +177,15 @@ func parseCountTokensBody(r *http.Request) (countedBody, error) {
 	return countedBody{model: canon.ModelID(model), tokens: estimateCountTokens(root)}, nil
 }
 
-// estimateCountTokens mirrors prism estimateClaudeRequestTokens: system,
-// messages, and tools are joined as text and charged ~4 chars/token, while
-// base64 attachment payloads are blanked before that charge and counted
-// through a bounded per-attachment estimate instead. A 2MB screenshot is
-// ~2.7M base64 chars; as raw text that reports hundreds of thousands of
-// tokens against a real cost around 1.6k. tool_use input and tool schemas
-// can legitimately hold attachment-shaped JSON, so only protocol content
-// positions (message blocks and tool_result blocks) are sanitized.
+// estimateCountTokens charges token counting the way count_tokens semantics
+// expect: system, messages, and tools are joined as text and charged ~4
+// chars/token, while base64 attachment payloads are blanked before that
+// charge and counted through a bounded per-attachment estimate instead. A
+// 2MB screenshot is ~2.7M base64 chars; as raw text that reports hundreds of
+// thousands of tokens against a real cost around 1.6k. tool_use input and
+// tool schemas can legitimately hold attachment-shaped JSON, so only
+// protocol content positions (message blocks and tool_result blocks) are
+// sanitized.
 func estimateCountTokens(root map[string]json.RawMessage) int64 {
 	var attachments int64
 	var parts []string
@@ -293,7 +294,7 @@ func cloneMap(m map[string]any) map[string]any {
 }
 
 // base64AttachmentTokens charges one attachment by its decoded byte size at
-// ~512 bytes per token, floored at 256 (prism estimateBase64AttachmentTokens).
+// ~512 bytes per token, floored at 256.
 func base64AttachmentTokens(data string) int64 {
 	unpadded := len(data)
 	if strings.HasSuffix(data, "==") {
@@ -411,8 +412,7 @@ func (s *Server) compactViaProvider(w http.ResponseWriter, r *http.Request, comp
 
 // compactViaTurn produces a real summary for providers without a Compactor:
 // a tool-free model turn dispatched through the standard run machinery with
-// the compaction prompt as the final user message (mirroring prism
-// buildRoutedCompactionBody), never fabricated history.
+// the compaction prompt as the final user message, never fabricated history.
 func (s *Server) compactViaTurn(w http.ResponseWriter, r *http.Request, target provider.Target, facts execution.Facts, req canon.Request) {
 	summary, err := s.compactSummaryTurn(r.Context(), target, facts, req)
 	if err != nil {

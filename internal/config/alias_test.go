@@ -52,7 +52,7 @@ func TestAliasBuildersRejectEmptySanitizedParts(t *testing.T) {
 }
 
 func TestAliasParsersRejectForeignFamilies(t *testing.T) {
-	if _, _, err := ParseClaudeAlias("prism-p"); !errors.Is(err, ErrMalformedAlias) {
+	if _, _, err := ParseClaudeAlias("x-p"); !errors.Is(err, ErrMalformedAlias) {
 		t.Fatalf("want ErrMalformedAlias, got %v", err)
 	}
 	if _, _, err := ParseClaudeAlias("claude-pmodel"); !errors.Is(err, ErrMalformedAlias) {

@@ -1,6 +1,6 @@
 {
   "provenance": {
-    "sourceCommit": "prism reference, MIT",
+    "sourceCommit": "upstream reference, MIT",
     "fieldOrderStreamStore": ["src/codex/warmup.ts:242-248", "tests/issue-702-expired-replay-state.test.ts:167-172"],
     "storePinnedFalse": ["src/adapters/openai-responses.ts:1161-1169"],
     "unsupportedForwardParamsDropped": ["src/adapters/openai-responses.ts:1180-1187"],

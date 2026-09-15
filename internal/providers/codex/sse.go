@@ -3,7 +3,7 @@ package codex
 import (
 	"bufio"
 	"bytes"
-	"encoding/base64"
+
 	"encoding/json"
 	"fmt"
 	"io"
@@ -382,30 +382,5 @@ func roleFromWire(r string) canon.Role {
 }
 
 func reasoningState(encrypted string) canon.OpaqueRef {
-	if strings.HasPrefix(encrypted, prismReasoningPrefix) {
-		if decoded, ok := decodeReasoningEnvelope(encrypted); ok {
-			return canon.OpaqueRef{Store: reasoningStorePRISMR1, Key: decoded}
-		}
-	}
 	return canon.OpaqueRef{Store: reasoningStoreNative, Key: encrypted}
-}
-
-func decodeReasoningEnvelope(encrypted string) (string, bool) {
-	payload, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(encrypted, prismReasoningPrefix))
-	if err != nil {
-		return "", false
-	}
-	var envelope struct {
-		Sig *string  `json:"sig"`
-		Red []string `json:"red"`
-		Txt *string  `json:"txt"`
-		Krc *string  `json:"krc"`
-	}
-	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return "", false
-	}
-	if envelope.Sig == nil && len(envelope.Red) == 0 && envelope.Txt == nil && envelope.Krc == nil {
-		return "", false
-	}
-	return string(payload), true
 }

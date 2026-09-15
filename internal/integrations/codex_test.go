@@ -127,8 +127,8 @@ func TestCodexApplyWritesModelCatalog(t *testing.T) {
 	if entry.MultiAgentVersion != nil || len(entry.ExperimentalSupportedTools) != 0 {
 		t.Fatalf("entry advertises tools the chat wire cannot carry: %+v", entry)
 	}
-	if entry.PrismCapabilityProvenance.Provider != "router" || entry.PrismCapabilityProvenance.ModelID != "glm-5.3-flash" {
-		t.Fatalf("provenance = %+v", entry.PrismCapabilityProvenance)
+	if entry.CapabilityProvenance.Provider != "router" || entry.CapabilityProvenance.ModelID != "glm-5.3-flash" {
+		t.Fatalf("provenance = %+v", entry.CapabilityProvenance)
 	}
 	if outcome := WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort, Models: models}); outcome.Kind != OutcomeUnchanged {
 		t.Fatalf("second apply: %+v", outcome)
@@ -215,19 +215,19 @@ func TestCodexDamagedFenceRefusesByName(t *testing.T) {
 	}
 }
 
-var prismRoutedToml = "# user configuration\n" +
+var foreignRoutedToml = "# user configuration\n" +
 	"model = \"router/glm-5.3-flash\"\n" +
-	"# Managed by prism: Codex routes through the local proxy.\n" +
+	"# Managed by another-manager: Codex routes through the local proxy.\n" +
 	"openai_base_url = \"http://127.0.0.1:8080/v1\"\n" +
 	"\n" +
 	"[features]\n" +
 	"fast_mode = false\n"
 
-var prismMarker = "# Managed by prism: Codex routes through the local proxy."
+var foreignMarker = "# Managed by another-manager: Codex routes through the local proxy."
 
-func TestCodexApplyTakesOverPrismRouting(t *testing.T) {
+func TestCodexApplyTakesOverForeignManagerRouting(t *testing.T) {
 	dir := t.TempDir()
-	configPath := tempFile(t, dir, "config.toml", prismRoutedToml)
+	configPath := tempFile(t, dir, "config.toml", foreignRoutedToml)
 	outcome := WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort})
 	if outcome.Kind != OutcomeWritten {
 		t.Fatalf("takeover apply: %+v", outcome)
@@ -238,7 +238,7 @@ func TestCodexApplyTakesOverPrismRouting(t *testing.T) {
 		`openai_base_url = "http://127.0.0.1:8787/v1"`,
 		`model = "router/glm-5.3-flash"`,
 		"[features]",
-		"# displaced: " + prismMarker,
+		"# displaced: " + foreignMarker,
 		`# displaced: openai_base_url = "http://127.0.0.1:8080/v1"`,
 		CodexFence.Begin,
 	} {
@@ -246,14 +246,14 @@ func TestCodexApplyTakesOverPrismRouting(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	if contains(got, prismMarker+"\n"+`openai_base_url = "http://127.0.0.1:8080/v1"`) {
+	if contains(got, foreignMarker+"\n"+`openai_base_url = "http://127.0.0.1:8080/v1"`) {
 		t.Errorf("displaced pair still routing:\n%s", got)
 	}
 	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback after takeover: %+v", outcome)
 	}
-	if got := readFile(t, configPath); got != prismRoutedToml {
-		t.Fatalf("rollback did not restore the displaced prism pair verbatim:\n%q", got)
+	if got := readFile(t, configPath); got != foreignRoutedToml {
+		t.Fatalf("rollback did not restore the displaced foreign pair verbatim:\n%q", got)
 	}
 	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeUnchanged {
 		t.Fatalf("second rollback: %+v", outcome)
@@ -395,7 +395,7 @@ func TestCodexApplyProviderOnlyRemovesStaleRoutingPair(t *testing.T) {
 
 func TestCodexReapplyAfterTakeoverIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	configPath := tempFile(t, dir, "config.toml", prismRoutedToml)
+	configPath := tempFile(t, dir, "config.toml", foreignRoutedToml)
 	WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort})
 	afterFirst := readFile(t, configPath)
 	if outcome := WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort}); outcome.Kind != OutcomeUnchanged {
@@ -408,7 +408,7 @@ func TestCodexReapplyAfterTakeoverIsIdempotent(t *testing.T) {
 
 func TestCodexRoutingOwnershipSurvivesMarkerStripping(t *testing.T) {
 	dir := t.TempDir()
-	configPath := tempFile(t, dir, "config.toml", prismRoutedToml)
+	configPath := tempFile(t, dir, "config.toml", foreignRoutedToml)
 	WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort})
 	stripped := strings.Replace(readFile(t, configPath), prismRoutingMarker+"\n", "", 1)
 	writeFileOrDie(t, configPath, stripped)
@@ -423,7 +423,7 @@ func TestCodexRoutingOwnershipSurvivesMarkerStripping(t *testing.T) {
 	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback after stripping: %+v", outcome)
 	}
-	if got := readFile(t, configPath); got != prismRoutedToml {
+	if got := readFile(t, configPath); got != foreignRoutedToml {
 		t.Fatalf("rollback did not restore the displaced pair after stripping:\n%q", got)
 	}
 }
