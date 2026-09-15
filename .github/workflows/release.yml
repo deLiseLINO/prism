@@ -340,20 +340,20 @@ jobs:
             echo "  sha256 arm:   \"${arm_sha}\","
             echo "         intel: \"${intel_sha}\""
             echo ''
-            echo '  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/Prism-#{version}-#{arch}.dmg"'
+            echo "  url \"https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/Prism-#{version}-#{arch}.dmg\""
             echo '  name "Prism"'
             echo '  desc "Desktop app for Prism (Electron UI + Go daemon)"'
-            echo '  homepage "https://github.com/${GITHUB_REPOSITORY}"'
+            echo "  homepage \"https://github.com/${GITHUB_REPOSITORY}\""
             echo ''
             echo '  app "Prism.app"'
             echo 'end'
           } > Casks/prism.rb
           git config user.name "prism-release-bot"
           git config user.email "noreply@prism.sh"
-          if git diff --quiet; then
+          git add Casks/prism.rb
+          if git diff --cached --quiet; then
             echo "::notice::cask already up to date for $version"
             exit 0
           fi
-          git add Casks/prism.rb
           git commit -m "cask: prism ${version}"
           git push origin main
