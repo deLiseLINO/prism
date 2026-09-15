@@ -163,7 +163,7 @@ function DaemonCard({
 }): ReactNode {
   const chip = daemonChip(status, unreachable)
   return (
-    <section className="panel card ov-card" style={{ '--i': 1, gridColumn: '1 / -1' } as CSSProperties}>
+    <section className="panel card ov-card" style={{ '--i': 1 } as CSSProperties}>
       <div className="ov-head">
         <div className="ov-head-l">
           <span className="ov-ic">

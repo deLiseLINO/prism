@@ -5,7 +5,7 @@ Overview is the default renderer route and the user's operational summary. The d
 ## Sub-features
 
 - Default routing: an empty or unknown hash resolves to `#/overview`. The removed `#/daemon` hash also resolves to `#/overview`.
-- Daemon card: full-width leading card with a state chip (ok/warn/danger tone, pulsing dot when operational), and `state`/`endpoint` rows. Read-only; lifecycle is supervised, not manual.
+- Daemon card: state chip (ok/warn/danger tone, pulsing dot when operational) and `state`/`endpoint` rows, one grid cell like the other cards. Read-only; lifecycle is supervised, not manual.
 - Vision sidecar (experimental): hidden unless the `visionSidecar` flag is on. Enable/disable toggle plus an eligible-model list (providers with image input enabled); picking a model sets it as the sidecar target. The toggle lives on `#/experimental`.
 - Default context window: preset buttons (32k/128k/256k/400k/1M) plus a custom token entry, applied to every model without its own override.
 - Partial failure: a failed request renders an error banner rather than inventing values. While daemon data is missing, the endpoint shows `unknown`, not `not listening` (which is reserved for the supervisor actually reporting no endpoint).
