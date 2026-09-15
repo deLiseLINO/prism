@@ -18,7 +18,7 @@ export function locateDaemon(env: NodeJS.ProcessEnv = process.env): DaemonBinary
   }
   const bundled = bundledDaemonPath()
   if (!existsSync(bundled)) {
-    throw new Error(`prism: bundled prismd not found at ${bundled}; build it with go build -o resources/prismd/prismd ../../cmd/prismd or set ${PRISMD_PATH_ENV}`)
+    throw new Error(`prism: bundled prismd not found at ${bundled}; run npm run build --workspace @prism/desktop or set ${PRISMD_PATH_ENV}`)
   }
   return { path: bundled, source: 'bundled' }
 }

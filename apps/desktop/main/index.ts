@@ -12,6 +12,7 @@ import { IntegrationApi } from '../shared/integrations'
 import { ManagementProxy } from '../shared/management'
 import { TrayController } from './tray'
 import { UpdaterService } from './updater/updater'
+import { locateResource } from './daemon/resources'
 import { createMainWindow } from './window'
 
 const HEALTH_TIMEOUT_MS = 15_000
@@ -30,9 +31,10 @@ async function bootstrap(): Promise<void> {
     app.quit()
     return
   }
-  const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'resources', 'icon.png'))
+  const iconPath = locateResource('icon.png')
+  const icon = nativeImage.createFromPath(iconPath)
   if (process.platform === 'darwin') app.dock?.setIcon(icon)
-  if (process.platform !== 'darwin') app.commandLine.appendSwitch('icon', path.join(__dirname, '..', '..', 'resources', 'icon.png'))
+  if (process.platform !== 'darwin') app.commandLine.appendSwitch('icon', iconPath)
   let mainWindow: BrowserWindow | null = null
   let quitting = false
   const endpoint = `http://${DAEMON_HOST}:${config.port}`
