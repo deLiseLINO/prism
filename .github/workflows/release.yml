@@ -279,3 +279,81 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat dist-release/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  update-homebrew-cask:
+    name: Update Homebrew cask
+    needs: [preflight, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Always run (including dry runs): this job only reads the published
+    # release, so it is the safe way to test tap automation without a new
+    # release. It never mutates the release itself.
+    if: always() && needs.publish.result != 'failure'
+    steps:
+      - name: Check release exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ needs.preflight.outputs.version }}"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::release $tag not found; nothing to update in the tap"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download checksums and resolve cask data
+        id: cask
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ needs.preflight.outputs.version }}"
+          version="${{ needs.preflight.outputs.version }}"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --output SHA256SUMS
+          arm_sha=$(awk '$2 == "Prism-'"$version"'-arm64.dmg" {print $1}' SHA256SUMS)
+          intel_sha=$(awk '$2 == "Prism-'"$version"'-x64.dmg" {print $1}' SHA256SUMS)
+          if [ -z "$arm_sha" ] || [ -z "$intel_sha" ]; then
+            echo "::error::missing dmg checksums for $version"
+            cat SHA256SUMS
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "arm_sha=$arm_sha"
+            echo "intel_sha=$intel_sha"
+          } >> "$GITHUB_OUTPUT"
+      - name: Clone tap and update cask
+        if: steps.check.outputs.skip != 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          version="${{ steps.cask.outputs.version }}"
+          arm_sha="${{ steps.cask.outputs.arm_sha }}"
+          intel_sha="${{ steps.cask.outputs.intel_sha }}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/homebrew-tap.git" tap
+          cd tap
+          mkdir -p Casks
+          {
+            echo 'cask "prism" do'
+            echo '  arch arm: "arm64", intel: "x64"'
+            echo ''
+            echo "  version \"${version}\""
+            echo "  sha256 arm:   \"${arm_sha}\","
+            echo "         intel: \"${intel_sha}\""
+            echo ''
+            echo '  url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/Prism-#{version}-#{arch}.dmg"'
+            echo '  name "Prism"'
+            echo '  desc "Desktop app for Prism (Electron UI + Go daemon)"'
+            echo '  homepage "https://github.com/${GITHUB_REPOSITORY}"'
+            echo ''
+            echo '  app "Prism.app"'
+            echo 'end'
+          } > Casks/prism.rb
+          git config user.name "prism-release-bot"
+          git config user.email "noreply@prism.sh"
+          if git diff --quiet; then
+            echo "::notice::cask already up to date for $version"
+            exit 0
+          fi
+          git add Casks/prism.rb
+          git commit -m "cask: prism ${version}"
+          git push origin main
