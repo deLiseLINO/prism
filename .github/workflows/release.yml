@@ -36,10 +36,6 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-env:
-  DRY_RUN: ${{ github.event_name == 'push' && 'false' || (github.event.inputs.dry_run || 'true') }}
-  RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
-
 jobs:
   preflight:
     name: Preflight
@@ -49,8 +45,14 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       dry_run: ${{ steps.dryrun.outputs.dry_run }}
+      ref: ${{ steps.ref.outputs.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # All refs, one refspec: fetch-depth 1 + fetch-tags collides with
+          # checkout's own tag refspec on tag-push events (git refuses to
+          # fetch two sources into the same refs/tags/* destination).
+          fetch-depth: 0
       - name: Resolve dry-run
         id: dryrun
         run: |
@@ -59,17 +61,53 @@ jobs:
           else
             echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
           fi
-      - name: Validate version
+      - name: Resolve version and ref
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          version="${RELEASE_VERSION}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::version '$version' is not semver (strip the leading v)"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            raw="${GITHUB_REF_NAME}"
+          else
+            raw="${INPUT_VERSION}"
+          fi
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version '$version' is not semver"
             exit 1
           fi
-          pkg_version=$(node -p "require('./apps/desktop/package.json').version")
-          if [ "$version" != "$pkg_version" ]; then
-            echo "::error::version $version does not equal apps/desktop/package.json $pkg_version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          tag="v${version}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ref="$tag"
+          else
+            # Dispatch builds the tag for the requested version, never the
+            # moving default branch: a dispatch must publish exactly the
+            # audited commit, and the tag must exist.
+            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "::error::tag $tag does not exist; push it first (a release publishes a tag, not main HEAD)"
+              exit 1
+            fi
+            ref="$tag"
+          fi
+          # Pin the exact commit so three parallel build jobs cannot race a
+          # force-moved tag into a mixed release.
+          sha=$(git rev-parse -q --verify "refs/tags/$tag^{}" || true)
+          if [ -z "$sha" ]; then
+            echo "::error::could not resolve $tag to a commit"
+            exit 1
+          fi
+          echo "ref=$sha" >> "$GITHUB_OUTPUT"
+          # Version equality is checked against the tree the release actually
+          # builds (the tag), not the default branch a dispatch checkout lands
+          # on: a stale main tree must not approve a version the tag lacks.
+          # Prerelease suffixes in the tag (-rc1, -beta.2) are allowed to
+          # exceed the package version they build: the package.json bump
+          # happens once per x.y.z line, the rc train re-tags the same tree.
+          pkg_version=$(git show "$sha:apps/desktop/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          base_version="${version%%-*}"
+          if [ "$base_version" != "$pkg_version" ]; then
+            echo "::error::version $version does not equal apps/desktop/package.json $pkg_version at $tag"
             exit 1
           fi
           if [[ "$version" =~ - ]]; then
@@ -77,20 +115,13 @@ jobs:
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Refuse to clobber an existing tag or release
+      - name: Refuse to clobber an existing release
         run: |
-          tag="v${RELEASE_VERSION}"
-          if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "::notice::tag $tag already exists (dry run: continuing)"
-            else
-              echo "::error::tag $tag already exists; refusing to move an immutable release"
-              exit 1
-            fi
-          fi
+          tag="v${{ steps.version.outputs.version }}"
+          # A tag push re-releases its own tag by design (releases are
+          # immutable, so the guard is about the release, not the tag).
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            if [ "$DRY_RUN" = "true" ]; then
+            if [ "${{ steps.dryrun.outputs.dry_run }}" = "true" ]; then
               echo "::notice::release $tag already exists (dry run: continuing)"
             else
               echo "::error::release $tag already exists; refusing to mutate it"
@@ -106,12 +137,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -119,7 +152,7 @@ jobs:
       - run: npm run build --workspace @prism/desktop
       - run: npx --workspace @prism/desktop electron-builder --linux AppImage --publish never
         working-directory: apps/desktop
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-artifacts
           path: apps/desktop/release/*.AppImage
@@ -132,12 +165,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -145,7 +180,7 @@ jobs:
       - run: npm run build --workspace @prism/desktop
       - run: npx --workspace @prism/desktop electron-builder --win nsis --x64 --arm64 --publish never
         working-directory: apps/desktop
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-artifacts
           path: apps/desktop/release/*.exe
@@ -157,12 +192,14 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -170,7 +207,7 @@ jobs:
       - run: npm run build --workspace @prism/desktop
       - run: npx --workspace @prism/desktop electron-builder --mac dmg --arm64 --x64 --publish never
         working-directory: apps/desktop
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-artifacts
           path: apps/desktop/release/*.dmg
@@ -179,41 +216,44 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: [preflight, build-linux, build-windows, build-macos]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.preflight.result == 'success' &&
-      needs.build-linux.result == 'success' &&
-      needs.build-windows.result == 'success' &&
-      needs.build-macos.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist-release
           merge-multiple: true
       - name: Verify and checksum the artifacts users will download
         run: |
           cd dist-release
-          rm -f -- *.blockmap
           found=0
           for f in *; do
             case "$f" in
               *.AppImage|*.exe|*.dmg) found=$((found+1));;
             esac
           done
-          if [ "$found" -lt 5 ]; then
-            echo "::error::expected at least 5 installers (AppImage, 2x exe, 2x dmg), found $found"
+          # AppImage 1 + nsis 1 (x64+arm64 universal installer) + dmg 2.
+          if [ "$found" -ne 4 ]; then
+            echo "::error::expected 4 installers (AppImage, universal exe, 2x dmg), found $found"
             exit 1
           fi
           shasum -a 256 * > SHA256SUMS
           cat SHA256SUMS
+      - name: Re-check the release does not exist right before publishing
+        if: needs.preflight.outputs.dry_run != 'true'
+        run: |
+          tag="v${{ needs.preflight.outputs.version }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $tag appeared since preflight; refusing to mutate it"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Publish (skipped on dry run)
         if: needs.preflight.outputs.dry_run != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.preflight.outputs.version }}
           prerelease: ${{ needs.preflight.outputs.prerelease == 'true' }}

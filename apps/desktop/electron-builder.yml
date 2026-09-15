@@ -11,6 +11,12 @@ extraResources:
     to: prismd
   - from: resources/webui
     to: webui
+  - from: resources/icon.png
+    to: icon.png
+  - from: resources/trayTemplate.png
+    to: trayTemplate.png
+  - from: resources/trayTemplate@2x.png
+    to: trayTemplate@2x.png
 asarUnpack:
   - "**/node_modules/electron-updater/**"
 publish:
@@ -47,6 +53,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   shortcutName: Prism
+  artifactName: ${productName}-${version}-setup.${ext}
 linux:
   icon: resources/icon.png
   category: Utility
@@ -55,7 +62,6 @@ linux:
     entry:
       Comment: Prism — local-first AI workbench
   executableName: prism-desktop
-  executableArgs:
-    - --no-sandbox
+  artifactName: ${productName}-${version}-${arch}.${ext}
   target:
     - AppImage

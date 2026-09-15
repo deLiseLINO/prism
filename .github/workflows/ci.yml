@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   go:
@@ -19,8 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -33,8 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -43,8 +43,36 @@ jobs:
       - run: npm run test:desktop
       # Build the whole bundle including the cross-compiled prismd matrix; the
       # Go toolchain is required for build.mjs.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
       - run: npm run build --workspace @prism/desktop
+      # Packaging smoke: catch icon/resource/asar breakage on PRs instead of
+      # release day, without paying for full installers. The unpacked dir
+      # carries an arch suffix only for non-default arches (linux-unpacked on
+      # x64 runners, linux-arm64-unpacked on an arm64 dev machine).
+      - run: npx --workspace @prism/desktop electron-builder --linux dir --publish never
+        working-directory: apps/desktop
+      - run: test -d "$(ls -d apps/desktop/release/linux*unpacked | head -n1)/resources/prismd"
+
+  windows-smoke:
+    name: Windows packaging smoke
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: npm ci
+      - run: npm run build --workspace @prism/desktop
+      - run: npx --workspace @prism/desktop electron-builder --win dir --x64 --publish never
+        working-directory: apps/desktop
+      - run: if (-not (Test-Path "apps/desktop/release/win-unpacked/resources/prismd")) { Write-Error "prismd missing from packaged resources"; exit 1 }
+        shell: pwsh

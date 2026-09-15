@@ -1,6 +1,6 @@
 import { Menu, Tray, app, nativeImage } from 'electron'
-import path from 'node:path'
 import type { DaemonStatus } from '@prism/contracts'
+import { locateResource } from './daemon/resources'
 
 export class TrayController {
   private tray: Tray | null = null
@@ -8,10 +8,10 @@ export class TrayController {
   constructor(private readonly showMainWindow: () => void) {}
 
   init(): void {
-    const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'resources', 'trayTemplate.png'))
+    const icon = nativeImage.createFromPath(locateResource('trayTemplate.png'))
     icon.addRepresentation({
       scaleFactor: 2,
-      buffer: nativeImage.createFromPath(path.join(__dirname, '..', '..', 'resources', 'trayTemplate@2x.png')).toPNG(),
+      buffer: nativeImage.createFromPath(locateResource('trayTemplate@2x.png')).toPNG(),
     })
     icon.setTemplateImage(true)
     this.tray = new Tray(icon)

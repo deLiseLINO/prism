@@ -111,7 +111,6 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
                       className="msm-seg-btn"
                       aria-pressed={wire === option.value}
                       onClick={() => setWire(option.value)}
-                      disabled={existing !== null}
                     >
                       {option.label}
                     </button>
