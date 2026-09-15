@@ -3,6 +3,7 @@ import type { DaemonStatus, ProvidersView, ProviderView } from '@prism/contracts
 import { AsyncBoundary, Banner, Empty, Toggle } from '../components/Ui'
 import { useAsync, useTask, describeError, type UseAsyncResult } from '../useAsync'
 import { api } from '../api'
+import { useExperimentalFlags } from '../experimental'
 
 const CONTEXT_PRESETS: readonly { readonly value: number; readonly label: string }[] = [
   { value: 32000, label: '32k' },
@@ -392,6 +393,8 @@ export function OverviewView({
   readonly daemonUnreachable: boolean
 }): JSX.Element {
   const providers = useAsync<ProvidersView>(() => api.providers(), [])
+  const { flags } = useExperimentalFlags()
+  const visionSidecarVisible = flags.visionSidecar
 
   return (
     <section className="screen" aria-labelledby="h-overview">
@@ -403,12 +406,12 @@ export function OverviewView({
             </svg>
             Overview
           </h1>
-          <p className="sub">daemon state, default context window and vision sidecar</p>
+          <p className="sub">daemon state and default context window</p>
         </div>
       </div>
       <div className="ov-grid">
         <DaemonCard status={daemon} unreachable={daemonUnreachable} />
-        <VisionSidecarCard providers={providers} />
+        {visionSidecarVisible ? <VisionSidecarCard providers={providers} /> : null}
         <ContextWindowCard providers={providers} />
       </div>
     </section>

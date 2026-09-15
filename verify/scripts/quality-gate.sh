@@ -7,7 +7,7 @@ fail() {
 }
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-repo=$(CDPATH= cd -- "$script_dir/../../.." && pwd -P)
+repo=$(CDPATH= cd -- "$script_dir/../.." && pwd -P)
 PORT="${PRISM_PORT:-18787}"
 
 assert_prerequisites() {

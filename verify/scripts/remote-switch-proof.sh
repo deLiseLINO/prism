@@ -9,7 +9,7 @@ set -euo pipefail
 fail() { echo "FAIL: $*" >&2; exit 1; }
 run_with_timeout() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_PORT:-18796}"
 REMOTE_PORT="${PRISM_REMOTE_PORT:-18797}"
@@ -144,11 +144,13 @@ cdp_eval "await (async () => {
     await sleep(100)
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
-  const toggle = document.querySelector('.toggle input[type=checkbox]')
+  const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Remote machines'))
+  if (!card) throw new Error('remote machines flag card not rendered')
+  const toggle = card.querySelector('.toggle input[type=checkbox]')
   if (!toggle) throw new Error('machines toggle not rendered')
   if (!toggle.checked) toggle.click()
   await sleep(200)
-  if (!document.querySelector('.toggle input[type=checkbox]').checked) throw new Error('toggle did not switch on')
+  if (!card.querySelector('.toggle input[type=checkbox]').checked) throw new Error('toggle did not switch on')
   return {enabled: true}
 })()" > "$EVID_WORK/flag-enable.json" || fail "enabling the machines flag failed"
 

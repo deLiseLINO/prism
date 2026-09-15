@@ -3,7 +3,7 @@
 User-facing features of the Prism system (the Electron desktop app in `apps/desktop`, the `prismd` daemon, the `prismctl` CLI, and the Codex/Grok/OMP integration clients), from the operator's point of view. Each file answers, in this exact order: what the feature's sub-features are, how to reach it as a user, how to drive it with the harness from `SKILL.md`, and what gotchas bite the verification driver.
 
 - `daemon-lifecycle.md` — the app supervises prismd: boot, crash restart, quit; window close hides to the tray instead of stopping anything. The Overview card reports state and endpoint; there are no manual controls.
-- `overview.md` — the default dashboard: daemon card (state, endpoint), vision sidecar, default context window.
+- `overview.md` — the default dashboard: daemon card (state, endpoint), vision sidecar behind the experimental flag, default context window.
 - `renderer-status.md` — the window shows live daemon status, subscribes to supervisor pushes, and the tray tooltip mirrors it.
 - `tray.md` — tray icon, Show Prism, Quit Prism, click-to-show, live tooltip.
 - `auth-flows.md` — per-provider OAuth add-account: start login, pending device state, browser handoff, cancel, terminal states.

@@ -7,7 +7,7 @@ set -euo pipefail
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../" && pwd -P)
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 PORT="${PRISM_PORT:-18789}"
 CDP_PORT="${PRISM_CDP_PORT:-19223}"
 RUNDIR=$(mktemp -d /tmp/prism-effort-verify.XXXXXX)

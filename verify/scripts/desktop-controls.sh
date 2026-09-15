@@ -6,7 +6,7 @@ fail() {
   exit 1
 }
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_PORT:-${PRISMCTL_PROOF_PORT:-18793}}"
 CDP_PORT="${PRISM_CDP_PORT:-19224}"

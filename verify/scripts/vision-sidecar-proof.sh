@@ -6,7 +6,7 @@ fail() {
   exit 1
 }
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_PORT:-18795}"
 CDP_PORT="${PRISM_CDP_PORT:-19225}"
@@ -111,25 +111,60 @@ cdp_eval "await (async () => {
   throw new Error('Overview did not remount after daemon became ready')
 })()" > /dev/null
 
+echo "==> vision sidecar card is hidden while the experimental flag is off"
+cdp_eval "await (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  for (let i = 0; i < 20; i++) {
+    const card = [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
+    if (card) throw new Error('vision sidecar card rendered while the flag is off')
+    if (document.querySelector('main h1')?.textContent.trim() === 'Overview' && document.querySelector('.ov-grid')) break
+    await sleep(250)
+  }
+  return {hidden: true}
+})()" > "$EVID_WORK/sidecar-hidden.json"
+grep -q '"hidden":true' "$EVID_WORK/sidecar-hidden.json" || fail "sidecar card not gated by the experimental flag"
+
+echo "==> enabling the experimental vision sidecar flag"
+cdp_eval "await (async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const nav = (l) => [...document.querySelectorAll('nav button')].find((b) => b.textContent.trim() === l)
+  nav('Experimental').click()
+  for (let i = 0; i < 60; i++) { if (document.querySelector('main h1')?.textContent.trim() === 'Experimental') break; await sleep(100) }
+  if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
+  const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Vision sidecar'))
+  if (!card) throw new Error('vision sidecar flag card not rendered')
+  const toggle = card.querySelector('.toggle input[type=checkbox]')
+  if (!toggle) throw new Error('vision sidecar flag toggle not rendered')
+  if (!toggle.checked) toggle.click()
+  await sleep(200)
+  if (!card.querySelector('.toggle input[type=checkbox]').checked) throw new Error('toggle did not switch on')
+  nav('Overview').click()
+  for (let i = 0; i < 60; i++) { if (document.querySelector('main h1')?.textContent.trim() === 'Overview') return {enabled: true}; await sleep(100) }
+  throw new Error('Overview did not reopen after enabling the flag')
+})()" > "$EVID_WORK/flag-enable.json"
+grep -q '"enabled":true' "$EVID_WORK/flag-enable.json" || fail "vision sidecar flag toggle failed"
+
 echo "==> vision sidecar card renders with disabled state and eligible model"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const card = () => [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
   for (let i = 0; i < 60; i++) {
-    const card = [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
-    if (card) {
-      const toggle = card.querySelector('.toggle input[type=checkbox]')
-      const rows = [...card.querySelectorAll('.prov-mline')].map((row) => row.querySelector('.prov-mline-name')?.textContent.trim())
-      if (toggle && rows.length > 0) {
-        return {
-          toggleChecked: toggle.checked,
-          rows,
-          badge: card.querySelector('.badge--ok')?.textContent.trim() ?? null,
-        }
+    const c = card()
+    const toggle = c?.querySelector('.toggle input[type=checkbox]')
+    const btn = c?.querySelector('.vsd__btn')
+    if (c && toggle && btn) {
+      const initial = {
+        toggleChecked: toggle.checked,
+        current: btn.querySelector('.vsd__cur')?.textContent.trim() ?? null,
       }
+      btn.click()
+      await sleep(300)
+      const opts = [...(c.querySelectorAll('.vsd__opt') ?? [])].map((o) => o.querySelector('.vsd__opt-name')?.textContent.trim())
+      return {...initial, options: opts}
     }
     await sleep(500)
   }
-  throw new Error('vision sidecar card never rendered with toggle and model rows: ' + (document.querySelector('main')?.innerText ?? '').slice(0, 400))
+  throw new Error('vision sidecar card never rendered with toggle and dropdown: ' + (document.querySelector('main')?.innerText ?? '').slice(0, 400))
 })()" > "$EVID_WORK/sidecar-initial.json"
 
 grep -q 'router/gpt-5.6-luna' "$EVID_WORK/sidecar-initial.json" || fail "eligible model not listed: $(cat "$EVID_WORK/sidecar-initial.json")"
@@ -140,17 +175,15 @@ echo "==> selecting the vision model enables the sidecar through the real UI"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   const card = () => [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
-  const row = () => [...(card()?.querySelectorAll('.prov-mline') ?? [])].find((node) => node.textContent.includes('router/gpt-5.6-luna'))
-  if (!row()) throw new Error('router/gpt-5.6-luna row not found')
-  row().click()
-  for (let i = 0; i < 60; i++) {
-    if (card()?.querySelector('.badge--ok')?.textContent.trim() === 'sidecar') break
-    await sleep(250)
-  }
-  const badge = card()?.querySelector('.badge--ok')?.textContent.trim()
-  if (badge !== 'sidecar') throw new Error('sidecar badge did not appear after row click')
+  const btn = card()?.querySelector('.vsd__btn')
+  if (!btn) throw new Error('model dropdown button not found')
+  btn.click()
+  await sleep(300)
+  const opt = [...(card()?.querySelectorAll('.vsd__opt') ?? [])].find((node) => node.textContent.includes('router/gpt-5.6-luna'))
+  if (!opt) throw new Error('router/gpt-5.6-luna option not found in the dropdown')
+  opt.click()
   for (let i = 0; i < 40; i++) {
-    if (card()?.querySelector('.toggle input[type=checkbox]')?.checked === true) return {selected: true, badge}
+    if (card()?.querySelector('.toggle input[type=checkbox]')?.checked === true) return {selected: true}
     await sleep(250)
   }
   throw new Error('toggle did not flip to enabled after model selection')
@@ -198,6 +231,5 @@ curl -sf "http://127.0.0.1:$PORT/api/v1/providers" > "$EVID_WORK/providers-after
 grep -q '"visionSidecar":{"enabled":true,"target":"router/gpt-5.6-luna"}' "$EVID_WORK/providers-after-on.json" \
   || fail "daemon config lost the sidecar target after re-enable: $(cat "$EVID_WORK/providers-after-on.json")"
 
-node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$CDP_PORT" "$EVID_WORK/sidecar-card.png" > /dev/null 2>&1 || true
+echo "vision sidecar proof OK (flag gate hidden/off, flag enable, card render, eligible model filter, select->enable, toggle off/on, config round-trip)"
 
-echo "vision sidecar proof OK (card render, eligible model filter, select->enable, toggle off/on, config round-trip)"
