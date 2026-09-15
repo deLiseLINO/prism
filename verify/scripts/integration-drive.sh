@@ -12,7 +12,7 @@ run_with_timeout() {
   perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "$seconds" "$@"
 }
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 REAL_HOME=$HOME
 PORT="${PRISM_PORT:-18787}"

@@ -58,7 +58,7 @@ function stubStorage(payload: Record<string, boolean> | null): void {
 
 describe('agent actions feature flag', () => {
   it('is not in the always-visible experimental list; it is gated on the daemon switch', () => {
-    expect(EXPERIMENTAL_FLAGS.map((f) => f.flag)).toEqual(['remoteInstall'])
+    expect(EXPERIMENTAL_FLAGS.map((f) => f.flag)).toEqual(['visionSidecar', 'remoteInstall'])
   })
 
   it('stays off by default and honors a stored true like any real flag', () => {
@@ -104,11 +104,11 @@ describe('agent actions feature flag', () => {
 
   describe('experimental screen card visibility', () => {
     it('the card set excludes agent actions unless the daemon allows them', () => {
-      expect(experimentalCards(false).map((c) => c.flag)).toEqual(['remoteInstall'])
+      expect(experimentalCards(false).map((c) => c.flag)).toEqual(['visionSidecar', 'remoteInstall'])
     })
 
     it('the card set leads with agent actions when the daemon allows them', () => {
-      expect(experimentalCards(true).map((c) => c.flag)).toEqual(['agentActions', 'remoteInstall'])
+      expect(experimentalCards(true).map((c) => c.flag)).toEqual(['agentActions', 'visionSidecar', 'remoteInstall'])
     })
 
     it('SSR (effects never ran) renders only the always-visible flags', () => {

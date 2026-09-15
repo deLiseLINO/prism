@@ -2,11 +2,16 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 const STORAGE_KEY = 'prism-experimental'
 
-export type ExperimentalFlag = 'remoteInstall' | 'agentActions'
+export type ExperimentalFlag = 'remoteInstall' | 'agentActions' | 'visionSidecar'
 
-const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions']
+const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions', 'visionSidecar']
 
 export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: string; description: string }[] = [
+  {
+    flag: 'visionSidecar',
+    label: 'Vision sidecar',
+    description: 'The vision sidecar card on Overview: describes images with a vision model before they reach text-only models.',
+  },
   {
     flag: 'remoteInstall',
     label: 'Remote machines and daemon install',
@@ -25,7 +30,7 @@ export const AGENT_ACTIONS_FLAG: { flag: ExperimentalFlag; label: string; descri
 
 type ExperimentalState = Record<ExperimentalFlag, boolean>
 
-const DISABLED: ExperimentalState = { remoteInstall: false, agentActions: false }
+const DISABLED: ExperimentalState = { remoteInstall: false, agentActions: false, visionSidecar: false }
 
 function readFlags(): ExperimentalState {
   try {

@@ -42,7 +42,7 @@ const VIEW_BY_HASH: Record<string, View> = {
 
 
 export const VIEWS: readonly ViewEntry[] = [
-  { view: 'overview', label: 'Overview', tagline: 'Daemon state, default context window and vision sidecar', section: 'Overview' },
+  { view: 'overview', label: 'Overview', tagline: 'Daemon state and default context window', section: 'Overview' },
   { view: 'usage', label: 'Accounts', tagline: 'Per-account quota, pinning and login', section: 'Operate' },
   { view: 'stats', label: 'Stats', tagline: 'Request and token statistics', section: 'Operate' },
   { view: 'logs', label: 'Logs', tagline: 'Model requests and failover history', section: 'Operate' },

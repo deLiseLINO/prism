@@ -3,7 +3,7 @@
 set -u
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-REPO_ROOT="${REPO_ROOT:-$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)}"
+REPO_ROOT="${REPO_ROOT:-$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)}"
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 RUNDIR=$(mktemp -d /tmp/prism-smoke.XXXXXX)
 PORT="${PRISM_SMOKE_PORT:-18789}"
