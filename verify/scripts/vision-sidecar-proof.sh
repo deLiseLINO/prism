@@ -230,6 +230,7 @@ cdp_eval "await (async () => {
 curl -sf "http://127.0.0.1:$PORT/api/v1/providers" > "$EVID_WORK/providers-after-on.json"
 grep -q '"visionSidecar":{"enabled":true,"target":"router/gpt-5.6-luna"}' "$EVID_WORK/providers-after-on.json" \
   || fail "daemon config lost the sidecar target after re-enable: $(cat "$EVID_WORK/providers-after-on.json")"
+node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/sidecar-card.png" > /dev/null 2>&1 || true
 
 echo "vision sidecar proof OK (flag gate hidden/off, flag enable, card render, eligible model filter, select->enable, toggle off/on, config round-trip)"
 
