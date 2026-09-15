@@ -7,8 +7,8 @@ import (
 
 // The staged expectations are the byte-identical outputs of the landed TS
 // implementation on the same seeds (packages/integrations at 480e5cc), plus
-// the codex root-routing pair added with the prism takeover support; any
-// drift here means the Go port changed user-visible bytes.
+// the codex root-routing pair; any drift here means the Go port changed
+// user-visible bytes.
 func TestDifferentialByteIdenticalOutputs(t *testing.T) {
 	codexSeed := "# user configuration\n" +
 		"top_setting = \"keep\"\n" +
