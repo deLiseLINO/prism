@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"prism/internal/canon"
+	"prism/internal/execution"
 	"prism/internal/provider"
 )
 
@@ -260,6 +261,85 @@ func TestTargetBaseURLWins(t *testing.T) {
 	}
 	if gotPath != "/v1/messages" {
 		t.Fatalf("path = %q", gotPath)
+	}
+}
+
+func TestSessionIDHeaderForwarded(t *testing.T) {
+	forward, err := execution.NewForwardSet(http.Header{"X-Session-Id": []string{"sess-42"}})
+	if err != nil {
+		t.Fatalf("NewForwardSet: %v", err)
+	}
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("X-Session-Id")
+		w.Write([]byte(sse(
+			ssePart("message_start", `{"type":"message_start","message":{}}`),
+			ssePart("message_stop", `{"type":"message_stop"}`),
+		)))
+	}))
+	defer server.Close()
+	runner := New(Options{BaseURL: server.URL})
+	err = runner.Run(context.Background(), provider.RunRequest{
+		Request: baseRequest(),
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+		Facts:   execution.Facts{Forward: forward},
+	}, &collectingSink{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(got) != 1 || got[0] != "sess-42" {
+		t.Fatalf("x-session-id = %v, want [sess-42]", got)
+	}
+}
+
+func TestSessionIDHeaderAbsentWithoutFacts(t *testing.T) {
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("X-Session-Id")
+		w.Write([]byte(sse(
+			ssePart("message_start", `{"type":"message_start","message":{}}`),
+			ssePart("message_stop", `{"type":"message_stop"}`),
+		)))
+	}))
+	defer server.Close()
+	runner := New(Options{BaseURL: server.URL})
+	err := runner.Run(context.Background(), provider.RunRequest{
+		Request: baseRequest(),
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+	}, &collectingSink{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("x-session-id = %v, want none", got)
+	}
+}
+
+func TestSessionIDHeaderEmptyValueNotForwarded(t *testing.T) {
+	forward, err := execution.NewForwardSet(http.Header{"X-Session-Id": []string{"   "}})
+	if err != nil {
+		t.Fatalf("NewForwardSet: %v", err)
+	}
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("X-Session-Id")
+		w.Write([]byte(sse(
+			ssePart("message_start", `{"type":"message_start","message":{}}`),
+			ssePart("message_stop", `{"type":"message_stop"}`),
+		)))
+	}))
+	defer server.Close()
+	runner := New(Options{BaseURL: server.URL})
+	err = runner.Run(context.Background(), provider.RunRequest{
+		Request: baseRequest(),
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+		Facts:   execution.Facts{Forward: forward},
+	}, &collectingSink{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("x-session-id = %v, want none for blank value", got)
 	}
 }
 

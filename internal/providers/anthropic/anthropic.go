@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"prism/internal/execution"
 	"prism/internal/provider"
 )
 
@@ -25,7 +26,7 @@ const (
 	minThinkingBudget  = 1024
 	maxErrorBodyBytes  = 1 << 20
 	stateStoreName     = "anthropic"
-	promptCacheKeyNote = "anthropic: prompt_cache_key accepted but not forwarded in MVP; no cache_control synthesis"
+	promptCacheKeyNote = "anthropic: prompt_cache_key accepted but not forwarded; client x-session-id forwarded on the messages run path when non-empty; no cache_control synthesis"
 )
 
 type Options struct {
@@ -173,6 +174,9 @@ func (r *Runner) buildRequest(req provider.RunRequest) (*outbound, error) {
 	}
 	out.url = messagesURL(r.baseURL(req.Target))
 	out.headers = r.buildHeaders("text/event-stream", req.Target.APIKeyRef, r.opts.Beta)
+	if v, ok := req.Facts.Forward.Get(execution.ForwardSessionID); ok && strings.TrimSpace(v) != "" {
+		out.headers = append(out.headers, header{"x-session-id", v})
+	}
 	return out, nil
 }
 
