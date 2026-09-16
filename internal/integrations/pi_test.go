@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-var piUserSeed = "{\n  \"providers\": {\n    \"edge-vps\": {\n      \"baseUrl\": \"http://127.0.0.1:9797/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"user-key\",\n      \"models\": []\n    }\n  }\n}\n"
+var piUserSeed = "{\n  \"providers\": {\n    \"acme-edge\": {\n      \"baseUrl\": \"http://127.0.0.1:9797/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"user-key\",\n      \"models\": []\n    }\n  }\n}\n"
 
 func TestPiPathResolution(t *testing.T) {
 	if got, err := PiConfigPath(Env{}, "/home/u"); err != nil || got != "/home/u/.pi/agent/models.json" {
@@ -36,10 +36,10 @@ func TestPiApplyWritesPrismProvider(t *testing.T) {
 	if !strings.Contains(got, `"prism": {`) {
 		t.Fatalf("prism provider missing:\n%s", got)
 	}
-	if !strings.Contains(got, `"baseUrl": "http://127.0.0.1:8787/v1"`) {
+	if !strings.Contains(got, `"baseUrl": "http://127.0.0.1:9797/v1"`) {
 		t.Fatalf("base url missing:\n%s", got)
 	}
-	if !strings.Contains(got, `"edge-vps"`) {
+	if !strings.Contains(got, `"acme-edge"`) {
 		t.Fatalf("user provider lost:\n%s", got)
 	}
 	if !strings.Contains(got, `"input": [`) {

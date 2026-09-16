@@ -217,13 +217,13 @@ func TestCodexDamagedFenceRefusesByName(t *testing.T) {
 
 var foreignRoutedToml = "# user configuration\n" +
 	"model = \"router/glm-5.3-flash\"\n" +
-	"# Managed by another-manager: Codex routes through the local proxy.\n" +
+	"# Managed by another manager.\n" +
 	"openai_base_url = \"http://127.0.0.1:8080/v1\"\n" +
 	"\n" +
 	"[features]\n" +
 	"fast_mode = false\n"
 
-var foreignMarker = "# Managed by another-manager: Codex routes through the local proxy."
+var foreignMarker = "# Managed by another manager."
 
 func TestCodexApplyTakesOverForeignManagerRouting(t *testing.T) {
 	dir := t.TempDir()
