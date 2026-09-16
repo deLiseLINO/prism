@@ -36,7 +36,7 @@ func TestPiApplyWritesPrismProvider(t *testing.T) {
 	if !strings.Contains(got, `"prism": {`) {
 		t.Fatalf("prism provider missing:\n%s", got)
 	}
-	if !strings.Contains(got, `"baseUrl": "http://127.0.0.1:8787/v1"`) {
+	if !strings.Contains(got, `"baseUrl": "http://127.0.0.1:9797/v1"`) {
 		t.Fatalf("base url missing:\n%s", got)
 	}
 	if !strings.Contains(got, `"acme-edge"`) {
