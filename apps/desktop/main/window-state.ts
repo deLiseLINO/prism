@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs'
+import { renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 export interface WindowState {
@@ -51,6 +51,7 @@ export function saveWindowState(userDataDir: string, state: WindowState): void {
   const file = stateFilePath(userDataDir)
   const tmp = `${file}.tmp`
   writeFileSync(tmp, `${JSON.stringify(state)}\n`)
+  renameSync(tmp, file)
 }
 
 export const WINDOW_SAVE_DEBOUNCE_MS = SAVE_DEBOUNCE_MS

@@ -12,6 +12,10 @@ export interface UseAsyncResult<T> {
   readonly set: (next: T) => void
 }
 
+const RETRY_BASE_MS = 500
+const RETRY_MAX_MS = 8_000
+const RETRY_MAX_ATTEMPTS = 7
+
 export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[]): UseAsyncResult<T> {
   const [state, setState] = useState<AsyncState<T>>({ kind: 'idle' })
   const [tick, setTick] = useState(0)
@@ -21,6 +25,8 @@ export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[]): U
 
   useEffect(() => {
     let active = true
+    let retryTimer: number | undefined
+    const attempt = tick
     setState((prev) => (hasValueRef.current || prev.kind === 'error' ? prev : { kind: 'loading' }))
     loadRef.current().then(
       (value) => {
@@ -34,10 +40,16 @@ export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[]): U
           kind: 'error',
           error: error instanceof Error ? error : new Error(String(error)),
         })
+        if (hasValueRef.current || attempt >= RETRY_MAX_ATTEMPTS) return
+        const delay = Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_MAX_MS)
+        retryTimer = window.setTimeout(() => {
+          if (active) setTick((n) => n + 1)
+        }, delay)
       },
     )
     return () => {
       active = false
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
     }
   }, [...deps, tick])
 
