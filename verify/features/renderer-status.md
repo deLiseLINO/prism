@@ -11,7 +11,7 @@ The React window subscribes to daemon status through the preload bridge. The sid
 
 ## How to get to it (user POV)
 
-Launch the app. The window titled Prism opens Overview and shows the daemon card. The sidebar footer shows the daemon state and pid on every route. A clean or unknown hash falls back to Overview.
+Launch the app. The window titled Prism opens the view the user last visited and shows the daemon card on Overview. The sidebar footer shows the daemon state and pid on every route. An unknown hash falls back to Overview; a clean hash restores the last visited view from `prism-view` in localStorage.
 
 ## Driving it with the harness
 
@@ -33,5 +33,5 @@ Proof: the DOM text contains the same state string the bridge reports, and the e
 - The renderer is sandboxed with a strict CSP: no inline script eval, no remote resources. Screenshot evidence comes from CDP `Page.captureScreenshot`, not from page-triggered downloads.
 - `document.body.innerText` is only meaningful after the initial status fetch resolves; race it by waiting for the bridge promise first.
 - The window close button hides, it does not quit; the DOM stays attached and the subscription keeps flowing.
-- Unknown hashes fall back to Overview (`viewFromHash` default), so navigating to `#/nonsense` is a valid way to prove the fallback, not a 404 state.
+- Unknown hashes fall back to Overview (`viewFromHash` default), so navigating to `#/nonsense` is a valid way to prove the fallback, not a 404 state. A clean (empty) hash instead restores the last visited view from `prism-view` in localStorage; a stored value that is not a known view falls back to Overview.
 - The endpoint renders only on the Overview daemon card; the sidebar footer carries state and pid. Do not look for endpoint text outside Overview.

@@ -17,7 +17,15 @@ function installLocation(initialHash: string): { location: LocationStub; restore
   })
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: { location: stub, history, dispatchEvent: () => true },
+    value: {
+      location: stub,
+      history,
+      dispatchEvent: () => true,
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+    },
     writable: true,
   })
   return {
@@ -102,5 +110,40 @@ describe('renderer routing', () => {
     expect(seen.has('stats')).toBe(true)
     expect(seen.has('logs')).toBe(true)
 
+  })
+
+  it('restores the last view on a clean hash and falls back to overview otherwise', () => {
+    const store = new Map<string, string>()
+    const windowStub = (globalThis as Record<string, unknown>)['window']
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        ...((windowStub as object) ?? {}),
+        localStorage: {
+          getItem: (key: string) => store.get(key) ?? null,
+          setItem: (key: string, value: string) => void store.set(key, value),
+        },
+      },
+      writable: true,
+    })
+
+    locationStub.hash = ''
+    expect(routing.readCurrentView()).toBe('overview')
+
+    store.set('prism-view', 'stats')
+    expect(routing.readCurrentView()).toBe('stats')
+
+    routing.rememberView('logs')
+    expect(store.get('prism-view')).toBe('logs')
+    locationStub.hash = ''
+    expect(routing.readCurrentView()).toBe('logs')
+
+    store.set('prism-view', 'bogus')
+    locationStub.hash = ''
+    expect(routing.readCurrentView()).toBe('overview')
+
+    store.set('prism-view', 'machines')
+    locationStub.hash = ''
+    expect(routing.readCurrentView()).toBe('machines')
   })
 })

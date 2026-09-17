@@ -12,7 +12,7 @@ The desktop app spawns prismd on boot, watches `/api/v1/health`, restarts it wit
 
 ## How to get to it (user POV)
 
-Launch the app. It opens Overview, where the daemon card leads the grid and shows the state chip and endpoint. Quit via the tray menu or Cmd+Q.
+Launch the app. It opens the last visited view; on Overview the daemon card leads the grid and shows the state chip and endpoint. Quit via the tray menu or Cmd+Q.
 
 ## Driving it with the harness
 
