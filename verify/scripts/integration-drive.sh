@@ -140,7 +140,9 @@ click_apply() {
     if (!button) throw new Error('$id Apply button not found')
     if (button.disabled) throw new Error('$id Apply button is disabled')
     card.dataset.verifyTag = 'before-apply'
+    const clickTime = performance.now()
     button.click()
+    const beforeClick = new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null))
     const animationReplays = []
     for (let i = 0; i < 60; i++) {
       await sleep(100)
@@ -156,7 +158,9 @@ click_apply() {
         return {id: '$id', state, remounted: false, animationReplays, text: current?.innerText}
       }
       for (const anim of (current ?? card).getAnimations()) {
-        if (anim instanceof CSSAnimation && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
+        if (!(anim instanceof CSSAnimation) || beforeClick.has(anim.animationName)) continue
+        const started = anim.startTime ?? 0
+        if (started > clickTime && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
       }
     }
     throw new Error('$id did not become managed after clicking Apply')
@@ -174,7 +178,9 @@ verify_no_remount_rollback() {
     if (!rollback) throw new Error('$id Rollback button not found')
     if (rollback.disabled) throw new Error('$id Rollback button is disabled before rollback')
     card.dataset.verifyTag = 'before-rollback'
+    const clickTime = performance.now()
     rollback.click()
+    const beforeClick = new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null))
     const animationReplays = []
     for (let i = 0; i < 150; i++) {
       const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
@@ -182,7 +188,9 @@ verify_no_remount_rollback() {
       if (current !== card) throw new Error('$id card remounted during rollback: the DOM node changed')
       if (current.dataset.verifyTag !== 'before-rollback') throw new Error('$id card remounted during rollback: the tag was lost')
       for (const anim of current.getAnimations()) {
-        if (anim instanceof CSSAnimation && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
+        if (!(anim instanceof CSSAnimation) || beforeClick.has(anim.animationName)) continue
+        const started = anim.startTime ?? 0
+        if (started > clickTime && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
       }
       const alert = current.querySelector('[role=alert]')
       if (alert) throw new Error('$id rollback refused: ' + alert.textContent)
@@ -302,7 +310,9 @@ verify_bulk_apply_all() {
     const cards = [...document.querySelectorAll('.int-row-wrap')]
     if (cards.length < 3) throw new Error('expected the integration cards, found ' + cards.length)
     for (const card of cards) card.dataset.verifyTag = 'before-bulk-apply'
+    const clickTime = performance.now()
     applyAll.click()
+    const beforeClick = cards.map((card) => new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null)))
     const animationReplays = []
     for (let i = 0; i < 300; i++) {
       const current = [...document.querySelectorAll('.int-row-wrap')]
@@ -311,8 +321,9 @@ verify_bulk_apply_all() {
         if (current[j] !== cards[j]) throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk apply: the DOM node changed')
         if (current[j].dataset.verifyTag !== 'before-bulk-apply') throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk apply: the tag was lost')
         for (const anim of current[j].getAnimations()) {
-          const name = anim instanceof CSSAnimation ? anim.animationName : null
-          if (name && !animationReplays.includes(name)) animationReplays.push(name)
+          if (!(anim instanceof CSSAnimation) || beforeClick[j].has(anim.animationName)) continue
+          const started = anim.startTime ?? 0
+          if (started > clickTime && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
         }
       }
       const alert = document.querySelector('.int-screen > .int-refusal[role=alert]')
@@ -352,7 +363,9 @@ verify_bulk_rollback_all() {
     const cards = [...document.querySelectorAll('.int-row-wrap')]
     if (cards.length < 3) throw new Error('expected the integration cards, found ' + cards.length)
     for (const card of cards) card.dataset.verifyTag = 'before-bulk-rollback'
+    const clickTime = performance.now()
     rollbackAll.click()
+    const beforeClick = cards.map((card) => new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null)))
     const animationReplays = []
     for (let i = 0; i < 300; i++) {
       const current = [...document.querySelectorAll('.int-row-wrap')]
@@ -361,8 +374,9 @@ verify_bulk_rollback_all() {
         if (current[j] !== cards[j]) throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk rollback: the DOM node changed')
         if (current[j].dataset.verifyTag !== 'before-bulk-rollback') throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk rollback: the tag was lost')
         for (const anim of current[j].getAnimations()) {
-          const name = anim instanceof CSSAnimation ? anim.animationName : null
-          if (name && !animationReplays.includes(name)) animationReplays.push(name)
+          if (!(anim instanceof CSSAnimation) || beforeClick[j].has(anim.animationName)) continue
+          const started = anim.startTime ?? 0
+          if (started > clickTime && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
         }
       }
       const alert = document.querySelector('.int-screen > .int-refusal[role=alert]')
@@ -398,7 +412,9 @@ click_toggle() {
     if (!input) throw new Error('$id Auto-apply checkbox not found')
     if (input.disabled) throw new Error('$id Auto-apply toggle is disabled')
     card.dataset.verifyTag = 'before-toggle'
+    const clickTime = performance.now()
     input.click()
+    const beforeClick = new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null))
     const animationReplays = []
     for (let i = 0; i < 60; i++) {
       await sleep(100)
@@ -414,7 +430,9 @@ click_toggle() {
         return {id: '$id', enabled: live.checked, remounted: false, animationReplays}
       }
       for (const anim of (current ?? card).getAnimations()) {
-        if (anim instanceof CSSAnimation && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
+        if (!(anim instanceof CSSAnimation) || beforeClick.has(anim.animationName)) continue
+        const started = anim.startTime ?? 0
+        if (started > clickTime && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
       }
     }
     throw new Error('$id toggle never settled to enabled=$next')
