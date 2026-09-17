@@ -37,7 +37,7 @@ opencode2 beta-19086 has no headless parse probe: `opencode2 models` is a silent
 ## Gotchas
 
 - Create the client directories before Electron starts. Installation status comes from the target file or detection-directory existence.
-- The Auto-apply toggle's checked state only flips after the renderer refreshes; the toggle is a controlled checkbox. The drive asserts the flip with no remount, no tag loss, and no entry-animation replay.
+- The Auto-apply toggle's checked state only flips after the renderer refreshes; the toggle is a controlled checkbox. The drive asserts the flip with no remount, no tag loss, and no entry-animation replay. A replay is an animation that started after the click; the entry animation still playing from the screen opening (same name, earlier start time) is not a replay.
 - The damaged card renders only after a status refresh: navigate away and back, or trigger any `onChanged` action. Asserting damage on a stale card is a bug in the assertion. The renderer derives damage from the fence detail (`detail` mentions fence + damage), while the auto-apply watcher's logged refusal on a damaged grok file is the collision formulation, not the fence-damage string.
 - The daemon-restart proof kills the daemon process directly (`pgrep -f <rundir>/prismd`). Electron survives, the supervisor relaunches the daemon, and `watchIntegrations` re-applies every enabled integration at startup. The new daemon's `GET /api/v1/integrations` must still report `enabled` for the toggled client.
 - Auto-apply derives Grok aliases from `provider/model` ids: model `gpt-5.6-luna-probe` on provider `codex` lands as `prism-codex-gpt-5-6-luna-probe` (non-`[A-Za-z0-9_-]` runs collapse to `-`). Assert the derived alias, not the raw model name.

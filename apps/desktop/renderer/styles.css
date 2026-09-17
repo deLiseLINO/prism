@@ -736,10 +736,6 @@ body::before {
 .int-card-foot .toggle { grid-area: 2 / 1; }
 .int-card-foot .int-actions { grid-area: 2 / 2; justify-self: end; }
 
-/* Integration cards refresh without re-entering: apply, rollback, and binary
-   jobs update cards in place. */
-.screen .int-card { animation: none; }
-
 .empty { padding: 36px 20px; text-align: center; color: var(--fg-subtle); }
 .empty-title, .empty__title { font-weight: 600; font-size: 13px; color: var(--fg-muted); }
 .empty__body { font-size: 12px; margin-top: 4px; }
