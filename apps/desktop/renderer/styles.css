@@ -725,12 +725,16 @@ body::before {
 .int-grid .int-card .int-refusal { border-top: 0; border-radius: 10px; padding: 10px 12px; }
 .int-card .confirm { margin-top: 0; border-radius: 10px; }
 .int-card-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  border-top: 1px solid var(--border); padding-top: 12px; flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 10px;
+  border-top: 1px solid var(--border); padding-top: 12px;
   margin-top: auto;
 }
-.int-card-foot .int-src { flex: 1; min-width: 120px; }
-.int-card-foot .int-actions { flex: none; }
+.int-card-foot .int-src { grid-area: 1 / 1 / 2 / 3; min-width: 0; }
+.int-card-foot .toggle { grid-area: 2 / 1; }
+.int-card-foot .int-actions { grid-area: 2 / 2; justify-self: end; }
 
 /* Integration cards refresh without re-entering: apply, rollback, and binary
    jobs update cards in place. */
