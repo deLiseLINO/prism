@@ -29,6 +29,8 @@ const VIEW_HASHES: Record<View, string> = {
   experimental: '#/experimental',
 }
 
+const VIEW_STORAGE_KEY = 'prism-view'
+
 const VIEW_BY_HASH: Record<string, View> = {
   '#/overview': 'overview',
   '#/providers': 'providers',
@@ -63,7 +65,29 @@ export function viewFromHash(raw: string): View {
 }
 
 export function readCurrentView(): View {
+  if (window.location.hash === '') return storedView() ?? 'overview'
   return viewFromHash(window.location.hash)
+}
+
+export function isView(value: unknown): value is View {
+  return VIEWS.some((entry) => entry.view === value)
+}
+
+export function storedView(): View | null {
+  try {
+    const value = window.localStorage.getItem(VIEW_STORAGE_KEY)
+    return isView(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
+export function rememberView(view: View): void {
+  try {
+    window.localStorage.setItem(VIEW_STORAGE_KEY, view)
+  } catch {
+    return
+  }
 }
 
 export function navigateTo(view: View, replace = false): void {

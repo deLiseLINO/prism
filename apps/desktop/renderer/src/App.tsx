@@ -6,7 +6,7 @@ import { ThemeToggle } from './components/Ui'
 
 import { useTheme } from './useTheme'
 import { ExperimentalFlagsProvider, useExperimentalFlags } from './experimental'
-import { SECTIONS, VIEWS, hashFor, navigateTo, readCurrentView, type View } from './routing'
+import { SECTIONS, VIEWS, hashFor, navigateTo, readCurrentView, rememberView, type View } from './routing'
 
 import { IntegrationsView } from './views/IntegrationsView'
 import { LogsView } from './views/LogsView'
@@ -133,6 +133,10 @@ function AppShell(): JSX.Element {
   useEffect(() => {
     if (window.location.hash !== hashFor(readCurrentView())) navigateTo('overview', true)
   }, [])
+
+  useEffect(() => {
+    rememberView(view)
+  }, [view])
 
   useEffect(() => {
     let cancelled = false
