@@ -112,6 +112,7 @@ body::before {
 .card__action { margin-left: auto; }
 .card__body { padding: 14px 22px 20px; }
 .card__body:empty { display: none; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
 
 .titleline {
   position: fixed; top: calc(7px / var(--zoom, 1)); left: calc(16px / var(--zoom, 1)); right: calc(16px / var(--zoom, 1)); z-index: 20;
