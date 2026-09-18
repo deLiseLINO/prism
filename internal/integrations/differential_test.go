@@ -137,6 +137,7 @@ func TestDifferentialByteIdenticalOutputs(t *testing.T) {
 				"            - medium",
 				"            - high",
 				"            - xhigh",
+				"            - max",
 				"          defaultLevel: medium",
 			)
 		}

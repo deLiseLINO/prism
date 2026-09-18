@@ -26,6 +26,7 @@ func ompLeaf(port int) string {
 		"            - medium",
 		"            - high",
 		"            - xhigh",
+		"            - max",
 		"          defaultLevel: medium",
 		"      - id: gemini-3-pro",
 		"        name: Gemini 3 Pro",
@@ -40,6 +41,7 @@ func ompLeaf(port int) string {
 		"            - medium",
 		"            - high",
 		"            - xhigh",
+		"            - max",
 		"          defaultLevel: medium",
 	}, "\n")
 }

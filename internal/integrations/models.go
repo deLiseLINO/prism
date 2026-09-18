@@ -53,9 +53,8 @@ var chatEffortVocabulary = []string{"off", "minimal", "low", "medium", "high", "
 var responsesEffortVocabulary = []string{"off", "low", "medium", "high", "xhigh", "max"}
 
 // ompThinkingEfforts is the effort ladder omp's thinking block accepts: the
-// chat-honored rungs minus off (a thinking level, not an effort) and max
-// (omp's schema rejects rungs beyond xhigh).
-var ompThinkingEfforts = []string{"minimal", "low", "medium", "high", "xhigh"}
+// chat-honored rungs minus off (a thinking level, not an effort).
+var ompThinkingEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
 // piThinkingLevels are the picker levels pi's thinkingLevelMap keys; each
 // maps to the wire effort it names, or null when the wire does not honor it.

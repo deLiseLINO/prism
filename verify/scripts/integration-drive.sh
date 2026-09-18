@@ -222,7 +222,7 @@ node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/integratio
 echo "==> checking generated client configs"
 grep -q "http://127.0.0.1:$PORT/v1" "$RUNDIR/.grok/config.toml" || fail "Grok config has no Prism endpoint after UI Apply"
 grep -q "prism managed block" "$RUNDIR/.grok/config.toml" || fail "Grok managed block missing after UI Apply"
-grep -q "prism:" "$RUNDIR/.omp/agent/models.yml" || fail "OMP provider missing after UI Apply"
+grep -q "            - max" "$RUNDIR/.omp/agent/models.yml" || fail "OMP effort ladder missing the max rung after UI Apply"
 grep -q "\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:$PORT\"" "$RUNDIR/.claude/settings.json" || fail "Claude settings has no Prism base URL after UI Apply"
 grep -q "\"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY\": \"1\"" "$RUNDIR/.claude/settings.json" || fail "Claude settings has no gateway model discovery switch after UI Apply"
 grep -q "\"baseUrl\":\"http://127.0.0.1:$PORT\"" "$RUNDIR/.claude/cache/gateway-models.json" || fail "Claude gateway model cache missing or pointing elsewhere after UI Apply"
