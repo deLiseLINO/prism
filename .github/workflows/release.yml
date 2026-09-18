@@ -156,7 +156,7 @@ jobs:
       - run: npm run build --workspace @prism/desktop
         env:
           PRISM_RELEASE_TAG: ${{ github.ref_name }}
-      - run: npx --workspace @prism/desktop electron-builder --linux AppImage --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
+      - run: npx --workspace @prism/desktop electron-builder --linux AppImage:x64 AppImage:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -187,7 +187,7 @@ jobs:
       - run: npm run build --workspace @prism/desktop
         env:
           PRISM_RELEASE_TAG: ${{ github.ref_name }}
-      - run: npx --workspace @prism/desktop electron-builder --win nsis --x64 --arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
+      - run: npx --workspace @prism/desktop electron-builder --win nsis:x64 nsis:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -247,9 +247,9 @@ jobs:
               *.AppImage|*.exe|*.dmg) found=$((found+1));;
             esac
           done
-          # AppImage 1 + nsis 1 (x64+arm64 universal installer) + dmg 2.
-          if [ "$found" -ne 4 ]; then
-            echo "::error::expected 4 installers (AppImage, universal exe, 2x dmg), found $found"
+          # AppImage 2 (x64+arm64) + nsis 2 (x64+arm64) + dmg 2.
+          if [ "$found" -ne 6 ]; then
+            echo "::error::expected 6 installers (2x AppImage, 2x nsis exe, 2x dmg), found $found"
             exit 1
           fi
           shasum -a 256 * > SHA256SUMS
