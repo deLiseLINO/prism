@@ -14,6 +14,14 @@ if (!existsSync(runPath)) {
   process.exit(1)
 }
 const run = JSON.parse(readFileSync(runPath, 'utf8'))
+const providersPath = path.join(dir, 'daemon/providers.json')
+const disabledProviders = new Set(
+  existsSync(providersPath)
+    ? (JSON.parse(readFileSync(providersPath, 'utf8')).providers ?? [])
+        .filter((p) => p.enabled === false)
+        .map((p) => p.id)
+    : [],
+)
 
 const problems = []
 function fail(message) {
@@ -38,11 +46,15 @@ const SCHEMA = 'prism-live-matrix-run/1'
 if (run.schema !== SCHEMA) fail(`schema is ${run.schema}, want ${SCHEMA}`)
 if (!/^\d{8}-\d{6}\.\d+$/.test(run.runId)) fail(`runId malformed: ${run.runId}`)
 
-const KNOWN_MODELS = [
+const STATIC_MODELS = [
   { id: 'codex/gpt-5.6-luna', provider: 'codex' },
   { id: 'antigravity/gemini-3.7-flash', provider: 'antigravity' },
-  { id: 'router/glm-5.3', provider: 'router' },
-  { id: 'router/glm-5.3-flash', provider: 'router' },
+]
+const pairIds = new Set(run.pairs.map((p) => p.modelId))
+const derived = [...pairIds].filter((id) => !STATIC_MODELS.some((m) => m.id === id))
+const KNOWN_MODELS = [
+  ...STATIC_MODELS,
+  ...derived.map((id) => ({ id, provider: id.split('/')[0] })),
 ]
 const bySlug = new Map(KNOWN_MODELS.map((m) => [m.id.replace(/[^a-z0-9]/gi, ''), m]))
 
@@ -82,6 +94,10 @@ for (const client of EXPECTED_CLIENTS) {
       continue
     }
     const pair = byKey.get(`${client}--${model.id}`)
+    if (disabledProviders.has(model.provider)) {
+      if (pair !== undefined) fail(`pair ${client}--${model.id} exists but provider ${model.provider} is disabled`)
+      continue
+    }
     if (pair === undefined) {
       fail(`missing pair ${client}--${model.id}`)
       continue
@@ -115,7 +131,13 @@ for (const client of EXPECTED_CLIENTS) {
     }
   }
 }
-const expectedPairCount = EXPECTED_CLIENTS.reduce((sum, client) => sum + requestedModels(client).length, 0)
+const expectedPairCount = EXPECTED_CLIENTS.reduce((sum, client) => {
+  return sum + requestedModels(client).filter((entry) => {
+    const modelId = client === 'grok' ? grokSelectorToModelId(entry) : entry.replace(/^prism\//, '')
+    const model = KNOWN_MODELS.find((m) => m.id === modelId)
+    return model !== undefined && !disabledProviders.has(model.provider)
+  }).length
+}, 0)
 if (run.pairs.length !== expectedPairCount) {
   fail(`run has ${run.pairs.length} pairs, want ${expectedPairCount}`)
 }

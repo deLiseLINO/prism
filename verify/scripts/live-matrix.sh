@@ -38,8 +38,8 @@ EVID_WORK="$RUNDIR/evidence"
 MIN_SECONDS="${PRISM_MATRIX_MIN_SECONDS:-300}"
 MAX_REQUESTS="${PRISM_MATRIX_MAX_REQUESTS:-60}"
 CEILING_SECONDS="${PRISM_MATRIX_CEILING_SECONDS:-540}"
-GROK_MODELS="${PRISM_MATRIX_GROK_MODELS:-prism-codex-gpt-5-6-luna prism-antigravity-gemini-3-7-flash prism-router-glm-5-3}"
-OMP_MODELS="${PRISM_MATRIX_OMP_MODELS:-prism/codex/gpt-5.6-luna prism/antigravity/gemini-3.7-flash prism/router/glm-5.3}"
+GROK_MODELS="${PRISM_MATRIX_GROK_MODELS:-}"
+OMP_MODELS="${PRISM_MATRIX_OMP_MODELS:-}"
 mkdir -p "$EVID_WORK/daemon" "$EVID_WORK/pairs" "$RUNDIR/.prism" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent" "$RUNDIR/work"
 
 cleanup() {
@@ -123,6 +123,28 @@ cp "$RUNDIR/.grok/config.toml" "$EVID_WORK/grok-config.toml" 2>/dev/null || true
 cp "$RUNDIR/.omp/agent/models.yml" "$EVID_WORK/omp-models.yml" 2>/dev/null || true
 HOME="$RUNDIR" run_with_timeout 30 grok models > "$EVID_WORK/grok-models.txt" 2>&1 || fail "Grok cannot load the config written by Apply"
 HOME="$RUNDIR" run_with_timeout 30 omp models > "$EVID_WORK/omp-models.txt" 2>&1 || fail "OMP cannot load the config written by Apply"
+
+curl -sf "http://127.0.0.1:$PORT/api/v1/providers" > "$EVID_WORK/daemon/providers.json" || fail "provider snapshot failed"
+
+DERIVED_MODEL=$("$PY3" -c 'import json,sys,urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:"+sys.argv[1]+"/api/v1/models"))["models"][0]["id"])' "$PORT")
+if [ -z "$GROK_MODELS" ]; then
+  GROK_MODELS="prism-codex-gpt-5-6-luna prism-antigravity-gemini-3-7-flash prism-$(echo "$DERIVED_MODEL" | tr '/.' '--')"
+fi
+if [ -z "$OMP_MODELS" ]; then
+  OMP_MODELS="prism/codex/gpt-5.6-luna prism/antigravity/gemini-3.7-flash prism/$DERIVED_MODEL"
+fi
+DERIVED_PROVIDER=${DERIVED_MODEL%%/*}
+provider_enabled() {
+  "$PY3" - "$EVID_WORK/daemon/providers.json" "$1" <<'PENEOF'
+import json, sys
+try:
+    providers = json.load(open(sys.argv[1])).get('providers', [])
+    match = [p for p in providers if p.get('id') == sys.argv[2]]
+    print('yes' if match and match[0].get('enabled') else 'no')
+except Exception:
+    print('no')
+PENEOF
+}
 
 usage_state_line() {
   "$PY3" -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" ".join(a["account"]+"="+a["state"] for a in d.get("accounts", [])))' "$1"
@@ -217,7 +239,7 @@ run_grok_pair() {
   pair_dir_name="grok--$alias"
   marker="PRISM_MATRIX_GROK_${alias//-/}$(date +%s | tail -c 4)"
   effort="medium"
-  if [ "$provider" = "router" ]; then effort="off"; fi
+  if [ "$provider" = "$DERIVED_PROVIDER" ]; then effort="low"; fi
   topics=("admission control and body-size limits in a local LLM proxy" "provider selection, affinity, cooldowns and failover ordering" "streaming translation between wire formats and failure handling")
   start_ts=$(date +%s)
   exit_code=0
@@ -238,7 +260,7 @@ run_grok_pair() {
     prompt_file="$RUNDIR/work/prompt-$pair_dir_name-$i.txt"
     if [ "$marker_sent" -eq 1 ]; then
       printf 'Print exactly this single line and nothing else: %s\n' "$marker" > "$prompt_file"
-    elif [ "$provider" = "router" ]; then
+    elif [ "$provider" = "$DERIVED_PROVIDER" ]; then
       [ "$i" -gt 1 ] && sleep 20
       printf 'Count from %s to %s, one number per line, with no commentary.\n' "$(( (i - 1) * 130 + 1 ))" "$(( i * 130 ))" > "$prompt_file"
     else
@@ -328,7 +350,7 @@ run_omp_pair() {
   pair_dir_name="omp--$(echo "$selector" | tr '/' '-')"
   marker="PRISM_MATRIX_OMP_${selector//[^a-zA-Z0-9]/}$(date +%s | tail -c 4)"
   thinking="medium"
-  if [ "$provider" = "router" ]; then thinking="off"; fi
+  if [ "$provider" = "$DERIVED_PROVIDER" ]; then thinking="off"; fi
   topics=("admission control and body-size limits in a local LLM proxy" "provider selection, affinity, cooldowns and failover ordering" "streaming translation between wire formats and failure handling")
   start_ts=$(date +%s)
   exit_code=0
@@ -348,7 +370,7 @@ run_omp_pair() {
     fi
     if [ "$marker_sent" -eq 1 ]; then
       prompt="Print exactly this single line and nothing else: $marker"
-    elif [ "$provider" = "router" ]; then
+    elif [ "$provider" = "$DERIVED_PROVIDER" ]; then
       [ "$i" -gt 1 ] && sleep 20
       prompt="Count from $(( (i - 1) * 130 + 1 )) to $(( i * 130 )), one number per line, with no commentary."
     else
@@ -452,10 +474,12 @@ for entry in $GROK_MODELS; do
   case "$entry" in
     prism-codex-gpt-5-6-luna) model_id="codex/gpt-5.6-luna"; provider="codex" ;;
     prism-antigravity-gemini-3-7-flash) model_id="antigravity/gemini-3.7-flash"; provider="antigravity" ;;
-    prism-router-glm-5-3) model_id="router/glm-5.3"; provider="router" ;;
-    prism-router-glm-5-3-flash) model_id="router/glm-5.3-flash"; provider="router" ;;
-    *) fail "unknown grok alias $entry (expected one of: $GROK_MODELS)" ;;
+    *) model_id="$DERIVED_MODEL"; provider="${DERIVED_MODEL%%/*}" ;;
   esac
+  if [ "$(provider_enabled "$provider")" = "no" ]; then
+    echo "grok/$model_id: skipped (provider disabled in source config)"
+    continue
+  fi
   run_grok_pair "$entry" "$model_id" "$provider"
 done
 
@@ -464,10 +488,12 @@ for entry in $OMP_MODELS; do
   case "$entry" in
     prism/codex/gpt-5.6-luna) model_id="codex/gpt-5.6-luna"; provider="codex" ;;
     prism/antigravity/gemini-3.7-flash) model_id="antigravity/gemini-3.7-flash"; provider="antigravity" ;;
-    prism/router/glm-5.3) model_id="router/glm-5.3"; provider="router" ;;
-    prism/router/glm-5.3-flash) model_id="router/glm-5.3-flash"; provider="router" ;;
-    *) fail "unknown omp model $entry (expected one of: $OMP_MODELS)" ;;
+    *) model_id="${entry#prism/}"; provider="${model_id%%/*}" ;;
   esac
+  if [ "$(provider_enabled "$provider")" = "no" ]; then
+    echo "omp/$model_id: skipped (provider disabled in source config)"
+    continue
+  fi
   run_omp_pair "$entry" "$model_id" "$provider"
 done
 

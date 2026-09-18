@@ -1,6 +1,6 @@
 ---
 name: verify-prism-desktop
-description: Drive the real Prism Electron app, its prismd daemon, prismctl, every management route, and the Grok, OMP, Codex, Claude, Pi, opencode v1, opencode2, and Hermes clients. Use after desktop, integration-writer, protocol, streaming, reasoning, daemon lifecycle, provider, CLI, or account changes. Proof requires actual UI clicks, generated-config parsing by each client, read-only quota reads, safe (cancelled) auth flows, live inference matrices for Luna, Gemini 3.7 Flash, and GLM 5.3 with >=300-second sessions, saved evidence, and isolated client homes.
+description: Drive the real Prism Electron app, its prismd daemon, prismctl, every management route, and the Grok, OMP, Codex, Claude, Pi, opencode v1, opencode2, and Hermes clients. Use after desktop, integration-writer, protocol, streaming, reasoning, daemon lifecycle, provider, CLI, or account changes. Proof requires actual UI clicks, generated-config parsing by each client, read-only quota reads, safe (cancelled) auth flows, live inference matrices for Luna, Gemini 3.7 Flash, and a derived chat model with >=300-second sessions, saved evidence, and isolated client homes.
 ---
 
 # Verify Prism desktop
@@ -104,11 +104,11 @@ The proof never opens the authorization URL in a browser, never enters credentia
 
 The proof requires accounts for both `codex` and `antigravity` providers to exist; it fails (not unreachable) if only one is present, because missing accounts are a coverage gap, not a credentials gap. A missing credential blob for an account is a real finding, not a proof failure: the quota cell renders `quota unavailable` and the daemon log names the account and reason.
 
-### Live matrix (Grok and OMP x Luna, Gemini 3.7 Flash, GLM 5.3)
+### Live matrix (Grok and OMP x Luna, Gemini 3.7 Flash, derived chat model)
 
-`scripts/live-matrix.sh` runs sequential real prompts per supported client/model pair until the pair has been alive for at least 300 seconds, then one final short marker request; a pair is a >=300-second session. The checked application models are the three models a user selects inside the clients: Luna (`codex/gpt-5.6-luna`), Gemini 3.7 Flash (`antigravity/gemini-3.7-flash`), and GLM 5.3 (`router/glm-5.3`). These are not subagent pool lanes.
+`scripts/live-matrix.sh` runs sequential real prompts per supported client/model pair until the pair has been alive for at least 300 seconds, then one final short marker request; a pair is a >=300-second session. The checked application models are Luna (`codex/gpt-5.6-luna`), Gemini 3.7 Flash (`antigravity/gemini-3.7-flash`), and one chat-wire model taken from the daemon's model list at runtime. These are not subagent pool lanes.
 
-The matrix derives selectors from what Apply wrote: grok uses the `prism-` aliases from `~/.grok/config.toml` (`prism-codex-gpt-5-6-luna`, `prism-antigravity-gemini-3-7-flash`, `prism-router-glm-5-3`); OMP uses the prism provider leaf paths (`prism/codex/gpt-5.6-luna`, `prism/antigravity/gemini-3.7-flash`, `prism/router/glm-5.3`). Each pair issues sequential long-generation prompts (essays for codex/antigravity, counting runs for the router provider, reasoning effort off for router pairs) under `--output-format streaming-json` for grok and `--mode json --print` for OMP, each bounded by a ceiling timeout so a hung generation fails instead of blocking. Once the 300-second floor is reached, the pair sends one final short request whose response must end with the unique marker. Failed attempts are retried up to three times and preserved under `pairs/<pair>-failed/`; the pair transcript contains only completed requests.
+The matrix derives selectors from what Apply wrote: grok uses the `prism-` aliases from `~/.grok/config.toml` (`prism-codex-gpt-5-6-luna`, `prism-antigravity-gemini-3-7-flash`, plus the derived chat model alias); OMP uses the prism provider leaf paths (`prism/codex/gpt-5.6-luna`, `prism/antigravity/gemini-3.7-flash`, plus the derived chat model path). Each pair issues sequential long-generation prompts (essays for codex/antigravity, counting runs for the derived chat provider, reasoning effort off for its pairs) under `--output-format streaming-json` for grok and `--mode json --print` for OMP, each bounded by a ceiling timeout so a hung generation fails instead of blocking. Once the 300-second floor is reached, the pair sends one final short request whose response must end with the unique marker for that pair.
 
 Each pair must satisfy every assertion or the matrix fails:
 

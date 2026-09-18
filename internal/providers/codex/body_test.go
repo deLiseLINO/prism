@@ -84,6 +84,7 @@ func TestEffortWireSendsExtendedRungs(t *testing.T) {
 	for effort, want := range map[canon.ReasoningEffort]string{
 		canon.EffortXHigh: "xhigh",
 		canon.EffortMax:   "max",
+		canon.EffortOff:   "off",
 	} {
 		req := canon.Request{
 			Model:     "gpt-5.2-codex",
