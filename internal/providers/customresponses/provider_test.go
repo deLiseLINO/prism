@@ -56,6 +56,7 @@ func TestExtendedEffortsReachResponsesWire(t *testing.T) {
 	for effort, want := range map[canon.ReasoningEffort]string{
 		canon.EffortXHigh: "xhigh",
 		canon.EffortMax:   "max",
+		canon.EffortOff:   "off",
 	} {
 		req := testRequest(false)
 		req.Reasoning = canon.ReasoningConfig{Effort: effort}

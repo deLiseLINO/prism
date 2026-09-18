@@ -323,6 +323,20 @@ func TestBudgetTablePerModel(t *testing.T) {
 	}
 }
 
+func TestEffortOffOmitsThinking(t *testing.T) {
+	request := baseRequest()
+	request.Reasoning.Effort = canon.EffortOff
+	runner := New(Options{})
+	out, err := runner.buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k"}})
+	if err != nil {
+		t.Fatalf("buildRequest(effort off): %v", err)
+	}
+	body := decodeBody(t, out.body)
+	if _, ok := body["thinking"]; ok {
+		t.Fatalf("thinking emitted for effort off: %v", body["thinking"])
+	}
+}
+
 func TestThinkingRequestShape(t *testing.T) {
 	request := baseRequest()
 	request.Reasoning.Effort = canon.EffortHigh

@@ -267,8 +267,18 @@ if command -v pi >/dev/null 2>&1; then
 else
   echo "pi CLI not in PATH; skipping pi parse proof (generated config still verified on disk)" | tee "$EVID_WORK/pi-models.skipped.txt"
 fi
-HOME="$RUNDIR" run_with_timeout 60 opencode models > "$EVID_WORK/opencode-models.txt" 2>&1 || fail "opencode v1 cannot load the config written by Apply"
-grep -q "^prism/" "$EVID_WORK/opencode-models.txt" || fail "opencode v1 does not list any model written by Apply"
+opencode_probe() {
+  seconds=$1
+  shift
+  (
+    unset OPENCODE_CONFIG_DIR
+    export HOME="$RUNDIR"
+    exec perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "$seconds" "$@"
+  )
+}
+opencode_probe 60 opencode models > /dev/null 2>&1 || true
+sleep 5
+opencode_probe 60 opencode models > "$EVID_WORK/opencode-models.txt" 2>&1 || fail "opencode v1 cannot load the config written by Apply"
 if HOME="$RUNDIR" run_with_timeout 5 hermes config get providers >/dev/null 2>&1; then
   HOME="$RUNDIR" run_with_timeout 30 hermes config get providers > "$EVID_WORK/hermes-providers.txt" 2>&1 || fail "Hermes cannot load the config written by Apply"
   grep -q "api: http://127.0.0.1:$PORT/v1" "$EVID_WORK/hermes-providers.txt" || fail "Hermes does not resolve the Prism provider written by Apply"
@@ -411,6 +421,18 @@ click_toggle() {
     const input = toggle.querySelector('input[type=checkbox]')
     if (!input) throw new Error('$id Auto-apply checkbox not found')
     if (input.disabled) throw new Error('$id Auto-apply toggle is disabled')
+    if (input.checked === $next) {
+      card.dataset.verifyTag = 'before-toggle'
+      input.click()
+      for (let i = 0; i < 60; i++) {
+        await sleep(100)
+        const cur = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+        if (cur?.querySelector('label.toggle input[type=checkbox]')?.checked === !$next) break
+      }
+      const settled = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')?.querySelector('label.toggle input[type=checkbox]')
+      if (settled?.checked !== !$next) throw new Error('$id toggle pre-pass never reached enabled=' + !$next)
+      settled.click()
+    }
     card.dataset.verifyTag = 'before-toggle'
     const clickTime = performance.now()
     input.click()
@@ -446,7 +468,7 @@ grep -q '"enabled":true' "$EVID_WORK/toggle-grok-on.json" || fail "grok toggle d
 echo "==> auto-apply: provider change rewrites the enabled grok config with no UI action"
 GEN=$(curl -sf "http://127.0.0.1:$PORT/api/v1/providers" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).generation') || fail "could not read providers generation"
 curl -sf -X PUT -H 'Content-Type: application/json' \
-  -d "{\"models\":[\"gpt-5.6-luna\",\"gpt-5.6-luna-probe\"],\"expectedGeneration\":$GEN}" \
+  -d "{\"models\":[\"gpt-5.6-luna\",\"gpt-5.6-luna-probe\"],\"enabled\":true,\"expectedGeneration\":$GEN}" \
   "http://127.0.0.1:$PORT/api/v1/providers/codex?expectedGeneration=$GEN" > "$EVID_WORK/provider-codex-update.json" || fail "provider codex update failed"
 AUTO_ALIAS=prism-codex-gpt-5-6-luna-probe
 AUTO_HIT=
@@ -465,7 +487,7 @@ cp "$RUNDIR/.grok/config.toml" "$RUNDIR/grok-config-damaged.toml"
 LOG_LINES_BEFORE=$(wc -l < "$RUNDIR/app.log" | tr -d ' ')
 GEN=$(curl -sf "http://127.0.0.1:$PORT/api/v1/providers" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).generation') || fail "could not read providers generation"
 curl -sf -X PUT -H 'Content-Type: application/json' \
-  -d "{\"models\":[\"gpt-5.6-luna\",\"gpt-5.6-luna-probe\"],\"expectedGeneration\":$GEN}" \
+  -d "{\"models\":[\"gpt-5.6-luna\",\"gpt-5.6-luna-probe\"],\"enabled\":true,\"expectedGeneration\":$GEN}" \
   "http://127.0.0.1:$PORT/api/v1/providers/codex?expectedGeneration=$GEN" > "$EVID_WORK/provider-codex-damage.json" || fail "provider codex damage-bump failed"
 AUTO_REFUSAL=
 for _ in $(seq 1 100); do
@@ -553,14 +575,15 @@ if [ "$LIVE" = "1" ]; then
   command -v grok >/dev/null 2>&1 || fail "live verification needs the grok CLI in PATH"
   command -v omp >/dev/null 2>&1 || fail "live verification needs the omp CLI in PATH"
   echo "==> running Grok through the UI-applied config"
+  LIVE_MODEL=$(curl -sf "http://127.0.0.1:$PORT/api/v1/models" | python3 -c 'import json,sys; print(json.load(sys.stdin)["models"][0]["id"])')
   GROK_MARKER=PRISM_GROK_LIVE_OK
-  GROK_MODEL="${PRISM_VERIFY_GROK_MODEL:-prism-antigravity-gemini-3-7-flash}"
+  GROK_MODEL="${PRISM_VERIFY_GROK_MODEL:-prism-$(echo "$LIVE_MODEL" | tr '/.' '--')}"
   HOME="$RUNDIR" run_with_timeout 120 grok -m "$GROK_MODEL" -p "Reply with exactly $GROK_MARKER" > "$EVID_WORK/grok-live.txt" 2>&1 || fail "Grok inference failed"
   grep -q "$GROK_MARKER" "$EVID_WORK/grok-live.txt" || fail "Grok output has no final marker"
 
   echo "==> running OMP with visible thinking"
   OMP_MARKER=PRISM_OMP_THINKING_OK
-  OMP_MODEL="${PRISM_VERIFY_OMP_MODEL:-prism/antigravity/gemini-3.7-flash}"
+  OMP_MODEL="${PRISM_VERIFY_OMP_MODEL:-prism/$LIVE_MODEL}"
   mkdir -p "$RUNDIR/work"
   printf 'PRISM_TOOL_INPUT\n' > "$RUNDIR/work/probe.txt"
   HOME="$RUNDIR" run_with_timeout 120 omp \

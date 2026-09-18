@@ -153,7 +153,7 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 		StopSequences: request.Sampling.Stop,
 		Stream:        streaming,
 	}
-	if request.Reasoning.Effort != 0 {
+	if request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff {
 		budget, ok := budgetFor(request.Model, request.Reasoning.Effort)
 		if !ok {
 			return nil, fmt.Errorf("anthropic: no thinking budget for model %q effort %d", request.Model, request.Reasoning.Effort)

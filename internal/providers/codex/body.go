@@ -341,6 +341,8 @@ func effortWire(e canon.ReasoningEffort) string {
 		return "xhigh"
 	case canon.EffortMax:
 		return "max"
+	case canon.EffortOff:
+		return "off"
 	default:
 		return ""
 	}
