@@ -20,7 +20,6 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
   const [wire, setWire] = useState<string>(existing?.wire ?? 'responses')
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? '')
   const [apiKey, setApiKey] = useState('')
-  const [apiKeySet, setApiKeySet] = useState<boolean>(existing?.credential.state === 'set')
   const task = useTask()
 
   useEffect(() => {
@@ -58,7 +57,6 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
       existing === null ? api.createProvider(write) : api.replaceProvider(existing.id, write),
     )
     if (ok === undefined) return
-    setApiKeySet(trimmedKey !== '' || apiKeySet)
     setApiKey('')
     onSaved(id.trim())
   }
@@ -136,7 +134,7 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
             <Field
               label="API key"
               htmlFor="prov-cred"
-              hint={apiKeySet ? 'Already set. Empty keeps it.' : undefined}
+              hint={existing === null ? undefined : 'Empty keeps the current value.'}
             >
               <TextInput
                 id="prov-cred"
@@ -145,7 +143,7 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
                 onChange={setApiKey}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder={apiKeySet ? 'paste new key' : 'paste key'}
+                placeholder="paste key"
               />
             </Field>
           </section>

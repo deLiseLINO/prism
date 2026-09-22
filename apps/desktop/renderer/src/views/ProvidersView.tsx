@@ -221,7 +221,6 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
     onMutated()
   }
 
-  const credentialTone = provider.credential.state === 'set' ? 'ok' : 'muted'
   const settings = provider.modelSettings ?? {}
   const needle = modelFilter.trim().toLowerCase()
   const visibleModels = needle === '' ? models : models.filter((m) => m.toLowerCase().includes(needle))
@@ -236,7 +235,6 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
         <div>
           <div className="prov-detail-title">
             <h2 className="prov-detail-name">{provider.id}</h2>
-            <span className={`badge badge--${credentialTone}`}>credential {provider.credential.state}</span>
           </div>
           <p className="prov-detail-wire">
             {wireLabel(provider.wire)}
@@ -618,7 +616,6 @@ export function ProvidersView(): JSX.Element {
                 {sortProviders(filtered, sortDisabled).map((provider) => {
                   const isActive = provider.id === activeId
                   const disabledCount = (provider.disabledModels ?? []).length
-                  const credentialTone = provider.credential.state === 'set' ? 'ok' : 'muted'
                   return (
                     <div
                       key={provider.id}
@@ -648,7 +645,6 @@ export function ProvidersView(): JSX.Element {
                       </div>
                       <div className="prov-prow-sub">
                         <span className="prov-prow-wire">{wireLabel(provider.wire)}</span>
-                        <span className={`badge badge--${credentialTone}`}>{provider.credential.state}</span>
                         <span className="num" style={{ marginLeft: 'auto' }}>{(provider.models ?? []).length} models</span>
                       </div>
                       <p className={`meta prov-prow-off${disabledCount > 0 ? '' : ' prov-prow-off--empty'}`}>

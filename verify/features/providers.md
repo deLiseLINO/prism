@@ -4,13 +4,13 @@ The Providers view is the CRUD surface for daemon providers: wires, endpoints, m
 
 ## Sub-features
 
-- List: id, wire, enabled, models, Default model, credential state, base URL. The generation stays in component state for CAS writes and is not rendered.
+- List: id, wire, enabled, models, Default model, base URL. The generation stays in component state for CAS writes and is not rendered. Credential state is deliberately not rendered anywhere in the providers UI (list, detail, editor).
 - Create: `POST /api/v1/providers` with `{id, wire, ...}`; wires are `codex`, `antigravity`, `responses`, `messages`, `chat`.
 - Replace: `PUT /api/v1/providers/{id}` with `expectedGeneration`; absent fields preserve existing values (absent=preserve merge).
 - Delete: `DELETE /api/v1/providers/{id}?expectedGeneration=N`; also deletes the stored credential.
-- Credentials: paste-once write (`credential` in the write body, or `apiKeyRef`); reads show only masked state (`set`/`unset`) — the value never round-trips.
+- Credentials: paste-once write (`credential` in the write body, or `apiKeyRef`); reads show only masked state (`set`/`unset`) in the API; the value never round-trips and the UI never renders the state.
 - Enable/disable: a single toggle that PUTs `enabled` (and per-model toggles that edit `disabledModels`).
-- Editor form fields: ID, Wire, Base URL, Default model, Models (comma-separated), Disabled models, Credential (password), Credential reference, Enabled toggle.
+- Editor form fields: ID, Wire, Base URL, Default model, Models (comma-separated), Disabled models, Credential (password), Credential reference, Enabled toggle. The credential field always shows the placeholder `paste key`; for an existing provider its hint reads `Empty keeps the current value.`
 - Search filters cards by provider id, wire, or model.
 
 ## How to get to it (user POV)
@@ -33,6 +33,6 @@ Every mutation uses throwaway provider ids (`ui-probe`, `openai-proxy`), never t
 
 - Generation CAS: every write needs the current `expectedGeneration`; a stale value returns 409 `stale_generation`, not a silent overwrite. The UI surfaces a re-fetch button on that error.
 - A provider whose route still references it cannot be deleted (400 `invalid_document`) — remove the route first.
-- The credential field is write-only: asserting it "round-trips" is wrong by design; assert `credential.state === 'set'` after a write and `unset` after delete.
+- The credential field is write-only: asserting it "round-trips" is wrong by design; assert `credential.state === 'set'` after a write and `unset` after delete through the API. The UI does not render the state anywhere, so a proof must assert its absence in the DOM (no `.prov-prow-sub .badge`, no credential badge in `.prov-detail`, no `Already set` hint in the editor) rather than a rendered value.
 - The editor's Models field is comma-separated text; `splitList` trims and drops empties, so a trailing comma adds nothing. Do not assert an empty-string model failure.
 - `responses`/`chat` wires require a Base URL; the editor hint also names `messages`, but config validation and doctor flag only `responses`/`chat`.
