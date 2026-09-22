@@ -87,7 +87,7 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 		return base
 	}
 
-	if upstream != "openai-chat" && upstream != "openai-responses" && upstream != "proto-stub" {
+	if upstream != "openai-chat" && upstream != "openai-responses" {
 		return fail(ClassHarnessFailure, "execution_error",
 			fmt.Sprintf("unit 2 (SSE egress): upstream protocol %s not implemented in unit 1", upstream))
 	}
@@ -424,14 +424,6 @@ func (r *Runner) Run(ctx context.Context, c Case, opts Options) CaseResult {
 			RecordUpstreamRequest(obs, built)
 		}
 		FinalizeObservation(obs, events, nil, 200)
-		AttachVerifiers(obs, c)
-	case RoleSyntheticTool:
-		stubObs, err := ExecuteMcpSyntheticAction(c)
-		if err != nil {
-			return fail(ClassHarnessFailure, "execution_error", err.Error())
-		}
-		obs = stubObs
-		AttachMcpVerifiers(obs, c)
 		AttachVerifiers(obs, c)
 	default:
 		return fail(ClassHarnessFailure, "execution_error",

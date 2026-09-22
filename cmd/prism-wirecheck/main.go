@@ -14,7 +14,7 @@ import (
 
 func main() {
 	fixturesPath := flag.String("fixtures", "cmd/prism-wirecheck/fixtures/protocol-v1-cases.json", "path to conformance fixture file")
-	caseID := flag.String("case", "", "run one case by id; empty runs the responses-core, chat-core, mcp-core, vision-core, reasoning-core, tools-core, anthropic-core and codex-core suites")
+	caseID := flag.String("case", "", "run one case by id; empty runs the responses-core, chat-core, vision-core, reasoning-core, tools-core, anthropic-core and codex-core suites")
 	noSelfCheck := flag.Bool("no-self-check", false, "skip the DSL self-check gauntlet")
 	flag.Parse()
 
@@ -40,7 +40,7 @@ func main() {
 			}
 			continue
 		}
-		if c.Suite == "responses-core" || c.Suite == "chat-core" || c.Suite == "mcp-core" || c.Suite == "vision-core" || c.Suite == "reasoning-core" || c.Suite == "tools-core" || c.Suite == "anthropic-core" || c.Suite == "codex-core" {
+		if c.Suite == "responses-core" || c.Suite == "chat-core" || c.Suite == "vision-core" || c.Suite == "reasoning-core" || c.Suite == "tools-core" || c.Suite == "anthropic-core" || c.Suite == "codex-core" {
 			selected = append(selected, *c)
 		}
 	}

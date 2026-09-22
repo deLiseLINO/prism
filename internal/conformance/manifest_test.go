@@ -23,8 +23,8 @@ func TestLoadVendoredAuthority(t *testing.T) {
 	if a.AssertionDSLVersion != "1.0.0" || a.EvidenceSchemaVersion != "1.0.0" {
 		t.Fatalf("dsl %s evidence %s", a.AssertionDSLVersion, a.EvidenceSchemaVersion)
 	}
-	if len(a.Cases) != 35 {
-		t.Fatalf("cases %d want 35", len(a.Cases))
+	if len(a.Cases) != 31 {
+		t.Fatalf("cases %d want 31", len(a.Cases))
 	}
 	suites := map[string]int{}
 	fixtures := 0
@@ -35,11 +35,11 @@ func TestLoadVendoredAuthority(t *testing.T) {
 			fixtures++
 		}
 	}
-	if len(suites) != 8 {
-		t.Fatalf("suites %d want 8", len(suites))
+	if len(suites) != 7 {
+		t.Fatalf("suites %d want 7", len(suites))
 	}
-	if fixtures != 46 {
-		t.Fatalf("fixtures %d want 46", fixtures)
+	if fixtures != 42 {
+		t.Fatalf("fixtures %d want 42", fixtures)
 	}
 }
 

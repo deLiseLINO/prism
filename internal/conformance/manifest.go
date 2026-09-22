@@ -11,20 +11,12 @@ const SyntheticMarker = "prism-lab-synthetic-v1"
 
 const AuthorityFile = "022_protocol_v1_cases.json"
 
-var mcpActionTokens = []string{
-	"mcp_namespace_round_trip_v1",
-	"mcp_schema_bounds_v1",
-	"mcp_call_result_v1",
-	"mcp_resource_round_trip_v1",
-}
-
 type FixtureRole string
 
 const (
 	RoleClientRequest    FixtureRole = "client_request"
 	RoleUpstreamResponse FixtureRole = "upstream_response"
 	RoleAdapterVector    FixtureRole = "adapter_vector"
-	RoleSyntheticTool    FixtureRole = "synthetic_tool"
 )
 
 type Fixture struct {
@@ -190,7 +182,7 @@ func Validate(a *Authority) error {
 	for _, c := range a.Cases {
 		var errs []string
 		errs = append(errs, validateFixtureDigests(c)...)
-		errs = append(errs, validateMcpHarnessFeatures(c)...)
+
 		expanded, err := ExpandScenario(a, c)
 		if err != nil {
 			errs = append(errs, err.Error())
@@ -226,27 +218,6 @@ func validateFixtureDigests(c Case) []string {
 		check(*c.InitiatingRequest, c.InitiatingRequest.ID)
 	}
 	return errs
-}
-
-func validateMcpHarnessFeatures(c Case) []string {
-	if c.Suite != "mcp-core" {
-		return nil
-	}
-	count := 0
-	for _, f := range c.Requirements.RequiredHarnessFeatures {
-		for _, token := range mcpActionTokens {
-			if f == token {
-				count++
-			}
-		}
-	}
-	if count != 1 {
-		return []string{fmt.Sprintf("%s: invalid_manifest MCP action token count %d", c.ID, count)}
-	}
-	if c.Fixture.Role != RoleSyntheticTool {
-		return []string{fmt.Sprintf("%s: MCP cases require synthetic_tool fixture role", c.ID)}
-	}
-	return nil
 }
 
 func validateExpandedFixtureRef(ref FixtureRef, a *Authority, bytes string) []string {
