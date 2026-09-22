@@ -14,6 +14,7 @@ import type {
   ManagementReply,
   ModelView,
   PoolSettingsView,
+  ProviderModelMode,
   ProviderMutationResponse,
   ProvidersView,
 
@@ -98,6 +99,17 @@ export const api = {
   },
   replaceProvider(id: string, body: ProviderWrite): Promise<ProviderMutationResponse> {
     return call('PUT', `/api/v1/providers/${encodeURIComponent(id)}`, body)
+  },
+  setProviderModelMode(
+    id: string,
+    mode: ProviderModelMode,
+    expectedGeneration: number,
+  ): Promise<ProviderMutationResponse> {
+    return call(
+      'PUT',
+      `/api/v1/providers/${encodeURIComponent(id)}/model-mode?expectedGeneration=${expectedGeneration}`,
+      { mode, expectedGeneration },
+    )
   },
   syncProviderModels(id: string, expectedGeneration: number): Promise<ProviderMutationResponse> {
     return call(

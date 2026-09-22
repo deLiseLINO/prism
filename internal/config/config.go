@@ -93,11 +93,24 @@ type Daemon struct {
 	Listen string `json:"listen"`
 }
 
+type ModelMode string
+
+const (
+	// ModelModeLogical stores collapsed family ids; the antigravity runner
+	// resolves the wire id per request. ModelModeRaw stores the raw wire ids
+	// discovery reported; routing and the request envelope pass them through.
+	ModelModeLogical ModelMode = "logical"
+	ModelModeRaw     ModelMode = "raw"
+)
+
+func (m ModelMode) Valid() bool { return m == "" || m == ModelModeLogical || m == ModelModeRaw }
+
 type Provider struct {
 	Wire           Wire                     `json:"wire"`
 	BaseURL        string                   `json:"baseURL,omitempty"`
 	APIKeyRef      string                   `json:"apiKeyRef,omitempty"`
 	DefaultModel   string                   `json:"defaultModel,omitempty"`
+	ModelMode      ModelMode                `json:"modelMode,omitempty"`
 	Models         []string                 `json:"models,omitempty"`
 	DisabledModels []string                 `json:"disabledModels,omitempty"`
 	SyncedModels   []string                 `json:"syncedModels,omitempty"`
@@ -174,6 +187,9 @@ func (d Document) validate() error {
 	for id, p := range d.Providers {
 		if id == "" {
 			return fmt.Errorf("%w: provider id", ErrEmptyField)
+		}
+		if !p.ModelMode.Valid() {
+			return fmt.Errorf("%w: providers.%s.modelMode %q", ErrInvalidValue, id, p.ModelMode)
 		}
 		if !p.Wire.valid() {
 			return fmt.Errorf("%w: providers.%s.wire %q", ErrUnknownWire, id, p.Wire)

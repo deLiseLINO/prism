@@ -1091,7 +1091,7 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 			"ag": {
 				Wire:           config.WireAntigravity,
 				Enabled:        &enabled,
-				Models:         []string{"gemini-3.7-flash-low", "gemini-3.7-flash-high", "claude-opus-4"},
+				Models:         []string{"gemini-3.7-flash-low", "gemini-3.7-flash-high", "claude-opus-4", "chat_20706"},
 				DisabledModels: []string{"gemini-3.7-flash-low"},
 				ModelSettings: map[string]config.ModelSettings{
 					"gemini-3.7-flash-high": {ContextWindow: 12345},
@@ -1120,7 +1120,7 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 	if got.Generation != snap.Generation+1 {
 		t.Fatalf("generation = %d, want %d", got.Generation, snap.Generation+1)
 	}
-	wantModels := []string{"claude-opus-4", "gemini-3.7-flash", "gemini-3.7-flash-high", "gemini-3.7-flash-low"}
+	wantModels := []string{"claude-opus-4", "gemini-3.7-flash"}
 	if !reflect.DeepEqual(p.Models, wantModels) {
 		t.Fatalf("models = %v, want %v", p.Models, wantModels)
 	}
@@ -1213,4 +1213,96 @@ func TestSyncModelsWithoutSyncerStaysUnsupported(t *testing.T) {
 	}}, 0)
 	rec := env.do(t, http.MethodPost, "/api/v1/providers/codex/sync-models?expectedGeneration=1", "")
 	assertErrorBody(t, rec, http.StatusNotImplemented, "unsupported")
+}
+
+
+func TestModelModeSwitchRoundTripsModelList(t *testing.T) {
+	m, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	seed := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"ag": {
+				Wire:    config.WireAntigravity,
+				Enabled: &enabled,
+				Models:         []string{"gemini-3.7-flash", "chat_20706"},
+				DisabledModels: []string{"gemini-3.7-flash"},
+				SyncedModels:   []string{"gemini-3.7-flash", "chat_20706"},
+				ModelSettings: map[string]config.ModelSettings{
+					"gemini-3.7-flash": {ContextWindow: 12345},
+				},
+			},
+			"codex": {Wire: config.WireCodex, Enabled: &enabled, Models: []string{"gpt-5.3"}},
+		},
+	}
+	snap, err := m.Update(seed, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}},
+		&fakeAuth{}, integrations.NewRegistry(), &fakeSyncer{}, nil)
+	handler := srv.Handler()
+
+	switchMode := func(t *testing.T, id string, gen uint64, mode string) Provider {
+		t.Helper()
+		body := `{"mode":"` + mode + `","expectedGeneration":` + strconv.FormatUint(gen, 10) + `}`
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut,
+			"/api/v1/providers/"+id+"/model-mode?expectedGeneration="+strconv.FormatUint(gen, 10),
+			strings.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("switch %s status = %d, want 200; body=%s", mode, rec.Code, rec.Body.String())
+		}
+		got := decodeBody[ProviderMutationResponse](t, rec)
+		return got.Provider
+	}
+
+	raw := switchMode(t, "ag", snap.Generation, "raw")
+	wantRawModels := []string{"chat_20706", "gemini-3.7-flash-high", "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-tiered"}
+	if !reflect.DeepEqual(raw.Models, wantRawModels) {
+		t.Fatalf("raw models = %v, want %v", raw.Models, wantRawModels)
+	}
+	if !reflect.DeepEqual(raw.SyncedModels, wantRawModels) {
+		t.Fatalf("raw synced = %v, want %v; manual badges would flip on after a sync", raw.SyncedModels, wantRawModels)
+	}
+	if !reflect.DeepEqual(raw.DisabledModels, wantRawModels[1:]) {
+		t.Fatalf("raw disabled = %v, want the expanded family", raw.DisabledModels)
+	}
+	if !reflect.DeepEqual(raw.RawModels, wantRawModels) {
+		t.Fatalf("rawModels = %v, want %v", raw.RawModels, wantRawModels)
+	}
+	for _, member := range wantRawModels[1:] {
+		if s, ok := raw.ModelSettings[member]; !ok || s.ContextWindow != 12345 {
+			t.Fatalf("settings fan-out missing %s: %+v", member, raw.ModelSettings)
+		}
+	}
+
+	stored := m.Get().Config.Providers["ag"]
+	if stored.ModelMode != config.ModelModeRaw || !reflect.DeepEqual(stored.Models, wantRawModels) {
+		t.Fatalf("persisted raw state = mode %q models %v", stored.ModelMode, stored.Models)
+	}
+
+	logical := switchMode(t, "ag", snap.Generation+1, "logical")
+	wantLogical := []string{"chat_20706", "gemini-3.7-flash"}
+	if !reflect.DeepEqual(logical.Models, wantLogical) {
+		t.Fatalf("logical models = %v, want %v", logical.Models, wantLogical)
+	}
+	if !reflect.DeepEqual(logical.SyncedModels, wantLogical) {
+		t.Fatalf("logical synced = %v, want %v; manual badges would flip on after a sync", logical.SyncedModels, wantLogical)
+	}
+	if !reflect.DeepEqual(logical.DisabledModels, []string{"gemini-3.7-flash"}) {
+		t.Fatalf("logical disabled = %v", logical.DisabledModels)
+	}
+	if s, ok := logical.ModelSettings["gemini-3.7-flash"]; !ok || s.ContextWindow != 12345 {
+		t.Fatalf("settings did not fold back: %+v", logical.ModelSettings)
+	}
+
+	// The codex wire has no families; the switch refuses rather than rewriting.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut,
+		"/api/v1/providers/codex/model-mode?expectedGeneration=1", strings.NewReader(`{"mode":"raw"}`)))
+	assertErrorBody(t, rec, http.StatusBadRequest, "invalid_value")
 }

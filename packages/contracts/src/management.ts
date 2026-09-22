@@ -33,23 +33,34 @@ export interface PoolSettingsView {
 
 // Provider response shape (internal/management/schema.go Provider). The daemon never echoes
 // apiKeyRef or credential bytes; the credential carries only its masked state.
+export type ProviderModelMode = 'logical' | 'raw'
+
 export interface ProviderView {
   readonly id: string
   readonly wire: string
   readonly baseURL?: string
   readonly defaultModel?: string
+  // Antigravity-only: the stored model list is collapsed family ids (logical)
+  // or raw wire ids (raw). Absent means logical on old daemons.
+  readonly modelMode?: ProviderModelMode
   readonly models?: readonly string[]
   readonly disabledModels?: readonly string[]
   readonly syncedModels?: readonly string[]
-  // Antigravity-only extras: rawModels flattens the live family members behind each
-  // logical id; modelEfforts maps logical family ids to their effort rungs. Both stay
-  // absent for every other wire, so old daemons parse unchanged.
+  // Antigravity-only extras: rawModels carries the raw wire ids behind each
+  // logical id (in raw mode it equals models); modelEfforts maps logical
+  // family ids to their effort rungs. Both stay absent for every other wire,
+  // so old clients parse unchanged.
   readonly rawModels?: readonly string[]
   readonly modelEfforts?: Readonly<Record<string, readonly string[]>>
   readonly modelSettings?: Readonly<Record<string, ModelSettingsView>>
   readonly enabled?: boolean
   readonly pool?: PoolSettingsView
   readonly credential: { readonly state: 'set' | 'unset' | 'unknown' }
+}
+
+export interface ProviderModeWrite {
+  readonly mode: ProviderModelMode
+  readonly expectedGeneration: number
 }
 
 export interface ProvidersView {

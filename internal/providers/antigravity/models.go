@@ -77,7 +77,9 @@ func FetchModels(ctx context.Context, client *http.Client, baseURL string, cred 
 // and RawModels stay presence-faithful between syncs.
 func parseModelIDs(raw []byte) ([]string, error) {
 	var payload struct {
-		Models map[string]json.RawMessage `json:"models"`
+		Models map[string]struct {
+			Internal bool `json:"isInternal"`
+		} `json:"models"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, fmt.Errorf("antigravity: models decode: %w", err)
@@ -86,10 +88,11 @@ func parseModelIDs(raw []byte) ([]string, error) {
 		return nil, fmt.Errorf("antigravity: models payload has no models object")
 	}
 	rawIDs := make([]string, 0, len(payload.Models))
-	for id := range payload.Models {
-		if id != "" {
-			rawIDs = append(rawIDs, id)
+	for id, meta := range payload.Models {
+		if id == "" || discoveryDenylist[id] || meta.Internal {
+			continue
 		}
+		rawIDs = append(rawIDs, id)
 	}
 	if len(rawIDs) == 0 {
 		return nil, fmt.Errorf("antigravity: models payload carries no model")
@@ -98,6 +101,19 @@ func parseModelIDs(raw []byte) ([]string, error) {
 	collapsed := collapseIds(rawIDs)
 	sort.Strings(collapsed)
 	return collapsed, nil
+}
+
+// DeniedModel reports whether an id is a service-only entry discovery hides
+// from agents; the sync merge uses it to drop such leftovers from stored lists.
+func DeniedModel(id string) bool {
+	return discoveryDenylist[id]
+}
+
+// discoveryDenylist holds the service-only ids discovery reports but no
+// agent should ever see; they are not selectable models.
+var discoveryDenylist = map[string]bool{
+	"chat_20706": true,
+	"chat_23310": true,
 }
 
 // recordDiscovery replaces the presence snapshot with a fresh raw list.

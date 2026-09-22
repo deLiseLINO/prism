@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/providers", s.providersCreate)
 	mux.HandleFunc("PUT /api/v1/providers/{id}", s.providersReplace)
 	mux.HandleFunc("POST /api/v1/providers/{id}/sync-models", s.providersSyncModels)
+	mux.HandleFunc("PUT /api/v1/providers/{id}/model-mode", s.providersModelMode)
 	mux.HandleFunc("DELETE /api/v1/providers/{id}", s.providersDelete)
 	mux.HandleFunc("PUT /api/v1/vision-sidecar", s.visionSidecarPut)
 	mux.HandleFunc("PUT /api/v1/context-window", s.contextWindowPut)
@@ -162,6 +163,8 @@ var routeTemplates = []string{
 	"/api/v1/models",
 	"/api/v1/providers",
 	"/api/v1/providers/{id}",
+	"/api/v1/providers/{id}/sync-models",
+	"/api/v1/providers/{id}/model-mode",
 	"/api/v1/accounts",
 	"/api/v1/accounts/{id}",
 	"/api/v1/accounts/{id}/pause",
@@ -370,6 +373,9 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	if body.DefaultModel != nil {
 		next.DefaultModel = *body.DefaultModel
 	}
+	if body.ModelMode != nil {
+		next.ModelMode = config.ModelMode(*body.ModelMode)
+	}
 	if body.Models != nil {
 		next.Models = body.Models
 	}
@@ -503,8 +509,19 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	}
 	doc := snap.Config
 	next := doc.Providers[id]
+	// The merge runs in logical id space so family members fold onto one row;
+	// a raw-mode provider converts back after the fold.
 	merged := make([]string, 0, len(next.Models)+len(remote))
-	merged = append(merged, next.Models...)
+	for _, m := range next.Models {
+		if antigravity.DeniedModel(m) {
+			continue
+		}
+		for _, id := range modeRow(m, config.ModelModeLogical) {
+			if !slices.Contains(merged, id) {
+				merged = append(merged, id)
+			}
+		}
+	}
 	for _, m := range remote {
 		if !slices.Contains(merged, m) {
 			merged = append(merged, m)
@@ -512,9 +529,21 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	}
 	slices.Sort(merged)
 	next.Models = merged
-	next.SyncedModels = remote
+	synced := make([]string, 0, len(remote))
+	for _, m := range remote {
+		for _, id := range modeRow(m, next.ModelMode) {
+			if !slices.Contains(synced, id) {
+				synced = append(synced, id)
+			}
+		}
+	}
+	next.SyncedModels = synced
 	doc.Providers[id] = next
 	foldRawModelSettings(&doc, id)
+	if next.ModelMode == config.ModelModeRaw {
+		next = switchModelMode(doc.Providers[id], config.ModelModeRaw)
+		doc.Providers[id] = next
+	}
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
 		writeConfigError(w, err)
@@ -542,6 +571,7 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 		Wire:           string(p.Wire),
 		BaseURL:        p.BaseURL,
 		DefaultModel:   p.DefaultModel,
+		ModelMode:      string(p.ModelMode),
 		Models:         p.Models,
 		DisabledModels: p.DisabledModels,
 		SyncedModels:   p.SyncedModels,
@@ -554,14 +584,154 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 	}, nil
 }
 
+// providersModelMode switches an antigravity provider between the logical
+// family view and the raw wire view. The stored model list moves with the
+// mode: logical keeps the collapsed family ids, raw expands them onto the
+// live wire ids discovery reported. Disabled entries and per-model settings
+// travel with their model, folding onto the family id when the raw side has
+// no per-member state and back out to every member when it does not. The
+// config write is one generation-bumped document, so routes, the catalog,
+// and agent integrations all observe the same list atomically.
+func (s *Server) providersModelMode(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	body, ok := decodeJSON[ProviderModeWrite](w, r)
+	if !ok {
+		return
+	}
+	mode := config.ModelMode(body.Mode)
+	if mode != config.ModelModeLogical && mode != config.ModelModeRaw {
+		writeError(w, http.StatusBadRequest, "invalid_value", "modelMode must be logical or raw")
+		return
+	}
+	expected, ok := generationFromQuery(w, r)
+	if !ok {
+		return
+	}
+	snap := s.cfg.Get()
+	p, exists := snap.Config.Providers[id]
+	if !exists {
+		writeError(w, http.StatusNotFound, "not_found", "provider "+id+" not found")
+		return
+	}
+	if p.Wire != config.WireAntigravity {
+		writeError(w, http.StatusBadRequest, "invalid_value", "model modes apply to the antigravity wire only")
+		return
+	}
+	if p.ModelMode == mode {
+		v, err := s.providerView(r.Context(), id, p)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: snap.Generation, Provider: v})
+		return
+	}
+	doc := snap.Config
+	doc.Providers[id] = switchModelMode(p, mode)
+	updated, err := s.cfg.Update(doc, expected)
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	v, err := s.providerView(r.Context(), id, updated.Config.Providers[id])
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+}
+
+// switchModelMode rewrites a provider's model list for the target mode.
+// Logical→raw replaces each family id with its live wire members (presence
+// from the last discovery; the table default covers pre-sync providers).
+// Raw→logical folds member ids onto their family id. Non-family ids pass
+// through both ways. Disabled entries and per-model settings travel with
+// their model: family state fans out onto every member in raw mode and folds
+// back onto the family id in logical mode, so a round trip loses nothing.
+// SyncedModels travel the same way, so the manual badge keeps meaning "the
+// last sync did not report this id" in both vocabularies.
+func switchModelMode(p config.Provider, mode config.ModelMode) config.Provider {
+	next := p
+	next.ModelMode = mode
+	models := make([]string, 0, len(p.Models))
+	disabled := make([]string, 0, len(p.DisabledModels))
+	for _, m := range p.Models {
+		row := modeRow(m, mode)
+		for _, id := range row {
+			if !slices.Contains(models, id) {
+				models = append(models, id)
+			}
+		}
+		if slices.Contains(p.DisabledModels, m) {
+			for _, id := range row {
+				if !slices.Contains(disabled, id) {
+					disabled = append(disabled, id)
+				}
+			}
+		}
+	}
+	slices.Sort(models)
+	slices.Sort(disabled)
+	next.Models = models
+	next.DisabledModels = disabled
+	synced := make([]string, 0, len(p.SyncedModels))
+	for _, m := range p.SyncedModels {
+		for _, id := range modeRow(m, mode) {
+			if slices.Contains(models, id) && !slices.Contains(synced, id) {
+				synced = append(synced, id)
+			}
+		}
+	}
+	if len(synced) == 0 {
+		next.SyncedModels = nil
+	} else {
+		slices.Sort(synced)
+		next.SyncedModels = synced
+	}
+	settings := make(map[string]config.ModelSettings, len(p.ModelSettings))
+	for m, s := range p.ModelSettings {
+		for _, id := range modeRow(m, mode) {
+			if slices.Contains(models, id) {
+				if _, exists := settings[id]; !exists {
+					settings[id] = s
+				}
+			}
+		}
+	}
+	if len(settings) == 0 {
+		next.ModelSettings = nil
+	} else {
+		next.ModelSettings = settings
+	}
+	return next
+}
+
+// modeRow maps one model id onto the row ids it occupies in the target mode:
+// a family id expands onto its live wire members going raw, a family member
+// folds onto its family id going logical, and every other id stays itself.
+func modeRow(m string, mode config.ModelMode) []string {
+	if mode == config.ModelModeRaw {
+		if raws := antigravity.RawModels(m); len(raws) > 0 {
+			return raws
+		}
+		return []string{m}
+	}
+	if logical := antigravity.LogicalModel(m); logical != "" {
+		return []string{logical}
+	}
+	return []string{m}
+}
+
 // rawModelsForProvider flattens the raw wire ids behind a provider's logical
 // models. Only the antigravity wire carries families; every other wire leaves
-// the field empty so old clients see no change. The logical ids come from the
-// stored Models list, so the raw list reflects config state rather than the
-// last discovery alone.
+// the field empty so old clients see no change. In raw mode the stored list
+// already carries the wire ids, so it echoes the list unchanged.
 func rawModelsForProvider(p config.Provider) []string {
 	if p.Wire != config.WireAntigravity {
 		return nil
+	}
+	if p.ModelMode == config.ModelModeRaw {
+		return p.Models
 	}
 	var out []string
 	for _, m := range p.Models {

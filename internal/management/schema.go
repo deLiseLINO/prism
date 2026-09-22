@@ -53,6 +53,7 @@ type Provider struct {
 	Wire           string                          `json:"wire"`
 	BaseURL        string                          `json:"baseURL,omitempty"`
 	DefaultModel   string                          `json:"defaultModel,omitempty"`
+	ModelMode      string                          `json:"modelMode,omitempty"`
 	Models         []string                        `json:"models,omitempty"`
 	DisabledModels []string                        `json:"disabledModels,omitempty"`
 	SyncedModels   []string                        `json:"syncedModels,omitempty"`
@@ -62,6 +63,16 @@ type Provider struct {
 	Enabled        *bool                           `json:"enabled,omitempty"`
 	Pool           *config.PoolSettings            `json:"pool,omitempty"`
 	Credential     ProviderCredential              `json:"credential"`
+}
+
+type ProviderModeWrite struct {
+	Mode               string `json:"mode"`
+	ExpectedGeneration uint64 `json:"expectedGeneration"`
+}
+
+type ProviderModeResponse struct {
+	Generation uint64   `json:"generation"`
+	Provider   Provider `json:"provider"`
 }
 
 type ProvidersResponse struct {
@@ -91,6 +102,7 @@ type ProviderWrite struct {
 	BaseURL            *string                          `json:"baseURL,omitempty"`
 	APIKeyRef          *string                          `json:"apiKeyRef,omitempty"`
 	DefaultModel       *string                          `json:"defaultModel,omitempty"`
+	ModelMode          *string                          `json:"modelMode,omitempty"`
 	Models             []string                         `json:"models"`
 	DisabledModels     []string                         `json:"disabledModels"`
 	SyncedModels       *[]string                        `json:"syncedModels,omitempty"`

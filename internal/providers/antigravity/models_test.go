@@ -16,7 +16,10 @@ func TestFetchModelsReturnsModelIDs(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"models":{
 			"gemini-3.7-flash":{"displayName":"Gemini 3.7 Flash","quotaInfo":{"remainingPercentage":75}},
-			"claude-opus-4":{"displayName":"Claude Opus 4","quotaInfo":{"remainingPercentage":40}}}}`))
+			"claude-opus-4":{"displayName":"Claude Opus 4","quotaInfo":{"remainingPercentage":40}},
+			"chat_20706":{"displayName":"chat"},
+			"chat_23310":{"displayName":"chat"},
+			"secret-preview":{"displayName":"Secret","isInternal":true}}}`))
 	}))
 	t.Cleanup(server.Close)
 

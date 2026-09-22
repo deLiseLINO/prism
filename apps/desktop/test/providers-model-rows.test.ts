@@ -24,24 +24,10 @@ describe('rung chips', () => {
   })
 })
 
-describe('model row selection for the raw toggle', () => {
-  const models = ['claude-opus-4', 'gemini-3.7-flash']
-  const rawModels = [
-    'claude-opus-4-5-thinking',
-    'gemini-3.7-flash-high',
-    'gemini-3.7-flash-low',
-    'gemini-3.7-flash-medium',
-    'gemini-3.7-flash-tiered',
-  ]
-
-  it('lists logical ids until the toggle flips to the raw wire ids', () => {
-    expect(visibleModelRows(models, rawModels, '', false)).toEqual(models)
-    expect(visibleModelRows(models, rawModels, '', true)).toEqual(rawModels)
-  })
-
-  it('filters raw rows by the needle and survives providers without families', () => {
-    expect(visibleModelRows(models, rawModels, 'low', true)).toEqual(['gemini-3.7-flash-low'])
-    expect(visibleModelRows(models, rawModels, 'opus', false)).toEqual(['claude-opus-4'])
-    expect(visibleModelRows(models, undefined, '', true)).toEqual([])
+describe('model row selection', () => {
+  it('lists whatever the daemon stores and filters by the needle', () => {
+    expect(visibleModelRows(['claude-opus-4', 'gemini-3.7-flash'], '')).toEqual(['claude-opus-4', 'gemini-3.7-flash'])
+    expect(visibleModelRows(['claude-opus-4', 'gemini-3.7-flash'], 'opus')).toEqual(['claude-opus-4'])
+    expect(visibleModelRows(['gemini-3.7-flash-low', 'gemini-3.7-flash-high'], 'low')).toEqual(['gemini-3.7-flash-low'])
   })
 })

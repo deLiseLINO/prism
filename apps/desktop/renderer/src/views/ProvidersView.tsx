@@ -54,8 +54,10 @@ export function sortProviders(list: readonly ProviderView[], disabledSnapshot: R
   })
 }
 
-// The antigravity family view: logical rows carry effort rungs, and a toggle
-// swaps the list onto the flat raw wire ids the daemon reports per provider.
+// The antigravity model view: logical family rows carry effort rungs, raw
+// rows are the wire ids the daemon routes. The mode switch persists through
+// the daemon, so the stored list, the catalog, and agent integrations all
+// move between the two views together.
 
 export function defaultEffort(efforts: readonly string[]): string {
   if (efforts.includes('medium')) return 'medium'
@@ -77,13 +79,10 @@ export function rungChips(model: string, modelEfforts: Readonly<Record<string, r
 
 export function visibleModelRows(
   models: readonly string[],
-  rawModels: readonly string[] | undefined,
   needle: string,
-  showRaw: boolean,
 ): readonly string[] {
-  const source = showRaw ? rawModels ?? [] : models
-  if (needle === '') return source
-  return source.filter((m) => m.toLowerCase().includes(needle))
+  if (needle === '') return models
+  return models.filter((m) => m.toLowerCase().includes(needle))
 }
 
 interface DetailProps {
@@ -97,7 +96,6 @@ interface DetailProps {
   readonly onDelete: () => void
   readonly onToggleProvider: (provider: ProviderView) => void
 }
-
 function ProviderDetail({ provider, generation, globalContextWindow, modelFilter, onOptimistic, onMutated, onEdit, onDelete, onToggleProvider }: DetailProps): JSX.Element {
   const [confirming, setConfirming] = useState(false)
   const [addModel, setAddModel] = useState('')
@@ -109,18 +107,28 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   const [syncing, setSyncing] = useState(false)
   const [freshModels, setFreshModels] = useState<readonly string[]>([])
   const [sortDisabled, setSortDisabled] = useState<readonly string[]>(provider.disabledModels ?? [])
-  const [showRaw, setShowRaw] = useState(false)
   const task = useTask()
   const models = provider.models ?? []
   const disabledModels = provider.disabledModels ?? []
   const syncedModels = provider.syncedModels ?? []
-  const rawModels = provider.rawModels ?? []
   const modelEfforts = provider.modelEfforts
-  const hasFamilies = rawModels.length > 0
+  const rawMode = provider.modelMode === 'raw'
+  const hasFamilies = (provider.rawModels ?? []).length > 0 && provider.wire === 'antigravity'
 
   async function mutate(patch: Partial<ProviderWrite>): Promise<void> {
     const ok = await task.run(() => api.replaceProvider(provider.id, buildWrite(provider, generation, patch)))
     if (ok === undefined) return
+    onMutated()
+  }
+
+  async function switchMode(mode: 'logical' | 'raw'): Promise<void> {
+    try {
+      await api.setProviderModelMode(provider.id, mode, generation)
+      setToggleError(null)
+      setFreshModels([])
+    } catch (err: unknown) {
+      setToggleError(err instanceof Error ? err : new Error(String(err)))
+    }
     onMutated()
   }
 
@@ -223,11 +231,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
 
   const settings = provider.modelSettings ?? {}
   const needle = modelFilter.trim().toLowerCase()
-  const visibleModels = needle === '' ? models : models.filter((m) => m.toLowerCase().includes(needle))
-  // A sync can empty rawModels mid-session; the raw view then falls back to
-  // logical rows instead of stranding an empty list with no toggle to exit.
-  const showRawList = showRaw && hasFamilies
-  const listedModels = visibleModelRows(models, rawModels, needle, showRawList)
+  const listedModels = visibleModelRows(models, needle)
 
   return (
     <section className="panel card prov-detail" style={{ '--i': 1 } as CSSProperties}>
@@ -251,22 +255,23 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
         <div className="prov-detail-label">
           models
           <span className="num">
-            {showRawList
-              ? (needle === '' ? rawModels.length : listedModels.length + ' of ' + rawModels.length) + ' raw'
-              : needle === '' ? models.length : visibleModels.length + ' of ' + models.length}
+            {(needle === '' ? models.length : listedModels.length + ' of ' + models.length) +
+              (hasFamilies ? (rawMode ? ' raw' : ' logical') : '')}
           </span>
           <span className="prov-detail-acts">
             {hasFamilies ? (
               <button
                 type="button"
                 className="pm-rawbtn"
-                onClick={() => setShowRaw((v) => !v)}
-                aria-pressed={showRawList}
-                aria-label={showRawList ? 'Show logical models' : 'Show raw models'}
-                title={showRawList ? 'Back to logical models' : 'Show the raw wire ids behind the logical models'}
+                onClick={() => void switchMode(rawMode ? 'logical' : 'raw')}
+                aria-pressed={rawMode}
+                aria-label={rawMode ? 'Switch to logical models' : 'Switch to raw models'}
+                title={rawMode
+                  ? 'Switch the provider to the collapsed logical model ids'
+                  : 'Switch the provider to the raw wire model ids'}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/></svg>
-                <span>{showRawList ? 'logical models' : 'show raw models'}</span>
+                <span>{rawMode ? 'logical models' : 'raw models'}</span>
               </button>
             ) : null}
             <button
@@ -304,14 +309,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
         </div>
         {listedModels.length > 0 ? (
           <div className="prov-mlist">
-            {showRawList ? listedModels.map((raw) => (
-              <div className="prov-mline prov-mline--raw" key={raw}>
-                <div className="prov-mline-l">
-                  <span className="prov-mline-dot" aria-hidden="true" />
-                  <span className="pm-id">{raw}</span>
-                </div>
-              </div>
-            )) : listedModels.slice().sort((a, b) => {
+            {listedModels.slice().sort((a, b) => {
               const oa = sortDisabled.includes(a) ? 1 : 0
               const ob = sortDisabled.includes(b) ? 1 : 0
               if (oa !== ob) return oa - ob
@@ -320,7 +318,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
               return fa - fb
             }).map((model) => {
               const off = disabledModels.includes(model)
-              const manual = !syncedModels.includes(model)
+              const manual = syncedModels.length > 0 && !syncedModels.includes(model)
               const fresh = freshModels.includes(model)
               const rungs = rungChips(model, modelEfforts)
               return (
