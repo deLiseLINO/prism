@@ -51,7 +51,7 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
         "models": ["gemini-3.7-flash", "gemini-2.5-pro", "chat_20706"],
         "disabledModels": ["gemini-2.5-pro"],
         "syncedModels": ["gemini-3.7-flash", "gemini-2.5-pro", "chat_20706"],
-        "modelSettings": {"gemini-3.7-flash": {"contextWindow": 12345}}
+        "modelSettings": {"gemini-3.7-flash": {"contextWindow": 12345, "reasoningEfforts": ["low", "high"]}}
       },
       "codex": {"wire": "codex", "models": ["gpt-5.6-luna"]}
     },
@@ -106,7 +106,7 @@ goto_view() {
   })()" > /dev/null
 }
 
-echo "==> initial logical view: family row with rungs, no manual badge"
+echo "==> initial logical view: rungs only on the manually overridden family, no manual badge"
 goto_view "Providers"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -122,15 +122,21 @@ cdp_eval "await (async () => {
   const rows = [...detail.querySelectorAll('.prov-mline')]
   const logicalIds = rows.map((r) => r.querySelector('.pm-name')?.textContent ?? '')
   const badges = rows.map((r) => [...r.querySelectorAll('.prov-mline-manual')].map((b) => b.textContent).join(','))
-  const rungs = rows.filter((r) => r.querySelector('.pm-rungs')).length
+  const rungRows = rows.filter((r) => r.querySelector('.pm-rungs')).map((r) => r.querySelector('.pm-name')?.textContent ?? '')
   const errors = []
   const wantLogical = ['gemini-2.5-pro', 'gemini-3.7-flash', 'chat_20706'].sort()
   const gotLogical = logicalIds.slice().sort()
   if (JSON.stringify(gotLogical) !== JSON.stringify(wantLogical)) errors.push('logical rows = ' + JSON.stringify(gotLogical))
   if (badges.some((b) => b.includes('manual'))) errors.push('manual badge on synced-style logical rows: ' + JSON.stringify(badges))
-  if (rungs === 0) errors.push('no effort rungs rendered on family rows')
+  if (JSON.stringify(rungRows) !== JSON.stringify(['gemini-3.7-flash'])) {
+    errors.push('effort rungs must render only on the manually overridden model: ' + JSON.stringify(rungRows))
+  }
+  const rungTexts = [...(rows.find((r) => (r.querySelector('.pm-name')?.textContent ?? '') === 'gemini-3.7-flash')?.querySelectorAll('.pm-rung') ?? [])].map((r) => r.textContent.trim())
+  if (JSON.stringify(rungTexts) !== JSON.stringify(['low', 'high'])) {
+    errors.push('rung chips = ' + JSON.stringify(rungTexts) + ', want ["low","high"] from the manual override')
+  }
   if (errors.length) throw new Error(errors.join('; '))
-  return {rows: gotLogical, rungs}
+  return {rows: gotLogical, rungRows}
 })()" > "$EVID_WORK/logical-view.json"
 
 echo "==> switch to raw through the UI button"

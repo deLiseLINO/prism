@@ -14,7 +14,7 @@ The Providers view is the CRUD surface for daemon providers: wires, endpoints, m
 - Search filters cards by provider id, wire, or model.
 - Model mode switch (antigravity only): `PUT /api/v1/providers/{id}/model-mode?expectedGeneration=N` with `{"mode":"raw"|"logical"}` moves the stored `models` list between collapsed family ids and raw wire ids in one generation write. Disabled entries and per-model settings travel with their model (family state fans out onto members in raw mode, folds back onto the family id in logical mode). The catalog, routes, and agent integrations observe the new list on the next read; nothing else to re-apply. Non-antigravity wires get 400 `invalid_value`.
 - Sync: `POST /api/v1/providers/{id}/sync-models` merges remote discovery into the stored list, folding raw family members onto their logical id; a raw-mode provider re-expands after the fold. Denied service ids and `isInternal` entries never enter the list, and the merge drops them from stored lists.
-- The Providers detail renders the stored list in both modes with the same rows: toggle, edit, remove buttons, fresh badge, and effort rungs (logical families only). The `manual` badge marks ids the last sync did not report; an absent `syncedModels` list marks none.
+- The Providers detail renders the stored list in both modes with the same rows: toggle, edit, remove buttons, fresh badge, and effort rungs. Rungs render only for models with manually overridden `modelSettings.<model>.reasoningEfforts`; a model without an override shows no rung row. The `manual` badge marks ids the last sync did not report; an absent `syncedModels` list marks none.
 
 ## How to get to it (user POV)
 

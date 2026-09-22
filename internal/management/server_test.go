@@ -1094,7 +1094,7 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 				Models:         []string{"gemini-3.7-flash-low", "gemini-3.7-flash-high", "claude-opus-4", "chat_20706"},
 				DisabledModels: []string{"gemini-3.7-flash-low"},
 				ModelSettings: map[string]config.ModelSettings{
-					"gemini-3.7-flash-high": {ContextWindow: 12345},
+					"gemini-3.7-flash-high": {ContextWindow: 12345, ReasoningEfforts: []string{"low", "high"}},
 					"claude-opus-4":         {ImageInput: true},
 				},
 			},
@@ -1144,11 +1144,8 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 	if !reflect.DeepEqual(p.RawModels, wantRaw) {
 		t.Fatalf("rawModels = %v, want %v", p.RawModels, wantRaw)
 	}
-	wantEfforts := map[string][]string{
-		"gemini-3.7-flash": {"minimal", "low", "medium", "high"},
-	}
-	if !reflect.DeepEqual(p.ModelEfforts, wantEfforts) {
-		t.Fatalf("modelEfforts = %v, want %v", p.ModelEfforts, wantEfforts)
+	if !reflect.DeepEqual(p.ModelSettings["gemini-3.7-flash"].ReasoningEfforts, []string{"low", "high"}) {
+		t.Fatalf("reasoningEfforts did not fold onto the logical id: %+v", p.ModelSettings)
 	}
 
 	stored := m.Get()
@@ -1215,7 +1212,6 @@ func TestSyncModelsWithoutSyncerStaysUnsupported(t *testing.T) {
 	assertErrorBody(t, rec, http.StatusNotImplemented, "unsupported")
 }
 
-
 func TestModelModeSwitchRoundTripsModelList(t *testing.T) {
 	m, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
 	if err != nil {
@@ -1226,8 +1222,8 @@ func TestModelModeSwitchRoundTripsModelList(t *testing.T) {
 		Version: config.SchemaVersion,
 		Providers: map[string]config.Provider{
 			"ag": {
-				Wire:    config.WireAntigravity,
-				Enabled: &enabled,
+				Wire:           config.WireAntigravity,
+				Enabled:        &enabled,
 				Models:         []string{"gemini-3.7-flash", "chat_20706"},
 				DisabledModels: []string{"gemini-3.7-flash"},
 				SyncedModels:   []string{"gemini-3.7-flash", "chat_20706"},

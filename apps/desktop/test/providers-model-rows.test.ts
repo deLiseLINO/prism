@@ -11,16 +11,17 @@ describe('default effort rung', () => {
 })
 
 describe('rung chips', () => {
-  it('marks the default rung and skips models without a family ladder', () => {
-    const efforts = { 'gemini-3.7-flash': ['minimal', 'low', 'medium', 'high'] }
-    expect(rungChips('gemini-3.7-flash', efforts)).toEqual([
+  it('renders only manually set efforts and skips unset models', () => {
+    const settings = { 'gemini-3.7-flash': { reasoningEfforts: ['minimal', 'low', 'medium', 'high'] } }
+    expect(rungChips('gemini-3.7-flash', settings)).toEqual([
       { effort: 'minimal', defaultRung: false },
       { effort: 'low', defaultRung: false },
       { effort: 'medium', defaultRung: true },
       { effort: 'high', defaultRung: false },
     ])
-    expect(rungChips('claude-opus-4', efforts)).toEqual([])
+    expect(rungChips('claude-opus-4', settings)).toEqual([])
     expect(rungChips('gemini-3.7-flash', undefined)).toEqual([])
+    expect(rungChips('claude-opus-4', { 'claude-opus-4': {} })).toEqual([])
   })
 })
 

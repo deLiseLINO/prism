@@ -54,10 +54,10 @@ export function sortProviders(list: readonly ProviderView[], disabledSnapshot: R
   })
 }
 
-// The antigravity model view: logical family rows carry effort rungs, raw
-// rows are the wire ids the daemon routes. The mode switch persists through
-// the daemon, so the stored list, the catalog, and agent integrations all
-// move between the two views together.
+// The antigravity model view: logical family rows carry effort rungs a user
+// set manually in model settings, raw rows are the wire ids the daemon
+// routes. The mode switch persists through the daemon, so the stored list,
+// the catalog, and agent integrations all move between the two views together.
 
 export function defaultEffort(efforts: readonly string[]): string {
   if (efforts.includes('medium')) return 'medium'
@@ -70,8 +70,8 @@ export interface RungChip {
   readonly defaultRung: boolean
 }
 
-export function rungChips(model: string, modelEfforts: Readonly<Record<string, readonly string[]>> | undefined): readonly RungChip[] {
-  const efforts = modelEfforts?.[model]
+export function rungChips(model: string, settings: Readonly<Record<string, ModelSettingsView>> | undefined): readonly RungChip[] {
+  const efforts = settings?.[model]?.reasoningEfforts
   if (efforts === undefined || efforts.length === 0) return []
   const def = defaultEffort(efforts)
   return efforts.map((effort) => ({ effort, defaultRung: effort === def }))
@@ -111,7 +111,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   const models = provider.models ?? []
   const disabledModels = provider.disabledModels ?? []
   const syncedModels = provider.syncedModels ?? []
-  const modelEfforts = provider.modelEfforts
+  const modelSettings = provider.modelSettings
   const rawMode = provider.modelMode === 'raw'
   const hasFamilies = (provider.rawModels ?? []).length > 0 && provider.wire === 'antigravity'
 
@@ -320,7 +320,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
               const off = disabledModels.includes(model)
               const manual = syncedModels.length > 0 && !syncedModels.includes(model)
               const fresh = freshModels.includes(model)
-              const rungs = rungChips(model, modelEfforts)
+              const rungs = rungChips(model, modelSettings)
               return (
                 <div
                   className={`prov-mline${off ? ' prov-mline--off' : ''}${fresh ? ' prov-mline--new' : ''} prov-mline--click`}

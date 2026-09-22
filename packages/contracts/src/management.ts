@@ -46,12 +46,10 @@ export interface ProviderView {
   readonly models?: readonly string[]
   readonly disabledModels?: readonly string[]
   readonly syncedModels?: readonly string[]
-  // Antigravity-only extras: rawModels carries the raw wire ids behind each
-  // logical id (in raw mode it equals models); modelEfforts maps logical
-  // family ids to their effort rungs. Both stay absent for every other wire,
-  // so old clients parse unchanged.
+  // Antigravity-only extra: rawModels carries the raw wire ids behind each
+  // logical id (in raw mode it equals models); it stays absent for every
+  // other wire, so old clients parse unchanged.
   readonly rawModels?: readonly string[]
-  readonly modelEfforts?: Readonly<Record<string, readonly string[]>>
   readonly modelSettings?: Readonly<Record<string, ModelSettingsView>>
   readonly enabled?: boolean
   readonly pool?: PoolSettingsView

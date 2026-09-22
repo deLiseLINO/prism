@@ -58,7 +58,6 @@ type Provider struct {
 	DisabledModels []string                        `json:"disabledModels,omitempty"`
 	SyncedModels   []string                        `json:"syncedModels,omitempty"`
 	RawModels      []string                        `json:"rawModels,omitempty"`
-	ModelEfforts   map[string][]string             `json:"modelEfforts,omitempty"`
 	ModelSettings  map[string]config.ModelSettings `json:"modelSettings,omitempty"`
 	Enabled        *bool                           `json:"enabled,omitempty"`
 	Pool           *config.PoolSettings            `json:"pool,omitempty"`

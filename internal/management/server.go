@@ -576,7 +576,6 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 		DisabledModels: p.DisabledModels,
 		SyncedModels:   p.SyncedModels,
 		RawModels:      rawModelsForProvider(p),
-		ModelEfforts:   modelEffortsForProvider(p),
 		ModelSettings:  p.ModelSettings,
 		Enabled:        p.Enabled,
 		Pool:           p.Pool,
@@ -742,38 +741,6 @@ func rawModelsForProvider(p config.Provider) []string {
 		}
 	}
 	slices.Sort(out)
-	return out
-}
-
-// modelEffortsForProvider maps each logical family id on the provider onto
-// its supported efforts, the rung ladders the desktop view renders as chips.
-// Wire-gated like rawModelsForProvider; families resolve presence-free from
-// the reviewed table, so no discovery is required for deterministic output.
-// Raw member leftovers in Models fold onto their family id first, so the map
-// carries one ladder per family rather than per-member duplicates.
-func modelEffortsForProvider(p config.Provider) map[string][]string {
-	if p.Wire != config.WireAntigravity {
-		return nil
-	}
-	var out map[string][]string
-	for _, m := range p.Models {
-		logical := antigravity.LogicalModel(m)
-		if logical == "" || out[logical] != nil {
-			continue
-		}
-		efforts := antigravity.ModelEfforts(logical)
-		if len(efforts) == 0 {
-			continue
-		}
-		if out == nil {
-			out = make(map[string][]string, len(p.Models))
-		}
-		rungs := make([]string, 0, len(efforts))
-		for _, e := range efforts {
-			rungs = append(rungs, string(e))
-		}
-		out[logical] = rungs
-	}
 	return out
 }
 
