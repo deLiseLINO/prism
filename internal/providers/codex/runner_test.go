@@ -90,24 +90,6 @@ func TestRunErrorClassifyStatus(t *testing.T) {
 	}
 }
 
-func TestRunErrorRetryAfter(t *testing.T) {
-	h := http.Header{}
-	h.Set("retry-after", "7")
-	rt := func(*http.Request) (*http.Response, error) {
-		return newResp(http.StatusTooManyRequests, h, ""), nil
-	}
-	re, _ := runOnce(t, rt)
-	if re.Class != provider.ClassRateLimited {
-		t.Fatalf("class = %d", re.Class)
-	}
-	if re.Kind != provider.Retryable {
-		t.Fatalf("kind = %d want Retryable", re.Kind)
-	}
-	if re.RetryAfter != 7*time.Second {
-		t.Fatalf("retryAfter = %v", re.RetryAfter)
-	}
-}
-
 func TestRunErrorInvalidRequestIsTerminalOmitted(t *testing.T) {
 	rt := func(*http.Request) (*http.Response, error) {
 		return newResp(http.StatusBadRequest, nil, ""), nil
@@ -163,29 +145,6 @@ func TestClassForStatus(t *testing.T) {
 	for status, want := range cases {
 		if got := classForStatus(status); got != want {
 			t.Fatalf("status %d: got %d want %d", status, got, want)
-		}
-	}
-}
-
-func TestRetryAfterFromHeader(t *testing.T) {
-	cases := []struct {
-		in   string
-		want time.Duration
-	}{
-		{"", 0},
-		{"  ", 0},
-		{"12", 12 * time.Second},
-		{"0", 0},
-		{"-1", 0},
-		{"abc", 0},
-	}
-	for _, tc := range cases {
-		h := http.Header{}
-		if tc.in != "" {
-			h.Set("retry-after", tc.in)
-		}
-		if got := retryAfterFrom(h); got != tc.want {
-			t.Fatalf("retry-after %q: got %v want %v", tc.in, got, tc.want)
 		}
 	}
 }

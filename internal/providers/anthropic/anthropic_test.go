@@ -66,26 +66,6 @@ func TestHTTPErrorMapping(t *testing.T) {
 	}
 }
 
-func TestRateLimitRetryAfter(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "7")
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer server.Close()
-	runner := New(Options{BaseURL: server.URL})
-	err := runner.Run(t.Context(), provider.RunRequest{
-		Request: baseRequest(),
-		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
-	}, &collectingSink{})
-	var re *provider.RunError
-	if !errors.As(err, &re) {
-		t.Fatalf("error = %T", err)
-	}
-	if re.RetryAfter != 7e9 {
-		t.Fatalf("retry after = %v", re.RetryAfter)
-	}
-}
-
 func TestTransportErrorClass(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	server.Close()

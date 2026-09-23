@@ -197,7 +197,6 @@ func TestRunner429BodyPeek(t *testing.T) {
 		attempts := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			attempts++
-			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(`{"error":{"message":"Too many requests"}}`))
 		}))
@@ -213,9 +212,6 @@ func TestRunner429BodyPeek(t *testing.T) {
 		}
 		if runErr.Class != provider.ClassRateLimited || runErr.Kind != provider.Retryable {
 			t.Fatalf("class/kind = %v/%v", runErr.Class, runErr.Kind)
-		}
-		if runErr.RetryAfter != time.Second {
-			t.Fatalf("retry after = %v", runErr.RetryAfter)
 		}
 		if attempts != 3 {
 			t.Fatalf("attempts = %d, want 3", attempts)
@@ -324,29 +320,6 @@ func TestRunnerCredentialFailureClassification(t *testing.T) {
 				t.Fatalf("no events must be emitted before the wire: %v", sink.events)
 			}
 		})
-	}
-}
-
-func TestRunnerRetryAfterHonoredCapped(t *testing.T) {
-	clock := newFakeClock()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "10")
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer server.Close()
-	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
-	runner.SetSleep(clock.Sleep)
-	runner.SetRand(func() float64 { return 0 })
-	var sink recordingSink
-	_ = runner.Run(context.Background(), testRequest(), &sink)
-	sleeps := clock.sleeps()
-	if len(sleeps) != 2 {
-		t.Fatalf("sleeps = %v", sleeps)
-	}
-	for _, d := range sleeps {
-		if d != BackoffMax {
-			t.Fatalf("sleep = %v, want capped %v", d, BackoffMax)
-		}
 	}
 }
 

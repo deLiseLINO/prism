@@ -8,9 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
 	"prism/internal/provider"
 )
@@ -55,7 +52,6 @@ func HTTPError(resp *http.Response, runner string) error {
 		Class:      ClassForStatus(resp.StatusCode, code),
 		Accepted:   accepted,
 		ReplaySafe: true,
-		RetryAfter: RetryAfter(resp.Header.Get("Retry-After")),
 		Cause:      fmt.Errorf("%s: %s", runner, msg),
 	}
 }
@@ -81,23 +77,3 @@ func ClassForStatus(status int, code string) provider.ErrorClass {
 	}
 }
 
-func RetryAfter(raw string) time.Duration {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0
-	}
-	if seconds, err := strconv.ParseFloat(raw, 64); err == nil {
-		if seconds < 0 {
-			return 0
-		}
-		return time.Duration(seconds * float64(time.Second))
-	}
-	if when, err := http.ParseTime(raw); err == nil {
-		d := time.Until(when)
-		if d < 0 {
-			return 0
-		}
-		return d
-	}
-	return 0
-}

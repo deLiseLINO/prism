@@ -833,30 +833,25 @@ func TestAggregateNoChoicesIsTypedError(t *testing.T) {
 
 func TestUpstreamHTTPErrorMapping(t *testing.T) {
 	cases := []struct {
-		name       string
-		status     int
-		body       string
-		retryAfter string
-		class      provider.ErrorClass
-		retry      time.Duration
-		accepted   bool
+		name     string
+		status   int
+		body     string
+		class    provider.ErrorClass
+		accepted bool
 	}{
-		{"unauthorized", 401, `{"error":{"message":"bad key","code":"invalid_api_key"}}`, "", provider.ClassUnauthorized, 0, false},
-		{"forbidden", 403, `{"error":{"message":"denied"}}`, "", provider.ClassForbidden, 0, false},
-		{"rate limited", 429, `{"error":{"message":"slow down","code":"rate_limit_exceeded"}}`, "7", provider.ClassRateLimited, 7 * time.Second, false},
-		{"context length", 400, `{"error":{"message":"too long","code":"context_length_exceeded"}}`, "", provider.ClassContextLength, 0, false},
-		{"invalid request", 400, `{"error":{"message":"bad"}}`, "", provider.ClassInvalidRequest, 0, false},
-		{"not found", 404, `{"error":{"message":"no model"}}`, "", provider.ClassNotFound, 0, false},
-		{"timeout status", 408, `{"error":{"message":"late"}}`, "", provider.ClassTimeout, 0, false},
-		{"server", 503, `{"error":{"message":"overloaded"}}`, "2", provider.ClassServer, 2 * time.Second, true},
-		{"malformed body", 500, `<html>oops</html>`, "", provider.ClassServer, 0, true},
+		{"unauthorized", 401, `{"error":{"message":"bad key","code":"invalid_api_key"}}`, provider.ClassUnauthorized, false},
+		{"forbidden", 403, `{"error":{"message":"denied"}}`, provider.ClassForbidden, false},
+		{"rate limited", 429, `{"error":{"message":"slow down","code":"rate_limit_exceeded"}}`, provider.ClassRateLimited, false},
+		{"context length", 400, `{"error":{"message":"too long","code":"context_length_exceeded"}}`, provider.ClassContextLength, false},
+		{"invalid request", 400, `{"error":{"message":"bad"}}`, provider.ClassInvalidRequest, false},
+		{"not found", 404, `{"error":{"message":"no model"}}`, provider.ClassNotFound, false},
+		{"timeout status", 408, `{"error":{"message":"late"}}`, provider.ClassTimeout, false},
+		{"server", 503, `{"error":{"message":"overloaded"}}`, provider.ClassServer, true},
+		{"malformed body", 500, `<html>oops</html>`, provider.ClassServer, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if tc.retryAfter != "" {
-					w.Header().Set("Retry-After", tc.retryAfter)
-				}
 				w.WriteHeader(tc.status)
 				fmt.Fprint(w, tc.body)
 			}))
@@ -872,9 +867,6 @@ func TestUpstreamHTTPErrorMapping(t *testing.T) {
 			}
 			if runErr.Kind != provider.Retryable || !runErr.ReplaySafe || runErr.Accepted != tc.accepted {
 				t.Fatalf("runErr = %+v", runErr)
-			}
-			if runErr.RetryAfter != tc.retry {
-				t.Fatalf("retryAfter = %s, want %s", runErr.RetryAfter, tc.retry)
 			}
 			if strings.Contains(err.Error(), "sk-super-secret-value-42") {
 				t.Fatal("error leaks the resolved key")

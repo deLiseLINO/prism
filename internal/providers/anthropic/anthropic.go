@@ -8,10 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"prism/internal/execution"
 	"prism/internal/provider"
@@ -196,9 +194,6 @@ func upstreamError(resp *http.Response) *provider.RunError {
 		Class: errorClassForStatus(resp.StatusCode),
 		Cause: cause,
 	}
-	if retryAfter := retryAfterFor(resp); retryAfter > 0 {
-		re.RetryAfter = retryAfter
-	}
 	return re
 }
 
@@ -234,18 +229,6 @@ func errorClassForStatus(status int) provider.ErrorClass {
 		return provider.ClassServer
 	}
 	return provider.ClassInvalidRequest
-}
-
-func retryAfterFor(resp *http.Response) time.Duration {
-	value := strings.TrimSpace(resp.Header.Get("Retry-After"))
-	if value == "" {
-		return 0
-	}
-	seconds, err := strconv.Atoi(value)
-	if err != nil || seconds < 0 {
-		return 0
-	}
-	return time.Duration(seconds) * time.Second
 }
 
 var errNoTerminal = errors.New("anthropic: stream ended without message_stop")

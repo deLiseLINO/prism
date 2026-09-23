@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -253,7 +252,6 @@ func drainClose(resp *http.Response) {
 }
 
 func classifyStatus(resp *http.Response) error {
-	retryAfter := retryAfterFrom(resp.Header)
 	class := classForStatus(resp.StatusCode)
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	log.Printf("prismd: codex upstream status %d body %q", resp.StatusCode, string(snippet))
@@ -264,7 +262,7 @@ func classifyStatus(resp *http.Response) error {
 		}
 	}
 	return provider.RunError{
-		Kind: provider.Retryable, Class: class, Accepted: true, RetryAfter: retryAfter,
+		Kind: provider.Retryable, Class: class, Accepted: true,
 		Cause: fmt.Errorf("codex: upstream status %d body %q", resp.StatusCode, string(snippet)),
 	}
 }
@@ -288,14 +286,3 @@ func classForStatus(status int) provider.ErrorClass {
 	return provider.ClassInvalidRequest
 }
 
-func retryAfterFrom(h http.Header) time.Duration {
-	v := strings.TrimSpace(h.Get("retry-after"))
-	if v == "" {
-		return 0
-	}
-	secs, err := strconv.Atoi(v)
-	if err != nil || secs < 0 {
-		return 0
-	}
-	return time.Duration(secs) * time.Second
-}

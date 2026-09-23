@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"prism/internal/account"
 	"prism/internal/canon"
@@ -360,28 +359,23 @@ func TestNonStreamingAggregationWithoutUsageDetails(t *testing.T) {
 
 func TestUpstreamErrorMapping(t *testing.T) {
 	cases := []struct {
-		name       string
-		status     int
-		body       string
-		retryAfter string
-		class      provider.ErrorClass
-		retry      time.Duration
+		name   string
+		status int
+		body   string
+		class  provider.ErrorClass
 	}{
-		{"unauthorized", 401, `{"error":{"message":"bad key","code":"invalid_api_key"}}`, "", provider.ClassUnauthorized, 0},
-		{"rate limited", 429, `{"error":{"message":"slow down","code":"rate_limit_exceeded"}}`, "7", provider.ClassRateLimited, 7 * time.Second},
-		{"rate limited date", 429, `{"error":{"message":"slow down"}}`, "", provider.ClassRateLimited, 0},
-		{"context length", 400, `{"error":{"message":"too long","code":"context_length_exceeded"}}`, "", provider.ClassContextLength, 0},
-		{"invalid request", 400, `{"error":{"message":"bad"}}`, "", provider.ClassInvalidRequest, 0},
-		{"not found", 404, `{"error":{"message":"no model"}}`, "", provider.ClassNotFound, 0},
-		{"server", 503, `{"error":{"message":"overloaded","code":"server_is_overloaded"}}`, "2", provider.ClassServer, 2 * time.Second},
-		{"malformed body", 500, `<html>oops</html>`, "", provider.ClassServer, 0},
+		{"unauthorized", 401, `{"error":{"message":"bad key","code":"invalid_api_key"}}`, provider.ClassUnauthorized},
+		{"rate limited", 429, `{"error":{"message":"slow down","code":"rate_limit_exceeded"}}`, provider.ClassRateLimited},
+		{"rate limited date", 429, `{"error":{"message":"slow down"}}`, provider.ClassRateLimited},
+		{"context length", 400, `{"error":{"message":"too long","code":"context_length_exceeded"}}`, provider.ClassContextLength},
+		{"invalid request", 400, `{"error":{"message":"bad"}}`, provider.ClassInvalidRequest},
+		{"not found", 404, `{"error":{"message":"no model"}}`, provider.ClassNotFound},
+		{"server", 503, `{"error":{"message":"overloaded","code":"server_is_overloaded"}}`, provider.ClassServer},
+		{"malformed body", 500, `<html>oops</html>`, provider.ClassServer},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if tc.retryAfter != "" {
-					w.Header().Set("Retry-After", tc.retryAfter)
-				}
 				w.WriteHeader(tc.status)
 				fmt.Fprint(w, tc.body)
 			}))
@@ -397,9 +391,6 @@ func TestUpstreamErrorMapping(t *testing.T) {
 			}
 			if runErr.Kind != provider.Retryable || !runErr.ReplaySafe {
 				t.Fatalf("runErr = %+v", runErr)
-			}
-			if runErr.RetryAfter != tc.retry {
-				t.Fatalf("retryAfter = %s, want %s", runErr.RetryAfter, tc.retry)
 			}
 		})
 	}

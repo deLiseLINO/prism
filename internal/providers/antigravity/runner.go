@@ -149,7 +149,7 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 				}
 			}
 			if attempt < RetryAttempts-1 {
-				r.sleep(BackoffDelay(attempt, 0, false, r.rand()))
+				r.sleep(BackoffDelay(attempt, r.rand()))
 				continue
 			}
 			return provider.RunError{
@@ -167,7 +167,6 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 			return transportError(readErr)
 		}
 		payloadText := string(errorBody)
-		retryAfter, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 
 		if resp.StatusCode == http.StatusBadRequest && !replayUsed {
 			if repaired, changed := repairEnvelope(body, payloadText); changed {
@@ -182,20 +181,18 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 				Kind:       provider.TerminalOmitted,
 				Class:      provider.ClassQuotaExhausted,
 				ReplaySafe: true,
-				RetryAfter: retryAfter,
 				Cause:      fmt.Errorf("antigravity: quota exhausted: %s", errorEnvelopeMessage(payloadText)),
 			}
 		}
 		class, kind := classifyStatus(resp.StatusCode)
 		if kind == provider.Retryable && attempt < RetryAttempts-1 {
-			r.sleep(BackoffDelay(attempt, retryAfter, hasRetryAfter, r.rand()))
+			r.sleep(BackoffDelay(attempt, r.rand()))
 			continue
 		}
 		return provider.RunError{
 			Kind:       kind,
 			Class:      class,
 			ReplaySafe: true,
-			RetryAfter: retryAfter,
 			Cause:      fmt.Errorf("antigravity: upstream status %d: %s", resp.StatusCode, errorEnvelopeMessage(payloadText)),
 		}
 	}

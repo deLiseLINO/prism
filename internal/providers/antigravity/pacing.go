@@ -1,7 +1,6 @@
 package antigravity
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,32 +14,12 @@ const (
 	AttemptTimeout = 200 * time.Second
 )
 
-func BackoffDelay(attempt int, retryAfter time.Duration, hasRetryAfter bool, rand01 float64) time.Duration {
-	if hasRetryAfter {
-		if retryAfter > BackoffMax {
-			return BackoffMax
-		}
-		return retryAfter
-	}
+func BackoffDelay(attempt int, rand01 float64) time.Duration {
 	exp := BackoffBase << attempt
 	if exp > BackoffMax || exp <= 0 {
 		exp = BackoffMax
 	}
 	return time.Duration(int64(float64(exp) * (0.8 + 0.4*rand01)))
-}
-
-func parseRetryAfter(v string) (time.Duration, bool) {
-	raw := strings.TrimSpace(v)
-	if raw == "" {
-		return 0, false
-	}
-	if seconds, err := strconv.Atoi(raw); err == nil && seconds >= 0 {
-		return time.Duration(seconds) * time.Second, true
-	}
-	if f, err := strconv.ParseFloat(raw, 64); err == nil && f >= 0 {
-		return time.Duration(f * float64(time.Second)), true
-	}
-	return 0, false
 }
 
 const (
