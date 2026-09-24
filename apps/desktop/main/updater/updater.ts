@@ -4,13 +4,13 @@ import { DEFAULT_UPDATE_POLICY, initialModel, statusOf, step, type UpdateEffect,
 
 export interface UpdaterOptions {
   readonly currentVersion: string
-  readonly updateUrl: string | null
   readonly policy?: UpdatePolicy
 }
 
 export interface UpdaterDependencies {
   readonly autoUpdater: AppUpdater | null
   readonly quitApp: () => void
+  readonly canInstall?: () => boolean
 }
 
 const QUIT_AND_INSTALL_ERROR = 'prism: no downloaded update to install'
@@ -21,6 +21,7 @@ export class UpdaterService {
   private timer: NodeJS.Timeout | null = null
   private readonly autoUpdater: AppUpdater | null
   private quit: () => void
+  private readonly canInstall?: () => boolean
   private readonly policy: UpdatePolicy
 
   constructor(
@@ -29,14 +30,15 @@ export class UpdaterService {
   ) {
     this.autoUpdater = deps.autoUpdater
     this.quit = deps.quitApp
+    this.canInstall = deps.canInstall
     this.model = initialModel(options.currentVersion)
     this.policy = options.policy ?? DEFAULT_UPDATE_POLICY
     if (deps.autoUpdater !== null) {
       deps.autoUpdater.autoDownload = true
       deps.autoUpdater.autoInstallOnAppQuit = false
-      if (options.updateUrl !== null) deps.autoUpdater.setFeedURL({ provider: 'generic', url: options.updateUrl })
       if (options.currentVersion.includes('-')) {
-        deps.autoUpdater.channel = 'prerelease'
+        deps.autoUpdater.channel = 'beta'
+        deps.autoUpdater.allowPrerelease = true
         deps.autoUpdater.allowDowngrade = false
       }
       this.wireEmitter(deps.autoUpdater)
@@ -75,11 +77,18 @@ export class UpdaterService {
     if (this.model.state !== 'downloaded') {
       throw new Error(QUIT_AND_INSTALL_ERROR)
     }
+    if (this.canInstall && !this.canInstall()) throw new Error('prism: update directory is not writable')
     this.dispatch({ type: 'install-request' })
   }
 
   performInstall(): void {
     if (this.autoUpdater === null) return
+    if (this.canInstall && !this.canInstall()) {
+      const error = 'prism: update directory is not writable'
+      console.error(error)
+      this.dispatch({ type: 'install-failure', error })
+      return
+    }
     try {
       this.autoUpdater.quitAndInstall(false, true)
     } catch (error) {

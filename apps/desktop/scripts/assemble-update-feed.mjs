@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parse, stringify } from 'yaml'
 
@@ -26,18 +26,15 @@ for (const name of names) {
     await copyFile(path.join(source, name), path.join(destination, name))
   }
 }
+const macInfo = parse(await readFile(path.join(source, 'latest-mac.yml'), 'utf8'))
+const zipFiles = macInfo.files.filter(file => file.url.endsWith('.zip'))
+if (zipFiles.length !== 2) throw new Error('macOS update channel requires both ZIP architectures')
+macInfo.files = zipFiles
+macInfo.path = zipFiles[0].url
+macInfo.sha512 = zipFiles[0].sha512
+await writeFile(path.join(destination, 'latest-mac.yml'), stringify(macInfo))
 
-const macPath = path.join(destination, 'latest-mac.yml')
-const macInfo = parse(await readFile(macPath, 'utf8'))
-macInfo.files = macInfo.files.filter(file => file.url.endsWith('.zip'))
-if (macInfo.files.length !== 2) throw new Error('macOS update channel requires both ZIP architectures')
-macInfo.path = macInfo.files[0].url
-macInfo.sha512 = macInfo.files[0].sha512
-await writeFile(macPath, stringify(macInfo))
 for (const channel of channels) {
-  const prerelease = channel.replace(/^latest/, 'prerelease')
-  await copyFile(path.join(destination, channel), path.join(destination, prerelease))
-}
-if (version.includes('-')) {
-  for (const channel of channels) await rm(path.join(destination, channel))
+  const beta = channel.replace(/^latest/, 'beta')
+  await copyFile(path.join(destination, channel), path.join(destination, beta))
 }

@@ -20,13 +20,16 @@ extraResources:
 asarUnpack:
   - "**/node_modules/electron-updater/**"
 publish:
-  - provider: generic
-    url: "https://releases.prism.sh/desktop"
+  - provider: github
+    owner: deLiseLINO
+    repo: prism
     channel: latest
 detectUpdateChannel: false
 mac:
   category: Utilities
-  notarize: true
+  forceCodeSigning: true
+  notarize: false
+  timestamp: none
   icon: resources/icon.icns
   artifactName: ${productName}-${version}-${arch}.${ext}
   target:
@@ -40,7 +43,6 @@ mac:
         - x64
 win:
   icon: resources/icon.ico
-  forceCodeSigning: true
   target:
     - target: nsis
       arch:
