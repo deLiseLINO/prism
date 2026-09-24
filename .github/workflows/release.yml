@@ -1,26 +1,10 @@
 name: Release
 
-# Desktop release for mac dmg / linux AppImage / windows nsis.
-# Practices distilled from several production release pipelines:
-# - dry_run defaults to true; the irreversible publish is opt-in
-# - preflight refuses an already-published tag/release and validates the
-#   version against package.json
-# - minimal top-level permissions; only the publish job escalates
-# - publish gates on every build job result; artifacts are uploaded with
-#   if-no-files-found: error
-# - SHA256SUMS is computed in the publish job from the downloaded bytes that
-#   users will actually get
-# - release runs serialize under one concurrency group and are never
-#   cancelled mid-flight
-
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release — must equal apps/desktop/package.json (e.g. 0.1.0)"
+        description: "Version tag to release, matching apps/desktop/package.json (e.g. 0.1.0)"
         required: true
         type: string
       dry_run:
@@ -45,51 +29,31 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       dry_run: ${{ steps.dryrun.outputs.dry_run }}
-      ref: ${{ steps.ref.outputs.ref }}
+      ref: ${{ steps.version.outputs.ref }}
       full_version: ${{ steps.version.outputs.full_version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # All refs, one refspec: fetch-depth 1 + fetch-tags collides with
-          # checkout's own tag refspec on tag-push events (git refuses to
-          # fetch two sources into the same refs/tags/* destination).
           fetch-depth: 0
       - name: Resolve dry-run
         id: dryrun
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "dry_run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
       - name: Resolve version and ref
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            raw="${GITHUB_REF_NAME}"
-          else
-            raw="${INPUT_VERSION}"
-          fi
+          raw="${INPUT_VERSION}"
           version="${raw#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$ ]]; then
             echo "::error::version '$version' is not semver"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           tag="v${version}"
-          if [ "${{ github.event_name }}" = "push" ]; then
-            ref="$tag"
-          else
-            # Dispatch builds the tag for the requested version, never the
-            # moving default branch: a dispatch must publish exactly the
-            # audited commit, and the tag must exist.
-            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-              echo "::error::tag $tag does not exist; push it first (a release publishes a tag, not main HEAD)"
-              exit 1
-            fi
-            ref="$tag"
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::tag $tag does not exist; push it before dispatching the workflow"
+            exit 1
           fi
           # Pin the exact commit so three parallel build jobs cannot race a
           # force-moved tag into a mixed release.
@@ -102,9 +66,7 @@ jobs:
           # Version equality is checked against the tree the release actually
           # builds (the tag), not the default branch a dispatch checkout lands
           # on: a stale main tree must not approve a version the tag lacks.
-          # Prerelease suffixes in the tag (-rc1, -beta.2) are allowed to
-          # exceed the package version they build: the package.json bump
-          # happens once per x.y.z line, the rc train re-tags the same tree.
+          # Beta tags use -beta.N so the GitHub updater can find their channel.
           pkg_version=$(git show "$sha:apps/desktop/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
           base_version="${version%%-*}"
           if [ "$base_version" != "$pkg_version" ]; then
@@ -122,8 +84,7 @@ jobs:
       - name: Refuse to clobber an existing release
         run: |
           tag="v${{ steps.version.outputs.version }}"
-          # A tag push re-releases its own tag by design (releases are
-          # immutable, so the guard is about the release, not the tag).
+          # Releases are immutable; a dry run may target an existing release.
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             if [ "${{ steps.dryrun.outputs.dry_run }}" = "true" ]; then
               echo "::notice::release $tag already exists (dry run: continuing)"
@@ -155,13 +116,15 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
         env:
-          PRISM_RELEASE_TAG: ${{ github.ref_name }}
+          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
       - run: npx --workspace @prism/desktop electron-builder --linux AppImage:x64 AppImage:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-artifacts
-          path: apps/desktop/release/*.AppImage
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/latest-linux*.yml
           if-no-files-found: error
           retention-days: 1
 
@@ -186,13 +149,18 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
         env:
-          PRISM_RELEASE_TAG: ${{ github.ref_name }}
+          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
       - run: npx --workspace @prism/desktop electron-builder --win nsis:x64 nsis:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-artifacts
-          path: apps/desktop/release/*.exe
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest.yml
           if-no-files-found: error
           retention-days: 1
 
@@ -216,13 +184,68 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
         env:
-          PRISM_RELEASE_TAG: ${{ github.ref_name }}
-      - run: npx --workspace @prism/desktop electron-builder --mac dmg --arm64 --x64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
+          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
+      - name: Require macOS update signing identity
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          if [ -z "$CSC_LINK" ] || [ -z "$CSC_KEY_PASSWORD" ]; then
+            echo "::error::configure a persistent macOS code-signing identity before building updates"
+            exit 1
+          fi
+      - name: Import macOS update signing identity
+        timeout-minutes: 2
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/prism-signing.keychain-db"
+          password=$(openssl rand -base64 32)
+          printf '%s' "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/prism-signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security set-keychain-settings "$keychain"
+          security import "$RUNNER_TEMP/prism-signing.p12" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          openssl pkcs12 -legacy -in "$RUNNER_TEMP/prism-signing.p12" -clcerts -nokeys -passin env:CSC_KEY_PASSWORD -out "$RUNNER_TEMP/prism-signing.pem"
+          sudo -n security add-trusted-cert -d -r trustRoot -p codeSign -k "$keychain" "$RUNNER_TEMP/prism-signing.pem"
+          rm "$RUNNER_TEMP/prism-signing.p12" "$RUNNER_TEMP/prism-signing.pem"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+          echo "CSC_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      - run: npx --workspace @prism/desktop electron-builder --mac dmg zip --arm64 --x64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
+      - name: Verify signed macOS update packages
+        run: |
+          extracted=$(mktemp -d)
+          trap 'rm -rf "$extracted"' EXIT
+          for arch in arm64 x64; do
+            if [ "$arch" = arm64 ]; then
+              built=apps/desktop/release/mac-arm64/Prism.app
+            else
+              built=apps/desktop/release/mac/Prism.app
+            fi
+            zip="apps/desktop/release/Prism-${{ needs.preflight.outputs.full_version }}-${arch}.zip"
+            mkdir "$extracted/$arch"
+            ditto -x -k "$zip" "$extracted/$arch"
+            app="$extracted/$arch/Prism.app"
+            requirement=$(codesign -d -r- "$built" 2>&1 | sed -n 's/^designated => //p')
+            if [[ "$requirement" != *'certificate leaf'* ]]; then
+              echo "::error::macOS identity does not bind updates to the signing certificate"
+              exit 1
+            fi
+            codesign --verify --deep --strict -R="$requirement" "$app"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-artifacts
-          path: apps/desktop/release/*.dmg
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.dmg.blockmap
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.zip.blockmap
+            apps/desktop/release/latest-mac.yml
           if-no-files-found: error
           retention-days: 1
 
@@ -234,10 +257,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist-release
           merge-multiple: true
+      - name: Assemble and verify update feed
+        run: |
+          node apps/desktop/scripts/assemble-update-feed.mjs dist-release update-feed "${{ needs.preflight.outputs.full_version }}"
+          node apps/desktop/scripts/verify-update-feed.mjs update-feed "${{ needs.preflight.outputs.full_version }}" --complete
       - name: Verify and checksum the artifacts users will download
         run: |
           cd dist-release
@@ -247,9 +282,8 @@ jobs:
               *.AppImage|*.exe|*.dmg) found=$((found+1));;
             esac
           done
-          # AppImage 2 (x64+arm64) + nsis 2 (x64+arm64) + dmg 2.
-          if [ "$found" -ne 6 ]; then
-            echo "::error::expected 6 installers (2x AppImage, 2x nsis exe, 2x dmg), found $found"
+          if [ "$found" -ne 5 ]; then
+            echo "::error::expected 5 installers (2x AppImage, 1x nsis exe, 2x dmg), found $found"
             exit 1
           fi
           shasum -a 256 * > SHA256SUMS
@@ -273,7 +307,8 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist-release/*
+            update-feed/*
+            dist-release/SHA256SUMS
       - name: Dry run summary
         if: needs.preflight.outputs.dry_run == 'true'
         run: |
@@ -288,24 +323,10 @@ jobs:
     needs: [preflight, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Always run (including dry runs): this job only reads the published
-    # release, so it is the safe way to test tap automation without a new
-    # release. It never mutates the release itself.
-    if: always() && needs.publish.result != 'failure'
+    if: needs.preflight.outputs.dry_run != 'true' && !contains(needs.preflight.outputs.version, '-beta.') && needs.publish.result == 'success'
     steps:
-      - name: Check release exists
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="v${{ needs.preflight.outputs.version }}"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::notice::release $tag not found; nothing to update in the tap"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
       - name: Download checksums and resolve cask data
         id: cask
-        if: steps.check.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -316,7 +337,6 @@ jobs:
           intel_sha=$(awk '$2 == "Prism-'"$version"'-x64.dmg" {print $1}' SHA256SUMS)
           if [ -z "$arm_sha" ] || [ -z "$intel_sha" ]; then
             echo "::error::missing dmg checksums for $version"
-            cat SHA256SUMS
             exit 1
           fi
           {
@@ -324,33 +344,46 @@ jobs:
             echo "arm_sha=$arm_sha"
             echo "intel_sha=$intel_sha"
           } >> "$GITHUB_OUTPUT"
-      - name: Clone tap and update cask
-        if: steps.check.outputs.skip != 'true'
+      - name: Update cask
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
         run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::error::HOMEBREW_TAP_GITHUB_TOKEN is required to publish the cask"
+            exit 1
+          fi
           version="${{ steps.cask.outputs.version }}"
           arm_sha="${{ steps.cask.outputs.arm_sha }}"
           intel_sha="${{ steps.cask.outputs.intel_sha }}"
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/homebrew-tap.git" tap
           cd tap
           mkdir -p Casks
-          {
-            echo 'cask "prism" do'
-            echo '  arch arm: "arm64", intel: "x64"'
-            echo ''
-            echo "  version \"${version}\""
-            echo "  sha256 arm:   \"${arm_sha}\","
-            echo "         intel: \"${intel_sha}\""
-            echo ''
-            echo "  url \"https://github.com/${GITHUB_REPOSITORY}/releases/download/v#{version}/Prism-#{version}-#{arch}.dmg\""
-            echo '  name "Prism"'
-            echo '  desc "Desktop app for Prism (Electron UI + Go daemon)"'
-            echo "  homepage \"https://github.com/${GITHUB_REPOSITORY}\""
-            echo ''
-            echo '  app "Prism.app"'
-            echo 'end'
-          } > Casks/prism.rb
+          cat > Casks/prism.rb <<'END_CASK'
+          cask "prism" do
+            arch arm: "arm64", intel: "x64"
+
+            version "VERSION"
+            sha256 arm:   "ARM_SHA",
+                   intel: "INTEL_SHA"
+
+            url "https://github.com/REPO/releases/download/v#{version}/Prism-#{version}-#{arch}.dmg"
+            name "Prism"
+            desc "Desktop app for Prism"
+            homepage "https://github.com/REPO"
+
+            auto_updates true
+
+            app "Prism.app"
+          end
+          END_CASK
+          sed -i.bak \
+            -e "s/VERSION/${version}/" \
+            -e "s/ARM_SHA/${arm_sha}/" \
+            -e "s/INTEL_SHA/${intel_sha}/" \
+            -e "s#REPO#${GITHUB_REPOSITORY}#" \
+            Casks/prism.rb
+          sed -i.bak 's/^          //' Casks/prism.rb
+          rm Casks/prism.rb.bak
           git config user.name "prism-release-bot"
           git config user.email "noreply@prism.sh"
           git add Casks/prism.rb

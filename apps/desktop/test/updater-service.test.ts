@@ -18,15 +18,8 @@ class FakeAutoUpdater extends EventEmitter implements AppUpdater {
   updateInfoAndProvider: unknown = null
   isUpdaterActive = false
   readonly logger: unknown = null
-  feedURL = ''
   quitAndInstallSpy = vi.fn()
   checkForUpdatesSpy = vi.fn()
-  setFeedURLSpy = vi.fn()
-
-  setFeedURL(url: unknown): void {
-    this.setFeedURLSpy(url)
-    this.feedURL = String((url as { url: string }).url)
-  }
 
   checkForUpdates(): Promise<unknown> {
     this.checkForUpdatesSpy()
@@ -43,16 +36,16 @@ class FakeAutoUpdater extends EventEmitter implements AppUpdater {
   }
 
   getFeedURL(): string {
-    return this.feedURL
+    return ''
   }
 }
 
-async function makeService(autoUpdater: FakeAutoUpdater | null, updateUrl: string | null = null) {
+async function makeService(autoUpdater: FakeAutoUpdater | null, currentVersion = '1.0.0', canInstall?: () => boolean) {
   const { UpdaterService } = await import('../main/updater/updater')
   const quitApp = vi.fn()
   const service = new UpdaterService(
-    { currentVersion: '1.0.0', updateUrl, policy: { initialCheckDelayMs: 1000, pollIntervalMs: 5000 } },
-    { autoUpdater, quitApp },
+    { currentVersion, policy: { initialCheckDelayMs: 1000, pollIntervalMs: 5000 } },
+    { autoUpdater, quitApp, canInstall },
   )
   return { service, quitApp }
 }
@@ -83,12 +76,29 @@ describe('UpdaterService', () => {
     expect(service.status.state).toBe('disabled')
   })
 
-  it('configures autoDownload on and autoInstallOnAppQuit off, and applies the feed override', async () => {
+  it('configures automatic download without installing on app quit', async () => {
     const fake = new FakeAutoUpdater()
-    await makeService(fake, 'https://updates.example.com/feed')
+    await makeService(fake)
     expect(fake.autoDownload).toBe(true)
     expect(fake.autoInstallOnAppQuit).toBe(false)
-    expect(fake.setFeedURLSpy).toHaveBeenCalledWith({ provider: 'generic', url: 'https://updates.example.com/feed' })
+    expect(fake.channel).toBe('latest')
+    expect(fake.allowPrerelease).toBe(false)
+  })
+
+  it('keeps beta builds on the GitHub prerelease channel without downgrades', async () => {
+    const fake = new FakeAutoUpdater()
+    await makeService(fake, '1.0.0-beta.1')
+    expect(fake.channel).toBe('beta')
+    expect(fake.allowPrerelease).toBe(true)
+    expect(fake.allowDowngrade).toBe(false)
+  })
+
+  it('keeps rc builds on their own prerelease channel without downgrades', async () => {
+    const fake = new FakeAutoUpdater()
+    await makeService(fake, '1.0.1-rc.1')
+    expect(fake.channel).toBe('rc')
+    expect(fake.allowPrerelease).toBe(true)
+    expect(fake.allowDowngrade).toBe(false)
   })
 
   it('first poll fires after the initial delay, then re-arms at the poll interval', async () => {
@@ -129,6 +139,20 @@ describe('UpdaterService', () => {
     const { service, quitApp } = await makeService(fake)
     expect(() => service.install()).toThrow(/no downloaded update/)
     expect(quitApp).not.toHaveBeenCalled()
+  })
+
+  it('does not quit or remove a Linux AppImage if its directory became unwritable', async () => {
+    const fake = new FakeAutoUpdater()
+    let writable = true
+    const { service, quitApp } = await makeService(fake, '1.0.0', () => writable)
+    service.start()
+    await vi.advanceTimersByTimeAsync(1000)
+    fake.emit('update-available', { version: '1.2.0' })
+    fake.emit('update-downloaded', { version: '1.2.0' })
+    writable = false
+    expect(() => service.install()).toThrow(/directory is not writable/)
+    expect(quitApp).not.toHaveBeenCalled()
+    expect(fake.quitAndInstallSpy).not.toHaveBeenCalled()
   })
 
   it('install() quits the app; pendingInstall drives quitAndInstall with forceRunAfter', async () => {
