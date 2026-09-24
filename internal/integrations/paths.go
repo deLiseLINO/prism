@@ -174,7 +174,6 @@ func XdgConfigHome(env Env, home string) string {
 	return filepath.Join(home, ".config")
 }
 
-// OpencodeConfigDir is the shared XDG config directory for opencode v1 and v2.
 func OpencodeConfigDir(env Env, home string) string {
 	return filepath.Join(XdgConfigHome(env, home), "opencode")
 }

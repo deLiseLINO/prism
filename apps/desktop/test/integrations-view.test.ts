@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { applyTargets, rollbackTargets, rowState, setIntegrationEnabled } from '../renderer/src/views/IntegrationsView'
+import { applyTargets, rollbackTargets, rowState, setIntegrationEnabled, visibleIntegrations } from '../renderer/src/views/IntegrationsView'
 import type { IntegrationStatus } from '@prism/contracts'
 import { api, ApiError } from '../renderer/src/api'
 
@@ -54,6 +54,12 @@ describe('integration card row state', () => {
 })
 
 describe('bulk targets', () => {
+  it('keeps bulk actions within the visible agent set', () => {
+    const list = [status({ id: 'codex' }), status({ id: 'omp' }), status({ id: 'opencode' })]
+    expect(visibleIntegrations(list, false).map((s) => s.id)).toEqual(['omp', 'opencode'])
+    expect(applyTargets(visibleIntegrations(list, false)).map((s) => s.id)).toEqual(['omp', 'opencode'])
+    expect(visibleIntegrations(list, true)).toEqual(list)
+  })
   it('apply targets installed non-managed cards and skips damaged and uninstalled ones', () => {
     const list = [
       status({ id: 'codex', managed: false }),

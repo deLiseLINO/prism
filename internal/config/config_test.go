@@ -127,7 +127,7 @@ func TestValidateRejectsWrongSchemaVersion(t *testing.T) {
 }
 
 func TestValidateIntegrationKeys(t *testing.T) {
-	for id := range map[string]bool{"codex": true, "grok": true, "omp": true, "claude": true, "pi": true, "opencode": true, "opencode2": true, "hermes": true} {
+	for id := range map[string]bool{"codex": true, "grok": true, "omp": true, "claude": true, "pi": true, "opencode": true, "hermes": true} {
 		d := validDoc()
 		d.Integrations = map[string]IntegrationSettings{id: {Enabled: true}}
 		if err := d.validate(); err != nil {

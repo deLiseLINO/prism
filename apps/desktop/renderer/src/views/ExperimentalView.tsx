@@ -1,5 +1,4 @@
 import type { CSSProperties } from 'react'
-import { Card, Toggle } from '../components/Ui'
 import { AGENT_ACTIONS_FLAG, EXPERIMENTAL_FLAGS, useExperimentalFlags, type ExperimentalFlag } from '../experimental'
 import { bridge } from '../bridge'
 import { useAsync } from '../useAsync'
@@ -34,13 +33,20 @@ export function ExperimentalView(): JSX.Element {
       </div>
       <div className="cards" style={{ '--i': 1 } as CSSProperties}>
         {cards.map(({ flag, label, description }) => (
-          <Card key={flag} title={label} description={description}>
-            <Toggle
+          <label key={flag} className="card experimental-flag">
+            <input
+              type="checkbox"
               checked={flags[flag]}
-              onChange={(next) => setFlag(flag, next)}
-              label={`Enable ${label}`}
+              onChange={(event) => setFlag(flag, event.target.checked)}
             />
-          </Card>
+            <span className="toggle__track" aria-hidden="true">
+              <span className="toggle__thumb" />
+            </span>
+            <span className="experimental-flag__text">
+              <span className="card__title">{label}</span>
+              <span className="card__description">{description}</span>
+            </span>
+          </label>
         ))}
       </div>
     </section>

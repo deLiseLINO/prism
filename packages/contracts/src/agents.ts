@@ -1,4 +1,4 @@
-export type AgentId = 'codex' | 'grok' | 'omp' | 'claude' | 'pi' | 'opencode' | 'opencode2' | 'hermes'
+export type AgentId = 'codex' | 'grok' | 'omp' | 'claude' | 'pi' | 'opencode' | 'hermes'
 
 export type AgentInstallSource = 'npm' | 'pnpm' | 'bun' | 'brew' | 'script' | 'unknown'
 

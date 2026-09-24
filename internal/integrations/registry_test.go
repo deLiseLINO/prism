@@ -7,28 +7,26 @@ import (
 )
 
 type registryFixture struct {
-	codex     string
-	grok      string
-	omp       string
-	claude    string
-	pi        string
-	opencode  string
-	opencode2 string
-	hermes    string
+	codex    string
+	grok     string
+	omp      string
+	claude   string
+	pi       string
+	opencode string
+	hermes   string
 }
 
 func newRegistryFixture(t *testing.T) registryFixture {
 	t.Helper()
 	dir := t.TempDir()
 	return registryFixture{
-		codex:     tempFile(t, dir, "codex.toml", userToml),
-		grok:      tempFile(t, dir, "grok.toml", userToml),
-		omp:       tempFile(t, dir, "models.yml", userModelYaml),
-		claude:    tempFile(t, dir, "settings.json", "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash\"\n    ]\n  }\n}\n"),
-		pi:        tempFile(t, dir, "pi-models.json", "{\n  \"providers\": {\n    \"acme-edge\": {\n      \"baseUrl\": \"http://127.0.0.1:9797/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"user-key\",\n      \"models\": []\n    }\n  }\n}\n"),
-		opencode:  tempFile(t, dir, "opencode-v1.json", "{\n  \"theme\": \"dark\",\n  \"provider\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"),
-		opencode2: tempFile(t, dir, "opencode-v2.json", "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"),
-		hermes:    tempFile(t, dir, "hermes-config.yaml", "model:\n  default: nous/ox-alpha\nproviders:\n  acme:\n    api: http://localhost:8080/v1\n    api_key: user-key\n    api_mode: chat_completions\n    discover_models: true\n"),
+		codex:    tempFile(t, dir, "codex.toml", userToml),
+		grok:     tempFile(t, dir, "grok.toml", userToml),
+		omp:      tempFile(t, dir, "models.yml", userModelYaml),
+		claude:   tempFile(t, dir, "settings.json", "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash\"\n    ]\n  }\n}\n"),
+		pi:       tempFile(t, dir, "pi-models.json", "{\n  \"providers\": {\n    \"acme-edge\": {\n      \"baseUrl\": \"http://127.0.0.1:9797/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"user-key\",\n      \"models\": []\n    }\n  }\n}\n"),
+		opencode: tempFile(t, dir, "opencode.json", opencodeUserSeed),
+		hermes:   tempFile(t, dir, "hermes-config.yaml", "model:\n  default: nous/ox-alpha\nproviders:\n  acme:\n    api: http://localhost:8080/v1\n    api_key: user-key\n    api_mode: chat_completions\n    discover_models: true\n"),
 	}
 }
 
@@ -43,7 +41,6 @@ func wiredRegistry(f registryFixture) *Registry {
 		{NewClaude(ClaudeOptions{Port: testPort, Models: DefaultPrismModels, ConfigPath: f.claude})},
 		{NewPi(PiOptions{Port: testPort, Models: DefaultPrismModels, ConfigPath: f.pi})},
 		{NewOpencode(OpencodeOptions{Port: testPort, Models: DefaultPrismModels, ConfigPath: f.opencode})},
-		{NewOpencode2(Opencode2Options{Port: testPort, Models: DefaultPrismModels, ConfigPath: f.opencode2})},
 		{NewHermes(HermesOptions{Port: testPort, Models: DefaultPrismModels, ConfigPath: f.hermes})},
 	}
 	for _, registration := range registrations {
@@ -98,14 +95,13 @@ func TestRegistryHonestTargetPaths(t *testing.T) {
 		t.Fatalf("status count: %d", len(statuses))
 	}
 	targets := map[ID]string{
-		Codex:     fixture.codex,
-		Grok:      fixture.grok,
-		Omp:       fixture.omp,
-		Claude:    fixture.claude,
-		Pi:        fixture.pi,
-		Opencode:  fixture.opencode,
-		Opencode2: fixture.opencode2,
-		Hermes:    fixture.hermes,
+		Codex:    fixture.codex,
+		Grok:     fixture.grok,
+		Omp:      fixture.omp,
+		Claude:   fixture.claude,
+		Pi:       fixture.pi,
+		Opencode: fixture.opencode,
+		Hermes:   fixture.hermes,
 	}
 	gotIDs := []string{}
 	for _, status := range statuses {
@@ -117,7 +113,7 @@ func TestRegistryHonestTargetPaths(t *testing.T) {
 			t.Errorf("%s target path: %+v", status.ID, status)
 		}
 	}
-	if strings.Join(gotIDs, ",") != "codex,grok,omp,claude,pi,opencode,opencode2,hermes" {
+	if strings.Join(gotIDs, ",") != "codex,grok,omp,claude,pi,opencode,hermes" {
 		t.Errorf("status order: %v", gotIDs)
 	}
 	if result := registry.Rollback(Codex); !result.OK {

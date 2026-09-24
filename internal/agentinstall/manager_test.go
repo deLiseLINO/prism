@@ -114,31 +114,28 @@ func TestInstallUnsupportedWhenNoTool(t *testing.T) {
 	}
 }
 
-// TestErrInstallActiveSharedBinary: opencode and opencode2 are two ids of one
-// binary; a job started through one id must refuse the other.
-func TestErrInstallActiveSharedBinary(t *testing.T) {
-	m, runner := newTestManager("npm", "opencode", "opencode2")
+func TestErrInstallActiveSameBinary(t *testing.T) {
+	m, runner := newTestManager("npm", "opencode")
 	block := make(chan struct{})
-	runner.behaviors["npm install -g opencode-ai@latest"] = func(ctx context.Context, out io.Writer) error {
+	runner.behaviors["npm install -g @opencode-ai/cli@latest"] = func(ctx context.Context, out io.Writer) error {
 		<-block
 		return nil
 	}
 	if _, err := m.Install(integrations.Opencode, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Install(integrations.Opencode2, false); !errors.Is(err, ErrInstallActive) {
+	if _, err := m.Install(integrations.Opencode, false); !errors.Is(err, ErrInstallActive) {
 		t.Fatalf("second install err = %v, want ErrInstallActive", err)
 	}
-	if _, err := m.Update(integrations.Opencode2); !errors.Is(err, ErrInstallActive) {
+	if _, err := m.Update(integrations.Opencode); !errors.Is(err, ErrInstallActive) {
 		t.Fatalf("update while active err = %v, want ErrInstallActive", err)
 	}
 	close(block)
 	waitTerminal(t, m, "opencode", time.Second)
-	// Guard released: a new job through the sibling id now starts.
-	if _, err := m.Install(integrations.Opencode2, false); err != nil {
+	if _, err := m.Install(integrations.Opencode, false); err != nil {
 		t.Fatalf("install after release: %v", err)
 	}
-	waitTerminal(t, m, "opencode2", time.Second)
+	waitTerminal(t, m, "opencode", time.Second)
 }
 
 // TestOutputTailCap: a 10KB installer transcript reports only the last 4096
@@ -296,14 +293,6 @@ func TestStatusAllDerivesFromPath(t *testing.T) {
 	if !grok.Installed || grok.Source != SourceBrew {
 		t.Errorf("grok status = %+v, want installed/brew", grok)
 	}
-	// opencode2 shares no binary with opencode here: absent.
-	opencode2 := byID[integrations.Opencode2]
-	if opencode2.Installed {
-		t.Errorf("opencode2 status = %+v, want not installed", opencode2)
-	}
-	if opencode2.CanUpdate || opencode2.Reason == "" {
-		t.Errorf("opencode2 must carry a not-installed reason, got %+v", opencode2)
-	}
 	// Job rides along as idle.
 	if codex.Job.State != StateIdle {
 		t.Errorf("codex job state = %q, want idle", codex.Job.State)
@@ -415,11 +404,9 @@ func TestInstallScriptFetchFails(t *testing.T) {
 	}
 }
 
-// TestUpdateScriptRerunFetches: opencode2 (no self-update argv) updates by
-// rerunning its fetched install script.
 func TestUpdateScriptRerunFetches(t *testing.T) {
 	m, runner := newTestManager("bash")
-	stat := statWith("/Users/x/.opencode/bin/opencode2")
+	stat := statWith("/Users/x/.opencode/bin/opencode")
 	m.stat = stat.stat
 	m.env = integrations.Env{"PATH": "/Users/x/.opencode/bin"}
 	m.fetchScript = func(ctx context.Context, url string) (string, error) {
@@ -428,14 +415,14 @@ func TestUpdateScriptRerunFetches(t *testing.T) {
 		}
 		return "/tmp/prism-fetched.sh", nil
 	}
-	job, err := m.Update(integrations.Opencode2)
+	job, err := m.Update(integrations.Opencode)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if job.Command != "bash https://opencode.ai/install" {
 		t.Fatalf("command = %q, want script rerun", job.Command)
 	}
-	final := waitTerminal(t, m, "opencode2", time.Second)
+	final := waitTerminal(t, m, "opencode", time.Second)
 	if final.State != StateSucceeded {
 		t.Fatalf("state = %q, want succeeded (err %q)", final.State, final.Error)
 	}

@@ -958,7 +958,7 @@ func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
 			t.Fatal(err)
 		}
 	}
-	for _, bin := range []string{"codex", "claude", "grok", "omp", "pi", "opencode", "opencode2", "hermes"} {
+	for _, bin := range []string{"codex", "claude", "grok", "omp", "pi", "opencode", "hermes"} {
 		if err := os.WriteFile(filepath.Join(localBin, bin), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}

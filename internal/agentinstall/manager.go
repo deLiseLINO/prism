@@ -63,8 +63,7 @@ type AgentStatus struct {
 	Job       Job             `json:"job"`
 }
 
-// ErrInstallActive refuses a new job while one is running for the same
-// binary (opencode and opencode2 are two ids of one shared binary).
+// ErrInstallActive refuses a new job while one is running for the same binary.
 var ErrInstallActive = errors.New("agentinstall: an install or update job is already active for this binary")
 
 type clockFunc func() time.Time
@@ -72,7 +71,7 @@ type clockFunc func() time.Time
 type Manager struct {
 	mu     sync.Mutex
 	jobs   map[string]*Job
-	active map[string]string // guard binary -> key of the running job
+	active map[string]string // binary -> key of the running job
 	env    integrations.Env
 	stat   func(string) (os.FileInfo, error)
 	eval   func(string) (string, error)
@@ -110,11 +109,7 @@ func NewManager(env integrations.Env, runner Runner, stat func(string) (os.FileI
 	}
 }
 
-// guardBinary is the identity the active-job lock uses.
 func (d Definition) guardBinary() string {
-	if d.GuardBinary != "" {
-		return d.GuardBinary
-	}
 	return d.Binary
 }
 

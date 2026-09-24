@@ -29,9 +29,7 @@ func TestResolveInstallPlanPerToolAvailability(t *testing.T) {
 		{name: "omp brew fallback", key: "omp", goos: "darwin", tools: []string{"brew"}, wantOK: true, wantMethod: MethodBrew, wantCommand: "brew install can1357/tap/omp"},
 		{name: "omp linux plan keeps brew", key: "omp", goos: "linux", tools: []string{"brew"}, wantOK: true, wantMethod: MethodBrew, wantCommand: "brew install can1357/tap/omp"},
 		{name: "pi npm first", key: "pi", goos: "linux", tools: []string{"npm"}, wantOK: true, wantMethod: MethodNpm, wantCommand: "npm install -g @earendil-works/pi-coding-agent"},
-		{name: "opencode brew first", key: "opencode", goos: "darwin", tools: []string{"brew", "npm"}, wantOK: true, wantMethod: MethodBrew, wantCommand: "brew install anomalyco/tap/opencode"},
-		{name: "opencode npm fallback", key: "opencode", goos: "darwin", tools: []string{"npm"}, wantOK: true, wantMethod: MethodNpm, wantCommand: "npm install -g opencode-ai@latest"},
-		{name: "opencode2 npm only tool path", key: "opencode2", goos: "darwin", tools: []string{"npm"}, wantOK: true, wantMethod: MethodNpm, wantCommand: "npm install -g @opencode-ai/cli@beta"},
+		{name: "opencode npm", key: "opencode", goos: "darwin", tools: []string{"npm"}, wantOK: true, wantMethod: MethodNpm, wantCommand: "npm install -g @opencode-ai/cli@latest"},
 		{name: "hermes npm", key: "hermes", goos: "linux", tools: []string{"npm"}, wantOK: true, wantMethod: MethodNpm, wantCommand: "npm install -g hermes-agent"},
 	}
 	for _, tc := range cases {
@@ -136,8 +134,7 @@ func TestEveryDefinitionHasDarwinAndLinuxPlans(t *testing.T) {
 			t.Errorf("%s: missing binary or verify arg", def.Key)
 		}
 	}
-	// opencode2 deliberately has no self-update argv.
-	if def, ok := definition("opencode2"); ok && def.SelfUpdate != nil {
-		t.Errorf("opencode2 SelfUpdate must be nil (verified 2026-09-09: no update subcommand)")
+	if def, ok := definition("opencode"); ok && def.SelfUpdate != nil {
+		t.Errorf("opencode SelfUpdate must be nil")
 	}
 }

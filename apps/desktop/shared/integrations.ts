@@ -9,7 +9,7 @@ import type {
 } from '@prism/contracts'
 import type { ManagementProxy } from './management'
 
-const INTEGRATION_IDS: readonly IntegrationId[] = ['codex', 'grok', 'omp', 'claude', 'pi', 'opencode', 'opencode2', 'hermes']
+const INTEGRATION_IDS: readonly IntegrationId[] = ['codex', 'grok', 'omp', 'claude', 'pi', 'opencode', 'hermes']
 
 export function parseIntegrationRequest(input: unknown): IntegrationRequest {
   if (typeof input !== 'object' || input === null) {

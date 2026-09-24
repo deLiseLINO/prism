@@ -53,7 +53,6 @@ func registerSandbox(t *testing.T, registry *integrations.Registry, dir string) 
 	claudePath := filepath.Join(dir, "claude", "settings.json")
 	piPath := filepath.Join(dir, "pi", "models.json")
 	opencodePath := filepath.Join(dir, "opencode", "opencode.json")
-	opencode2Path := filepath.Join(dir, "opencode2", "opencode.json")
 	hermesPath := filepath.Join(dir, "hermes", "config.yaml")
 	registrations := []struct {
 		module integrations.Module
@@ -64,7 +63,6 @@ func registerSandbox(t *testing.T, registry *integrations.Registry, dir string) 
 		{integrations.NewClaude(integrations.ClaudeOptions{Port: 8787, Models: integrations.DefaultPrismModels, ConfigPath: claudePath})},
 		{integrations.NewPi(integrations.PiOptions{Port: 8787, Models: integrations.DefaultPrismModels, ConfigPath: piPath})},
 		{integrations.NewOpencode(integrations.OpencodeOptions{Port: 8787, Models: integrations.DefaultPrismModels, ConfigPath: opencodePath})},
-		{integrations.NewOpencode2(integrations.Opencode2Options{Port: 8787, Models: integrations.DefaultPrismModels, ConfigPath: opencode2Path})},
 		{integrations.NewHermes(integrations.HermesOptions{Port: 8787, Models: integrations.DefaultPrismModels, ConfigPath: hermesPath})},
 	}
 	for _, registration := range registrations {
@@ -92,10 +90,10 @@ func TestIntegrationsListStatus(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Integrations) != 8 {
-		t.Fatalf("expected 8 statuses, got %d", len(body.Integrations))
+	if len(body.Integrations) != 7 {
+		t.Fatalf("expected 7 statuses, got %d", len(body.Integrations))
 	}
-	for i, want := range []integrations.ID{integrations.Codex, integrations.Grok, integrations.Omp, integrations.Claude, integrations.Pi, integrations.Opencode, integrations.Opencode2, integrations.Hermes} {
+	for i, want := range []integrations.ID{integrations.Codex, integrations.Grok, integrations.Omp, integrations.Claude, integrations.Pi, integrations.Opencode, integrations.Hermes} {
 		if body.Integrations[i].ID != want {
 			t.Errorf("status %d id %s, want %s", i, body.Integrations[i].ID, want)
 		}
@@ -413,8 +411,8 @@ func TestHostScopedIntegrationsRouteToRemoteRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if len(localBody.Integrations) != 8 {
-		t.Fatalf("local host: expected 8 statuses, got %d", len(localBody.Integrations))
+	if len(localBody.Integrations) != 7 {
+		t.Fatalf("local host: expected 7 statuses, got %d", len(localBody.Integrations))
 	}
 
 	res, err = http.Get(hostTS.URL + "/api/v1/hosts/workmac/integrations")
@@ -426,8 +424,8 @@ func TestHostScopedIntegrationsRouteToRemoteRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if len(remoteBody.Integrations) != 8 {
-		t.Fatalf("remote host: expected 8 statuses, got %d", len(remoteBody.Integrations))
+	if len(remoteBody.Integrations) != 7 {
+		t.Fatalf("remote host: expected 7 statuses, got %d", len(remoteBody.Integrations))
 	}
 	for _, status := range remoteBody.Integrations {
 		if status.TargetPath == nil || !strings.Contains(*status.TargetPath, "remote"+string(filepath.Separator)) {
@@ -781,8 +779,7 @@ func TestIntegrationApplyRollbackRoundTrip(t *testing.T) {
 		{"omp", filepath.Join(dir, "omp", "models.yml"), "theme: dark\nproviders:\n  openai:\n    apiKey: sk-user\n    models: []\n", "http://127.0.0.1:8787/v1"},
 		{"claude", filepath.Join(dir, "claude", "settings.json"), "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash\"\n    ]\n  }\n}\n", "http://127.0.0.1:8787"},
 		{"pi", filepath.Join(dir, "pi", "models.json"), "{\n  \"providers\": {\n    \"acme-edge\": {\n      \"baseUrl\": \"http://127.0.0.1:9797/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"user-key\",\n      \"models\": []\n    }\n  }\n}\n", "http://127.0.0.1:8787/v1"},
-		{"opencode", filepath.Join(dir, "opencode", "opencode.json"), "{\n  \"theme\": \"dark\",\n  \"provider\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n", "http://127.0.0.1:8787/v1"},
-		{"opencode2", filepath.Join(dir, "opencode2", "opencode.json"), "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n", "http://127.0.0.1:8787/v1"},
+		{"opencode", filepath.Join(dir, "opencode", "opencode.json"), "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n", "http://127.0.0.1:8787/v1"},
 		{"hermes", filepath.Join(dir, "hermes", "config.yaml"), "model:\n  default: nous/ox-alpha\nproviders:\n  acme:\n    api: http://localhost:8080/v1\n    api_key: user-key\n    api_mode: chat_completions\n    discover_models: true\n", "http://127.0.0.1:8787/v1"},
 	}
 	for _, client := range clients {

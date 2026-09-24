@@ -1,7 +1,7 @@
 import type { AgentsView, AgentId, AgentJob, AgentJobReply, AgentJobRequest, AgentStatus, ManagementReply } from '@prism/contracts'
 import type { ManagementProxy } from './management'
 
-const AGENT_IDS: readonly AgentId[] = ['codex', 'grok', 'omp', 'claude', 'pi', 'opencode', 'opencode2', 'hermes']
+const AGENT_IDS: readonly AgentId[] = ['codex', 'grok', 'omp', 'claude', 'pi', 'opencode', 'hermes']
 
 export function parseAgentJobRequest(input: unknown): AgentJobRequest {
   if (typeof input !== 'object' || input === null) {

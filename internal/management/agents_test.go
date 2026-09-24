@@ -11,6 +11,7 @@ import (
 	"prism/internal/config"
 	"prism/internal/integrations"
 )
+
 type fakeInstaller struct {
 	statuses  []agentinstall.AgentStatus
 	install   map[integrations.ID]agentinstall.Job
@@ -206,7 +207,7 @@ func TestAgentInstallConflictAndUnsupported(t *testing.T) {
 		statuses:  allAgentStatuses(),
 		installOK: map[integrations.ID]error{integrations.Omp: agentinstall.ErrInstallActive},
 		install: map[integrations.ID]agentinstall.Job{
-			integrations.Opencode2: {Key: "opencode2", State: agentinstall.StateUnsupported, Error: "no plan"},
+			integrations.Opencode: {Key: "opencode", State: agentinstall.StateUnsupported, Error: "no plan"},
 		},
 	}
 	ts := agentsEnv(t, installer)
@@ -228,7 +229,7 @@ func TestAgentInstallConflictAndUnsupported(t *testing.T) {
 		t.Fatalf("expected install_active, got %s", conflictBody.Error.Code)
 	}
 
-	unsupported := agentsPost(t, ts, "/api/v1/agents/opencode2/install")
+	unsupported := agentsPost(t, ts, "/api/v1/agents/opencode/install")
 	defer unsupported.Body.Close()
 	if unsupported.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for unsupported plan, got %d", unsupported.StatusCode)

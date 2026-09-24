@@ -228,8 +228,6 @@ func (p *yamlProviderProbe) HasManagedRegion(content string) bool {
 	return ReadProviderLeafBody(content, "prism", p.fileLabel, p.endpointKey).Kind == LeafPresent
 }
 
-// jsonBlockProbe adapts one `container.leaf` JSON block client (pi, opencode,
-// opencode2).
 type jsonBlockProbe struct {
 	id          ID
 	container   string

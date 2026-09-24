@@ -248,7 +248,7 @@ var helpIntegrations = `Usage: prismctl integrations status [codex|grok|omp] [--
        prismctl integrations rollback <codex|grok|omp> [--json]
 `
 
-var helpAgents = `Usage: prismctl agents [status] [codex|claude|grok|omp|pi|opencode|opencode2|hermes] [--json]
+var helpAgents = `Usage: prismctl agents [status] [codex|claude|grok|omp|pi|opencode|hermes] [--json]
        prismctl agents install <agent> [--force] [--json]
        prismctl agents update <agent> [--json]
        prismctl agents job <agent> [--json]
@@ -829,7 +829,7 @@ func parseAgents(args []string, spec map[string]bool) (*command, error) {
 
 func isAgentID(s string) bool {
 	switch s {
-	case "codex", "claude", "grok", "omp", "pi", "opencode", "opencode2", "hermes":
+	case "codex", "claude", "grok", "omp", "pi", "opencode", "hermes":
 		return true
 	}
 	return false
