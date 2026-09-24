@@ -194,21 +194,6 @@ jobs:
             echo "::error::configure a persistent macOS code-signing identity before building updates"
             exit 1
           fi
-      - name: Trust the macOS signing certificate for this build
-        env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-        run: |
-          keychain="$RUNNER_TEMP/prism-signing.keychain-db"
-          printf '%s' "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/prism-signing.p12"
-          openssl pkcs12 -legacy -in "$RUNNER_TEMP/prism-signing.p12" -clcerts -nokeys \
-            -passin env:CSC_KEY_PASSWORD -out "$RUNNER_TEMP/prism-signing.pem"
-          security create-keychain -p "$CSC_KEY_PASSWORD" "$keychain"
-          security set-keychain-settings "$keychain"
-          security unlock-keychain -p "$CSC_KEY_PASSWORD" "$keychain"
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | sed -e 's/^ *"//' -e 's/"$//')
-          security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$RUNNER_TEMP/prism-signing.pem"
-          rm "$RUNNER_TEMP/prism-signing.p12" "$RUNNER_TEMP/prism-signing.pem"
       - run: npx --workspace @prism/desktop electron-builder --mac dmg zip --arm64 --x64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
         env:
