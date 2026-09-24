@@ -135,6 +135,53 @@ func TestAssistantHistoryUsesOutputText(t *testing.T) {
 	}
 }
 
+func TestReasoningReplayIncludesSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		summary []canon.TextContent
+		want    string
+	}{
+		{name: "empty", want: `[]`},
+		{name: "present", summary: []canon.TextContent{{Text: "thinking"}}, want: `[{"type":"summary_text","text":"thinking"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := testRequest(false)
+			req.Input = []canon.Item{
+				canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+				canon.ReasoningItem{ID: "rs_1", Summary: tc.summary},
+				canon.FunctionCall{ID: "fc_1", CallID: "call_1", Name: "get_weather", Arguments: []byte(`{}`)},
+				canon.FunctionOutput{CallID: "call_1", Output: []canon.Content{canon.TextContent{Text: "sunny"}}},
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Input []map[string]json.RawMessage `json:"input"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if got := string(body.Input[1]["summary"]); got != tc.want {
+					t.Errorf("reasoning summary = %s, want %s", got, tc.want)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				fmt.Fprint(w, `{"status":"completed","output":[]}`)
+			}))
+			defer srv.Close()
+			events := &collector{}
+			if err := New(staticKey, Options{}).Run(context.Background(), provider.RunRequest{
+				Request: req, Target: testTarget(srv.URL),
+			}, events); err != nil {
+				t.Fatalf("reasoning continuation: %v", err)
+			}
+			if events.TerminalCount() != 1 {
+				t.Fatalf("terminals = %d, want completed response", events.TerminalCount())
+			}
+		})
+	}
+}
+
 func TestResponsesURLVariants(t *testing.T) {
 	cases := map[string]string{
 		"https://example.com":              "https://example.com/v1/responses",
