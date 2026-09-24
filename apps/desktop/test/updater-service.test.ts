@@ -81,12 +81,22 @@ describe('UpdaterService', () => {
     await makeService(fake)
     expect(fake.autoDownload).toBe(true)
     expect(fake.autoInstallOnAppQuit).toBe(false)
+    expect(fake.channel).toBe('latest')
+    expect(fake.allowPrerelease).toBe(false)
   })
 
   it('keeps beta builds on the GitHub prerelease channel without downgrades', async () => {
     const fake = new FakeAutoUpdater()
     await makeService(fake, '1.0.0-beta.1')
     expect(fake.channel).toBe('beta')
+    expect(fake.allowPrerelease).toBe(true)
+    expect(fake.allowDowngrade).toBe(false)
+  })
+
+  it('keeps rc builds on their own prerelease channel without downgrades', async () => {
+    const fake = new FakeAutoUpdater()
+    await makeService(fake, '1.0.1-rc.1')
+    expect(fake.channel).toBe('rc')
     expect(fake.allowPrerelease).toBe(true)
     expect(fake.allowDowngrade).toBe(false)
   })

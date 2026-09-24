@@ -35,6 +35,7 @@ macInfo.sha512 = zipFiles[0].sha512
 await writeFile(path.join(destination, 'latest-mac.yml'), stringify(macInfo))
 
 for (const channel of channels) {
-  const beta = channel.replace(/^latest/, 'beta')
-  await copyFile(path.join(destination, channel), path.join(destination, beta))
+  for (const prefix of ['beta', 'rc']) {
+    await copyFile(path.join(destination, channel), path.join(destination, channel.replace(/^latest/, prefix)))
+  }
 }

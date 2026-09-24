@@ -10,8 +10,7 @@ if (!directory || !version || (mode !== undefined && mode !== '--complete')) {
 }
 
 const stableChannels = ['latest.yml', 'latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml']
-const betaChannels = stableChannels.map(name => name.replace(/^latest/, 'beta'))
-const channels = [...stableChannels, ...betaChannels]
+const channels = [...stableChannels, ...['beta', 'rc'].flatMap(prefix => stableChannels.map(name => name.replace(/^latest/, prefix)))]
 const names = await readdir(directory)
 if (mode === '--complete') {
   for (const channel of channels) {
@@ -33,7 +32,7 @@ for (const channel of channels.filter(name => names.includes(name))) {
     throw new Error(`${channel}: invalid version or files`)
   }
   const actual = info.files.map(file => file.url)
-  const wanted = expected[channel.replace(/^beta/, 'latest')]
+  const wanted = expected[channel.replace(/^(beta|rc)/, 'latest')]
   if (actual.length === 0 || actual.some(name => !wanted.includes(name)) ||
       new Set(actual).size !== actual.length ||
       (mode === '--complete' && (actual.length !== wanted.length || wanted.some(name => !actual.includes(name))))) {

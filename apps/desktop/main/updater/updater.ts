@@ -36,8 +36,9 @@ export class UpdaterService {
     if (deps.autoUpdater !== null) {
       deps.autoUpdater.autoDownload = true
       deps.autoUpdater.autoInstallOnAppQuit = false
-      if (options.currentVersion.includes('-')) {
-        deps.autoUpdater.channel = 'beta'
+      const channel = options.currentVersion.match(/-(beta|rc)\.[0-9]+$/)?.[1]
+      if (channel) {
+        deps.autoUpdater.channel = channel
         deps.autoUpdater.allowPrerelease = true
         deps.autoUpdater.allowDowngrade = false
       }
