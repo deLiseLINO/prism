@@ -47,11 +47,11 @@ class FakeAutoUpdater extends EventEmitter implements AppUpdater {
   }
 }
 
-async function makeService(autoUpdater: FakeAutoUpdater | null, updateUrl: string | null = null) {
+async function makeService(autoUpdater: FakeAutoUpdater | null, updateUrl: string | null = null, currentVersion = '1.0.0') {
   const { UpdaterService } = await import('../main/updater/updater')
   const quitApp = vi.fn()
   const service = new UpdaterService(
-    { currentVersion: '1.0.0', updateUrl, policy: { initialCheckDelayMs: 1000, pollIntervalMs: 5000 } },
+    { currentVersion, updateUrl, policy: { initialCheckDelayMs: 1000, pollIntervalMs: 5000 } },
     { autoUpdater, quitApp },
   )
   return { service, quitApp }
@@ -89,6 +89,13 @@ describe('UpdaterService', () => {
     expect(fake.autoDownload).toBe(true)
     expect(fake.autoInstallOnAppQuit).toBe(false)
     expect(fake.setFeedURLSpy).toHaveBeenCalledWith({ provider: 'generic', url: 'https://updates.example.com/feed' })
+  })
+
+  it('keeps release candidates on the prerelease channel without downgrades', async () => {
+    const fake = new FakeAutoUpdater()
+    await makeService(fake, null, '1.0.0-rc1')
+    expect(fake.channel).toBe('prerelease')
+    expect(fake.allowDowngrade).toBe(false)
   })
 
   it('first poll fires after the initial delay, then re-arms at the poll interval', async () => {

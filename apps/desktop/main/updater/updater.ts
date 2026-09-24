@@ -35,6 +35,10 @@ export class UpdaterService {
       deps.autoUpdater.autoDownload = true
       deps.autoUpdater.autoInstallOnAppQuit = false
       if (options.updateUrl !== null) deps.autoUpdater.setFeedURL({ provider: 'generic', url: options.updateUrl })
+      if (options.currentVersion.includes('-')) {
+        deps.autoUpdater.channel = 'prerelease'
+        deps.autoUpdater.allowDowngrade = false
+      }
       this.wireEmitter(deps.autoUpdater)
     }
   }
