@@ -1,15 +1,26 @@
-# Desktop updates
+# Desktop releases
 
-The private source repository is not the update server. Packaged applications check `https://releases.prism.sh/desktop`. That HTTPS path must expose the objects in the release bucket at `/desktop/` without authentication. Keep the bucket private if the HTTPS distribution provides public read access. Do not put storage or GitHub credentials in the application.
+Prism publishes installers through GitHub Releases in the public `deLiseLINO/prism` repository. The packaged updater reads release assets without a GitHub token. The release workflow does not use a separate update server or storage credentials.
 
-## Configure the release
+## Publish a release
 
-1. Point `releases.prism.sh` at a public HTTPS distribution for the release bucket. Preserve object names and serve `latest*.yml` and `prerelease*.yml` without caching. The release job uploads installers before channel files.
-2. Create an AWS role that GitHub Actions can assume using OIDC. Limit its trust policy to this repository and the release workflow. Grant `s3:PutObject` on the bucket's `desktop/*` prefix. Set repository variables `UPDATE_FEED_ROLE_ARN`, `UPDATE_FEED_REGION`, and `UPDATE_FEED_BUCKET`.
-3. Supply a Developer ID Application certificate as repository secrets `MAC_CSC_LINK` and `MAC_CSC_KEY_PASSWORD`. For notarization, set `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Supply a Windows code-signing certificate as `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD`. The release jobs reject missing credentials and verify the resulting installer signatures.
-4. Run the release workflow with `dry_run: true` against a version tag. It builds the installers and validates their update metadata without publishing. After checking the artifacts, dispatch the workflow with `dry_run: false`. A tag push also publishes; do not push a release tag until the storage and signing credentials are ready.
-5. Install one signed build, release a higher version, and check an update on macOS, Windows, and Linux AppImage. An existing build with updates disabled needs a manual reinstall first. Linux updates require launching the AppImage, not an extracted directory.
+1. Make the repository public before distributing installers. GitHub Releases in a private repository are not an anonymous update feed.
+2. Merge the release changes and set `apps/desktop/package.json` to the release version. Configure `MAC_CSC_LINK` and `MAC_CSC_KEY_PASSWORD` as GitHub Actions secrets for a single, persistent macOS code-signing certificate and private key. Use the same identity for every release. `MAC_CSC_LINK` is a base64-encoded PKCS#12 file; keep the unencoded private key out of the repository. The release job rejects missing signing credentials.
+3. Create and push a new `vX.Y.Z` tag on that commit. Pushing the tag does not publish: run the `Release` workflow manually and enter the version.
+4. Leave `dry_run: true` for the first run. Inspect the generated artifacts and checksums. Then run the workflow again with `dry_run: false` to publish the immutable GitHub Release. Do not reuse a tag whose release already exists.
+5. After the workflow succeeds, inspect the GitHub Release assets and `SHA256SUMS`. A stable release contains `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml` and their `beta` counterparts. A `vX.Y.Z-beta.N` tag creates a prerelease. The updater reads `beta*.yml` from the selected prerelease; the stable release also carries those files so beta users can move to stable.
+6. Install an older published build, publish a higher version, and check downloading and applying the update on macOS, Windows, and Linux AppImage. A build made before updater support needs manual reinstall first. Linux self-update requires launching the AppImage from a writable directory. If that directory is not writable, updates are disabled; permission is checked again before the app quits to install.
 
-Stable builds publish both `latest*.yml` and `prerelease*.yml`, so prerelease users receive the final release. Prerelease builds update only `prerelease*.yml` and leave the stable channel untouched. The release job assembles the feed with `apps/desktop/scripts/assemble-update-feed.mjs` and verifies file sizes and SHA-512 checksums with `apps/desktop/scripts/verify-update-feed.mjs`. The public installer and update payloads can be downloaded without access to the private repository.
+The publish job verifies the sizes and SHA-512 values in the update manifests with `apps/desktop/scripts/verify-update-feed.mjs`. The update payloads and manifests are attached to the same immutable version release. Publishing credentials stay in GitHub Actions.
 
-Linux AppImage updates use the feed's SHA-512 checksums but do not verify an independent publisher signature. Restrict writes to the bucket and its HTTPS distribution; anyone who can replace both a channel file and its payload can supply a matching checksum. Do not treat a passing checksum as proof of publisher identity.
+## macOS without a Developer ID
+
+The release contains a signed app, unsigned DMGs, and signed app ZIPs for updates. Squirrel.Mac checks the new app against the installed app's designated code-signing requirement. The signing identity must stay the same across versions. An ad-hoc signature (`codesign -s -`) changes with the app's contents and cannot replace this identity. Do not re-sign a downloaded copy: that breaks the link to the next update.
+
+A self-signed certificate is enough to establish update continuity, but Apple does not trust it as a Developer ID certificate. The app is not notarized. Download the correct DMG from the GitHub Release, compare its SHA-256 with `SHA256SUMS`, copy `Prism.app` into Applications, then try to open it. If macOS blocks it and you trust the source, follow [Apple's Open Anyway instructions](https://support.apple.com/en-us/102445) in **System Settings → Privacy & Security**. Do not disable Gatekeeper system-wide.
+
+To make a new code-signing identity for CI, create one self-signed code-signing certificate with its private key and export them together to a password-protected PKCS#12 file. If exporting with OpenSSL 3, use `openssl pkcs12 -export -legacy`: macOS `security import` rejects its default PKCS#12 encryption. Store that file only in the `MAC_CSC_LINK` secret as base64, and store its export password in `MAC_CSC_KEY_PASSWORD`. Before releasing, confirm that both the old and new signed apps pass `codesign --verify --deep --strict` and that the new app satisfies the old app's designated requirement. Losing or rotating this private key breaks automatic updates from previously installed builds.
+
+## Update trust
+
+Windows and Linux installers are also unsigned. Their updater verifies SHA-512 from the GitHub Release metadata, but that does not prove publisher identity if someone can replace both the manifest and the installer. Protect repository write access and release publishing permissions. Windows may display an unknown-publisher warning. Do not present these builds as signed or notarized.

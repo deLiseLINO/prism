@@ -1,5 +1,5 @@
 import { app, nativeImage, type BrowserWindow } from 'electron'
-import { readFileSync } from 'node:fs'
+import { accessSync, constants, readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
 import type { HostView } from '@prism/contracts'
@@ -55,11 +55,23 @@ async function bootstrap(): Promise<void> {
   const management = new ManagementProxy(endpoint)
   const proxies = new HostProxyRegistry(management, { fetchHosts: () => fetchDaemonHosts(management) })
 
+  const appImagePath = process.platform === 'linux' ? process.env.APPIMAGE : undefined
+  const canUpdateAppImage = (): boolean => {
+    if (!appImagePath || !path.isAbsolute(appImagePath)) return false
+    try {
+      accessSync(path.dirname(appImagePath), constants.W_OK | constants.X_OK)
+      return true
+    } catch {
+      return false
+    }
+  }
   const updater = new UpdaterService(
-    { currentVersion: appVersion(), updateUrl: config.updateUrl },
+    { currentVersion: appVersion() },
     {
-      autoUpdater: app.isPackaged ? require('electron-updater').autoUpdater : null,
+      autoUpdater: app.isPackaged &&
+        (process.platform !== 'linux' || canUpdateAppImage()) ? require('electron-updater').autoUpdater : null,
       quitApp: () => app.quit(),
+      canInstall: process.platform === 'linux' ? canUpdateAppImage : undefined,
     },
   )
 
