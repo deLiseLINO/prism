@@ -9,14 +9,12 @@ export const PRISM_HEADLESS_ENV = 'PRISM_HEADLESS'
 export const PRISM_USER_DATA_ENV = 'PRISM_USER_DATA'
 export const PRISM_WEBUI_DIR_ENV = 'PRISM_WEBUI_DIR'
 export const PRISM_UPDATE_URL_ENV = 'PRISM_UPDATE_URL'
-export const PRISM_UPDATER_ENV = 'PRISM_UPDATER'
 
 export interface DesktopConfig {
   readonly port: number
   readonly headless: boolean
   readonly userDataPath: string | null
   readonly updateUrl: string | null
-  readonly updaterDisabled: boolean
   readonly daemonConfigPath: string | null
   readonly webuiDir: string | null
 }
@@ -32,7 +30,6 @@ export async function loadDesktopConfig(env: NodeJS.ProcessEnv = process.env): P
     userDataPath: parseOptionalPath(env[PRISM_USER_DATA_ENV]),
     updateUrl: parseUpdateUrl(env[PRISM_UPDATE_URL_ENV]),
     webuiDir: parseOptionalPath(env[PRISM_WEBUI_DIR_ENV]),
-    updaterDisabled: parseUpdaterDisabled(env[PRISM_UPDATER_ENV]),
   }
 }
 
@@ -91,9 +88,4 @@ function parseUpdateUrl(raw: string | undefined): string | null {
     throw new Error(`prism: ${PRISM_UPDATE_URL_ENV} must be https, got ${raw}`)
   }
   return url.toString()
-}
-
-function parseUpdaterDisabled(raw: string | undefined): boolean {
-  if (raw === undefined || raw === '') return false
-  return raw === '0' || raw.toLowerCase() === 'false'
 }

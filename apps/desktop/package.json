@@ -24,6 +24,7 @@
     "electron": "38.8.6",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.25.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "yaml": "^2.9.1"
   }
 }

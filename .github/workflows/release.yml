@@ -45,7 +45,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       dry_run: ${{ steps.dryrun.outputs.dry_run }}
-      ref: ${{ steps.ref.outputs.ref }}
+      ref: ${{ steps.version.outputs.ref }}
       full_version: ${{ steps.version.outputs.full_version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -155,13 +155,15 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
         env:
-          PRISM_RELEASE_TAG: ${{ github.ref_name }}
+          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
       - run: npx --workspace @prism/desktop electron-builder --linux AppImage:x64 AppImage:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-artifacts
-          path: apps/desktop/release/*.AppImage
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/latest-linux*.yml
           if-no-files-found: error
           retention-days: 1
 
@@ -186,13 +188,36 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
         env:
-          PRISM_RELEASE_TAG: ${{ github.ref_name }}
+          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
+      - name: Require Windows signing credentials
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          if [ -z "$WIN_CSC_LINK" ] || [ -z "$WIN_CSC_KEY_PASSWORD" ]; then
+            echo "::error::missing Windows signing credentials"
+            exit 1
+          fi
       - run: npx --workspace @prism/desktop electron-builder --win nsis:x64 nsis:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - name: Verify Windows publisher
+        shell: pwsh
+        run: |
+          $update = Get-Content apps/desktop/release/win-unpacked/resources/app-update.yml -Raw
+          if ($update -notmatch 'publisherName:') { throw 'Missing updater publisherName' }
+          $signature = Get-AuthenticodeSignature apps/desktop/release/Prism-${{ needs.preflight.outputs.full_version }}-setup.exe
+          if ($signature.Status -ne 'Valid') { throw "Invalid installer signature: $($signature.Status)" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-artifacts
-          path: apps/desktop/release/*.exe
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest.yml
           if-no-files-found: error
           retention-days: 1
 
@@ -216,13 +241,43 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
         env:
-          PRISM_RELEASE_TAG: ${{ github.ref_name }}
-      - run: npx --workspace @prism/desktop electron-builder --mac dmg --arm64 --x64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
+          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
+      - name: Require macOS signing and notarization credentials
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::missing $name"
+              exit 1
+            fi
+          done
+      - run: npx --workspace @prism/desktop electron-builder --mac dmg zip --arm64 --x64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - run: |
+          codesign --verify --deep --strict --verbose=2 apps/desktop/release/mac-arm64/Prism.app
+          codesign --verify --deep --strict --verbose=2 apps/desktop/release/mac/Prism.app
+          spctl -a -vvv --type execute apps/desktop/release/mac-arm64/Prism.app
+          spctl -a -vvv --type execute apps/desktop/release/mac/Prism.app
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-artifacts
-          path: apps/desktop/release/*.dmg
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.zip.blockmap
+            apps/desktop/release/*.dmg.blockmap
+            apps/desktop/release/latest-mac.yml
           if-no-files-found: error
           retention-days: 1
 
@@ -233,11 +288,37 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist-release
           merge-multiple: true
+      - name: Assemble and verify update feed
+        run: |
+          node apps/desktop/scripts/assemble-update-feed.mjs dist-release update-feed "${{ needs.preflight.outputs.full_version }}"
+          node apps/desktop/scripts/verify-update-feed.mjs update-feed "${{ needs.preflight.outputs.full_version }}" --complete
+      - name: Require update feed configuration
+        if: needs.preflight.outputs.dry_run != 'true'
+        env:
+          BUCKET: ${{ vars.UPDATE_FEED_BUCKET }}
+          REGION: ${{ vars.UPDATE_FEED_REGION }}
+          ROLE: ${{ vars.UPDATE_FEED_ROLE_ARN }}
+        run: |
+          for name in BUCKET REGION ROLE; do
+            if [ -z "${!name}" ]; then
+              echo "::error::missing $name"
+              exit 1
+            fi
+          done
       - name: Verify and checksum the artifacts users will download
         run: |
           cd dist-release
@@ -247,7 +328,6 @@ jobs:
               *.AppImage|*.exe|*.dmg) found=$((found+1));;
             esac
           done
-          # AppImage 2 (x64+arm64) + nsis 2 (x64+arm64) + dmg 2.
           if [ "$found" -ne 6 ]; then
             echo "::error::expected 6 installers (2x AppImage, 2x nsis exe, 2x dmg), found $found"
             exit 1
@@ -264,6 +344,36 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+      - uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d116df # v4.2.1
+        if: needs.preflight.outputs.dry_run != 'true'
+        with:
+          role-to-assume: ${{ vars.UPDATE_FEED_ROLE_ARN }}
+          aws-region: ${{ vars.UPDATE_FEED_REGION }}
+      - name: Upload immutable update payloads
+        if: needs.preflight.outputs.dry_run != 'true'
+        env:
+          BUCKET: ${{ vars.UPDATE_FEED_BUCKET }}
+        run: |
+          for file in update-feed/*; do
+            case "$file" in
+              *.yml) continue ;;
+            esac
+            aws s3 cp "$file" "s3://$BUCKET/desktop/" --cache-control 'public,max-age=31536000,immutable'
+          done
+      - name: Publish update channels
+        if: needs.preflight.outputs.dry_run != 'true'
+        env:
+          BUCKET: ${{ vars.UPDATE_FEED_BUCKET }}
+        run: |
+          for file in update-feed/*.yml; do
+            aws s3 cp "$file" "s3://$BUCKET/desktop/" --cache-control 'no-store' --content-type 'text/yaml'
+          done
+      - name: Verify live update channel
+        if: needs.preflight.outputs.dry_run != 'true'
+        run: |
+          for file in update-feed/*.yml; do
+            cmp "$file" <(curl --fail --silent --show-error "https://releases.prism.sh/desktop/${file##*/}")
+          done
       - name: Publish (skipped on dry run)
         if: needs.preflight.outputs.dry_run != 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
