@@ -195,6 +195,7 @@ jobs:
             exit 1
           fi
       - name: Import macOS update signing identity
+        timeout-minutes: 2
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
@@ -208,7 +209,7 @@ jobs:
           security import "$RUNNER_TEMP/prism-signing.p12" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
           openssl pkcs12 -legacy -in "$RUNNER_TEMP/prism-signing.p12" -clcerts -nokeys -passin env:CSC_KEY_PASSWORD -out "$RUNNER_TEMP/prism-signing.pem"
-          security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$RUNNER_TEMP/prism-signing.pem"
+          sudo -n security add-trusted-cert -d -r trustRoot -p codeSign -k "$keychain" "$RUNNER_TEMP/prism-signing.pem"
           rm "$RUNNER_TEMP/prism-signing.p12" "$RUNNER_TEMP/prism-signing.pem"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           security find-identity -v -p codesigning "$keychain"
