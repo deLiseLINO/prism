@@ -1,4 +1,4 @@
-export type IntegrationId = 'codex' | 'grok' | 'omp' | 'claude' | 'pi' | 'opencode' | 'opencode2' | 'hermes'
+export type IntegrationId = 'codex' | 'grok' | 'omp' | 'claude' | 'pi' | 'opencode' | 'hermes'
 
 export interface IntegrationRequest {
   readonly id: IntegrationId

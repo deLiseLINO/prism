@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"prism/internal/integrations"
 )
 
 type Snapshot struct {
@@ -49,6 +51,10 @@ func loadSnapshot(path string) (Snapshot, error) {
 	var f fileFormat
 	if err := json.Unmarshal(b, &f); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	if previous, ok := f.Config.Integrations["opencode2"]; ok {
+		f.Config.Integrations[string(integrations.Opencode)] = previous
+		delete(f.Config.Integrations, "opencode2")
 	}
 	if err := f.Config.validate(); err != nil {
 		return Snapshot{}, err

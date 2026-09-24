@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,43 @@ import (
 	"testing"
 	"time"
 )
+
+func TestOpenMigratesOpencodeIntegrationSetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	doc := validDoc()
+	doc.Integrations = map[string]IntegrationSettings{
+		"opencode":  {Enabled: false},
+		"opencode2": {Enabled: true},
+	}
+	data, err := json.Marshal(fileFormat{Version: SchemaVersion, Generation: 4, Config: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := m.Get()
+	if s.Generation != 4 || !s.Config.Integrations["opencode"].Enabled {
+		t.Fatalf("migrated snapshot: %+v", s)
+	}
+	if _, ok := s.Config.Integrations["opencode2"]; ok {
+		t.Fatal("obsolete integration setting remained")
+	}
+	if _, err := m.Update(s.Config, s.Generation); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "opencode2") {
+		t.Fatalf("obsolete integration setting persisted: %s", stored)
+	}
+}
 
 func TestOpenMissingPathStartsEmpty(t *testing.T) {
 	m, err := Open(filepath.Join(t.TempDir(), "config.json"))

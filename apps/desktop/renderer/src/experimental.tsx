@@ -2,11 +2,16 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 const STORAGE_KEY = 'prism-experimental'
 
-export type ExperimentalFlag = 'remoteInstall' | 'agentActions' | 'visionSidecar'
+export type ExperimentalFlag = 'remoteInstall' | 'agentActions' | 'visionSidecar' | 'otherAgents'
 
-const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions', 'visionSidecar']
+const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions', 'visionSidecar', 'otherAgents']
 
 export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: string; description: string }[] = [
+  {
+    flag: 'otherAgents',
+    label: 'Other agents',
+    description: 'Show agents other than OMP and OpenCode in Integrations.',
+  },
   {
     flag: 'visionSidecar',
     label: 'Vision sidecar',
@@ -30,7 +35,7 @@ export const AGENT_ACTIONS_FLAG: { flag: ExperimentalFlag; label: string; descri
 
 type ExperimentalState = Record<ExperimentalFlag, boolean>
 
-const DISABLED: ExperimentalState = { remoteInstall: false, agentActions: false, visionSidecar: false }
+const DISABLED: ExperimentalState = { remoteInstall: false, agentActions: false, visionSidecar: false, otherAgents: false }
 
 function readFlags(): ExperimentalState {
   try {

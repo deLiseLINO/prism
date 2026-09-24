@@ -8,17 +8,13 @@ package agentinstall
 import "prism/internal/integrations"
 
 type Definition struct {
-	Key    string
-	IDs    []integrations.ID
-	Binary string
-	// GuardBinary is the binary identity the active-job guard locks on; it
-	// equals Binary except where two ids share one installed binary
-	// (opencode2 guards on opencode's binary).
-	GuardBinary string
-	VerifyArg   string
-	Plans       map[string][]Plan
-	SelfUpdate  []string
-	DocsURL     string
+	Key        string
+	IDs        []integrations.ID
+	Binary     string
+	VerifyArg  string
+	Plans      map[string][]Plan
+	SelfUpdate []string
+	DocsURL    string
 }
 
 var definitions = []Definition{
@@ -126,32 +122,11 @@ var definitions = []Definition{
 		VerifyArg: "--version",
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "brew", Tool: "brew", Command: []string{"brew", "install", "anomalyco/tap/opencode"}, Package: "anomalyco/tap/opencode", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "opencode-ai@latest"}, Package: "opencode-ai", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
+				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@opencode-ai/cli@latest"}, Package: "@opencode-ai/cli", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
 				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash"}, DocsURL: "https://opencode.ai"},
 			},
 			"linux": {
-				{Method: "brew", Tool: "brew", Command: []string{"brew", "install", "anomalyco/tap/opencode"}, Package: "anomalyco/tap/opencode", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "opencode-ai@latest"}, Package: "opencode-ai", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash"}, DocsURL: "https://opencode.ai"},
-			},
-		},
-		SelfUpdate: []string{"opencode", "upgrade"},
-		DocsURL:    "https://opencode.ai",
-	},
-	{
-		Key:         "opencode2",
-		IDs:         []integrations.ID{integrations.Opencode2},
-		Binary:      "opencode2",
-		GuardBinary: "opencode",
-		VerifyArg:   "--version",
-		Plans: map[string][]Plan{
-			"darwin": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@opencode-ai/cli@beta"}, Package: "@opencode-ai/cli", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash"}, DocsURL: "https://opencode.ai"},
-			},
-			"linux": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@opencode-ai/cli@beta"}, Package: "@opencode-ai/cli", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
+				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@opencode-ai/cli@latest"}, Package: "@opencode-ai/cli", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
 				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash"}, DocsURL: "https://opencode.ai"},
 			},
 		},

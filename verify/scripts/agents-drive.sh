@@ -35,7 +35,7 @@ for tool in npm bash sh; do
   printf '#!/bin/sh\nexit 0\n' > "$RUNDIR/sandbox/tools/$tool"
   chmod 755 "$RUNDIR/sandbox/tools/$tool"
 done
-for bin in codex claude grok omp pi opencode opencode2 hermes; do
+for bin in codex claude grok omp pi opencode hermes; do
   printf '#!/bin/sh\nexit 0\n' > "$RUNDIR/sandbox/home/.local/bin/$bin"
   chmod 755 "$RUNDIR/sandbox/home/.local/bin/$bin"
 done

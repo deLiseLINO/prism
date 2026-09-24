@@ -36,9 +36,6 @@ func newIntegrationRegistry(port int, env integrations.Env, home string, io inte
 	if err := registry.Register(integrations.NewOpencode(integrations.OpencodeOptions{Port: port, Models: models, ModelsSource: modelsSrc, Env: env, Home: home, IO: io})); err != nil {
 		return nil, nil, err
 	}
-	if err := registry.Register(integrations.NewOpencode2(integrations.Opencode2Options{Port: port, Models: models, ModelsSource: modelsSrc, Env: env, Home: home, IO: io})); err != nil {
-		return nil, nil, err
-	}
 	if err := registry.Register(integrations.NewHermes(integrations.HermesOptions{Port: port, Models: models, ModelsSource: modelsSrc, Env: env, Home: home, IO: io})); err != nil {
 		return nil, nil, err
 	}

@@ -61,6 +61,7 @@ PRISMD_PATH="$RUNDIR/prismd" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS=1 \
+CODEX_HOME="$RUNDIR/.codex" \
 HOME="$RUNDIR" \
 "$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
   --user-data-dir="$RUNDIR/electron" \
@@ -78,8 +79,24 @@ for _ in $(seq 1 80); do
 done
 WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
 
+node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "await (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const button = [...document.querySelectorAll('nav button')].find((node) => node.textContent.includes('Experimental'))
+  if (!button) throw new Error('Experimental navigation button not found')
+  button.click()
+  for (let i = 0; i < 40; i++) {
+    const input = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes('Other agents'))?.querySelector('input')
+    if (input) {
+      if (!input.checked) input.click()
+      return input.checked
+    }
+    await sleep(100)
+  }
+  throw new Error('Other agents toggle not found')
+})()" > "$EVID_WORK/experimental-agents.json" || fail "could not enable other agents through UI"
+
 echo "==> applying all integrations through the real UI"
-for ID in codex grok omp claude pi opencode opencode2 hermes; do
+for ID in codex grok omp claude pi opencode hermes; do
   node "$REPO_ROOT/verify/scripts/apply-integration.mjs" "$WS" "$ID" \
     > "$EVID_WORK/apply-$ID.json" 2> "$EVID_WORK/apply-$ID.stderr" \
     || { cat "$EVID_WORK/apply-$ID.stderr" >&2; fail "UI Apply failed for $ID"; }
@@ -208,43 +225,24 @@ else
   record_result pi fail "rc=$rc chars=$chars"
 fi
 
-echo "==> opencode v1 big task ($MODEL_LABEL)"
+echo "==> opencode big task ($MODEL_LABEL)"
 set +e
 (
   unset OPENCODE_CONFIG_DIR
   export HOME="$RUNDIR"
-  run_with_timeout 60 opencode models > /dev/null 2>&1 || true
-  sleep 5
-  run_with_timeout "$CEIL" opencode run --model "$PI" "$MODEL_TASK Final line must be exactly: $GAMETASK_MARKER" \
+  run_with_timeout "$CEIL" opencode run --standalone --model "$PI" "$MODEL_TASK Final line must be exactly: $GAMETASK_MARKER" \
     > "$EVID_WORK/opencode-game.txt" 2> "$EVID_WORK/opencode-game.stderr"
 )
 rc=$?
 set -e
 chars=$(wc -c < "$EVID_WORK/opencode-game.txt" | tr -d ' ')
-if [ "$rc" -eq 0 ] && [ "$chars" -ge 2000 ] && grep -q "$GAMETASK_MARKER" "$EVID_WORK/opencode-game.txt"; then
-  record_result opencode pass "chars=$chars"
-else
-  record_result opencode fail "rc=$rc chars=$chars"
-fi
-
-echo "==> opencode2 big task ($MODEL_LABEL)"
-set +e
-(
-  unset OPENCODE_CONFIG_DIR
-  export HOME="$RUNDIR"
-  run_with_timeout "$CEIL" opencode2 run --standalone --model "$PI" "$MODEL_TASK Final line must be exactly: $GAMETASK_MARKER" \
-    > "$EVID_WORK/opencode2-game.txt" 2> "$EVID_WORK/opencode2-game.stderr"
-)
-rc=$?
-set -e
-chars=$(wc -c < "$EVID_WORK/opencode2-game.txt" | tr -d ' ')
 game_artifact=0
 [ -s "$RUNDIR/work/brick-breaker.html" ] && game_artifact=$(wc -c < "$RUNDIR/work/brick-breaker.html" | tr -d ' ')
-if [ "$rc" -eq 0 ] && grep -q "$GAMETASK_MARKER" "$EVID_WORK/opencode2-game.txt" \
+if [ "$rc" -eq 0 ] && grep -q "$GAMETASK_MARKER" "$EVID_WORK/opencode-game.txt" \
    && { [ "$chars" -ge 2000 ] || [ "$game_artifact" -ge 5000 ]; }; then
-  record_result opencode2 pass "chars=$chars artifact=$game_artifact"
+  record_result opencode pass "chars=$chars artifact=$game_artifact"
 else
-  record_result opencode2 fail "rc=$rc chars=$chars artifact=$game_artifact"
+  record_result opencode fail "rc=$rc chars=$chars artifact=$game_artifact"
 fi
 
 echo "==> hermes big task ($MODEL_LABEL)"

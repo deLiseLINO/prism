@@ -12,6 +12,7 @@ import type {
 import { AsyncBoundary, Button, Confirm, Empty, Toggle } from '../components/Ui'
 import { InstallCell } from '../components/InstallCell'
 import { useActiveHost } from '../ActiveHost'
+import { useExperimentalFlags } from '../experimental'
 import { bridge } from '../bridge'
 import { api, ApiError } from '../api'
 import { useAsync, useTask, describeError } from '../useAsync'
@@ -39,6 +40,10 @@ export function applyTargets(list: readonly IntegrationStatus[]): readonly Integ
 
 export function rollbackTargets(list: readonly IntegrationStatus[]): readonly IntegrationStatus[] {
   return list.filter((status) => status.installed && status.managed && rowState(status) !== 'damaged')
+}
+
+export function visibleIntegrations(list: readonly IntegrationStatus[], showOtherAgents: boolean): readonly IntegrationStatus[] {
+  return showOtherAgents ? list : list.filter((status) => status.id === 'omp' || status.id === 'opencode')
 }
 
 const stateDot: Record<RowState, string> = {
@@ -327,6 +332,7 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
 
 export function IntegrationsView(): JSX.Element {
   const { host: selected } = useActiveHost()
+  const { flags } = useExperimentalFlags()
   const statuses = useAsync<IntegrationsViewData>(() => api.integrationsStatus(), [selected])
   const agents = useAsync<AgentsView>(
     () => selected === 'local' ? bridge.agents.status() : Promise.resolve({ agents: [], actionsEnabled: false }),
@@ -357,7 +363,7 @@ export function IntegrationsView(): JSX.Element {
       >
         {(all) => (
           <IntegrationsBoard
-            list={all.integrations}
+            list={visibleIntegrations(all.integrations, flags.otherAgents)}
             byAgent={byAgent}
             generation={all.generation}
             remote={selected !== 'local'}

@@ -35,10 +35,7 @@ func TestResolveUpdatePlanMatrix(t *testing.T) {
 		{name: "omp script", key: "omp", source: SourceScript, goos: "linux", wantCommand: "omp update"},
 		{name: "pi npm", key: "pi", source: SourceNpm, goos: "linux", wantCommand: "npm install -g @earendil-works/pi-coding-agent@latest"},
 		{name: "pi script", key: "pi", source: SourceScript, goos: "linux", wantCommand: "pi update"},
-		{name: "opencode brew", key: "opencode", source: SourceBrew, goos: "linux", wantCommand: "brew upgrade anomalyco/tap/opencode"},
-		{name: "opencode npm", key: "opencode", source: SourceNpm, goos: "linux", wantCommand: "npm install -g opencode-ai@latest"},
-		{name: "opencode script", key: "opencode", source: SourceScript, goos: "linux", wantCommand: "opencode upgrade"},
-		{name: "opencode2 npm", key: "opencode2", source: SourceNpm, goos: "linux", wantCommand: "npm install -g @opencode-ai/cli@latest"},
+		{name: "opencode npm", key: "opencode", source: SourceNpm, goos: "linux", wantCommand: "npm install -g @opencode-ai/cli@latest"},
 		{name: "hermes npm", key: "hermes", source: SourceNpm, goos: "linux", wantCommand: "npm install -g hermes-agent@latest"},
 		{name: "hermes script", key: "hermes", source: SourceScript, goos: "linux", wantCommand: "hermes update --yes"},
 	}
@@ -76,7 +73,7 @@ func updateEnv(pnpmOnPath bool) (integrationsEnv, func(string) (os.FileInfo, err
 // only when pnpm itself resolves; otherwise a named refusal suggests npm.
 func TestUpdatePnpmRequiresPnpmOnPath(t *testing.T) {
 	env, stat := updateEnv(false)
-	plan := resolveUpdatePlan("opencode2", SourcePnpm, "linux", env, stat)
+	plan := resolveUpdatePlan("opencode", SourcePnpm, "linux", env, stat)
 	if plan.Command != nil {
 		t.Fatalf("pnpm absent but command returned: %v", plan.Command)
 	}
@@ -84,25 +81,22 @@ func TestUpdatePnpmRequiresPnpmOnPath(t *testing.T) {
 		t.Errorf("refusal = %q, want PATH mention", plan.Unsupported)
 	}
 	envOK, statOK := updateEnv(true)
-	planOK := resolveUpdatePlan("opencode2", SourcePnpm, "linux", envOK, statOK)
+	planOK := resolveUpdatePlan("opencode", SourcePnpm, "linux", envOK, statOK)
 	if got := strings.Join(planOK.Command, " "); got != "pnpm add -g @opencode-ai/cli@latest" {
 		t.Errorf("command = %q, want pnpm add -g @opencode-ai/cli@latest", got)
 	}
 }
 
-// TestUpdateOpencode2Fallback: opencode2 has no self-update argv (verified
-// live 2026-09-09), so script installs rerun the fetched install script and
-// npm installs refresh the package.
-func TestUpdateOpencode2Fallback(t *testing.T) {
+func TestUpdateOpencodeFallback(t *testing.T) {
 	env, stat := updateEnv(false)
-	script := resolveUpdatePlan("opencode2", SourceScript, "linux", env, stat)
+	script := resolveUpdatePlan("opencode", SourceScript, "linux", env, stat)
 	if script.Command != nil {
 		t.Errorf("script source: command = %v, want none", script.Command)
 	}
 	if script.Script == nil || script.Script.Interpreter != "bash" || script.Script.URL != "https://opencode.ai/install" {
 		t.Errorf("script source: plan = %+v, want the opencode.ai install script", script)
 	}
-	npm := resolveUpdatePlan("opencode2", SourceNpm, "linux", env, stat)
+	npm := resolveUpdatePlan("opencode", SourceNpm, "linux", env, stat)
 	if got := strings.Join(npm.Command, " "); got != "npm install -g @opencode-ai/cli@latest" {
 		t.Errorf("npm source: command = %q, want npm refresh", got)
 	}
@@ -133,7 +127,7 @@ func TestUpdateManagerlessSourceRefuses(t *testing.T) {
 // reason, never a fabricated command.
 func TestUpdateUnknownSourceRefusalIsHonest(t *testing.T) {
 	env, stat := updateEnv(false)
-	for _, key := range []string{"codex", "claude", "grok", "omp", "pi", "opencode", "opencode2", "hermes"} {
+	for _, key := range []string{"codex", "claude", "grok", "omp", "pi", "opencode", "hermes"} {
 		plan := resolveUpdatePlan(key, SourceUnknown, "linux", env, stat)
 		if plan.Command != nil {
 			t.Errorf("%s: unknown source produced command %v", key, plan.Command)

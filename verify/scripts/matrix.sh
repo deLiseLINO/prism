@@ -35,7 +35,6 @@ node-npm-claude|node|17202||||claude|claude
 node-npm-grok|node|17203|/opt/nobash:/usr/local/bin|mkdir -p /opt/nobash && for f in /usr/bin/*; do case ${f##*/} in bash) ;; *) ln -sf "$f" /opt/nobash/ ;; esac; done||grok|grok
 node-npm-pi|node|17204||||pi|pi
 node-npm-opencode|node|17205||||opencode|opencode
-node-npm-opencode2|node|17206||||opencode2|opencode2
 node-npm-hermes|node|17207||||hermes|hermes
 node-pnpm-classify|node|17208|/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/share/pnpm:/root/.local/share/pnpm/bin|npm install -g pnpm && export PNPM_HOME=/root/.local/share/pnpm && export PATH=/usr/local/bin:$PNPM_HOME:$PNPM_HOME/bin:$PATH && pnpm add -g @openai/codex|||codex
 node-bun-omp|node|17209|/usr/local/bin:/root/.bun/bin|npm install -g bun||omp|omp

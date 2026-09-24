@@ -2,12 +2,28 @@ package integrations
 
 import "strconv"
 
-const opencodeProviderNPM = "@ai-sdk/openai-compatible"
+const opencodeProviderPackage = "@opencode-ai/ai/providers/openai-compatible"
 
-// RenderOpencodeModels renders the v1 `models` map: one entry per prism model,
-// keyed by the model id, with a reasoning-effort variant map when the model
-// declares one.
-func RenderOpencodeModels(models []Model, inner string, item string, field string) []string {
+func RenderOpencodeLeaf(port int, models []Model, leafIndent int) string {
+	pad := repeatSpaces(leafIndent)
+	inner := repeatSpaces(leafIndent + 2)
+	item := repeatSpaces(leafIndent + 4)
+	field := repeatSpaces(leafIndent + 6)
+	lines := []string{
+		pad + `"prism": {`,
+		inner + `"name": "Prism",`,
+		inner + `"package": ` + jsonString(opencodeProviderPackage) + `,`,
+		inner + `"settings": {`,
+		item + `"baseURL": ` + jsonString(ProviderBaseUrl(port)) + `,`,
+		item + `"apiKey": ` + jsonString(prismApiKey),
+		inner + `},`,
+	}
+	lines = append(lines, renderOpencodeModels(models, inner, item, field)...)
+	lines = append(lines, pad+`}`)
+	return joinStrings(lines)
+}
+
+func renderOpencodeModels(models []Model, inner string, item string, field string) []string {
 	if len(models) == 0 {
 		return []string{inner + `"models": {}`}
 	}
@@ -29,8 +45,6 @@ func RenderOpencodeModels(models []Model, inner string, item string, field strin
 			nameLine,
 		)
 		if model.ContextWindow > 0 {
-			// opencode's schema takes the limit pair together or not at all;
-			// an unknown window keeps the client's own defaults.
 			limitClose := field + `}`
 			if hasReasoning {
 				limitClose += ","
@@ -43,23 +57,16 @@ func RenderOpencodeModels(models []Model, inner string, item string, field strin
 			)
 		}
 		if hasReasoning {
-			// v1 surfaces the effort picker as per-model variants; each value
-			// names an AI SDK model option the openai-compatible package
-			// lowers to a reasoning_effort wire field.
-			lines = append(lines, renderOpencodeReasoningV1(efforts, field)...)
+			lines = append(lines, renderOpencodeReasoning(efforts, field)...)
 		}
 		lines = append(lines, item+`}`+comma)
 	}
-	lines = append(lines, inner+`}`)
-	return lines
+	return append(lines, inner+`}`)
 }
 
-// renderOpencodeReasoningV1 emits the capability flag and the variant map the
-// openai-compatible npm path reads.
-func renderOpencodeReasoningV1(efforts []string, field string) []string {
+func renderOpencodeReasoning(efforts []string, field string) []string {
 	lines := []string{
-		field + `"reasoning": true,`,
-		field + `"variants": {`,
+		field + `"variants": [`,
 	}
 	for i, effort := range efforts {
 		comma := ","
@@ -67,38 +74,20 @@ func renderOpencodeReasoningV1(efforts []string, field string) []string {
 			comma = ""
 		}
 		lines = append(lines,
-			field+`  `+jsonString(effort)+`: {`,
-			field+`    "reasoningEffort": `+jsonString(effort),
+			field+`  {`,
+			field+`    "id": `+jsonString(effort)+`,`,
+			field+`    "body": {`,
+			field+`      "reasoning_effort": `+jsonString(effort),
+			field+`    }`,
 			field+`  }`+comma,
 		)
 	}
-	return append(lines, field+`}`)
-}
-
-// RenderOpencodeLeaf renders the `provider.prism` member (singular key) of
-// opencode v1's opencode.json: an openai-compatible npm provider block.
-func RenderOpencodeLeaf(port int, models []Model, leafIndent int) string {
-	pad := repeatSpaces(leafIndent)
-	inner := repeatSpaces(leafIndent + 2)
-	item := repeatSpaces(leafIndent + 4)
-	field := repeatSpaces(leafIndent + 6)
-	lines := []string{
-		pad + `"prism": {`,
-		inner + `"name": "Prism",`,
-		inner + `"npm": ` + jsonString(opencodeProviderNPM) + `,`,
-		inner + `"options": {`,
-		item + `"baseURL": ` + jsonString(ProviderBaseUrl(port)) + `,`,
-		item + `"apiKey": ` + jsonString(prismApiKey),
-		inner + `},`,
-	}
-	lines = append(lines, RenderOpencodeModels(models, inner, item, field)...)
-	lines = append(lines, pad+`}`)
-	return joinStrings(lines)
+	return append(lines, field+`]`)
 }
 
 func opencodeTransform(port int, models []Model) func(current string) ConfigTransform {
 	return func(current string) ConfigTransform {
-		result := UpsertJSONBlockLeaf(current, "provider", "prism", "opencode.json", func(leafIndent int) string {
+		result := UpsertJSONBlockLeaf(current, "providers", "prism", "opencode.json", func(leafIndent int) string {
 			return RenderOpencodeLeaf(port, models, leafIndent)
 		})
 		if result.Kind == "written" {
@@ -110,7 +99,7 @@ func opencodeTransform(port int, models []Model) func(current string) ConfigTran
 
 func opencodeRollbackTransform() func(current string) ConfigTransform {
 	return func(current string) ConfigTransform {
-		result := RemoveJSONBlockLeaf(current, "provider", "prism", "opencode.json")
+		result := RemoveJSONBlockLeaf(current, "providers", "prism", "opencode.json")
 		if result.Kind == "written" {
 			return nextTransform(result.Next, result.Changed)
 		}
@@ -119,7 +108,7 @@ func opencodeRollbackTransform() func(current string) ConfigTransform {
 }
 
 func opencodeManagedRead(content string) ManagedRead {
-	read := ReadJSONBlockLeaf(content, "provider", "prism", "opencode.json", "baseURL")
+	read := ReadJSONBlockLeaf(content, "providers", "prism", "opencode.json", "baseURL")
 	return jsonLeafToManagedRead(read)
 }
 

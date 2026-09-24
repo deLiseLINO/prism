@@ -108,7 +108,6 @@ func isCask(def Definition, goos string) bool {
 }
 
 // scriptPlan finds the install script whose rerun updates in place;
-// opencode2 (no SelfUpdate) lands here for script installs.
 func scriptPlan(def Definition, goos string) *Script {
 	for _, plan := range def.Plans[goos] {
 		if plan.Script != nil {

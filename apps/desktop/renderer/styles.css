@@ -113,6 +113,12 @@ body::before {
 .card__body { padding: 14px 22px 20px; }
 .card__body:empty { display: none; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+.experimental-flag { display: flex; align-items: center; gap: 20px; padding: 18px 22px; cursor: pointer; }
+.experimental-flag__text { display: grid; gap: 3px; }
+.experimental-flag input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.experimental-flag input:checked + .toggle__track { background: var(--accent); border-color: color-mix(in oklab, var(--accent) 60%, transparent); }
+.experimental-flag input:checked + .toggle__track::after { transform: translateX(18px); }
+.experimental-flag input:focus-visible + .toggle__track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .titleline {
   position: fixed; top: calc(7px / var(--zoom, 1)); left: calc(16px / var(--zoom, 1)); right: calc(16px / var(--zoom, 1)); z-index: 20;

@@ -1,6 +1,6 @@
 ---
 name: verify-prism-desktop
-description: Drive the real Prism Electron app, its prismd daemon, prismctl, every management route, and the Grok, OMP, Codex, Claude, Pi, opencode v1, opencode2, and Hermes clients. Use after desktop, integration-writer, protocol, streaming, reasoning, daemon lifecycle, provider, CLI, or account changes. Proof requires actual UI clicks, generated-config parsing by each client, read-only quota reads, safe (cancelled) auth flows, live inference matrices for Luna, Gemini 3.7 Flash, and a derived chat model with >=300-second sessions, saved evidence, and isolated client homes.
+description: Drive the real Prism Electron app, its prismd daemon, prismctl, every management route, and the Grok, OMP, Codex, Claude, Pi, OpenCode, and Hermes clients. Use after desktop, integration-writer, protocol, streaming, reasoning, daemon lifecycle, provider, CLI, or account changes. Proof requires actual UI clicks, generated-config checks, read-only quota reads, safe (cancelled) auth flows, live inference matrices for Luna, Gemini 3.7 Flash, and a derived chat model with >=300-second sessions, saved evidence, and isolated client homes.
 ---
 
 # Verify Prism desktop
@@ -17,7 +17,7 @@ Run from the repository root. The helpers build the current `prismd` and desktop
 verify/scripts/integration-drive.sh
 ```
 
-This structural mode clicks Apply for Codex, Grok, OMP, Claude, Pi, opencode v1, opencode2, and Hermes, checks the managed state in the rendered UI, reads the generated files, and makes the installed Grok, OMP, Pi, opencode v1, Claude, and Hermes binaries parse them. opencode2 beta-19086 has no headless parse probe (its `models` command is a silent no-op in an isolated home); the structural run asserts its file contract byte-level instead and live mode covers real use. It does not prove inference.
+This structural mode enables Other agents, clicks Apply for Codex, Grok, OMP, Claude, Pi, OpenCode, and Hermes, checks the managed state in the rendered UI, reads the generated files, and makes the installed Grok, OMP, Pi, Claude, and Hermes binaries parse them. OpenCode has no reliable headless parse probe; the structural run checks its file contract and live mode covers real use. It does not prove inference.
 
 Run the legacy migration mode when Apply behavior changes. It seeds the unfenced Prism Grok tables written by the previous setup and requires the UI action to migrate them:
 
@@ -55,7 +55,6 @@ test -x "$(command -v perl)"
 test -x "$(command -v claude)"
 test -x "$(command -v pi)"
 test -x "$(command -v opencode)"
-test -x "$(command -v opencode2)"
 test -x "$(command -v hermes)"
 test -f ~/.prism/prism.json
 test -d ~/.prism/credentials
@@ -69,14 +68,15 @@ Every check except the last three is a prerequisite. The last three should fail 
 
 Drive user-facing behavior through rendered controls:
 
-1. Click the `Integrations` navigation button.
-2. Find the card by its visible heading, such as `grok`.
-3. Assert its Apply button exists and is enabled.
-4. Click Apply.
-5. Fail on any rendered alert.
-6. Wait until the same card renders the exact `managed` badge.
-7. Read the generated file from the isolated client home.
-8. Run the real client against that file.
+1. For clients other than OMP and OpenCode, click Experimental and enable Other agents.
+2. Click the `Integrations` navigation button.
+3. Find the card by its visible heading, such as `grok`.
+4. Assert its Apply button exists and is enabled.
+5. Click Apply.
+6. Fail on any rendered alert.
+7. Wait until the same card renders the exact `managed` badge.
+8. Read the generated file from the isolated client home.
+9. Run the real client against that file when a parse probe is available.
 
 Use `window.prism.*` only to diagnose a failed UI path. A bridge call that succeeds while the button path fails proves a renderer regression.
 
@@ -125,11 +125,11 @@ Use the user's existing Codex and Antigravity accounts only for these inference 
 ## Evidence
 
 Each helper prints a permanent evidence directory. Structural and live integration runs default to `/tmp/prism-verify-evidence.<timestamp>.<pid>`; auth-proof, quota-proof, and live-matrix runs default to `./verify/evidence/<kind>/<runId>/` inside the repository so they survive reboot. Override with `PRISM_VERIFY_EVIDENCE_DIR`. Keep:
-- `apply-codex.json`, `apply-grok.json`, `apply-omp.json`, `apply-claude.json`, `apply-pi.json`, `apply-opencode.json`, `apply-opencode2.json`, and `apply-hermes.json`;
+- `apply-codex.json`, `apply-grok.json`, `apply-omp.json`, `apply-claude.json`, `apply-pi.json`, `apply-opencode.json`, and `apply-hermes.json`;
 - on UI failure, `integrations-failure.json`, `integrations-failure.png`, and `apply-<client>-diagnostic.json`;
 - `integrations.png`;
-- `codex-config.toml`, `grok-config.toml`, `omp-models.yml`, `claude-settings.json`, `pi-models.json`, `opencode-config.json` (shared by v1 and v2), and `hermes-config.yaml`;
-- `codex-login-status.txt`, `grok-models.txt`, `omp-models.txt`, `claude-doctor.txt`, `pi-models.txt`, `opencode-models.txt`, `hermes-providers.txt`, `hermes-config-check.txt`, and `opencode2-models.txt` (a recorded SKIPPED marker when the headless probe is unavailable);
+- `codex-config.toml`, `grok-config.toml`, `omp-models.yml`, `claude-settings.json`, `pi-models.json`, `opencode-config.json`, and `hermes-config.yaml`;
+- `codex-login-status.txt`, `grok-models.txt`, `omp-models.txt`, `claude-doctor.txt`, `pi-models.txt`, `opencode-models.txt` (a recorded skip), `hermes-providers.txt`, and `hermes-config-check.txt`;
 - in live mode, `grok-live.txt`, `omp-live.ndjson`, `omp-live.stderr`, `omp-assertion.json`, and `omp-assertion.stderr`;
 - `app.log` and `build.log`;
 - in auth-proof runs, `auth-codex-pending.json`, `auth-codex-cancelled.json`, `auth-antigravity-pending.json`, `auth-antigravity-cancelled.json`, the matching screenshots, and the pre/post account snapshots;

@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { renderToString } from 'react-dom/server'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { EXPERIMENTAL_FLAGS, ExperimentalFlagsProvider, useExperimentalFlags } from '../renderer/src/experimental'
 import { InstallCell } from '../renderer/src/components/InstallCell'
 import { ExperimentalView, experimentalCards } from '../renderer/src/views/ExperimentalView'
@@ -58,7 +61,7 @@ function stubStorage(payload: Record<string, boolean> | null): void {
 
 describe('agent actions feature flag', () => {
   it('is not in the always-visible experimental list; it is gated on the daemon switch', () => {
-    expect(EXPERIMENTAL_FLAGS.map((f) => f.flag)).toEqual(['visionSidecar', 'remoteInstall'])
+    expect(EXPERIMENTAL_FLAGS.map((f) => f.flag)).toEqual(['otherAgents', 'visionSidecar', 'remoteInstall'])
   })
 
   it('stays off by default and honors a stored true like any real flag', () => {
@@ -104,11 +107,11 @@ describe('agent actions feature flag', () => {
 
   describe('experimental screen card visibility', () => {
     it('the card set excludes agent actions unless the daemon allows them', () => {
-      expect(experimentalCards(false).map((c) => c.flag)).toEqual(['visionSidecar', 'remoteInstall'])
+      expect(experimentalCards(false).map((c) => c.flag)).toEqual(['otherAgents', 'visionSidecar', 'remoteInstall'])
     })
 
     it('the card set leads with agent actions when the daemon allows them', () => {
-      expect(experimentalCards(true).map((c) => c.flag)).toEqual(['agentActions', 'visionSidecar', 'remoteInstall'])
+      expect(experimentalCards(true).map((c) => c.flag)).toEqual(['agentActions', 'otherAgents', 'visionSidecar', 'remoteInstall'])
     })
 
     it('SSR (effects never ran) renders only the always-visible flags', () => {
@@ -120,7 +123,23 @@ describe('agent actions feature flag', () => {
         </ExperimentalFlagsProvider>,
       )
       expect(html).toContain('Remote machines and daemon install')
+      expect(html).toContain('Other agents')
       expect(html).not.toContain('Agent install and update')
+    })
+
+    it('switches Other agents when its card text is clicked', () => {
+      stubStorage(null)
+      ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      act(() => root.render(<ExperimentalFlagsProvider><ExperimentalView /></ExperimentalFlagsProvider>))
+      const card = Array.from(container.querySelectorAll<HTMLLabelElement>('.experimental-flag'))
+        .find((node) => node.textContent?.includes('Other agents'))
+      const checkbox = card?.querySelector<HTMLInputElement>('input[type=checkbox]')
+      expect(checkbox?.checked).toBe(false)
+      act(() => card?.querySelector<HTMLElement>('.card__title')?.click())
+      expect(checkbox?.checked).toBe(true)
+      act(() => root.unmount())
     })
   })
 })

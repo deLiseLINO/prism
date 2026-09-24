@@ -68,7 +68,7 @@ func TestDetectSourceMatrix(t *testing.T) {
 	}{
 		// ground truth from the live machine
 		{"/Users/x/.local/lib/node_modules/@scope/cli.js", SourceNpm},
-		{"/Users/x/node_modules/.pnpm/@opencode-ai+cli@1.0.0/node_modules/.bin/opencode2", SourcePnpm},
+		{"/Users/x/node_modules/.pnpm/@opencode-ai+cli@1.0.0/node_modules/.bin/opencode", SourcePnpm},
 		{"/Users/x/.grok/downloads/grok-1.0.24-macos-aarch64", SourceScript},
 		{"/Users/x/.local/share/claude/versions/1.0.32/claude", SourceUnknown},
 		{"/Users/x/.local/bin/codex", SourceScript},

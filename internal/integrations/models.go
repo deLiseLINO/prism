@@ -3,17 +3,16 @@ package integrations
 type ID string
 
 const (
-	Codex     ID = "codex"
-	Grok      ID = "grok"
-	Omp       ID = "omp"
-	Claude    ID = "claude"
-	Pi        ID = "pi"
-	Opencode  ID = "opencode"
-	Opencode2 ID = "opencode2"
-	Hermes    ID = "hermes"
+	Codex    ID = "codex"
+	Grok     ID = "grok"
+	Omp      ID = "omp"
+	Claude   ID = "claude"
+	Pi       ID = "pi"
+	Opencode ID = "opencode"
+	Hermes   ID = "hermes"
 )
 
-var IDs = []ID{Codex, Grok, Omp, Claude, Pi, Opencode, Opencode2, Hermes}
+var IDs = []ID{Codex, Grok, Omp, Claude, Pi, Opencode, Hermes}
 
 func ValidID(s string) (ID, bool) {
 	for _, id := range IDs {

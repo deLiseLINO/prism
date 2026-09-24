@@ -11,7 +11,7 @@ User-facing features of the Prism system (the Electron desktop app in `apps/desk
 - `providers.md` — provider CRUD with generation CAS, credential paste-once, model enable/disable; the per-provider model list and sync live on the provider card (the old read-only Models tab was removed with the split-detail providers view).
 - `combos-routes.md` — combo create/edit/delete and route alias mapping under CAS.
 - `usage.md` — the real per-account usage view backed by the pool snapshot.
-- `integrations-apply.md` — one click patches codex/grok/omp/claude/pi/opencode/opencode2/hermes client configs; rollback strips them.
+- `integrations-apply.md` covers applying and rolling back client configs for codex, grok, omp, claude, pi, opencode, and hermes.
 - `hosts-switching.md` — the Integrations host selector: local and remote hosts, switching reloads statuses, apply/rollback act on the selected host, honest unresolved statuses.
 - `agents-install.md` — install and update the agent binaries behind the integrations through the `/api/v1/agents*` routes and `prismctl agents`.
 
