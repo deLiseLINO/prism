@@ -29,16 +29,17 @@ type reasoning struct {
 }
 
 type inputItem struct {
-	Type      string        `json:"type"`
-	ID        string        `json:"id,omitempty"`
-	Role      string        `json:"role,omitempty"`
-	Content   []contentPart `json:"content,omitempty"`
-	CallID    string        `json:"call_id,omitempty"`
-	Name      string        `json:"name,omitempty"`
-	Arguments string        `json:"arguments,omitempty"`
-	Input     string        `json:"input,omitempty"`
-	Output    any           `json:"output,omitempty"`
-	Signature string        `json:"signature,omitempty"`
+	Type      string         `json:"type"`
+	ID        string         `json:"id,omitempty"`
+	Role      string         `json:"role,omitempty"`
+	Content   []contentPart  `json:"content,omitempty"`
+	Summary   *[]contentPart `json:"summary,omitempty"`
+	CallID    string         `json:"call_id,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Arguments string         `json:"arguments,omitempty"`
+	Input     string         `json:"input,omitempty"`
+	Output    any            `json:"output,omitempty"`
+	Signature string         `json:"signature,omitempty"`
 }
 
 type contentPart struct {
@@ -136,9 +137,14 @@ func inputFrom(items []canon.Item) ([]inputItem, error) {
 			}
 			out = append(out, inputItem{Type: "message", Role: roleWire(m.Role), Content: parts})
 		case canon.ReasoningItem:
+			summary := make([]contentPart, 0, len(m.Summary))
+			for _, part := range m.Summary {
+				summary = append(summary, contentPart{Type: "summary_text", Text: part.Text})
+			}
 			out = append(out, inputItem{
 				Type:      "reasoning",
 				ID:        string(m.ID),
+				Summary:   &summary,
 				Content:   []contentPart{{Type: "reasoning_text", Text: m.Content}},
 				Signature: m.Signature,
 			})
