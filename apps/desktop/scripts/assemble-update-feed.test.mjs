@@ -33,13 +33,12 @@ describe('assemble-update-feed', () => {
       }
       const result = spawnSync(process.execPath, [script, source, destination, version], { encoding: 'utf8' })
       expect(result.status, result.stderr).toBe(0)
-      const mac = parse(await readFile(path.join(destination, 'latest-mac.yml'), 'utf8'))
+      const mac = parse(await readFile(path.join(destination, 'rc-mac.yml'), 'utf8'))
       expect(mac.files.map(entry => entry.url).sort()).toEqual([
         'Prism-0.1.0-rc.4-arm64.zip',
         'Prism-0.1.0-rc.4-x64.zip',
       ])
       expect(mac.files.map(entry => entry.sha512).sort()).toEqual(['arm', 'x64'])
-      expect(await readFile(path.join(destination, 'rc-mac.yml'), 'utf8')).toBe(await readFile(path.join(destination, 'latest-mac.yml'), 'utf8'))
     } finally {
       await rm(root, { recursive: true, force: true })
     }

@@ -33,12 +33,8 @@ const buildCwd = scriptDir
 // (see main/daemon/locate.ts, main/hosts/install.ts, and daemon-targets.mjs).
 const { daemonTargets, selectDaemonTargets } = await import('./daemon-targets.mjs')
 const selectedDaemons = selectDaemonTargets(daemonTargets, process.env.PRISM_DAEMON_TARGETS)
-// Stale binaries from a previous daemonTargets matrix must not ship:
+// Stale binaries from a previous daemonTargets matrix must not ship.
 // resources/prismd is gitignored and never cleaned by anything else.
-// The full matrix ships in every installer (the extraResources copy is not
-// arch-filtered); the main process picks its binary at runtime. A release job
-// that sets PRISM_DAEMON_TARGETS compiles only its own slice and copies the
-// rest in before packaging.
 await rm(prismdDir, { recursive: true, force: true })
 await rm(path.join(scriptDir, 'resources', 'webui'), { recursive: true, force: true })
 await rm(distDir, { recursive: true, force: true })
