@@ -55,7 +55,7 @@ jobs:
             echo "::error::tag $tag does not exist; push it before dispatching the workflow"
             exit 1
           fi
-          # Pin the exact commit so three parallel build jobs cannot race a
+          # Pin the exact commit so parallel build jobs cannot race a
           # force-moved tag into a mixed release.
           sha=$(git rev-parse -q --verify "refs/tags/$tag^{}" || true)
           if [ -z "$sha" ]; then
@@ -96,6 +96,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  build-prismd-linux:
+    name: Linux prismd
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build linux daemon binaries
+        env:
+          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
+        run: |
+          version="${PRISM_RELEASE_TAG#v}"
+          out=apps/desktop/resources/prismd
+          mkdir -p "$out"
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-X prism/internal/buildinfo.Version=${version}" -o "$out/prismd-linux-${arch}" ./cmd/prismd
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: prismd-linux
+          path: |
+            apps/desktop/resources/prismd/prismd-linux-amd64
+            apps/desktop/resources/prismd/prismd-linux-arm64
+          if-no-files-found: error
+          retention-days: 1
+
   build-linux:
     name: Linux AppImage
     needs: preflight
@@ -117,6 +149,7 @@ jobs:
       - run: npm run build --workspace @prism/desktop
         env:
           PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
+          PRISM_DAEMON_TARGETS: prismd-linux-amd64,prismd-linux-arm64,prismd-darwin-arm64,prismd-darwin-amd64
       - run: npx --workspace @prism/desktop electron-builder --linux AppImage:x64 AppImage:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -150,6 +183,7 @@ jobs:
       - run: npm run build --workspace @prism/desktop
         env:
           PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
+          PRISM_DAEMON_TARGETS: prismd-windows-amd64.exe,prismd-windows-arm64.exe,prismd-linux-amd64,prismd-linux-arm64
       - run: npx --workspace @prism/desktop electron-builder --win nsis:x64 nsis:arm64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
         env:
@@ -165,10 +199,14 @@ jobs:
           retention-days: 1
 
   build-macos:
-    name: macOS dmg
-    needs: preflight
+    name: macOS ${{ matrix.arch }}
+    needs: [preflight, build-prismd-linux]
     runs-on: macos-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -181,10 +219,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Cache downloaded Electron
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-darwin-${{ matrix.arch }}-38.8.6
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
         env:
           PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
+          PRISM_DAEMON_TARGETS: prismd-darwin-arm64,prismd-darwin-amd64
+      - name: Download linux daemon binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: prismd-linux
+          path: apps/desktop/resources/prismd
       - name: Require macOS update signing identity
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -214,32 +263,37 @@ jobs:
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           security find-identity -v -p codesigning "$keychain"
           echo "CSC_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
-      - run: npx --workspace @prism/desktop electron-builder --mac dmg zip --arm64 --x64 --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
+      - run: npx --workspace @prism/desktop electron-builder --mac dmg zip --${{ matrix.arch }} --publish never --config.extraMetadata.version=${{ needs.preflight.outputs.full_version }}
         working-directory: apps/desktop
-      - name: Verify signed macOS update packages
+      - name: Verify signed macOS update package
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.preflight.outputs.full_version }}
         run: |
           extracted=$(mktemp -d)
           trap 'rm -rf "$extracted"' EXIT
-          for arch in arm64 x64; do
-            if [ "$arch" = arm64 ]; then
-              built=apps/desktop/release/mac-arm64/Prism.app
-            else
-              built=apps/desktop/release/mac/Prism.app
-            fi
-            zip="apps/desktop/release/Prism-${{ needs.preflight.outputs.full_version }}-${arch}.zip"
-            mkdir "$extracted/$arch"
-            ditto -x -k "$zip" "$extracted/$arch"
-            app="$extracted/$arch/Prism.app"
-            requirement=$(codesign -d -r- "$built" 2>&1 | sed -n 's/^designated => //p')
-            if [[ "$requirement" != *'certificate leaf'* ]]; then
-              echo "::error::macOS identity does not bind updates to the signing certificate"
-              exit 1
-            fi
-            codesign --verify --deep --strict -R="$requirement" "$app"
-          done
+          if [ "$ARCH" = arm64 ]; then
+            built=apps/desktop/release/mac-arm64/Prism.app
+          else
+            built=apps/desktop/release/mac/Prism.app
+          fi
+          zip="apps/desktop/release/Prism-${VERSION}-${ARCH}.zip"
+          ditto -x -k "$zip" "$extracted"
+          app="$extracted/Prism.app"
+          requirement=$(codesign -d -r- "$built" 2>&1 | sed -n 's/^designated => //p')
+          if [[ "$requirement" != *'certificate leaf'* ]]; then
+            echo "::error::macOS identity does not bind updates to the signing certificate"
+            exit 1
+          fi
+          codesign --verify --deep --strict -R="$requirement" "$app"
+          test -x "$built/Contents/Resources/prismd/prismd-darwin-arm64"
+          test -x "$built/Contents/Resources/prismd/prismd-darwin-amd64"
+          test -x "$built/Contents/Resources/prismd/prismd-linux-amd64"
+          test -x "$built/Contents/Resources/prismd/prismd-linux-arm64"
+          test ! -e "$built/Contents/Resources/prismd/prismd-windows-amd64.exe"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: macos-artifacts
+          name: macos-${{ matrix.arch }}-artifacts
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.dmg.blockmap
@@ -251,7 +305,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [preflight, build-linux, build-windows, build-macos]
+    needs: [preflight, build-prismd-linux, build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -267,8 +321,16 @@ jobs:
       - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: dist-release
-          merge-multiple: true
+          path: release-parts
+      - name: Stage release artifacts
+        run: |
+          mkdir -p dist-release
+          cp release-parts/linux-artifacts/* release-parts/windows-artifacts/* dist-release/
+          for arch in arm64 x64; do
+            cp "release-parts/macos-${arch}-artifacts/"*.dmg "release-parts/macos-${arch}-artifacts/"*.dmg.blockmap dist-release/
+            cp "release-parts/macos-${arch}-artifacts/"*.zip "release-parts/macos-${arch}-artifacts/"*.zip.blockmap dist-release/
+            cp "release-parts/macos-${arch}-artifacts/latest-mac.yml" "dist-release/latest-mac-${arch}.yml"
+          done
       - name: Assemble and verify update feed
         run: |
           node apps/desktop/scripts/assemble-update-feed.mjs dist-release update-feed "${{ needs.preflight.outputs.full_version }}"
