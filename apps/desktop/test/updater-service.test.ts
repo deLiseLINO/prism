@@ -44,7 +44,7 @@ async function makeService(autoUpdater: FakeAutoUpdater | null, currentVersion =
   const { UpdaterService } = await import('../main/updater/updater')
   const quitApp = vi.fn()
   const service = new UpdaterService(
-    { currentVersion, policy: { initialCheckDelayMs: 1000, pollIntervalMs: 5000 } },
+    { currentVersion, policy: { initialCheckDelayMs: 1000, pollIntervalMs: 5000, rcPollIntervalMs: 2000 } },
     { autoUpdater, quitApp, canInstall },
   )
   return { service, quitApp }
@@ -136,6 +136,26 @@ describe('UpdaterService', () => {
     expect(fake.checkForUpdatesSpy).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(fake.checkForUpdatesSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('polls an rc build twice as often as a stable build', async () => {
+    const stable = new FakeAutoUpdater()
+    const stableService = await makeService(stable)
+    stableService.service.start()
+    await vi.advanceTimersByTimeAsync(1000)
+    stable.emit('update-not-available', { version: '1.0.0' })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(stable.checkForUpdatesSpy).toHaveBeenCalledTimes(2)
+
+    const rc = new FakeAutoUpdater()
+    const rcService = await makeService(rc, '1.0.0-rc.1')
+    rcService.service.start()
+    await vi.advanceTimersByTimeAsync(1000)
+    rc.emit('update-not-available', { version: '1.0.0-rc.1' })
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(rc.checkForUpdatesSpy).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(rc.checkForUpdatesSpy).toHaveBeenCalledTimes(2)
   })
 
   it('translates the full happy path through the emitter into status', async () => {
