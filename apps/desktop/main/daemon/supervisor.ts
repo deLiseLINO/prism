@@ -123,6 +123,7 @@ export class DaemonSupervisor {
     if (webuiDir !== null) args.push('--webui', webuiDir)
     const child = spawn(binaryPath, args, {
       stdio: ['ignore', 'ignore', 'inherit'],
+      windowsHide: true,
       shell: false,
     })
     this.child = child
