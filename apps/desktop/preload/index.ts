@@ -43,6 +43,7 @@ const bridge: PrismBridge = {
     status: () => ipcRenderer.invoke(IpcChannel.updaterGetStatus),
     check: () => ipcRenderer.invoke(IpcChannel.updaterCheck),
     install: () => ipcRenderer.invoke(IpcChannel.updaterInstall),
+    setRcChannel: (on: boolean) => ipcRenderer.invoke(IpcChannel.updaterSetRcChannel, on),
     onStatus: (listener) => {
       const handler = (_event: IpcRendererEvent, status: UpdaterStatus) => listener(status)
       ipcRenderer.on(IpcChannel.updaterStatusEvent, handler)

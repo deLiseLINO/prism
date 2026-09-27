@@ -39,6 +39,7 @@ describe('updater IPC forwarding', () => {
     status: { state: 'idle', currentVersion: '1.0.0' } as never,
     check: vi.fn().mockResolvedValue(undefined),
     install: vi.fn(),
+    setRcChannel: vi.fn(),
   }
 
   async function register(): Promise<void> {
@@ -67,6 +68,7 @@ describe('updater IPC forwarding', () => {
     expect(electronRegistry.handlers.has(IpcChannel.updaterGetStatus)).toBe(true)
     expect(electronRegistry.handlers.has(IpcChannel.updaterCheck)).toBe(true)
     expect(electronRegistry.handlers.has(IpcChannel.updaterInstall)).toBe(true)
+    expect(electronRegistry.handlers.has(IpcChannel.updaterSetRcChannel)).toBe(true)
   })
 
   it('returns the updater status snapshot', async () => {
@@ -77,12 +79,13 @@ describe('updater IPC forwarding', () => {
 
   it('rejects destroyed senders on every updater channel', async () => {
     await register()
-    for (const channel of [IpcChannel.updaterGetStatus, IpcChannel.updaterCheck, IpcChannel.updaterInstall]) {
+    for (const channel of [IpcChannel.updaterGetStatus, IpcChannel.updaterCheck, IpcChannel.updaterInstall, IpcChannel.updaterSetRcChannel]) {
       const handler = electronRegistry.handlers.get(channel)
       expect(() => handler!(fakeEvent(true))).toThrow(/untrusted sender/)
     }
     expect(updater.check).not.toHaveBeenCalled()
     expect(updater.install).not.toHaveBeenCalled()
+    expect(updater.setRcChannel).not.toHaveBeenCalled()
   })
 
   it('forwards check and install to the service', async () => {
@@ -91,6 +94,8 @@ describe('updater IPC forwarding', () => {
     expect(updater.check).toHaveBeenCalledTimes(1)
     expect(() => electronRegistry.handlers.get(IpcChannel.updaterInstall)!(fakeEvent())).not.toThrow()
     expect(updater.install).toHaveBeenCalledTimes(1)
+    await electronRegistry.handlers.get(IpcChannel.updaterSetRcChannel)!(fakeEvent(), true)
+    expect(updater.setRcChannel).toHaveBeenCalledWith(true)
   })
 })
 

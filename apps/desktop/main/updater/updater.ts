@@ -36,14 +36,29 @@ export class UpdaterService {
     if (deps.autoUpdater !== null) {
       deps.autoUpdater.autoDownload = true
       deps.autoUpdater.autoInstallOnAppQuit = false
-      const channel = options.currentVersion.match(/-(beta|rc)\.[0-9]+$/)?.[1]
-      if (channel) {
-        deps.autoUpdater.channel = channel
-        deps.autoUpdater.allowPrerelease = true
-        deps.autoUpdater.allowDowngrade = false
-      }
+      this.applyChannel(deps.autoUpdater, false)
       this.wireEmitter(deps.autoUpdater)
     }
+  }
+
+  setRcChannel(on: boolean): void {
+    if (this.autoUpdater === null) return
+    this.applyChannel(this.autoUpdater, on)
+    this.dispatch({ type: 'check-request' })
+  }
+
+  private applyChannel(autoUpdater: AppUpdater, requestRc: boolean): void {
+    const fromVersion = this.options.currentVersion.match(/-(beta|rc)\.[0-9]+$/)?.[1]
+    const channel = requestRc ? 'rc' : fromVersion
+    if (channel === undefined) {
+      autoUpdater.channel = 'latest'
+      autoUpdater.allowPrerelease = false
+      autoUpdater.allowDowngrade = false
+      return
+    }
+    autoUpdater.channel = channel
+    autoUpdater.allowPrerelease = true
+    autoUpdater.allowDowngrade = requestRc && fromVersion !== 'rc'
   }
 
   get status(): UpdaterStatus {

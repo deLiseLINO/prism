@@ -103,6 +103,7 @@ const webUpdater: PrismBridge['updater'] = {
   status: () => Promise.resolve(updaterDisabled),
   check: () => Promise.reject(new Error('prism: app updates are not available in web mode; update from the desktop app')),
   install: () => Promise.reject(new Error('prism: app updates are not available in web mode; update from the desktop app')),
+  setRcChannel: () => Promise.reject(new Error('prism: app updates are not available in web mode; update from the desktop app')),
   onStatus: (): Unsubscribe => () => undefined,
 }
 

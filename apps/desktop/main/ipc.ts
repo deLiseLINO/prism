@@ -133,4 +133,9 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     wiring.updater.install()
   })
+  ipcMain.handle(IpcChannel.updaterSetRcChannel, (event, input: unknown) => {
+    trustedSender(event)
+    if (typeof input !== 'boolean') throw new Error('prism: rc channel requires a boolean')
+    wiring.updater.setRcChannel(input)
+  })
 }
