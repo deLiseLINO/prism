@@ -114,6 +114,14 @@ describe('UpdaterService', () => {
     expect(fake.allowDowngrade).toBe(false)
   })
 
+  it('turning the switch off on an rc build leaves the rc channel', async () => {
+    const fake = new FakeAutoUpdater()
+    const { service } = await makeService(fake, '1.0.1-rc.1')
+    service.setRcChannel(false)
+    expect(fake.channel).toBe('latest')
+    expect(fake.allowPrerelease).toBe(false)
+  })
+
   it('first poll fires after the initial delay, then re-arms at the poll interval', async () => {
     const fake = new FakeAutoUpdater()
     const { service } = await makeService(fake)

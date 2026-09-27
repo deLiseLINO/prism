@@ -25,7 +25,7 @@ export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: strin
   {
     flag: 'rcChannel',
     label: 'RC update channel',
-    description: 'Check GitHub Releases for newer RC builds. Off follows the channel of the installed version.',
+    description: 'Check GitHub Releases for newer RC builds. Off follows stable releases.',
   },
 ]
 
