@@ -23,14 +23,14 @@ export function ReportActions({ title, detail }: { readonly title: string; reado
 
   async function send(target: 'issue' | 'bot'): Promise<void> {
     await bridge.report.send(target, title, detail)
-    setNote(target === 'bot' ? 'Sent to the bot.' : 'Sent as an anonymous issue.')
+    setNote(target === 'bot' ? 'Reported.' : 'Sent as an anonymous issue.')
   }
 
   return (
     <div className="banner__action">
       {GITHUB_REPORTS ? <Button tone="ghost" size="sm" onClick={() => void run(ownIssue, setNote)}>Open issue</Button> : null}
       {GITHUB_REPORTS && worker ? <Button tone="ghost" size="sm" onClick={() => void run(() => send('issue'), setNote)}>Send anonymously</Button> : null}
-      {worker ? <Button tone="ghost" size="sm" onClick={() => void run(() => send('bot'), setNote)}>Send anonymously</Button> : null}
+      {worker ? <Button tone="ghost" size="sm" onClick={() => void run(() => send('bot'), setNote)}>Report anonymously</Button> : null}
       {note !== null ? <span className="note">{note}</span> : null}
     </div>
   )
