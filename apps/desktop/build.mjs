@@ -30,29 +30,23 @@ const buildCwd = scriptDir
 // Bundled daemon matrix: every supported platform/arch gets its own binary so
 // the packaged app works on any build host (e.g. an arm64 mac producing an
 // x64 dmg). The main process picks the right one via process.platform/arch
-// (see main/daemon/locate.ts and main/hosts/install.ts).
-const daemonTargets = [
-  { GOOS: 'darwin', GOARCH: 'arm64', name: 'prismd-darwin-arm64' },
-  { GOOS: 'darwin', GOARCH: 'amd64', name: 'prismd-darwin-amd64' },
-  { GOOS: 'linux', GOARCH: 'amd64', name: 'prismd-linux-amd64' },
-  { GOOS: 'linux', GOARCH: 'arm64', name: 'prismd-linux-arm64' },
-  { GOOS: 'windows', GOARCH: 'amd64', name: 'prismd-windows-amd64.exe' },
-  { GOOS: 'windows', GOARCH: 'arm64', name: 'prismd-windows-arm64.exe' },
-]
-// Stale binaries from a previous daemonTargets matrix must not ship:
+// (see main/daemon/locate.ts, main/hosts/install.ts, and daemon-targets.mjs).
+const { daemonTargets, selectDaemonTargets } = await import('./daemon-targets.mjs')
+const selectedDaemons = selectDaemonTargets(daemonTargets, process.env.PRISM_DAEMON_TARGETS)
+// Stale binaries from a previous daemonTargets matrix must not ship.
 // resources/prismd is gitignored and never cleaned by anything else.
-// The full matrix ships in every installer (the extraResources copy is not
-// arch-filtered); the main process picks its binary at runtime.
 await rm(prismdDir, { recursive: true, force: true })
 await rm(path.join(scriptDir, 'resources', 'webui'), { recursive: true, force: true })
 await rm(distDir, { recursive: true, force: true })
 await mkdir(prismdDir, { recursive: true })
-for (const { GOOS, GOARCH, name } of daemonTargets) {
+for (const { GOOS, GOARCH, name } of selectedDaemons) {
+  const started = Date.now()
   execFileSync(goCommand, ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, name), '../../cmd/prismd'], {
     cwd: buildCwd,
     stdio: 'inherit',
     env: { ...process.env, CGO_ENABLED: '0', GOOS, GOARCH },
   })
+  console.log(`prismd ${name} ${((Date.now() - started) / 1000).toFixed(1)}s`)
 }
 
 
