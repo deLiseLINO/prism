@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DaemonStatus, ReportSnapshot, ReportTarget } from '@prism/contracts'
@@ -38,6 +39,14 @@ function workerUrl(): string | null {
 }
 
 function appVersion(): string {
+  const base = packagedVersion()
+  if (/-rc\.[0-9]+$/.test(base) || /-beta\.[0-9]+$/.test(base)) return base
+  const channel = process.env.PRISM_REPORT_CHANNEL
+  if (channel === 'rc' || channel === 'beta') return `${base}-${channel}`
+  return base
+}
+
+function packagedVersion(): string {
   if (app.isPackaged) return app.getVersion()
   try {
     const pkg = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as { version?: string }

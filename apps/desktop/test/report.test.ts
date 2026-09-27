@@ -19,7 +19,7 @@ function source(workerUrl: string | null = 'https://reports.example/report'): Re
     status,
     logTail: () => 'daemon stderr line',
     workerUrl,
-    version: '0.1.0',
+    version: '0.1.0-rc',
     platform: 'win32 x64',
   }
 }
@@ -27,7 +27,7 @@ function source(workerUrl: string | null = 'https://reports.example/report'): Re
 describe('report snapshot', () => {
   it('keeps the daemon log out of the public issue body', () => {
     const snapshot = buildSnapshot(source(), 'Login failed to start', 'unknown: fetch failed')
-    expect(snapshot.body).toContain('unknown: fetch failed')
+    expect(snapshot.body).toContain('version: 0.1.0-rc')
     expect(snapshot.body).toContain('daemon: ready')
     expect(snapshot.body).not.toContain('daemon stderr line')
     expect(snapshot.issueUrl).toContain('https://github.com/deLiseLINO/prism/issues/new')
