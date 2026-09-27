@@ -26,12 +26,14 @@ function sessionTone(state: AuthSessionState): 'ok' | 'error' | 'info' {
 interface AuthSession {
   readonly session: string
   readonly url: string
+  readonly userCode: string
   readonly state: AuthSessionState
 }
 
 const LOGIN_PROVIDERS = [
   { id: 'codex', label: 'codex' },
   { id: 'antigravity', label: 'antigravity' },
+  { id: 'cline', label: 'cline' },
 ] as const
 
 export interface AddAccountModalProps {
@@ -110,7 +112,12 @@ export function AddAccountModal({
     const started = await task.run<AuthStartView>(() => api.authStart(selected.id))
     if (started === undefined) return
     sessionRef.current = started.session
-    setSession({ session: started.session, url: started.url, state: 'pending' })
+    setSession({
+      session: started.session,
+      url: started.url,
+      userCode: started.userCode ?? '',
+      state: 'pending',
+    })
   }
 
   function cancelLogin(): void {
@@ -205,10 +212,16 @@ export function AddAccountModal({
           {session !== null && !TERMINAL[session.state] ? (
             <section className="msm-sec">
               <div className="msm-sec-label">Login</div>
-              <p className="note">
-                Complete the login in your browser. This window checks
-                automatically until it finishes.
-              </p>
+              {session.userCode !== '' ? (
+                <p className="note">
+                  Enter code <span className="num">{session.userCode}</span> in the browser, then wait here.
+                </p>
+              ) : (
+                <p className="note">
+                  Complete the login in your browser. This window checks
+                  automatically until it finishes.
+                </p>
+              )}
             </section>
           ) : null}
           {approved ? (

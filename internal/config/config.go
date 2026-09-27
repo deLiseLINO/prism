@@ -22,11 +22,12 @@ const (
 	WireOpenAIResponses   Wire = "responses"
 	WireAnthropicMessages Wire = "messages"
 	WireOpenAIChat        Wire = "chat"
+	WireCline             Wire = "cline"
 )
 
 func (w Wire) valid() bool {
 	switch w {
-	case WireCodex, WireAntigravity, WireOpenAIResponses, WireAnthropicMessages, WireOpenAIChat:
+	case WireCodex, WireAntigravity, WireOpenAIResponses, WireAnthropicMessages, WireOpenAIChat, WireCline:
 		return true
 	}
 	return false

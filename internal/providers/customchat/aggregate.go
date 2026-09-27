@@ -32,7 +32,15 @@ type aggregateMessage struct {
 	Role             string              `json:"role"`
 	Content          *string             `json:"content"`
 	ReasoningContent string              `json:"reasoning_content"`
+	Reasoning        string              `json:"reasoning"`
 	ToolCalls        []aggregateToolCall `json:"tool_calls"`
+}
+
+func (m aggregateMessage) reasoningText() string {
+	if m.ReasoningContent != "" {
+		return m.ReasoningContent
+	}
+	return m.Reasoning
 }
 
 type aggregateToolCall struct {
@@ -120,12 +128,12 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 	if responseID == "" {
 		responseID = "assistant"
 	}
-	if choice.Message.ReasoningContent != "" {
-		reasoning := canon.ReasoningItem{ID: canon.ItemID(responseID + "-reasoning"), Content: choice.Message.ReasoningContent}
-		if err := emit(canon.ItemStarted{Item: reasoning}); err != nil {
+	if reasoning := choice.Message.reasoningText(); reasoning != "" {
+		item := canon.ReasoningItem{ID: canon.ItemID(responseID + "-reasoning"), Content: reasoning}
+		if err := emit(canon.ItemStarted{Item: item}); err != nil {
 			return err
 		}
-		if err := emit(canon.ItemFinished{Item: reasoning}); err != nil {
+		if err := emit(canon.ItemFinished{Item: item}); err != nil {
 			return err
 		}
 	}

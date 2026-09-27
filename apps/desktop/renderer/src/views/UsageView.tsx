@@ -214,6 +214,7 @@ export function UsagePanel(): JSX.Element {
     }
     return pins
   }, [providersReady])
+
   const accounts = usage.state.kind === 'ready' ? usage.state.value.accounts : []
 
   const refreshQuota = useCallback(
