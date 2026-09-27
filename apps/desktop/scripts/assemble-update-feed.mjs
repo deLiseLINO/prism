@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parse, stringify } from 'yaml'
 
@@ -34,8 +34,10 @@ macInfo.path = zipFiles[0].url
 macInfo.sha512 = zipFiles[0].sha512
 await writeFile(path.join(destination, 'latest-mac.yml'), stringify(macInfo))
 
-for (const channel of channels) {
-  for (const prefix of ['beta', 'rc']) {
-    await copyFile(path.join(destination, channel), path.join(destination, channel.replace(/^latest/, prefix)))
+const channel = version.match(/-(beta|rc)\.[0-9]+$/)?.[1] ?? 'latest'
+if (channel !== 'latest') {
+  for (const name of channels) {
+    await copyFile(path.join(destination, name), path.join(destination, name.replace(/^latest/, channel)))
+    await unlink(path.join(destination, name))
   }
 }
