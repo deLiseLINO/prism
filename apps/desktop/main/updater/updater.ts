@@ -36,7 +36,7 @@ export class UpdaterService {
     if (deps.autoUpdater !== null) {
       deps.autoUpdater.autoDownload = true
       deps.autoUpdater.autoInstallOnAppQuit = false
-      this.applyChannel(deps.autoUpdater, false)
+      this.applyChannel(deps.autoUpdater, /-rc\.[0-9]+$/.test(this.options.currentVersion))
       this.wireEmitter(deps.autoUpdater)
     }
   }
@@ -49,11 +49,11 @@ export class UpdaterService {
 
   private applyChannel(autoUpdater: AppUpdater, requestRc: boolean): void {
     const fromVersion = this.options.currentVersion.match(/-(beta|rc)\.[0-9]+$/)?.[1]
-    const channel = requestRc ? 'rc' : fromVersion
+    const channel = requestRc ? 'rc' : fromVersion === 'beta' ? 'beta' : undefined
     if (channel === undefined) {
       autoUpdater.channel = 'latest'
       autoUpdater.allowPrerelease = false
-      autoUpdater.allowDowngrade = false
+      autoUpdater.allowDowngrade = fromVersion === 'rc'
       return
     }
     autoUpdater.channel = channel

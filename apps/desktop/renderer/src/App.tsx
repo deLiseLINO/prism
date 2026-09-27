@@ -93,12 +93,15 @@ function AppShell(): JSX.Element {
   const [view, setView] = useState<View>(readCurrentView())
   const { flags } = useExperimentalFlags()
   const machinesVisible = flags.remoteInstall
-  useEffect(() => {
-    void bridge.updater.setRcChannel(flags.rcChannel)
-  }, [flags.rcChannel])
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null)
   const [daemonUnreachable, setDaemonUnreachable] = useState(false)
   const [updater, setUpdater] = useState<UpdaterStatus | null>(null)
+  useEffect(() => {
+    const version = updater?.currentVersion ?? ''
+    const installedRc = /-rc\.[0-9]+$/.test(version)
+    if (version === '' && !flags.rcChannel) return
+    void bridge.updater.setRcChannel(flags.rcChannel || installedRc)
+  }, [flags.rcChannel, updater?.currentVersion])
   const mainRef = useRef<HTMLElement | null>(null)
   const viewRef = useRef(view)
   const boot = useDaemonBoot(daemon, daemonUnreachable)
