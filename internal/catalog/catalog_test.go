@@ -148,6 +148,65 @@ func TestParseFixture(t *testing.T) {
 	}
 }
 
+func TestParseMajorityBeatsDissent(t *testing.T) {
+	body := `{
+	  "a": {"models": {"m": {"id": "glm-5.3", "limit": {"context": 1000000}, "modalities": {"input": ["text"]}}}},
+	  "b": {"models": {"m": {"id": "glm-5.3", "limit": {"context": 1000000}, "modalities": {"input": ["text", "image"]}}}},
+	  "c": {"models": {"m": {"id": "glm-5.3", "limit": {"context": 1048576}, "modalities": {"input": ["text"]}}}}
+	}`
+	rows, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rows["glm-5.3"]
+	if got.ContextWindow != 1000000 {
+		t.Fatalf("window = %d, want 1000000", got.ContextWindow)
+	}
+	if got.Image == nil || *got.Image {
+		t.Fatalf("image = %v, want false", got.Image)
+	}
+}
+
+func TestParseTieStaysUnknown(t *testing.T) {
+	body := `{
+	  "a": {"models": {"m": {"id": "glm-5.3", "limit": {"context": 1000000}, "modalities": {"input": ["text", "image"]}}}},
+	  "b": {"models": {"m": {"id": "glm-5.3", "limit": {"context": 1048576}, "modalities": {"input": ["text"]}}}}
+	}`
+	rows, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rows["glm-5.3"]; ok {
+		t.Fatalf("tie stored %+v", rows["glm-5.3"])
+	}
+}
+
+func TestParseProviderSplitAbstains(t *testing.T) {
+	body := `{
+	  "split": {"models": {
+	    "a": {"id": "glm-5.3", "limit": {"context": 1000000}, "modalities": {"input": ["text"]}},
+	    "b": {"id": "zai/glm-5.3", "limit": {"context": 1048576}, "modalities": {"input": ["text", "image"]}}
+	  }},
+	  "one": {"models": {"m": {"id": "glm-5.3", "limit": {"context": 1000000}, "modalities": {"input": ["text"]}}}},
+	  "two": {"models": {"m": {"id": "glm-5.3", "limit": {"context": 1000000}, "modalities": {"input": ["text"]}}}}
+	}`
+	rows, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rows["glm-5.3"]
+	if got.ContextWindow != 1000000 {
+		t.Fatalf("window = %d, want 1000000 from the agreeing providers", got.ContextWindow)
+	}
+	if got.Image == nil || *got.Image {
+		t.Fatalf("image = %v, want false", got.Image)
+	}
+	full := rows["zai/glm-5.3"]
+	if full.ContextWindow != 1048576 || full.Image == nil || !*full.Image {
+		t.Fatalf("full id = %+v", full)
+	}
+}
+
 func TestRefreshTwiceSameBody(t *testing.T) {
 	dir := t.TempDir()
 	x, err := Open(dir)

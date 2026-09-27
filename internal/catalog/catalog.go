@@ -112,40 +112,79 @@ func (x *Index) store(rows map[string]Facts) error {
 	return nil
 }
 
+type fieldVote struct {
+	value int
+	set   bool
+	split bool
+}
+
+func (f *fieldVote) add(n int) {
+	if n == 0 || f.split {
+		return
+	}
+	if !f.set {
+		f.value = n
+		f.set = true
+		return
+	}
+	if f.value != n {
+		f.split = true
+		f.value = 0
+	}
+}
+
+type providerSlot struct {
+	window fieldVote
+	image  fieldVote
+}
+
 type vote struct {
-	window    int
-	windowSet bool
-	image     bool
-	imageSet  bool
+	windows map[int]int
+	images  map[int]int
 }
 
 func (v *vote) add(row Facts) {
 	if row.ContextWindow > 0 {
-		if !v.windowSet {
-			v.window = row.ContextWindow
-			v.windowSet = true
-		} else if v.window != row.ContextWindow {
-			v.window = 0
+		if v.windows == nil {
+			v.windows = map[int]int{}
 		}
+		v.windows[row.ContextWindow]++
 	}
 	if row.Image != nil {
-		if !v.imageSet {
-			v.image = *row.Image
-			v.imageSet = true
-		} else if v.image != *row.Image {
-			v.imageSet = false
-			v.image = false
+		if v.images == nil {
+			v.images = map[int]int{}
+		}
+		key := 0
+		if *row.Image {
+			key = 1
+		}
+		v.images[key]++
+	}
+}
+
+func majority(counts map[int]int) (int, bool) {
+	best, bestN, second := 0, 0, 0
+	for value, n := range counts {
+		if n > bestN {
+			second = bestN
+			best, bestN = value, n
+		} else if n > second {
+			second = n
 		}
 	}
+	if bestN == 0 || bestN == second {
+		return 0, false
+	}
+	return best, true
 }
 
 func (v vote) facts() Facts {
 	out := Facts{}
-	if v.windowSet && v.window > 0 {
-		out.ContextWindow = v.window
+	if n, ok := majority(v.windows); ok {
+		out.ContextWindow = n
 	}
-	if v.imageSet {
-		on := v.image
+	if key, ok := majority(v.images); ok {
+		on := key == 1
 		out.Image = &on
 	}
 	return out
@@ -167,19 +206,47 @@ func Parse(body []byte) (map[string]Facts, error) {
 		if err := json.Unmarshal(raw, &provider); err != nil {
 			continue
 		}
+		local := map[string]*providerSlot{}
 		for key, modelRaw := range provider.Models {
 			row, ok := parseModel(key, modelRaw)
 			if !ok {
 				continue
 			}
 			for _, match := range matchKeys(row.id) {
-				v := acc[match]
-				if v == nil {
-					v = &vote{}
-					acc[match] = v
+				slot := local[match]
+				if slot == nil {
+					slot = &providerSlot{}
+					local[match] = slot
 				}
-				v.add(row.facts)
+				slot.window.add(row.facts.ContextWindow)
+				image := 0
+				if row.facts.Image != nil {
+					image = -1
+					if *row.facts.Image {
+						image = 1
+					}
+				}
+				slot.image.add(image)
 			}
+		}
+		for match, slot := range local {
+			ballot := Facts{}
+			if slot.window.set && !slot.window.split {
+				ballot.ContextWindow = slot.window.value
+			}
+			if slot.image.set && !slot.image.split {
+				on := slot.image.value == 1
+				ballot.Image = &on
+			}
+			if ballot.ContextWindow == 0 && ballot.Image == nil {
+				continue
+			}
+			v := acc[match]
+			if v == nil {
+				v = &vote{}
+				acc[match] = v
+			}
+			v.add(ballot)
 		}
 	}
 	out := make(map[string]Facts, len(acc))
