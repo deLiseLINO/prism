@@ -637,7 +637,7 @@ func run(opts options) error {
 	if homeErr != nil {
 		home = ""
 	}
-	daemonEnv := integrations.Environ(os.Environ())
+	daemonEnv := agentinstall.WithUserPath(integrations.Environ(os.Environ()))
 	modelsSrc := integrationModels(cfg)
 	intg, codexIntegration, err := newIntegrationRegistry(daemonPortNum, daemonEnv, home, nil, modelsSrc)
 	if err != nil {
