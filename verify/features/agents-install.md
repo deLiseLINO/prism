@@ -39,7 +39,7 @@ For a real-machine status proof (read-only, safe): `curl -sf http://127.0.0.1:18
 
 ## Gotchas
 
-- Install state is PATH-derived: a stopped daemon and a fresh daemon report the same status. Never assert a job's existence from a previous session.
+- Install state is PATH-derived: a stopped daemon and a fresh daemon report the same status. Never assert a job's existence from a previous session. prismd prepends the login PATH of the account in its own env, because a Dock launch only inherits the system PATH. A sandbox HOME does not see the operator's binaries.
 - `~/.local/bin` classifications: pi installed via npm under `~/.local` still classifies as `npm` (its resolved path contains `node_modules`), while script-installed codex under the same directory classifies as `script` even though its symlink target (`~/.codex/bin/...`) is unrecognized — the PATH entry is the fallback. Source detection reads the symlink-resolved path first.
 - pi has no script plan, deliberately: pi's installer requires Node.js 22.19+ and npm, but the script plan is only reachable when npm is absent, so it can never succeed. With npm absent, pi install honestly returns `unsupported`.
 - A second OpenCode install or update job returns 409 while the first job runs.
