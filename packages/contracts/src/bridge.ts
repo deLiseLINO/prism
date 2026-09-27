@@ -47,4 +47,17 @@ export interface PrismBridge {
     readonly setRcChannel: (on: boolean) => Promise<void>
     readonly onStatus: (listener: (status: UpdaterStatus) => void) => Unsubscribe
   }
+  readonly report: {
+    readonly snapshot: (title: string, detail: string) => Promise<ReportSnapshot>
+    readonly send: (target: ReportTarget, title: string, detail: string) => Promise<void>
+  }
+}
+
+export type ReportTarget = 'issue' | 'bot'
+
+export interface ReportSnapshot {
+  readonly title: string
+  readonly body: string
+  readonly issueUrl: string
+  readonly workerConfigured: boolean
 }

@@ -116,4 +116,8 @@ const webBridge: PrismBridge = {
   window: webWindow,
   zoom: webZoom,
   updater: webUpdater,
+  report: {
+    snapshot: () => Promise.reject(new Error('prism: reports are sent from the desktop app')),
+    send: () => Promise.reject(new Error('prism: reports are sent from the desktop app')),
+  },
 }

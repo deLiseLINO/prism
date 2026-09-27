@@ -122,11 +122,12 @@ export class DaemonSupervisor {
     const webuiDir = locateWebui(this.options.webuiDir)
     if (webuiDir !== null) args.push('--webui', webuiDir)
     const child = spawn(binaryPath, args, {
-      stdio: ['ignore', 'ignore', 'inherit'],
+      stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
       shell: false,
     })
     this.child = child
+    this.captureLog(child)
     child.once('error', (error) => {
       this.handleSpawnError(error)
     })
@@ -225,6 +226,21 @@ export class DaemonSupervisor {
     }
   }
 
+
+  logTail(): string {
+    return this.log
+  }
+
+  private log = ''
+
+  private captureLog(child: ChildProcess): void {
+    const stream = child.stderr
+    if (stream === null || stream === undefined) return
+    stream.setEncoding('utf8')
+    stream.on('data', (chunk: string) => {
+      this.log = (this.log + chunk).slice(-16_000)
+    })
+  }
   private emit(): void {
     for (const listener of [...this.listeners]) listener(this.status)
   }

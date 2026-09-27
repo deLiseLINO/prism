@@ -5,6 +5,7 @@ import { Banner, Button } from './Ui'
 import { useTask, describeError } from '../useAsync'
 import { api, ApiError } from '../api'
 import { bridge } from '../bridge'
+import { ReportActions } from './ReportActions'
 
 const POLL_INTERVAL_MS = 1_500
 
@@ -304,7 +305,11 @@ export function AddAccountModal({
         </footer>
         {task.error !== null ? (
           <div className="pmod-error">
-            <Banner tone="error" title="Login failed to start">
+            <Banner
+              tone="error"
+              title="Login failed to start"
+              action={<ReportActions title="Login failed to start" detail={describeError(task.error)} />}
+            >
               {describeError(task.error)}
               {task.error instanceof ApiError && task.error.code === 'loopback_unavailable'
                 ? ': the loopback callback port is busy. Free it and retry.'
