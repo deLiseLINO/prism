@@ -24,11 +24,13 @@ export type UpdateEffect =
 export interface UpdatePolicy {
   readonly initialCheckDelayMs: number
   readonly pollIntervalMs: number
+  readonly rcPollIntervalMs: number
 }
 
 export const DEFAULT_UPDATE_POLICY: UpdatePolicy = {
   initialCheckDelayMs: 15_000,
-  pollIntervalMs: 240_000,
+  pollIntervalMs: 60_000,
+  rcPollIntervalMs: 30_000,
 }
 
 export interface UpdaterModel {

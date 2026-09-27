@@ -23,6 +23,7 @@ export class UpdaterService {
   private quit: () => void
   private readonly canInstall?: () => boolean
   private readonly policy: UpdatePolicy
+  private followingRc: boolean
 
   constructor(
     private readonly options: UpdaterOptions,
@@ -33,6 +34,7 @@ export class UpdaterService {
     this.canInstall = deps.canInstall
     this.model = initialModel(options.currentVersion)
     this.policy = options.policy ?? DEFAULT_UPDATE_POLICY
+    this.followingRc = /-rc\.[0-9]+$/.test(this.options.currentVersion)
     if (deps.autoUpdater !== null) {
       deps.autoUpdater.autoDownload = true
       deps.autoUpdater.autoInstallOnAppQuit = false
@@ -43,6 +45,7 @@ export class UpdaterService {
 
   setRcChannel(on: boolean): void {
     if (this.autoUpdater === null) return
+    this.followingRc = on
     this.applyChannel(this.autoUpdater, on)
     this.dispatch({ type: 'check-request' })
   }
@@ -120,7 +123,7 @@ export class UpdaterService {
 
   private dispatch(event: UpdateEvent): void {
     const before = this.model
-    const result = step(this.model, event, this.policy)
+    const result = step(this.model, event, { ...this.policy, pollIntervalMs: this.followingRc ? this.policy.rcPollIntervalMs : this.policy.pollIntervalMs })
     this.model = result.model
     this.interpret(result.effect)
     if (this.model !== before) this.emit()
