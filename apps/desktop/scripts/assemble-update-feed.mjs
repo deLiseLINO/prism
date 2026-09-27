@@ -9,11 +9,36 @@ if (!source || !destination || !version) {
 
 const channels = ['latest.yml', 'latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml']
 const names = new Set(await readdir(source))
-for (const name of channels) {
+const macChannels = [...names].filter(name => /^latest-mac(?:-.+)?\.yml$/.test(name)).sort()
+if (macChannels.length === 0) throw new Error('missing channel latest-mac.yml')
+for (const name of channels.filter(name => name !== 'latest-mac.yml')) {
   if (!names.has(name)) throw new Error(`missing channel ${name}`)
 }
 await mkdir(destination, { recursive: true })
-for (const name of channels) {
+
+const macParts = []
+for (const name of macChannels) {
+  const info = parse(await readFile(path.join(source, name), 'utf8'))
+  if (info.version !== version || !Array.isArray(info.files)) throw new Error(`invalid channel ${name}`)
+  macParts.push(info)
+}
+const macInfo = { ...macParts[0] }
+const seen = new Set()
+macInfo.files = macParts.flatMap(info => info.files).filter(file => {
+  if (seen.has(file.url)) return false
+  seen.add(file.url)
+  return true
+})
+for (const file of macInfo.files) {
+  if (!names.has(file.url)) throw new Error(`latest-mac.yml references missing ${file.url}`)
+}
+const macZipFiles = macInfo.files.filter(file => file.url.endsWith('.zip'))
+if (macZipFiles.length !== 2) throw new Error('macOS update channel requires both ZIP architectures')
+macInfo.files = macZipFiles
+macInfo.path = macZipFiles[0].url
+macInfo.sha512 = macZipFiles[0].sha512
+
+for (const name of channels.filter(name => name !== 'latest-mac.yml')) {
   const info = parse(await readFile(path.join(source, name), 'utf8'))
   if (info.version !== version || !Array.isArray(info.files)) throw new Error(`invalid channel ${name}`)
   for (const file of info.files) {
@@ -26,12 +51,6 @@ for (const name of names) {
     await copyFile(path.join(source, name), path.join(destination, name))
   }
 }
-const macInfo = parse(await readFile(path.join(source, 'latest-mac.yml'), 'utf8'))
-const zipFiles = macInfo.files.filter(file => file.url.endsWith('.zip'))
-if (zipFiles.length !== 2) throw new Error('macOS update channel requires both ZIP architectures')
-macInfo.files = zipFiles
-macInfo.path = zipFiles[0].url
-macInfo.sha512 = zipFiles[0].sha512
 await writeFile(path.join(destination, 'latest-mac.yml'), stringify(macInfo))
 
 const channel = version.match(/-(beta|rc)\.[0-9]+$/)?.[1] ?? 'latest'
