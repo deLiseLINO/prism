@@ -1,10 +1,10 @@
 import { app, nativeImage, type BrowserWindow } from 'electron'
-import { readFileSync } from 'node:fs'
+import { accessSync, constants, readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
 import type { HostView } from '@prism/contracts'
 import { HostProxyRegistry } from './hosts/registry'
-import { loadDesktopConfig, PRISM_UPDATER_ENV } from './config'
+import { loadDesktopConfig } from './config'
 import { DaemonSupervisor } from './daemon/supervisor'
 import { registerIpc } from './ipc'
 import { AgentsApi } from '../shared/agents'
@@ -55,21 +55,23 @@ async function bootstrap(): Promise<void> {
   const management = new ManagementProxy(endpoint)
   const proxies = new HostProxyRegistry(management, { fetchHosts: () => fetchDaemonHosts(management) })
 
+  const appImagePath = process.platform === 'linux' ? process.env.APPIMAGE : undefined
+  const canUpdateAppImage = (): boolean => {
+    if (!appImagePath || !path.isAbsolute(appImagePath)) return false
+    try {
+      accessSync(path.dirname(appImagePath), constants.W_OK | constants.X_OK)
+      return true
+    } catch {
+      return false
+    }
+  }
   const updater = new UpdaterService(
-    { currentVersion: appVersion(), updateUrl: config.updateUrl },
+    { currentVersion: appVersion() },
     {
-      // The generic releases.prism.sh feed does not exist yet; shipping it
-      // in installers puts every packaged app into a permanent update-error
-      // state (checks 15s after launch, then every 240s, against a dead URL).
-      // The updater stays off by default until a real feed is configured
-      // (either a live generic server or GitHub Releases provider wired into
-      // the release pipeline). PRISM_UPDATER=1 opts in explicitly; the env
-      // escape hatch keeps local experiments against a private feed alive.
-      autoUpdater:
-        app.isPackaged && !config.updaterDisabled && env[PRISM_UPDATER_ENV] === '1'
-          ? require('electron-updater').autoUpdater
-          : null,
+      autoUpdater: app.isPackaged &&
+        (process.platform !== 'linux' || canUpdateAppImage()) ? require('electron-updater').autoUpdater : null,
       quitApp: () => app.quit(),
+      canInstall: process.platform === 'linux' ? canUpdateAppImage : undefined,
     },
   )
 

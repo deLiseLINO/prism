@@ -9,6 +9,7 @@ vi.mock('../renderer/src/bridge', () => ({
       status: vi.fn(),
       check: vi.fn(),
       install: vi.fn(),
+      setRcChannel: vi.fn(),
       onStatus: vi.fn(() => () => undefined),
     },
   },

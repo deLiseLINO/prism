@@ -93,6 +93,9 @@ function AppShell(): JSX.Element {
   const [view, setView] = useState<View>(readCurrentView())
   const { flags } = useExperimentalFlags()
   const machinesVisible = flags.remoteInstall
+  useEffect(() => {
+    void bridge.updater.setRcChannel(flags.rcChannel)
+  }, [flags.rcChannel])
   const [daemon, setDaemon] = useState<DaemonStatus | null>(null)
   const [daemonUnreachable, setDaemonUnreachable] = useState(false)
   const [updater, setUpdater] = useState<UpdaterStatus | null>(null)

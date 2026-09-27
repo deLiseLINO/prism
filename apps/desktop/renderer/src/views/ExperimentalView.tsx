@@ -9,9 +9,6 @@ interface FlagCard {
   readonly description: string
 }
 
-// The agent-actions card only exists when the daemon itself was started with
-// actions enabled (PRISM_AGENT_ACTIONS). Without it there is nothing to
-// toggle: the daemon refuses the mutations regardless.
 export function experimentalCards(daemonAllowsActions: boolean): readonly FlagCard[] {
   return daemonAllowsActions ? [AGENT_ACTIONS_FLAG, ...EXPERIMENTAL_FLAGS] : EXPERIMENTAL_FLAGS
 }
@@ -37,7 +34,11 @@ export function ExperimentalView(): JSX.Element {
             <input
               type="checkbox"
               checked={flags[flag]}
-              onChange={(event) => setFlag(flag, event.target.checked)}
+              onChange={(event) => {
+                const on = event.target.checked
+                setFlag(flag, on)
+                if (flag === 'rcChannel') void bridge.updater.setRcChannel(on)
+              }}
             />
             <span className="toggle__track" aria-hidden="true">
               <span className="toggle__thumb" />

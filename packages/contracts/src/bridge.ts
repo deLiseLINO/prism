@@ -44,6 +44,7 @@ export interface PrismBridge {
     readonly status: () => Promise<UpdaterStatus>
     readonly check: () => Promise<void>
     readonly install: () => Promise<void>
+    readonly setRcChannel: (on: boolean) => Promise<void>
     readonly onStatus: (listener: (status: UpdaterStatus) => void) => Unsubscribe
   }
 }

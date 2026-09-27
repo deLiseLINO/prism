@@ -2,9 +2,9 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 const STORAGE_KEY = 'prism-experimental'
 
-export type ExperimentalFlag = 'remoteInstall' | 'agentActions' | 'visionSidecar' | 'otherAgents'
+export type ExperimentalFlag = 'remoteInstall' | 'agentActions' | 'visionSidecar' | 'otherAgents' | 'rcChannel'
 
-const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions', 'visionSidecar', 'otherAgents']
+const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions', 'visionSidecar', 'otherAgents', 'rcChannel']
 
 export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: string; description: string }[] = [
   {
@@ -22,11 +22,13 @@ export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: strin
     label: 'Remote machines and daemon install',
     description: 'The Machines tab and one-click prismd install on a remote host over key-auth ssh.',
   },
+  {
+    flag: 'rcChannel',
+    label: 'RC update channel',
+    description: 'Check GitHub Releases for newer RC builds. Off follows the channel of the installed version.',
+  },
 ]
 
-// agentActions is described separately: the Experimental screen only shows it
-// when the daemon reports agent actions as available (PRISM_AGENT_ACTIONS at
-// daemon start). End users never see it.
 export const AGENT_ACTIONS_FLAG: { flag: ExperimentalFlag; label: string; description: string } = {
   flag: 'agentActions',
   label: 'Agent install and update',
@@ -35,7 +37,7 @@ export const AGENT_ACTIONS_FLAG: { flag: ExperimentalFlag; label: string; descri
 
 type ExperimentalState = Record<ExperimentalFlag, boolean>
 
-const DISABLED: ExperimentalState = { remoteInstall: false, agentActions: false, visionSidecar: false, otherAgents: false }
+const DISABLED: ExperimentalState = { remoteInstall: false, agentActions: false, visionSidecar: false, otherAgents: false, rcChannel: false }
 
 function readFlags(): ExperimentalState {
   try {

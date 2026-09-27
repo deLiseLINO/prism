@@ -20,6 +20,7 @@ export const IpcChannel = {
   updaterGetStatus: 'prism:updater-get-status',
   updaterCheck: 'prism:updater-check',
   updaterInstall: 'prism:updater-install',
+  updaterSetRcChannel: 'prism:updater-set-rc-channel',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]
