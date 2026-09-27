@@ -194,7 +194,7 @@ describe('DaemonSupervisor restart policy', () => {
     expect(spawnMock).toHaveBeenCalledWith(
       '/virtual/prismd',
       ['--listen', '127.0.0.1:4931', '--webui', '/virtual/webui'],
-      { stdio: ['ignore', 'ignore', 'inherit'], windowsHide: true, shell: false },
+      { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false },
     )
   })
 
@@ -205,7 +205,7 @@ describe('DaemonSupervisor restart policy', () => {
     expect(spawnMock).toHaveBeenCalledWith(
       '/virtual/prismd',
       ['--listen', '127.0.0.1:4931'],
-      { stdio: ['ignore', 'ignore', 'inherit'], windowsHide: true, shell: false },
+      { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false },
     )
   })
 })
