@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import type { AuthSessionState, AuthStartView, ProviderView } from '@prism/contracts'
+import type { AuthSessionState, AuthStartView } from '@prism/contracts'
 import { Banner, Button } from './Ui'
 import { useTask, describeError } from '../useAsync'
 import { api, ApiError } from '../api'
@@ -29,18 +29,21 @@ interface AuthSession {
   readonly state: AuthSessionState
 }
 
+const LOGIN_PROVIDERS = [
+  { id: 'codex', label: 'codex' },
+  { id: 'antigravity', label: 'antigravity' },
+] as const
+
 export interface AddAccountModalProps {
-  readonly providers: readonly ProviderView[]
   readonly onAdded: () => void
   readonly onClose: () => void
 }
 
 export function AddAccountModal({
-  providers,
   onAdded,
   onClose,
 }: AddAccountModalProps): JSX.Element {
-  const [providerId, setProviderId] = useState(providers[0]?.id ?? '')
+  const [providerId, setProviderId] = useState<string>(LOGIN_PROVIDERS[0].id)
   const [session, setSession] = useState<AuthSession | null>(null)
   const [pollFailure, setPollFailure] = useState<'expired' | 'interrupted' | null>(null)
   const [copied, setCopied] = useState(false)
@@ -48,8 +51,7 @@ export function AddAccountModal({
   const notifiedRef = useRef(false)
   const task = useTask()
 
-  const selected =
-    providers.find((provider) => provider.id === providerId) ?? providers[0]
+  const selected = LOGIN_PROVIDERS.find((provider) => provider.id === providerId) ?? LOGIN_PROVIDERS[0]
 
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent): void => {
@@ -101,7 +103,6 @@ export function AddAccountModal({
   }
 
   async function start(): Promise<void> {
-    if (selected === undefined) return
     sessionRef.current = null
     notifiedRef.current = false
     setSession(null)
@@ -154,7 +155,7 @@ export function AddAccountModal({
           <div>
             <div className="msm-title num">Add account</div>
             <div className="msm-sub">
-              <span className="badge badge--muted num">{selected?.wire ?? 'login'}</span>
+              <span className="badge badge--muted num">{selected.id}</span>
               {session !== null ? (
                 <span className={`badge badge--${sessionTone(session.state)} num`}>
                   {session.state}
@@ -168,139 +169,126 @@ export function AddAccountModal({
           </button>
         </header>
         <div className="msm-body">
-          {providers.length === 0 ? (
-            <section className="msm-sec">
-              <p className="note">
-                No providers with a login flow. Add a codex or antigravity provider
-                first.
-              </p>
-            </section>
-          ) : (
-            <>
-              <section className="msm-sec">
-                <div className="msm-sec-label">Provider</div>
-                <div className="pmod-wire">
-                  <span className="pmod-wire-label">Provider</span>
-                  <div className="msm-seg" role="group" aria-label="Login provider">
-                    {providers.map((provider) => (
-                      <button
-                        key={provider.id}
-                        type="button"
-                        className="msm-seg-btn"
-                        aria-pressed={(selected?.id ?? '') === provider.id}
-                        onClick={() => setProviderId(provider.id)}
-                        disabled={session !== null}
-                      >
-                        {provider.id}
-                      </button>
-                    ))}
-                  </div>
-                  <select
-                    id="add-account-provider"
-                    className="sr-only"
-                    value={selected?.id ?? ''}
-                    onChange={(e) => setProviderId(e.target.value)}
-                    tabIndex={-1}
-                    aria-hidden="true"
+          <section className="msm-sec">
+            <div className="msm-sec-label">Provider</div>
+            <div className="pmod-wire">
+              <span className="pmod-wire-label">Provider</span>
+              <div className="msm-seg" role="group" aria-label="Login provider">
+                {LOGIN_PROVIDERS.map((provider) => (
+                  <button
+                    key={provider.id}
+                    type="button"
+                    className="msm-seg-btn"
+                    aria-pressed={selected.id === provider.id}
+                    onClick={() => setProviderId(provider.id)}
                     disabled={session !== null}
                   >
-                    {providers.map((provider) => (
-                      <option key={provider.id} value={provider.id}>{provider.id}</option>
-                    ))}
-                  </select>
-                </div>
-              </section>
-              {session !== null && !TERMINAL[session.state] ? (
-                <section className="msm-sec">
-                  <div className="msm-sec-label">Login</div>
-                  <p className="note">
-                    Complete the login in your browser. This window checks
-                    automatically until it finishes.
-                  </p>
-                </section>
-              ) : null}
-              {approved ? (
-                <section className="msm-sec">
-                  <Banner tone="ok" title="Authorized">
-                    The account joined the pool.
-                  </Banner>
-                </section>
-              ) : null}
-              {failed && !approved ? (
-                <section className="msm-sec">
-                  <Banner tone="error" title="Authorization failed">
-                    Start a new login to retry.
-                  </Banner>
-                </section>
-              ) : null}
+                    {provider.label}
+                  </button>
+                ))}
+              </div>
+              <select
+                id="add-account-provider"
+                className="sr-only"
+                value={selected.id}
+                onChange={(e) => setProviderId(e.target.value)}
+                tabIndex={-1}
+                aria-hidden="true"
+                disabled={session !== null}
+              >
+                {LOGIN_PROVIDERS.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.label}</option>
+                ))}
+              </select>
+            </div>
+          </section>
+          {session !== null && !TERMINAL[session.state] ? (
+            <section className="msm-sec">
+              <div className="msm-sec-label">Login</div>
+              <p className="note">
+                Complete the login in your browser. This window checks
+                automatically until it finishes.
+              </p>
+            </section>
+          ) : null}
+          {approved ? (
+            <section className="msm-sec">
+              <Banner tone="ok" title="Authorized">
+                The account joined the pool.
+              </Banner>
+            </section>
+          ) : null}
+          {failed && !approved ? (
+            <section className="msm-sec">
+              <Banner tone="error" title="Authorization failed">
+                Start a new login to retry.
+              </Banner>
+            </section>
+          ) : null}
+        </div>
+        <footer className="msm-foot">
+          <span className="msm-spacer" />
+          {session === null ? (
+            <>
+              <Button tone="ghost" size="sm" onClick={onClose} disabled={task.running}>
+                Close
+              </Button>
+              <Button
+                tone="primary"
+                size="sm"
+                onClick={() => {
+                  void start()
+                }}
+                disabled={task.running}
+                busy={task.running}
+              >
+                Start login
+              </Button>
+            </>
+          ) : TERMINAL[session.state] ? (
+            <>
+              <Button tone="ghost" size="sm" onClick={onClose}>
+                Close
+              </Button>
+              <Button
+                tone="primary"
+                size="sm"
+                onClick={() => {
+                  void start()
+                }}
+                disabled={task.running}
+                busy={task.running}
+              >
+                Start another login
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button tone="danger" size="sm" onClick={cancelLogin}>
+                Cancel login
+              </Button>
+              <Button
+                tone="ghost"
+                size="sm"
+                onClick={() => {
+                  void copyLink()
+                }}
+              >
+                {copied ? 'Copied' : 'Copy link'}
+              </Button>
+              <Button
+                tone="primary"
+                size="sm"
+                title="Open the authorization page in your default browser."
+                onClick={() => {
+                  void bridge.shell.openExternal(session.url)
+                }}
+              >
+                Open in browser
+              </Button>
             </>
           )}
-        </div>
-        {providers.length > 0 ? (
-          <footer className="msm-foot">
-            <span className="msm-spacer" />
-            {session === null ? (
-              <>
-                <Button tone="ghost" size="sm" onClick={onClose} disabled={task.running}>
-                  Close
-                </Button>
-                <Button
-                  tone="primary"
-                  size="sm"
-                  onClick={() => {
-                    void start()
-                  }}
-                  disabled={task.running}
-                  busy={task.running}
-                >
-                  Start login
-                </Button>
-              </>
-            ) : TERMINAL[session.state] ? (
-              <>
-                <Button tone="ghost" size="sm" onClick={onClose}>
-                  Close
-                </Button>
-                <Button
-                  tone="primary"
-                  size="sm"
-                  onClick={() => {
-                    void start()
-                  }}
-                  disabled={task.running}
-                  busy={task.running}
-                >
-                  Start another login
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button tone="danger" size="sm" onClick={cancelLogin}>
-                  Cancel login
-                </Button>
-                <Button
-                  tone="ghost"
-                  size="sm"
-                  onClick={() => {
-                    void copyLink()
-                  }}
-                >
-                  {copied ? 'Copied' : 'Copy link'}
-                </Button>
-                <Button
-                  tone="primary"
-                  size="sm"
-                  title="Open the authorization page in your default browser."
-                  onClick={() => {
-                    void bridge.shell.openExternal(session.url)
-                  }}
-                >
-                  Open in browser
-                </Button>
-              </>
-            )}
-          </footer>
-        ) : null}
+        </footer>
         {task.error !== null ? (
           <div className="pmod-error">
             <Banner tone="error" title="Login failed to start">
