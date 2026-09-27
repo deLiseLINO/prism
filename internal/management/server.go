@@ -1033,7 +1033,7 @@ func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) resolveAuthProvider(raw string) account.ProviderID {
 	switch raw {
-	case "codex", "antigravity":
+	case "codex", "antigravity", "cline":
 	default:
 		return account.ProviderID(raw)
 	}
@@ -1046,6 +1046,8 @@ func (s *Server) resolveAuthProvider(raw string) account.ProviderID {
 			wire = "codex"
 		case config.WireAntigravity:
 			wire = "antigravity"
+		case config.WireCline:
+			wire = "cline"
 		}
 		if wire == raw && match == "" {
 			match = id
@@ -1067,7 +1069,7 @@ func (s *Server) authStart(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, AuthStartResponse{Session: string(start.Session), URL: start.URL})
+	writeJSON(w, http.StatusOK, AuthStartResponse{Session: string(start.Session), URL: start.URL, UserCode: start.UserCode})
 }
 
 func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {

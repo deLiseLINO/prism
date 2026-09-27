@@ -35,8 +35,11 @@ type RefresherOptions struct {
 	Repos map[account.ProviderID]*account.Repository
 	Pool  RefreshPool
 	Flows map[account.ProviderID]Flow
-	Now   func() time.Time
-	Wait  time.Duration
+	// RefreshFlows carries refresh-only flows for providers whose login is
+	// external to prism (credentials imported from the vendor CLI).
+	RefreshFlows map[account.ProviderID]RefreshFlow
+	Now          func() time.Time
+	Wait         time.Duration
 }
 
 // Refresher is the context-aware credential source behind the Codex and
@@ -47,12 +50,13 @@ type RefresherOptions struct {
 // the provider flow's refresh endpoint, write generation N+1, and advance the
 // runtime pool.
 type Refresher struct {
-	file  *store.FileCredentialStore
-	repos map[account.ProviderID]*account.Repository
-	pool  RefreshPool
-	flows map[account.ProviderID]Flow
-	now   func() time.Time
-	wait  time.Duration
+	file         *store.FileCredentialStore
+	repos        map[account.ProviderID]*account.Repository
+	pool         RefreshPool
+	flows        map[account.ProviderID]Flow
+	refreshFlows map[account.ProviderID]RefreshFlow
+	now          func() time.Time
+	wait         time.Duration
 }
 
 func NewRefresher(opts RefresherOptions) (*Refresher, error) {
@@ -71,12 +75,13 @@ func NewRefresher(opts RefresherOptions) (*Refresher, error) {
 		wait = refreshWait
 	}
 	return &Refresher{
-		file:  opts.File,
-		repos: opts.Repos,
-		pool:  opts.Pool,
-		flows: opts.Flows,
-		now:   now,
-		wait:  wait,
+		file:         opts.File,
+		repos:        opts.Repos,
+		pool:         opts.Pool,
+		flows:        opts.Flows,
+		refreshFlows: opts.RefreshFlows,
+		now:          now,
+		wait:         wait,
 	}, nil
 }
 
@@ -94,13 +99,16 @@ func (r *Refresher) Credential(ctx context.Context, lease account.Lease) (accoun
 	if repo == nil {
 		return account.Credential{}, fmt.Errorf("auth: no account repository configured for %s", lease.Provider)
 	}
-	flow, ok := r.flows[lease.Provider]
-	if !ok {
+	var rf RefreshFlow
+	if flow, ok := r.flows[lease.Provider]; ok {
+		rf, ok = flow.(RefreshFlow)
+		if !ok {
+			return account.Credential{}, fmt.Errorf("auth: provider %s does not support credential refresh", lease.Provider)
+		}
+	} else if only, ok := r.refreshFlows[lease.Provider]; ok {
+		rf = only
+	} else {
 		return account.Credential{}, fmt.Errorf("auth: unknown provider %s", lease.Provider)
-	}
-	rf, ok := flow.(RefreshFlow)
-	if !ok {
-		return account.Credential{}, fmt.Errorf("auth: provider %s does not support credential refresh", lease.Provider)
 	}
 	if blob, ok, err := r.file.Get(ctx, lease.Provider, lease.Account, lease.CredGen); err != nil {
 		return account.Credential{}, err
@@ -202,7 +210,7 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 	if next.Access == "" || next.ExpiresAt.IsZero() {
 		return account.Credential{}, fmt.Errorf("auth: refresh response for %s/%s is incomplete", p, id)
 	}
-	if prev.AccountID != "" && next.AccountID != "" && next.AccountID != prev.AccountID {
+	if prev.AccountID != "" && next.AccountID != "" && next.AccountID != prev.AccountID && !importedIdentity(prev.AccountID) {
 		return account.Credential{}, fmt.Errorf("auth: refresh returned a credential for a different account")
 	}
 	if next.AccountID == "" {
@@ -216,6 +224,12 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 		return account.Credential{}, err
 	}
 	return next, nil
+}
+
+// importedIdentity marks credentials whose vendor file carried no account
+// identity; the first refresh adopts the provider-reported one.
+func importedIdentity(id string) bool {
+	return id == "imported"
 }
 
 func (r *Refresher) load(ctx context.Context, p account.ProviderID, id account.AccountID, gen account.CredentialGeneration) (account.Credential, error) {

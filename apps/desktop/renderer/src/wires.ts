@@ -2,6 +2,7 @@ export const WIRE_OPTIONS: readonly { readonly value: string; readonly label: st
   { value: 'chat', label: 'openai-completions' },
   { value: 'responses', label: 'openai-responses' },
   { value: 'messages', label: 'anthropic' },
+  { value: 'cline', label: 'cline' },
 ]
 
 export function wireLabel(value: string): string {

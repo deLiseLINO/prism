@@ -16,8 +16,9 @@ import (
 type AuthSessionID string
 
 type AuthStart struct {
-	Session AuthSessionID
-	URL     string
+	Session  AuthSessionID
+	URL      string
+	UserCode string
 }
 
 type AuthCallback struct {
@@ -65,6 +66,12 @@ type Flow interface {
 	Config() ProviderConfig
 	AuthURL(state, verifier, redirectURI string) string
 	Exchange(ctx context.Context, code, verifier, redirectURI string) (account.Credential, error)
+}
+
+type DeviceFlow interface {
+	Flow
+	BeginDevice(ctx context.Context) (deviceAuth, error)
+	ExchangeDevice(ctx context.Context, started deviceAuth) (account.Credential, error)
 }
 
 type Options struct {
@@ -138,6 +145,9 @@ func (s *Service) Start(ctx context.Context, provider account.ProviderID) (AuthS
 	if !ok {
 		return AuthStart{}, ErrUnknownProvider
 	}
+	if device, ok := flow.(DeviceFlow); ok {
+		return s.startDevice(ctx, provider, device)
+	}
 	redirectURI, err := s.listenerURI(provider, flow.Config())
 	if err != nil {
 		return AuthStart{}, err
@@ -150,9 +160,62 @@ func (s *Service) Start(ctx context.Context, provider account.ProviderID) (AuthS
 	if err != nil {
 		return AuthStart{}, fmt.Errorf("auth: state nonce: %w", err)
 	}
+	sid, err := s.newSession(provider, verifier, state, redirectURI)
+	if err != nil {
+		return AuthStart{}, err
+	}
+	return AuthStart{Session: sid, URL: flow.AuthURL(state, verifier, redirectURI)}, nil
+}
+
+func (s *Service) startDevice(ctx context.Context, provider account.ProviderID, flow DeviceFlow) (AuthStart, error) {
+	started, err := flow.BeginDevice(ctx)
+	if err != nil {
+		return AuthStart{}, err
+	}
+	sid, err := s.newSession(provider, started.DeviceCode, started.UserCode, started.URL)
+	if err != nil {
+		return AuthStart{}, err
+	}
+	go s.pollDevice(sid, flow, started)
+	return AuthStart{Session: sid, URL: started.URL, UserCode: started.UserCode}, nil
+}
+
+func (s *Service) pollDevice(sid AuthSessionID, flow DeviceFlow, started deviceAuth) {
+	ctx, cancel := context.WithTimeout(context.Background(), started.ExpiresIn+time.Minute)
+	defer cancel()
+	cred, err := flow.ExchangeDevice(ctx, started)
+	s.mu.Lock()
+	rec, ok := s.pending[sid]
+	if !ok || rec.status != StatusPending {
+		s.mu.Unlock()
+		return
+	}
+	provider := rec.provider
+	if err != nil {
+		rec.status = StatusFailed
+		s.mu.Unlock()
+		return
+	}
+	rec.status = statusExchanging
+	s.mu.Unlock()
+	acct, err := s.sink.Persist(ctx, provider, cred)
+	s.mu.Lock()
+	if err != nil {
+		rec.status = StatusFailed
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.sink.Register(acct)
+	s.mu.Lock()
+	rec.status = StatusComplete
+	s.mu.Unlock()
+}
+
+func (s *Service) newSession(provider account.ProviderID, verifier, state, redirectURI string) (AuthSessionID, error) {
 	rawSession, err := randomToken(s.opts.Random, 16)
 	if err != nil {
-		return AuthStart{}, fmt.Errorf("auth: session id: %w", err)
+		return "", fmt.Errorf("auth: session id: %w", err)
 	}
 	sid := AuthSessionID(rawSession)
 	s.mu.Lock()
@@ -167,7 +230,7 @@ func (s *Service) Start(ctx context.Context, provider account.ProviderID) (AuthS
 		status:      StatusPending,
 	}
 	s.byState[state] = sid
-	return AuthStart{Session: sid, URL: flow.AuthURL(state, verifier, redirectURI)}, nil
+	return sid, nil
 }
 
 // Complete validates and finishes a callback from the management route or the

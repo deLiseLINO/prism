@@ -25,6 +25,7 @@ const (
 	KindAntigravity
 	KindOpenAIResponses
 	KindAnthropic
+	KindCline
 )
 
 type Instance struct {

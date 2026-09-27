@@ -212,6 +212,7 @@ export interface StatsResponseView {
 export interface AuthStartView {
   readonly session: string
   readonly url: string
+  readonly userCode?: string
 }
 
 export type AuthSessionState =

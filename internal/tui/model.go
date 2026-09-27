@@ -71,7 +71,6 @@ type Model struct {
 	StatsLoading        bool
 	StatsScroll         int
 
-
 	DeleteConfirm bool
 	PinConfirm    bool
 
@@ -80,7 +79,7 @@ type Model struct {
 	animationTicking     bool
 }
 
-var authProviders = []string{"codex", "antigravity"}
+var authProviders = []string{"codex", "antigravity", "cline"}
 
 const defaultProviderFilter = "codex"
 
@@ -483,7 +482,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Notice = ""
 		return m, nil
 
-
 	case IntegrationApplyResultMsg:
 		m.IntegrationConfirm = ""
 		if msg.Err != nil {
@@ -501,7 +499,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Notice = "integration applied: " + msg.ID + " on " + m.activeHostLabel()
 		m.noticeSeq++
 		return m, tea.Batch(scheduleNoticeClearCmd(m.noticeSeq), FetchHostIntegrationsCmd(m.api, m.activeHostID()))
-
 
 	case AnimationFrameMsg:
 		if !m.advanceAnimations(msg.Now) {

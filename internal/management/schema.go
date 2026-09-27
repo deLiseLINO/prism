@@ -261,8 +261,9 @@ type StatsResponse struct {
 }
 
 type AuthStartResponse struct {
-	Session string `json:"session"`
-	URL     string `json:"url"`
+	Session  string `json:"session"`
+	URL      string `json:"url"`
+	UserCode string `json:"userCode,omitempty"`
 }
 
 type AuthCallbackWrite struct {

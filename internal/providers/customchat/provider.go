@@ -28,6 +28,7 @@ type KeyResolver func(ctx context.Context, target provider.Target, lease account
 type Options struct {
 	ExtraHeaders []Header
 	Models       []provider.Model
+	Client       *http.Client
 }
 
 type Runner struct {
@@ -42,7 +43,7 @@ var (
 )
 
 func New(resolve KeyResolver, opts Options) *Runner {
-	return &Runner{resolve: resolve, extra: opts.ExtraHeaders, models: opts.Models}
+	return &Runner{resolve: resolve, extra: opts.ExtraHeaders, models: opts.Models, client: opts.Client}
 }
 
 type upstreamRequest struct {
@@ -80,8 +81,8 @@ func (r *Runner) buildUpstream(target provider.Target, key string, req canon.Req
 	if key != "" {
 		headers = append(headers, Header{Name: "Authorization", Value: "Bearer " + key})
 	}
-	headers = append(headers, r.extra...)
 	headers = append(headers, forwardHeaders(facts)...)
+	headers = append(headers, r.extra...)
 	return &upstreamRequest{
 		URL:     chatURL(target.BaseURL),
 		Headers: headers,

@@ -610,6 +610,9 @@ func run(opts options) error {
 	quotas.refresher = refresher
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	env.ensureFlows("codex", config.WireCodex)
+	env.ensureFlows("antigravity", config.WireAntigravity)
+	env.ensureFlows("cline", config.WireCline)
 	for _, id := range slices.Sorted(maps.Keys(d.Providers)) {
 		if err := env.ensureProvider(ctx, id, d.Providers[id]); err != nil {
 			return err

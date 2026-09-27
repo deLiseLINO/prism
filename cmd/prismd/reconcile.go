@@ -20,6 +20,7 @@ import (
 	"prism/internal/provider"
 	"prism/internal/providers/anthropic"
 	"prism/internal/providers/antigravity"
+	"prism/internal/providers/cline"
 	"prism/internal/providers/codex"
 	"prism/internal/providers/customchat"
 	"prism/internal/providers/customresponses"
@@ -125,6 +126,8 @@ func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
 			return
 		}
 		e.flows[providerID] = flow
+	case config.WireCline:
+		e.flows[providerID] = auth.NewClineFlow(auth.Options{})
 	default:
 		delete(e.flows, providerID)
 	}
@@ -147,11 +150,44 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 		return customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}), nil
 	case config.WireOpenAIChat:
 		return customchat.New(customKey{e.creds}.Resolve, customchat.Options{}), nil
+	case config.WireCline:
+		return clineRunner(e, p), nil
 	case config.WireAnthropicMessages:
 		return anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.client}), creds: e.creds, provider: providerID}, nil
 	default:
 		return nil, fmt.Errorf("prismd: provider %q has unknown wire %q", id, p.Wire)
 	}
+}
+
+func clineRunner(e *daemonEnv, p config.Provider) provider.Runner {
+	extra := make([]customchat.Header, 0, len(cline.ProductHeaders()))
+	for name, value := range cline.ProductHeaders() {
+		extra = append(extra, customchat.Header{Name: name, Value: value})
+	}
+	resolve := func(ctx context.Context, target provider.Target, lease account.Lease) (string, error) {
+		cred, err := e.refresher.Credential(ctx, lease)
+		if err != nil {
+			return "", err
+		}
+		return cred.Access, nil
+	}
+	inner := customchat.New(resolve, customchat.Options{ExtraHeaders: extra, Client: &http.Client{Transport: cline.UnwrapTransport{}}})
+	return clineAuthRunner{inner: inner, chatBase: cline.GatewayBase(p.BaseURL)}
+}
+
+type clineAuthRunner struct {
+	inner    provider.Runner
+	chatBase string
+}
+
+func (r clineAuthRunner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
+	if req.Target.APIKeyRef == "" {
+		req.Target.APIKeyRef = "lease"
+	}
+	if r.chatBase != "" {
+		req.Target.BaseURL = r.chatBase + "/api/v1"
+	}
+	return r.inner.Run(ctx, req, sink)
 }
 
 func (e *daemonEnv) reconcileOnce(ctx context.Context) {
