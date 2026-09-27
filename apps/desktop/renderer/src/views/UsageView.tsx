@@ -74,8 +74,8 @@ function windowOrder(window: UsageWindow): number {
   return windowFamily(window.label) === 'claude' ? 10 + type : type
 }
 
-export function quotaWindows(quota: QuotaView): readonly UsageWindow[] {
-  if (quota.source === 'unknown') return []
+export function quotaWindows(quota: QuotaView | undefined): readonly UsageWindow[] {
+  if (quota === undefined || quota.source === 'unknown') return []
   if (quota.windows !== undefined && quota.windows.length > 0) {
     return quota.windows
       .slice()

@@ -6,7 +6,7 @@ User-facing features of the Prism system (the Electron desktop app in `apps/desk
 - `overview.md` — the default dashboard: daemon card (state, endpoint), vision sidecar behind the experimental flag, default context window.
 - `renderer-status.md` — the window shows live daemon status, subscribes to supervisor pushes, and the tray tooltip mirrors it.
 - `tray.md` — tray icon, Show Prism, Quit Prism, click-to-show, live tooltip.
-- `auth-flows.md` — per-provider OAuth add-account: start login, pending device state, browser handoff, cancel, terminal states.
+- `auth-flows.md` — add-account login from Accounts: start, pending state, cancel, and the bottom-right error toast when start fails.
 - `accounts-quota.md` — account rows, quota bars and the precise `no quota` state, pause/resume/priority/remove, selection policy, and the read-only quota proof.
 - `providers.md` — provider CRUD with generation CAS, credential paste-once, model enable/disable; the per-provider model list and sync live on the provider card (the old read-only Models tab was removed with the split-detail providers view).
 - `combos-routes.md` — combo create/edit/delete and route alias mapping under CAS.

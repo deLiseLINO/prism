@@ -384,6 +384,13 @@ body::before {
 .banner__detail { font-size: 12px; margin-top: 2px; }
 .banner__action { margin-left: auto; }
 
+.error-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 70;
+  width: min(380px, calc(100vw - 36px));
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+}
+.error-toast__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.error-toast__actions { display: flex; justify-content: flex-end; }
 .prov-split { display: grid; grid-template-columns: 344px minmax(0, 1fr); gap: 14px; align-items: start; }
 .prov-detail-wrap { display: grid; }
 .prov-detail-wrap > .prov-detail { animation: prov-swap 0.5s var(--ease-out) backwards; }

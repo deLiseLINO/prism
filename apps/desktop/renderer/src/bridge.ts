@@ -26,6 +26,7 @@ export const bridge: PrismBridge = {
   get window() { return (electronBridge() ?? webBridge).window },
   get zoom() { return (electronBridge() ?? webBridge).zoom },
   get updater() { return (electronBridge() ?? webBridge).updater },
+  get report() { return (electronBridge() ?? webBridge).report },
 }
 
 async function healthAsDaemonStatus(): Promise<DaemonStatus> {
@@ -116,4 +117,8 @@ const webBridge: PrismBridge = {
   window: webWindow,
   zoom: webZoom,
   updater: webUpdater,
+  report: {
+    snapshot: () => Promise.reject(new Error('prism: reports are sent from the desktop app')),
+    send: () => Promise.reject(new Error('prism: reports are sent from the desktop app')),
+  },
 }

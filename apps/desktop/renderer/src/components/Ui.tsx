@@ -1,5 +1,7 @@
 import type { ThemeMode } from '../useTheme'
 import { cloneElement, Component, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { ReportActions } from './ReportActions'
 
 export interface CardProps {
   readonly title?: string
@@ -449,29 +451,36 @@ export function describeUnknownError(error: unknown): string {
   return String(error)
 }
 
-export function VersionMismatchBanner({
-  error,
-  onRetry,
+export function ErrorToast({
+  title,
+  detail,
+  onClose,
 }: {
-  readonly error: unknown
-  readonly onRetry: () => void
+  readonly title: string
+  readonly detail: string
+  readonly onClose: () => void
 }): JSX.Element {
-  const detail = describeUnknownError(error)
-  const isContract = detail.includes('quota') || detail.includes('undefined')
-  return (
-    <Banner
-      tone="warn"
-      title={isContract ? 'Daemon and app versions do not match' : 'Renderer error'}
-      action={
-        <Button tone="ghost" size="sm" onClick={onRetry}>
-          Retry
-        </Button>
-      }
-    >
-      {isContract
-        ? 'Restart Prism so the bundled daemon updates to the same version. Data may be incomplete until then.'
-        : detail}
-    </Banner>
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return createPortal(
+    <section className="error-toast card" role="alert" aria-label={title}>
+      <header className="error-toast__head">
+        <div className="msm-title">{title}</div>
+        <button type="button" className="ibtn" aria-label="Close" onClick={onClose}>
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><path d="M2.5 2.5l9 9M11.5 2.5l-9 9" /></svg>
+        </button>
+      </header>
+      <p className="note">{detail}</p>
+      <div className="error-toast__actions">
+        <ReportActions title={title} detail={detail} />
+      </div>
+    </section>,
+    document.body,
   )
 }
 
@@ -489,9 +498,10 @@ export class RenderErrorBoundary extends Component<
     const { error } = this.state
     if (error !== null) {
       return (
-        <VersionMismatchBanner
-          error={error}
-          onRetry={() => this.setState({ error: null })}
+        <ErrorToast
+          title="Something went wrong"
+          detail={describeUnknownError(error)}
+          onClose={() => this.setState({ error: null })}
         />
       )
     }

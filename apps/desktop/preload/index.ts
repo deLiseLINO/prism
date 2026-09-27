@@ -52,6 +52,10 @@ const bridge: PrismBridge = {
       }
     },
   },
+  report: {
+    snapshot: (title: string, detail: string) => ipcRenderer.invoke(IpcChannel.reportSnapshot, { title, detail }),
+    send: (target: 'issue' | 'bot', title: string, detail: string) => ipcRenderer.invoke(IpcChannel.reportSend, { target, title, detail }),
+  },
 }
 
 contextBridge.exposeInMainWorld('prism', bridge)

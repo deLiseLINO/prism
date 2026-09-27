@@ -9,7 +9,7 @@ import { installHostDaemon, parseHostInstallRequest, type HostInstallDeps } from
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
 import type { UpdaterService } from './updater/updater'
-
+import { buildSnapshot, reportSource, sendReport } from './report'
 
 export interface IpcWiring {
   readonly supervisor: DaemonSupervisor
@@ -138,4 +138,26 @@ export function registerIpc(wiring: IpcWiring): void {
     if (typeof input !== 'boolean') throw new Error('prism: rc channel requires a boolean')
     wiring.updater.setRcChannel(input)
   })
+  ipcMain.handle(IpcChannel.reportSnapshot, (event, input: unknown) => {
+    trustedSender(event)
+    const report = parseReport(input)
+    const source = reportSource(wiring.supervisor.status, () => wiring.supervisor.logTail())
+    return buildSnapshot(source, report.title, report.detail)
+  })
+  ipcMain.handle(IpcChannel.reportSend, (event, input: unknown) => {
+    trustedSender(event)
+    const report = parseReport(input)
+    const source = reportSource(wiring.supervisor.status, () => wiring.supervisor.logTail())
+    return sendReport(source, report.target, report.title, report.detail)
+  })
+}
+
+function parseReport(input: unknown): { title: string; detail: string; target: 'issue' | 'bot' } {
+  if (typeof input !== 'object' || input === null) throw new Error('prism: report requires an object')
+  const record = input as Record<string, unknown>
+  if (typeof record.title !== 'string' || record.title === '') throw new Error('prism: report title requires a string')
+  if (typeof record.detail !== 'string') throw new Error('prism: report detail requires a string')
+  const target = record.target === undefined ? 'issue' : record.target
+  if (target !== 'issue' && target !== 'bot') throw new Error('prism: report target must be issue or bot')
+  return { title: record.title, detail: record.detail, target }
 }
