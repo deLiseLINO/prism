@@ -214,13 +214,6 @@ export function UsagePanel(): JSX.Element {
     }
     return pins
   }, [providersReady])
-  const authProviders = useMemo(
-    () =>
-      (providersReady?.providers ?? []).filter(
-        (provider) => provider.wire === 'codex' || provider.wire === 'antigravity',
-      ),
-    [providersReady],
-  )
   const accounts = usage.state.kind === 'ready' ? usage.state.value.accounts : []
 
   const refreshQuota = useCallback(
@@ -367,7 +360,6 @@ export function UsagePanel(): JSX.Element {
             tone="ghost"
             size="sm"
             onClick={() => setAdding(true)}
-            disabled={authProviders.length === 0}
             title="Authorize a new account through the provider login flow."
           >
             Add account
@@ -400,7 +392,6 @@ export function UsagePanel(): JSX.Element {
           <>
             {adding ? (
               <AddAccountModal
-                providers={authProviders}
                 onAdded={() => {
                   usage.refresh()
                   providers.refresh()
