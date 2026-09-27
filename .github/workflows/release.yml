@@ -96,38 +96,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  build-prismd-linux:
-    name: Linux prismd
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.preflight.outputs.ref }}
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Build linux daemon binaries
-        env:
-          PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
-        run: |
-          version="${PRISM_RELEASE_TAG#v}"
-          out=apps/desktop/resources/prismd
-          mkdir -p "$out"
-          for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-X prism/internal/buildinfo.Version=${version}" -o "$out/prismd-linux-${arch}" ./cmd/prismd
-          done
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: prismd-linux
-          path: |
-            apps/desktop/resources/prismd/prismd-linux-amd64
-            apps/desktop/resources/prismd/prismd-linux-arm64
-          if-no-files-found: error
-          retention-days: 1
-
   build-linux:
     name: Linux AppImage
     needs: preflight
@@ -200,7 +168,7 @@ jobs:
 
   build-macos:
     name: macOS ${{ matrix.arch }}
-    needs: [preflight, build-prismd-linux]
+    needs: preflight
     runs-on: macos-latest
     timeout-minutes: 30
     strategy:
@@ -229,11 +197,6 @@ jobs:
         env:
           PRISM_RELEASE_TAG: v${{ needs.preflight.outputs.version }}
           PRISM_DAEMON_TARGETS: prismd-darwin-arm64,prismd-darwin-amd64
-      - name: Download linux daemon binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: prismd-linux
-          path: apps/desktop/resources/prismd
       - name: Require macOS update signing identity
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -286,11 +249,6 @@ jobs:
             exit 1
           fi
           codesign --verify --deep --strict -R="$requirement" "$app"
-          test -x "$built/Contents/Resources/prismd/prismd-darwin-arm64"
-          test -x "$built/Contents/Resources/prismd/prismd-darwin-amd64"
-          test -x "$built/Contents/Resources/prismd/prismd-linux-amd64"
-          test -x "$built/Contents/Resources/prismd/prismd-linux-arm64"
-          test ! -e "$built/Contents/Resources/prismd/prismd-windows-amd64.exe"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-${{ matrix.arch }}-artifacts
@@ -305,7 +263,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [preflight, build-prismd-linux, build-linux, build-windows, build-macos]
+    needs: [preflight, build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
