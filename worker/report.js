@@ -34,22 +34,14 @@ async function postIssue(env, report) {
 }
 
 async function postBot(env, report) {
-  const text = `${report.title}\n\n${report.body}`.slice(0, 4000)
+  const text = `${report.title}\n\n${report.body}`.slice(0, 1000)
+  const log = typeof report.log === 'string' ? report.log.trim() : ''
   const token = typeof env.TELEGRAM_BOT_TOKEN === 'string' ? env.TELEGRAM_BOT_TOKEN : ''
   const chat = typeof env.TELEGRAM_CHAT_ID === 'string' ? env.TELEGRAM_CHAT_ID : ''
-  const message = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chat, text }),
-  })
-  const messageBody = await message.text()
-  if (!message.ok) throw new Error(telegramError(message.status, messageBody))
-  const log = typeof report.log === 'string' ? report.log.trim() : ''
-  if (log === '') return
   const form = new FormData()
   form.set('chat_id', chat)
-  form.set('caption', 'Full log')
-  form.set('document', new File([log], 'prism-log.txt', { type: 'text/plain' }))
+  form.set('caption', text)
+  form.set('document', new File([log === '' ? text : log], 'prism-log.txt', { type: 'text/plain' }))
   const file = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: 'POST',
     body: form,
