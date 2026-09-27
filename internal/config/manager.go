@@ -100,9 +100,20 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 	if err := writeAtomic(m.path, fileFormat{Version: SchemaVersion, Generation: gen, Config: next}); err != nil {
 		return Snapshot{}, err
 	}
-	m.snap = Snapshot{Config: cloneDocument(next), Generation: gen}
+	stored := cloneDocument(next)
+	stored.catalog = m.snap.Config.catalog
+	m.snap = Snapshot{Config: stored, Generation: gen}
 	m.notifyChanged()
 	return cloneSnapshot(m.snap), nil
+}
+
+func (m *Manager) SetCatalog(c catalogLookup) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.snap.Config.catalog = c
 }
 
 func (m *Manager) notifyChanged() {
@@ -165,6 +176,7 @@ func cloneDocument(d Document) Document {
 		Hosts:         cloneMap(d.Hosts),
 		Integrations:  cloneMap(d.Integrations),
 		VisionSidecar: d.VisionSidecar,
+		catalog:       d.catalog,
 	}
 	for id, p := range d.Providers {
 		p.Models = append([]string(nil), p.Models...)

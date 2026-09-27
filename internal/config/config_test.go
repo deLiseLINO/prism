@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"prism/internal/catalog"
 )
 
 func boolPtr(v bool) *bool { return &v }
@@ -311,6 +313,96 @@ func TestResolveImageInputPrecedence(t *testing.T) {
 		if got := doc.ResolveImageInput("p", c.model); got != c.want {
 			t.Fatalf("ResolveImageInput(%s) = %v, want %v", c.model, got, c.want)
 		}
+	}
+}
+
+type staticCatalog map[string]catalog.Facts
+
+func (c staticCatalog) Lookup(id string) catalog.Facts {
+	if c == nil {
+		return catalog.Facts{}
+	}
+	return c[id]
+}
+
+func TestNilCatalogPreservesResolverChain(t *testing.T) {
+	window := 128000
+	on := true
+	doc := Document{
+		ContextWindow: 400000,
+		Providers: map[string]Provider{
+			"p": {
+				Discovered: map[string]DiscoveredFacts{
+					"listed": {ContextWindow: &window, Image: &on},
+				},
+			},
+		},
+	}
+	if got := doc.ResolveContextWindow("p", "listed"); got != 128000 {
+		t.Fatalf("listed window = %d", got)
+	}
+	if got := doc.ResolveContextWindow("p", "plain"); got != 400000 {
+		t.Fatalf("global window = %d", got)
+	}
+	if !doc.ResolveImageInput("p", "listed") || doc.ResolveImageInput("p", "plain") {
+		t.Fatal("nil catalog changed image resolution")
+	}
+}
+
+func TestCatalogFillsUnknownAndLosesToListing(t *testing.T) {
+	listedWindow := 128000
+	off := false
+	on := true
+	doc := Document{
+		ContextWindow: 400000,
+		Providers: map[string]Provider{
+			"p": {
+				Models: []string{"manual", "listed", "text", "bare"},
+				ModelSettings: map[string]ModelSettings{
+					"manual": {ContextWindow: 200000, ImageInput: &off},
+				},
+				Discovered: map[string]DiscoveredFacts{
+					"listed": {ContextWindow: &listedWindow},
+					"text":   {Image: &off},
+				},
+			},
+		},
+	}
+	doc.setCatalog(staticCatalog{
+		"manual": {ContextWindow: 500000, Image: &on},
+		"listed": {ContextWindow: 500000, Image: &on},
+		"text":   {ContextWindow: 500000, Image: &on},
+		"bare":   {ContextWindow: 500000, Image: &on},
+	})
+	if got := doc.ResolveContextWindow("p", "manual"); got != 200000 {
+		t.Fatalf("manual window = %d, want 200000", got)
+	}
+	if got := doc.ResolveContextWindow("p", "listed"); got != 128000 {
+		t.Fatalf("listing window = %d, want 128000", got)
+	}
+	if got := doc.ResolveContextWindow("p", "bare"); got != 500000 {
+		t.Fatalf("catalog window = %d, want 500000", got)
+	}
+	if doc.ResolveImageInput("p", "manual") {
+		t.Fatal("manual image false lost to catalog")
+	}
+	if doc.ResolveImageInput("p", "text") {
+		t.Fatal("listing image false lost to catalog")
+	}
+	if !doc.ResolveImageInput("p", "bare") {
+		t.Fatal("catalog image true did not fill a silent model")
+	}
+	src := doc.ResolveContextSource("p", "bare")
+	if src.Window != 500000 || src.Source != "catalog" {
+		t.Fatalf("context source = %+v", src)
+	}
+	img := doc.ResolveImageSource("p", "text")
+	if img.Image || img.Source != "listing" {
+		t.Fatalf("image source = %+v", img)
+	}
+	global := doc.ResolveContextSource("p", "missing")
+	if global.Window != 400000 || global.Source != "global" {
+		t.Fatalf("global source = %+v", global)
 	}
 }
 

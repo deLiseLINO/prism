@@ -349,3 +349,39 @@ func TestCloneDocumentCopiesDiscoveredPointers(t *testing.T) {
 		t.Fatal("mutating the clone changed the snapshot")
 	}
 }
+
+func TestSetCatalogSurvivesUpdateWithoutWritingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	m, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := true
+	m.SetCatalog(staticCatalog{"glm-5.3": {ContextWindow: 500000, Image: &on}})
+	before, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	gen := m.Get().Generation
+	doc := validDoc()
+	if _, err := m.Update(doc, gen); err != nil {
+		t.Fatal(err)
+	}
+	got := m.Get().Config.ResolveContextWindow("codex-main", "glm-5.3")
+	if got != 500000 {
+		t.Fatalf("window after update = %d, want catalog 500000", got)
+	}
+	if !m.Get().Config.ResolveImageInput("codex-main", "glm-5.3") {
+		t.Fatal("catalog image lost after update")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after), "glm-5.3") || strings.Contains(string(after), "catalog") {
+		t.Fatal("catalog facts written into prism.json")
+	}
+	if gen == 0 && len(before) != 0 {
+		t.Fatal("unexpected config before first update")
+	}
+}

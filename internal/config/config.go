@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"prism/internal/catalog"
 	"prism/internal/integrations"
 )
 
@@ -80,6 +81,7 @@ type Document struct {
 	Hosts         map[string]Host                `json:"hosts,omitempty"`
 	Integrations  map[string]IntegrationSettings `json:"integrations,omitempty"`
 	VisionSidecar VisionSidecarSettings          `json:"visionSidecar,omitempty"`
+	catalog       catalogLookup                  `json:"-"`
 }
 
 type IntegrationSettings struct {
@@ -152,31 +154,87 @@ func (d *DiscoveredFacts) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type catalogLookup interface {
+	Lookup(modelID string) catalog.Facts
+}
+
+func (d *Document) setCatalog(c catalogLookup) {
+	if d == nil {
+		return
+	}
+	d.catalog = c
+}
+
+func (d Document) catalogFacts(model string) catalog.Facts {
+	if d.catalog == nil {
+		return catalog.Facts{}
+	}
+	return d.catalog.Lookup(model)
+}
+
 func (d Document) ResolveContextWindow(providerID, model string) int {
+	n, _ := d.contextFallback(providerID, model, true)
+	return n
+}
+
+func (d Document) contextFallback(providerID, model string, includeManual bool) (int, string) {
 	if p, ok := d.Providers[providerID]; ok {
-		if s, ok := p.ModelSettings[model]; ok && s.ContextWindow > 0 {
-			return s.ContextWindow
+		if includeManual {
+			if s, ok := p.ModelSettings[model]; ok && s.ContextWindow > 0 {
+				return s.ContextWindow, "manual"
+			}
 		}
 		if facts, ok := p.Discovered[model]; ok && facts.ContextWindow != nil && *facts.ContextWindow > 0 {
-			return *facts.ContextWindow
+			return *facts.ContextWindow, "listing"
 		}
 	}
-	if d.ContextWindow > 0 {
-		return d.ContextWindow
+	if n := d.catalogFacts(model).ContextWindow; n > 0 {
+		return n, "catalog"
 	}
-	return DefaultContextWindow
+	if d.ContextWindow > 0 {
+		return d.ContextWindow, "global"
+	}
+	return DefaultContextWindow, "global"
 }
 
 func (d Document) ResolveImageInput(providerID, model string) bool {
+	on, _ := d.imageResolution(providerID, model)
+	return on
+}
+
+func (d Document) imageResolution(providerID, model string) (bool, string) {
 	if p, ok := d.Providers[providerID]; ok {
 		if s, ok := p.ModelSettings[model]; ok && s.ImageInput != nil {
-			return *s.ImageInput
+			return *s.ImageInput, "manual"
 		}
-		if facts, ok := p.Discovered[model]; ok && facts.Image != nil && *facts.Image {
-			return true
+		if facts, ok := p.Discovered[model]; ok && facts.Image != nil {
+			return *facts.Image, "listing"
 		}
 	}
-	return false
+	if img := d.catalogFacts(model).Image; img != nil && *img {
+		return true, "catalog"
+	}
+	return false, "none"
+}
+
+type ContextSource struct {
+	Window int
+	Source string
+}
+
+type ImageSource struct {
+	Image  bool
+	Source string
+}
+
+func (d Document) ResolveContextSource(providerID, model string) ContextSource {
+	n, src := d.contextFallback(providerID, model, false)
+	return ContextSource{Window: n, Source: src}
+}
+
+func (d Document) ResolveImageSource(providerID, model string) ImageSource {
+	on, src := d.imageResolution(providerID, model)
+	return ImageSource{Image: on, Source: src}
 }
 
 type PoolSettings struct {

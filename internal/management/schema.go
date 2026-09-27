@@ -60,10 +60,18 @@ type Provider struct {
 	RawModels      []string                          `json:"rawModels,omitempty"`
 	Discovered     map[string]config.DiscoveredFacts `json:"discovered,omitempty"`
 	ResolvedImage  map[string]bool                   `json:"resolvedImage,omitempty"`
+	ResolvedFacts  map[string]ResolvedFacts          `json:"resolvedFacts,omitempty"`
 	ModelSettings  map[string]config.ModelSettings   `json:"modelSettings,omitempty"`
 	Enabled        *bool                             `json:"enabled,omitempty"`
 	Pool           *config.PoolSettings              `json:"pool,omitempty"`
 	Credential     ProviderCredential                `json:"credential"`
+}
+
+type ResolvedFacts struct {
+	ContextWindow int    `json:"contextWindow"`
+	ContextSource string `json:"contextSource"`
+	Image         bool   `json:"image"`
+	ImageSource   string `json:"imageSource"`
 }
 
 type ListedModel struct {

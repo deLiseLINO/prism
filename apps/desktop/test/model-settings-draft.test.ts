@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftFromSettings, draftToSettings } from '../renderer/src/components/ModelSettingsModal'
+import { contextCaption, draftFromSettings, draftToSettings } from '../renderer/src/components/ModelSettingsModal'
 
 describe('model settings draft', () => {
   it('omits imageInput until the user touches the toggle', () => {
@@ -28,5 +28,11 @@ describe('model settings draft', () => {
     const draft = draftFromSettings({ imageInput: true }, false)
     expect(draft.imageTouched).toBe(true)
     expect(draftToSettings(draft)).toEqual({ imageInput: true })
+  })
+
+  it('captions the non-manual source without recomputing it', () => {
+    expect(contextCaption('catalog', 500000)).toBe('catalog 500,000')
+    expect(contextCaption('listing', 128000)).toBe('listing 128,000')
+    expect(contextCaption('global', 256000)).toBe('global 256,000')
   })
 })

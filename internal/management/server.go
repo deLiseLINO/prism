@@ -273,7 +273,7 @@ func (s *Server) providersList(w http.ResponseWriter, r *http.Request) {
 	snap := s.cfg.Get()
 	out := make([]Provider, 0, len(snap.Config.Providers))
 	for _, id := range sortedKeys(snap.Config.Providers) {
-		v, err := s.providerView(r.Context(), id, snap.Config.Providers[id])
+		v, err := s.providerView(r.Context(), snap.Config, id, snap.Config.Providers[id])
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())
 			return
@@ -406,7 +406,7 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 			return
 		}
 	}
-	v, err := s.providerView(r.Context(), id, updated.Config.Providers[id])
+	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -551,7 +551,7 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, err)
 		return
 	}
-	v, err := s.providerView(r.Context(), id, updated.Config.Providers[id])
+	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -559,14 +559,31 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
 }
 
-func resolvedImages(id string, p config.Provider) map[string]bool {
+func resolvedImages(doc config.Document, id string, p config.Provider) map[string]bool {
 	if len(p.Models) == 0 {
 		return nil
 	}
-	doc := config.Document{Providers: map[string]config.Provider{id: p}}
 	out := make(map[string]bool, len(p.Models))
 	for _, model := range p.Models {
 		out[model] = doc.ResolveImageInput(id, model)
+	}
+	return out
+}
+
+func resolvedFacts(doc config.Document, id string, p config.Provider) map[string]ResolvedFacts {
+	if len(p.Models) == 0 {
+		return nil
+	}
+	out := make(map[string]ResolvedFacts, len(p.Models))
+	for _, model := range p.Models {
+		ctx := doc.ResolveContextSource(id, model)
+		img := doc.ResolveImageSource(id, model)
+		out[model] = ResolvedFacts{
+			ContextWindow: ctx.Window,
+			ContextSource: ctx.Source,
+			Image:         img.Image,
+			ImageSource:   img.Source,
+		}
 	}
 	return out
 }
@@ -628,7 +645,7 @@ func fillUnknown(base, overlay config.DiscoveredFacts) config.DiscoveredFacts {
 	return base
 }
 
-func (s *Server) providerView(ctx context.Context, id string, p config.Provider) (Provider, error) {
+func (s *Server) providerView(ctx context.Context, doc config.Document, id string, p config.Provider) (Provider, error) {
 	state := "unset"
 	set, err := s.creds.Configured(ctx, id)
 	if err != nil {
@@ -637,6 +654,7 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 	if set {
 		state = "set"
 	}
+	doc.Providers = map[string]config.Provider{id: p}
 	return Provider{
 		ID:             id,
 		Wire:           string(p.Wire),
@@ -648,7 +666,8 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 		SyncedModels:   p.SyncedModels,
 		RawModels:      rawModelsForProvider(p),
 		Discovered:     p.Discovered,
-		ResolvedImage:  resolvedImages(id, p),
+		ResolvedImage:  resolvedImages(doc, id, p),
+		ResolvedFacts:  resolvedFacts(doc, id, p),
 		ModelSettings:  p.ModelSettings,
 		Enabled:        p.Enabled,
 		Pool:           p.Pool,
@@ -690,7 +709,7 @@ func (s *Server) providersModelMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.ModelMode == mode {
-		v, err := s.providerView(r.Context(), id, p)
+		v, err := s.providerView(r.Context(), snap.Config, id, p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())
 			return
@@ -705,7 +724,7 @@ func (s *Server) providersModelMode(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, err)
 		return
 	}
-	v, err := s.providerView(r.Context(), id, updated.Config.Providers[id])
+	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return

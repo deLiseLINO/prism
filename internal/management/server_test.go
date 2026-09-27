@@ -18,6 +18,7 @@ import (
 	"prism/internal/auth"
 	"prism/internal/buildinfo"
 	"prism/internal/canon"
+	"prism/internal/catalog"
 	"prism/internal/config"
 	"prism/internal/execution"
 	"prism/internal/integrations"
@@ -28,6 +29,10 @@ import (
 )
 
 const testSecret = "sk-test-credential-value"
+
+type staticLookup map[string]catalog.Facts
+
+func (s staticLookup) Lookup(id string) catalog.Facts { return s[id] }
 
 type fakePool struct {
 	accounts  []account.Account
@@ -1465,6 +1470,38 @@ func TestProviderPutPreservesDiscovered(t *testing.T) {
 	}
 	if _, ok := view.Discovered["m"]; !ok {
 		t.Fatal("provider view omitted discovered")
+	}
+}
+
+func TestProviderViewUsesCatalogWhenListingIsSilent(t *testing.T) {
+	env := newEnv(t)
+	on := true
+	env.cfg.SetCatalog(staticLookup{"grok-4.7": {ContextWindow: 500000, Image: &on}})
+	if _, err := env.cfg.Update(config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"custom": {Wire: config.WireOpenAIChat, BaseURL: "http://up.example/v1", Models: []string{"grok-4.7"}},
+		},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do(t, http.MethodGet, "/api/v1/providers", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody[ProvidersResponse](t, rec)
+	var view Provider
+	for _, p := range body.Providers {
+		if p.ID == "custom" {
+			view = p
+		}
+	}
+	if view.ResolvedImage["grok-4.7"] != true {
+		t.Fatalf("resolvedImage = %v, want catalog true", view.ResolvedImage)
+	}
+	facts := view.ResolvedFacts["grok-4.7"]
+	if facts.ContextWindow != 500000 || facts.ContextSource != "catalog" || !facts.Image || facts.ImageSource != "catalog" {
+		t.Fatalf("resolvedFacts = %+v", facts)
 	}
 }
 

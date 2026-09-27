@@ -13,6 +13,12 @@ const CONTEXT_PRESETS: readonly { readonly value: number; readonly label: string
 
 const EFFORTS: readonly string[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
+export type ContextSource = 'listing' | 'catalog' | 'global'
+
+export function contextCaption(source: ContextSource, n: number): string {
+  return `${source} ${fmt(n)}`
+}
+
 function fmt(n: number): string {
   return n.toLocaleString('en-US')
 }
@@ -51,7 +57,7 @@ export interface ModelSettingsModalProps {
   readonly model: string
   readonly isNew: boolean
   readonly fallbackContextWindow: number
-  readonly discoveredContextWindow?: number
+  readonly contextSource?: ContextSource
   readonly resolvedImage?: boolean
   readonly initial: ModelSettingsView | undefined
   readonly busy: boolean
@@ -64,7 +70,7 @@ export function ModelSettingsModal({
   model,
   isNew,
   fallbackContextWindow,
-  discoveredContextWindow,
+  contextSource = 'global',
   resolvedImage = false,
   initial,
   busy,
@@ -229,7 +235,7 @@ export function ModelSettingsModal({
                   value={custom}
                   onChange={(event) => onCustomInput(event.target.value)}
                   inputMode="numeric"
-                  placeholder={String(discoveredContextWindow ?? fallbackContextWindow)}
+                  placeholder={String(fallbackContextWindow)}
                   aria-label="Custom context window"
                 />
                 <span className="msm-suffix">tokens</span>
@@ -238,9 +244,7 @@ export function ModelSettingsModal({
                 Effective <b className="num">{fmt(effective)} tokens</b>
                 {ctxOver
                   ? ' · applies to this model'
-                  : discoveredContextWindow !== undefined
-                    ? ` · listing ${fmt(discoveredContextWindow)}`
-                    : ` · global ${fmt(fallbackContextWindow)}`}
+                  : ` · ${contextCaption(contextSource, fallbackContextWindow)}`}
               </p>
             </div>
           </section>

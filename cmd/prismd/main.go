@@ -27,6 +27,7 @@ import (
 	"prism/internal/auth"
 	"prism/internal/buildinfo"
 	"prism/internal/canon"
+	modelcat "prism/internal/catalog"
 	"prism/internal/config"
 	"prism/internal/integrations"
 	"prism/internal/management"
@@ -618,11 +619,16 @@ func run(opts options) error {
 	if err != nil {
 		return err
 	}
+	modelCatalog, err := modelcat.Open(filepath.Dir(opts.configPath))
+	if err != nil {
+		return err
+	}
+	cfg.SetCatalog(modelCatalog)
 	d := cfg.Get().Config
 	creds := credentialStore{file: store.NewFileCredentialStore(opts.credentialPath)}
 	pool := account.New(secret, time.Now)
 	registry := provider.NewRegistry()
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	quotas := newQuotaTable(pool, cfg, client)
 	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client)
 	refresher, err := auth.NewRefresher(auth.RefresherOptions{File: creds.file, Repos: env.repos, Pool: pool, Flows: env.flows})
@@ -715,9 +721,9 @@ func run(opts options) error {
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	go env.loop(ctx)
 	go watchIntegrations(ctx, cfg, intg)
+	go refreshModelCatalog(ctx, modelCatalog, client)
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
-	log.Printf("prismd: listening on %s config=%s credentials=%s", opts.listen, opts.configPath, opts.credentialPath)
 	select {
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -746,4 +752,23 @@ func run(opts options) error {
 	<-stopDone
 	log.Printf("prismd: shutdown complete")
 	return nil
+}
+
+func refreshModelCatalog(ctx context.Context, index *modelcat.Index, client *http.Client) {
+	refresh := func() {
+		if err := index.Refresh(ctx, client); err != nil && ctx.Err() == nil {
+			log.Printf("prismd: model catalog refresh: %v", err)
+		}
+	}
+	refresh()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
 }

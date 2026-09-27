@@ -52,6 +52,7 @@ export interface ProviderView {
   readonly rawModels?: readonly string[]
   readonly discovered?: Readonly<Record<string, DiscoveredFacts>>
   readonly resolvedImage?: Readonly<Record<string, boolean>>
+  readonly resolvedFacts?: Readonly<Record<string, ResolvedFacts>>
   readonly modelSettings?: Readonly<Record<string, ModelSettingsView>>
   readonly enabled?: boolean
   readonly pool?: PoolSettingsView
@@ -94,6 +95,13 @@ export interface ContextWindowWrite {
 export interface DiscoveredFacts {
   readonly contextWindow?: number
   readonly image?: boolean
+}
+
+export interface ResolvedFacts {
+  readonly contextWindow: number
+  readonly contextSource: 'listing' | 'catalog' | 'global'
+  readonly image: boolean
+  readonly imageSource: 'manual' | 'listing' | 'catalog' | 'none'
 }
 
 export interface ModelSettingsView {
