@@ -26,6 +26,7 @@ export const bridge: PrismBridge = {
   get window() { return (electronBridge() ?? webBridge).window },
   get zoom() { return (electronBridge() ?? webBridge).zoom },
   get updater() { return (electronBridge() ?? webBridge).updater },
+  get report() { return (electronBridge() ?? webBridge).report },
 }
 
 async function healthAsDaemonStatus(): Promise<DaemonStatus> {

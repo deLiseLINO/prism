@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { AuthSessionState, AuthStartView } from '@prism/contracts'
-import { Banner, Button } from './Ui'
+import { Banner, Button, ErrorToast } from './Ui'
 import { useTask, describeError } from '../useAsync'
 import { api, ApiError } from '../api'
 import { bridge } from '../bridge'
-import { ReportActions } from './ReportActions'
 
 const POLL_INTERVAL_MS = 1_500
 
@@ -53,6 +52,8 @@ export function AddAccountModal({
   const sessionRef = useRef<string | null>(null)
   const notifiedRef = useRef(false)
   const task = useTask()
+  const [toast, setToast] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
 
   const selected = LOGIN_PROVIDERS.find((provider) => provider.id === providerId) ?? LOGIN_PROVIDERS[0]
 
@@ -110,15 +111,23 @@ export function AddAccountModal({
     notifiedRef.current = false
     setSession(null)
     setPollFailure(null)
-    const started = await task.run<AuthStartView>(() => api.authStart(selected.id))
-    if (started === undefined) return
-    sessionRef.current = started.session
-    setSession({
-      session: started.session,
-      url: started.url,
-      userCode: started.userCode ?? '',
-      state: 'pending',
-    })
+    setToast(null)
+    setStarting(true)
+    try {
+      const started = await api.authStart(selected.id)
+      sessionRef.current = started.session
+      setSession({
+        session: started.session,
+        url: started.url,
+        userCode: started.userCode ?? '',
+        state: 'pending',
+      })
+    } catch (error: unknown) {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      setToast(describeError(normalized))
+    } finally {
+      setStarting(false)
+    }
   }
 
   function cancelLogin(): void {
@@ -244,7 +253,7 @@ export function AddAccountModal({
           <span className="msm-spacer" />
           {session === null ? (
             <>
-              <Button tone="ghost" size="sm" onClick={onClose} disabled={task.running}>
+              <Button tone="ghost" size="sm" onClick={onClose} disabled={starting}>
                 Close
               </Button>
               <Button
@@ -253,8 +262,8 @@ export function AddAccountModal({
                 onClick={() => {
                   void start()
                 }}
-                disabled={task.running}
-                busy={task.running}
+                disabled={starting}
+                busy={starting}
               >
                 Start login
               </Button>
@@ -303,19 +312,8 @@ export function AddAccountModal({
             </>
           )}
         </footer>
-        {task.error !== null ? (
-          <div className="pmod-error">
-            <Banner
-              tone="error"
-              title="Login failed to start"
-              action={<ReportActions title="Login failed to start" detail={describeError(task.error)} />}
-            >
-              {describeError(task.error)}
-              {task.error instanceof ApiError && task.error.code === 'loopback_unavailable'
-                ? ': the loopback callback port is busy. Free it and retry.'
-                : null}
-            </Banner>
-          </div>
+        {toast !== null ? (
+          <ErrorToast title="Login failed to start" detail={toast} onClose={() => setToast(null)} />
         ) : null}
       </section>
     </div>,

@@ -8,9 +8,14 @@ export default {
     if (typeof report.title !== 'string' || typeof report.body !== 'string') {
       return new Response('missing report', { status: 400 })
     }
-    if (report.target === 'issue') await postIssue(env, report)
-    else await postBot(env, report)
-    return new Response(null, { status: 204 })
+    try {
+      if (report.target === 'issue') await postIssue(env, report)
+      else await postBot(env, report)
+      return new Response(null, { status: 204 })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return new Response(message, { status: 502 })
+    }
   },
 }
 
@@ -29,13 +34,30 @@ async function postIssue(env, report) {
 }
 
 async function postBot(env, report) {
+  const text = `${report.title}\n\n${report.body}`.slice(0, 4000)
+  const token = typeof env.TELEGRAM_BOT_TOKEN === 'string' ? env.TELEGRAM_BOT_TOKEN : ''
+  const chat = typeof env.TELEGRAM_CHAT_ID === 'string' ? env.TELEGRAM_CHAT_ID : ''
+  const message = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chat, text }),
+  })
+  const messageBody = await message.text()
+  if (!message.ok) throw new Error(telegramError(message.status, messageBody))
+  const log = typeof report.log === 'string' ? report.log.trim() : ''
+  if (log === '') return
   const form = new FormData()
-  form.set('chat_id', env.TELEGRAM_CHAT_ID)
-  form.set('caption', report.title.slice(0, 200))
-  form.set('document', new File([`${report.body}\n\n${report.log ?? ''}`], 'prism-report.txt', { type: 'text/plain' }))
-  const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
+  form.set('chat_id', chat)
+  form.set('caption', 'Full log')
+  form.set('document', new File([log], 'prism-log.txt', { type: 'text/plain' }))
+  const file = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: 'POST',
     body: form,
   })
-  if (!response.ok) throw new Error(`telegram ${response.status}`)
+  const fileBody = await file.text()
+  if (!file.ok) throw new Error(telegramError(file.status, fileBody))
+}
+
+function telegramError(status, body) {
+  return `telegram ${status} ${body.replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot').slice(0, 180)}`
 }
