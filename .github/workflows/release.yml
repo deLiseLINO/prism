@@ -287,8 +287,20 @@ jobs:
           for arch in arm64 x64; do
             cp "release-parts/macos-${arch}-artifacts/"*.dmg "release-parts/macos-${arch}-artifacts/"*.dmg.blockmap dist-release/
             cp "release-parts/macos-${arch}-artifacts/"*.zip "release-parts/macos-${arch}-artifacts/"*.zip.blockmap dist-release/
-            cp "release-parts/macos-${arch}-artifacts/latest-mac.yml" "dist-release/latest-mac-${arch}.yml"
+            cp "release-parts/macos-${arch}-artifacts/latest-mac.yml" "dist-release/latest-mac.yml.${arch}"
           done
+          node --input-type=module <<'EOF'
+          import { readFile, writeFile, rm } from 'node:fs/promises'
+          import { parse, stringify } from 'yaml'
+          const parts = []
+          for (const arch of ['arm64', 'x64']) {
+            parts.push(parse(await readFile(`dist-release/latest-mac.yml.${arch}`, 'utf8')))
+            await rm(`dist-release/latest-mac.yml.${arch}`)
+          }
+          const files = parts.flatMap(info => info.files).filter(file => file.url.endsWith('.zip'))
+          if (files.length !== 2) throw new Error(`expected 2 macOS zip entries, got ${files.length}`)
+          await writeFile('dist-release/latest-mac.yml', stringify({ ...parts[0], files, path: files[0].url, sha512: files[0].sha512 }))
+          EOF
       - name: Assemble and verify update feed
         run: |
           node apps/desktop/scripts/assemble-update-feed.mjs dist-release update-feed "${{ needs.preflight.outputs.full_version }}"
