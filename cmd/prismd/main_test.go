@@ -12,6 +12,7 @@ import (
 
 	"prism/internal/account"
 	"prism/internal/config"
+	"prism/internal/integrations"
 	"prism/internal/quota"
 )
 
@@ -276,7 +277,7 @@ func TestIntegrationModelsResolveContextWindows(t *testing.T) {
 				Wire:   config.WireCodex,
 				Models: []string{"gpt-5.2", "gpt-5.2-codex"},
 				ModelSettings: map[string]config.ModelSettings{
-					"gpt-5.2": {ContextWindow: 200000, ImageInput: true},
+					"gpt-5.2": {ContextWindow: 200000, ImageInput: boolPtr(true)},
 				},
 			},
 			"ag": {Wire: config.WireAntigravity, Models: []string{"gemini-3-pro"}},
@@ -301,5 +302,50 @@ func TestIntegrationModelsResolveContextWindows(t *testing.T) {
 		if m.ImageInput != imageWant[m.ID] {
 			t.Fatalf("%s imageInput = %v", m.ID, m.ImageInput)
 		}
+	}
+}
+
+func TestIntegrationModelsDoNotTreatSidecarAsImage(t *testing.T) {
+	dir := t.TempDir()
+	m, err := config.Open(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := true
+	off := false
+	window := 128000
+	if _, err := m.Update(config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"router": {
+				Wire:    config.WireOpenAIChat,
+				BaseURL: "http://up.example/v1",
+				Models:  []string{"text", "listed", "forced-off"},
+				Discovered: map[string]config.DiscoveredFacts{
+					"listed":     {ContextWindow: &window, Image: &on},
+					"forced-off": {Image: &on},
+					"text":       {Image: &off},
+				},
+				ModelSettings: map[string]config.ModelSettings{
+					"forced-off": {ImageInput: &off},
+				},
+			},
+		},
+		VisionSidecar: config.VisionSidecarSettings{Enabled: true, Target: "router/listed"},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]integrations.Model{}
+	for _, model := range integrationModels(m)() {
+		got[model.ID] = model
+	}
+	if got["router/text"].ImageInput {
+		t.Fatal("sidecar enabled marked a text-only model image-capable")
+	}
+	if !got["router/listed"].ImageInput || got["router/listed"].ContextWindow != 128000 {
+		t.Fatalf("listed = %+v, want image and discovered window", got["router/listed"])
+	}
+	if got["router/forced-off"].ImageInput {
+		t.Fatal("explicit false override lost to discovered image")
 	}
 }

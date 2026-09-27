@@ -1,6 +1,6 @@
 # Vision: image input through the sidecar
 
-Text-only models receive image descriptions from a vision-capable sidecar model; image-capable models receive images directly. The renderer card for it sits on Overview behind the experimental `visionSidecar` flag; the daemon feature itself is always active when configured.
+Text-only models receive image descriptions from a vision-capable sidecar model; image-capable models receive images directly. Image capability is the settings override when one is set, otherwise the last listing. Enabling the sidecar does not mark other models image-capable in client configs. The Overview card sits behind the experimental `visionSidecar` flag and lists models whose resolved image is true. The daemon feature itself is always active when configured.
 
 ## Wiring
 

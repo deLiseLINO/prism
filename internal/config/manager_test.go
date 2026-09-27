@@ -312,3 +312,40 @@ func TestChangesSignalsAfterAdoptedDiskReload(t *testing.T) {
 		t.Fatalf("adopted snapshot: %q", got)
 	}
 }
+
+func TestCloneDocumentCopiesDiscoveredPointers(t *testing.T) {
+	on := true
+	window := 128000
+	m := &Manager{snap: Snapshot{Config: Document{
+		Version: SchemaVersion,
+		Providers: map[string]Provider{
+			"codex": {
+				Wire: WireCodex,
+				Discovered: map[string]DiscoveredFacts{
+					"gpt-5.2": {ContextWindow: &window, Image: &on},
+				},
+				ModelSettings: map[string]ModelSettings{
+					"gpt-5.2": {ImageInput: &on},
+				},
+			},
+		},
+	}}}
+	got := m.Get().Config
+	src := m.snap.Config.Providers["codex"]
+	cloned := got.Providers["codex"]
+	if cloned.Discovered["gpt-5.2"].ContextWindow == src.Discovered["gpt-5.2"].ContextWindow {
+		t.Fatal("discovered window pointer aliased the snapshot")
+	}
+	if cloned.Discovered["gpt-5.2"].Image == src.Discovered["gpt-5.2"].Image {
+		t.Fatal("discovered image pointer aliased the snapshot")
+	}
+	if cloned.ModelSettings["gpt-5.2"].ImageInput == src.ModelSettings["gpt-5.2"].ImageInput {
+		t.Fatal("image override pointer aliased the snapshot")
+	}
+	*cloned.Discovered["gpt-5.2"].ContextWindow = 1
+	*cloned.Discovered["gpt-5.2"].Image = false
+	*cloned.ModelSettings["gpt-5.2"].ImageInput = false
+	if *src.Discovered["gpt-5.2"].ContextWindow != 128000 || !*src.Discovered["gpt-5.2"].Image || !*src.ModelSettings["gpt-5.2"].ImageInput {
+		t.Fatal("mutating the clone changed the snapshot")
+	}
+}

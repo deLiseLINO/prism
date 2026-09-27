@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -93,7 +92,25 @@ type modelSyncer struct {
 	client    *http.Client
 }
 
-func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]string, error) {
+type listedModel struct {
+	ID            string
+	ContextWindow *int
+	Image         *bool
+}
+
+func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]management.ListedModel, error) {
+	rows, err := m.remoteModels(ctx, id, p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]management.ListedModel, len(rows))
+	for i, row := range rows {
+		out[i] = management.ListedModel{ID: row.ID, ContextWindow: row.ContextWindow, Image: row.Image}
+	}
+	return out, nil
+}
+
+func (m modelSyncer) remoteModels(ctx context.Context, id string, p config.Provider) ([]listedModel, error) {
 	switch p.Wire {
 	case config.WireCodex, config.WireAntigravity:
 		return m.remoteModelsPooled(ctx, id, p)
@@ -103,7 +120,7 @@ func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provi
 
 // remoteModelsPooled serves the native wires. Their model listings live on
 // provider-owned endpoints keyed to a real account, not the config baseURL.
-func (m modelSyncer) remoteModelsPooled(ctx context.Context, id string, p config.Provider) ([]string, error) {
+func (m modelSyncer) remoteModelsPooled(ctx context.Context, id string, p config.Provider) ([]listedModel, error) {
 	lease, ok := m.leaseFor(id, p)
 	if !ok {
 		return nil, fmt.Errorf("provider %s has no active account to list models for", id)
@@ -117,9 +134,25 @@ func (m modelSyncer) remoteModelsPooled(ctx context.Context, id string, p config
 	}
 	switch p.Wire {
 	case config.WireCodex:
-		return codex.FetchModels(ctx, m.client, p.BaseURL, codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID})
+		rows, err := codex.FetchModelList(ctx, m.client, p.BaseURL, codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]listedModel, len(rows))
+		for i, row := range rows {
+			out[i] = listedModel{ID: row.ID, ContextWindow: row.ContextWindow, Image: row.Image}
+		}
+		return out, nil
 	case config.WireAntigravity:
-		return antigravity.FetchModels(ctx, m.client, p.BaseURL, antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID})
+		ids, err := antigravity.FetchModels(ctx, m.client, p.BaseURL, antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]listedModel, len(ids))
+		for i, id := range ids {
+			out[i] = listedModel{ID: id}
+		}
+		return out, nil
 	}
 	return nil, fmt.Errorf("provider %s wire %q does not support model listing", id, p.Wire)
 }
@@ -157,7 +190,7 @@ func (m modelSyncer) leaseFor(id string, p config.Provider) (account.Lease, bool
 	return account.Lease{Provider: providerID, Account: best.ID, CredGen: best.CredGen}, true
 }
 
-func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config.Provider) ([]string, error) {
+func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config.Provider) ([]listedModel, error) {
 	if p.BaseURL == "" {
 		return nil, fmt.Errorf("provider %s has no baseURL to list models from", id)
 	}
@@ -188,21 +221,11 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	if err != nil {
 		return nil, err
 	}
-	var envelope struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	rows, err := parseOpenAIModelList(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w from %s", err, p.BaseURL)
 	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, fmt.Errorf("malformed models response from %s: %w", p.BaseURL, err)
-	}
-	out := make([]string, 0, len(envelope.Data))
-	for _, row := range envelope.Data {
-		if row.ID != "" {
-			out = append(out, row.ID)
-		}
-	}
-	return out, nil
+	return rows, nil
 }
 
 func (s credentialStore) blob(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration) ([]byte, error) {
@@ -304,7 +327,7 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 					ID:                     id + "/" + model,
 					Name:                   id + "/" + model,
 					ContextWindow:          snap.Config.ResolveContextWindow(id, model),
-					ImageInput:             settings.ImageInput || snap.Config.VisionSidecar.Enabled,
+					ImageInput:             snap.Config.ResolveImageInput(id, model),
 					ReasoningEfforts:       settings.ReasoningEfforts,
 					DefaultReasoningEffort: defaultReasoningEffort(settings.ReasoningEfforts),
 				})

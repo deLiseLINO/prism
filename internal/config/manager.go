@@ -169,6 +169,8 @@ func cloneDocument(d Document) Document {
 	for id, p := range d.Providers {
 		p.Models = append([]string(nil), p.Models...)
 		p.DisabledModels = append([]string(nil), p.DisabledModels...)
+		p.SyncedModels = append([]string(nil), p.SyncedModels...)
+		p.Discovered = cloneDiscovered(p.Discovered)
 		p.ModelSettings = cloneModelSettings(p.ModelSettings)
 		if p.Enabled != nil {
 			v := *p.Enabled
@@ -205,7 +207,37 @@ func cloneModelSettings(m map[string]ModelSettings) map[string]ModelSettings {
 		if v.ReasoningEfforts != nil {
 			v.ReasoningEfforts = append([]string(nil), v.ReasoningEfforts...)
 		}
+		v.ImageInput = cloneBool(v.ImageInput)
 		out[k] = v
 	}
 	return out
+}
+
+func cloneDiscovered(m map[string]DiscoveredFacts) map[string]DiscoveredFacts {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]DiscoveredFacts, len(m))
+	for k, v := range m {
+		v.ContextWindow = cloneInt(v.ContextWindow)
+		v.Image = cloneBool(v.Image)
+		out[k] = v
+	}
+	return out
+}
+
+func cloneBool(v *bool) *bool {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
+}
+
+func cloneInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
 }

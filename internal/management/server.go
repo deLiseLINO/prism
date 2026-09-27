@@ -31,7 +31,7 @@ type Catalog interface {
 }
 
 type ModelSyncer interface {
-	RemoteModels(ctx context.Context, id string, p config.Provider) ([]string, error)
+	RemoteModels(ctx context.Context, id string, p config.Provider) ([]ListedModel, error)
 }
 
 type CredentialStore interface {
@@ -522,24 +522,26 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, m := range remote {
-		if !slices.Contains(merged, m) {
-			merged = append(merged, m)
+	for _, row := range remote {
+		if !slices.Contains(merged, row.ID) {
+			merged = append(merged, row.ID)
 		}
 	}
 	slices.Sort(merged)
 	next.Models = merged
 	synced := make([]string, 0, len(remote))
-	for _, m := range remote {
-		for _, id := range modeRow(m, next.ModelMode) {
+	for _, row := range remote {
+		for _, id := range modeRow(row.ID, next.ModelMode) {
 			if !slices.Contains(synced, id) {
 				synced = append(synced, id)
 			}
 		}
 	}
 	next.SyncedModels = synced
+	next.Discovered = discoveredFromList(remote)
 	doc.Providers[id] = next
 	foldRawModelSettings(&doc, id)
+	foldDiscovered(&doc, id)
 	if next.ModelMode == config.ModelModeRaw {
 		next = switchModelMode(doc.Providers[id], config.ModelModeRaw)
 		doc.Providers[id] = next
@@ -555,6 +557,75 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+}
+
+func resolvedImages(id string, p config.Provider) map[string]bool {
+	if len(p.Models) == 0 {
+		return nil
+	}
+	doc := config.Document{Providers: map[string]config.Provider{id: p}}
+	out := make(map[string]bool, len(p.Models))
+	for _, model := range p.Models {
+		out[model] = doc.ResolveImageInput(id, model)
+	}
+	return out
+}
+
+func discoveredFromList(remote []ListedModel) map[string]config.DiscoveredFacts {
+	out := map[string]config.DiscoveredFacts{}
+	for _, row := range remote {
+		if row.ID == "" {
+			continue
+		}
+		facts := config.DiscoveredFacts{}
+		if row.ContextWindow != nil && *row.ContextWindow > 0 {
+			n := *row.ContextWindow
+			facts.ContextWindow = &n
+		}
+		if row.Image != nil {
+			v := *row.Image
+			facts.Image = &v
+		}
+		if facts.ContextWindow == nil && facts.Image == nil {
+			continue
+		}
+		out[row.ID] = facts
+	}
+	if len(out) == 0 {
+		return map[string]config.DiscoveredFacts{}
+	}
+	return out
+}
+
+func foldDiscovered(doc *config.Document, id string) {
+	p := doc.Providers[id]
+	if p.Wire != config.WireAntigravity || len(p.Discovered) == 0 {
+		return
+	}
+	logical := map[string]config.DiscoveredFacts{}
+	raw := map[string]config.DiscoveredFacts{}
+	for model, facts := range p.Discovered {
+		if family := antigravity.LogicalModel(model); family != "" && family != model {
+			raw[family] = fillUnknown(raw[family], facts)
+			continue
+		}
+		logical[model] = facts
+	}
+	for model, facts := range raw {
+		logical[model] = fillUnknown(facts, logical[model])
+	}
+	p.Discovered = logical
+	doc.Providers[id] = p
+}
+
+func fillUnknown(base, overlay config.DiscoveredFacts) config.DiscoveredFacts {
+	if overlay.ContextWindow != nil {
+		base.ContextWindow = overlay.ContextWindow
+	}
+	if overlay.Image != nil {
+		base.Image = overlay.Image
+	}
+	return base
 }
 
 func (s *Server) providerView(ctx context.Context, id string, p config.Provider) (Provider, error) {
@@ -576,6 +647,8 @@ func (s *Server) providerView(ctx context.Context, id string, p config.Provider)
 		DisabledModels: p.DisabledModels,
 		SyncedModels:   p.SyncedModels,
 		RawModels:      rawModelsForProvider(p),
+		Discovered:     p.Discovered,
+		ResolvedImage:  resolvedImages(id, p),
 		ModelSettings:  p.ModelSettings,
 		Enabled:        p.Enabled,
 		Pool:           p.Pool,
@@ -701,6 +774,21 @@ func switchModelMode(p config.Provider, mode config.ModelMode) config.Provider {
 		next.ModelSettings = nil
 	} else {
 		next.ModelSettings = settings
+	}
+	discovered := make(map[string]config.DiscoveredFacts, len(p.Discovered))
+	for m, facts := range p.Discovered {
+		for _, id := range modeRow(m, mode) {
+			if slices.Contains(models, id) {
+				if _, exists := discovered[id]; !exists {
+					discovered[id] = facts
+				}
+			}
+		}
+	}
+	if len(discovered) == 0 {
+		next.Discovered = nil
+	} else {
+		next.Discovered = discovered
 	}
 	return next
 }

@@ -7,6 +7,9 @@ import (
 	"testing"
 )
 
+func boolPtr(v bool) *bool { return &v }
+func intPtr(v int) *int    { return &v }
+
 func validDoc() Document {
 	return Document{
 		Version: SchemaVersion,
@@ -238,6 +241,126 @@ func TestResolveContextWindowFallbackChain(t *testing.T) {
 	}
 }
 
+func TestResolveContextWindowUsesDiscoveredBeforeGlobal(t *testing.T) {
+	window := 128000
+	bad := 0
+	doc := Document{
+		ContextWindow: 400000,
+		Providers: map[string]Provider{
+			"codex": {
+				Models: []string{"over", "listed", "bad", "plain"},
+				ModelSettings: map[string]ModelSettings{
+					"over": {ContextWindow: 200000},
+				},
+				Discovered: map[string]DiscoveredFacts{
+					"over":   {ContextWindow: &window},
+					"listed": {ContextWindow: &window},
+					"bad":    {ContextWindow: &bad},
+				},
+			},
+		},
+	}
+	if got := doc.ResolveContextWindow("codex", "over"); got != 200000 {
+		t.Fatalf("override = %d, want 200000", got)
+	}
+	if got := doc.ResolveContextWindow("codex", "listed"); got != 128000 {
+		t.Fatalf("discovered = %d, want 128000", got)
+	}
+	if got := doc.ResolveContextWindow("codex", "bad"); got != 400000 {
+		t.Fatalf("non-positive discovered = %d, want global 400000", got)
+	}
+	if got := doc.ResolveContextWindow("codex", "plain"); got != 400000 {
+		t.Fatalf("missing discovered = %d, want global 400000", got)
+	}
+	doc.ContextWindow = 0
+	if got := doc.ResolveContextWindow("codex", "plain"); got != DefaultContextWindow {
+		t.Fatalf("empty chain = %d, want %d", got, DefaultContextWindow)
+	}
+}
+
+func TestResolveImageInputPrecedence(t *testing.T) {
+	on := true
+	off := false
+	doc := Document{Providers: map[string]Provider{
+		"p": {
+			Models: []string{"listed", "forced-off", "override-on", "missing", "old-on", "old-off"},
+			Discovered: map[string]DiscoveredFacts{
+				"listed":      {Image: &on},
+				"forced-off":  {Image: &on},
+				"override-on": {Image: &off},
+			},
+			ModelSettings: map[string]ModelSettings{
+				"forced-off":  {ImageInput: &off},
+				"override-on": {ImageInput: &on},
+				"old-on":      {ImageInput: &on},
+			},
+		},
+	}}
+	cases := []struct {
+		model string
+		want  bool
+	}{
+		{"listed", true},
+		{"forced-off", false},
+		{"override-on", true},
+		{"missing", false},
+		{"old-on", true},
+		{"old-off", false},
+	}
+	for _, c := range cases {
+		if got := doc.ResolveImageInput("p", c.model); got != c.want {
+			t.Fatalf("ResolveImageInput(%s) = %v, want %v", c.model, got, c.want)
+		}
+	}
+}
+
+func TestDiscoveredFactsDropsNonPositiveWindow(t *testing.T) {
+	var facts DiscoveredFacts
+	if err := json.Unmarshal([]byte(`{"contextWindow":0,"image":false}`), &facts); err != nil {
+		t.Fatal(err)
+	}
+	if facts.ContextWindow != nil {
+		t.Fatalf("zero window stored: %+v", facts)
+	}
+	if facts.Image == nil || *facts.Image {
+		t.Fatalf("image false not stored: %+v", facts)
+	}
+	if err := json.Unmarshal([]byte(`{"contextWindow":-3}`), &facts); err != nil {
+		t.Fatal(err)
+	}
+	if facts.ContextWindow != nil || facts.Image != nil {
+		t.Fatalf("negative window or stale image stored: %+v", facts)
+	}
+	if err := json.Unmarshal([]byte(`{"contextWindow":128000,"image":true}`), &facts); err != nil {
+		t.Fatal(err)
+	}
+	if facts.ContextWindow == nil || *facts.ContextWindow != 128000 || facts.Image == nil || !*facts.Image {
+		t.Fatalf("positive facts = %+v", facts)
+	}
+}
+
+func TestModelSettingsImageInputOmittedIsNil(t *testing.T) {
+	var s ModelSettings
+	if err := json.Unmarshal([]byte(`{"contextWindow":100}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.ImageInput != nil {
+		t.Fatal("omitted imageInput decoded as an override")
+	}
+	if err := json.Unmarshal([]byte(`{"imageInput":true}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.ImageInput == nil || !*s.ImageInput {
+		t.Fatalf("imageInput true = %v", s.ImageInput)
+	}
+	if err := json.Unmarshal([]byte(`{"imageInput":false}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.ImageInput == nil || *s.ImageInput {
+		t.Fatalf("imageInput false = %v", s.ImageInput)
+	}
+}
+
 func TestValidateRejectsBadContextWindows(t *testing.T) {
 	base := func() Document {
 		return Document{
@@ -308,7 +431,7 @@ func TestValidateVisionSidecarTarget(t *testing.T) {
 					BaseURL: "http://localhost",
 					Models:  []string{"vision", "text"},
 					ModelSettings: map[string]ModelSettings{
-						"vision": {ImageInput: true},
+						"vision": {ImageInput: boolPtr(true)},
 					},
 				},
 			},

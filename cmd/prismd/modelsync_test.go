@@ -10,8 +10,17 @@ import (
 
 	"prism/internal/account"
 	"prism/internal/config"
+	"prism/internal/management"
 	"prism/internal/store"
 )
+
+func idsOf(rows []management.ListedModel) []string {
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		out[i] = row.ID
+	}
+	return out
+}
 
 // stubCreds records the lease the syncer resolved and answers a fixed
 // credential, standing in for the refresher.
@@ -81,8 +90,8 @@ func TestModelSyncerListsCodexModelsFromUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoteModels: %v", err)
 	}
-	if len(models) != 1 || models[0] != "gpt-5.6-terra" {
-		t.Fatalf("models = %v, want only the visible slug", models)
+	if ids := idsOf(models); len(ids) != 1 || ids[0] != "gpt-5.6-terra" {
+		t.Fatalf("models = %v, want only the visible slug", ids)
 	}
 	if creds.gotLease.Account != "codex:a" || creds.gotLease.Provider != "codex" {
 		t.Fatalf("refresher lease = %+v, want codex/codex:a", creds.gotLease)
@@ -111,8 +120,11 @@ func TestModelSyncerListsAntigravityModelsFromUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoteModels: %v", err)
 	}
-	if len(models) != 1 || models[0] != "gemini-3.7-flash" {
-		t.Fatalf("models = %v, want gemini-3.7-flash", models)
+	if ids := idsOf(models); len(ids) != 1 || ids[0] != "gemini-3.7-flash" {
+		t.Fatalf("models = %v, want gemini-3.7-flash", ids)
+	}
+	if models[0].ContextWindow != nil || models[0].Image != nil {
+		t.Fatalf("antigravity listing must stay id-only: %+v", models[0])
 	}
 	if creds.gotLease.Account != "ag:a" || creds.gotLease.CredGen != 3 {
 		t.Fatalf("refresher lease = %+v, want ag:a gen 3", creds.gotLease)
@@ -145,8 +157,8 @@ func TestModelSyncerCustomWireStillUsesBaseURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoteModels: %v", err)
 	}
-	if len(models) != 2 || models[0] != "m1" {
-		t.Fatalf("models = %v", models)
+	if ids := idsOf(models); len(ids) != 2 || ids[0] != "m1" {
+		t.Fatalf("models = %v", ids)
 	}
 
 	_, err = syncer.RemoteModels(context.Background(), "custom", config.Provider{Wire: config.WireOpenAIChat})
@@ -170,8 +182,8 @@ func TestModelSyncerCustomWireWorksWithoutCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoteModels: %v", err)
 	}
-	if len(models) != 1 || models[0] != "m1" {
-		t.Fatalf("models = %v, want [m1]", models)
+	if ids := idsOf(models); len(ids) != 1 || ids[0] != "m1" {
+		t.Fatalf("models = %v, want [m1]", ids)
 	}
 	if auth != "" {
 		t.Fatalf("Authorization = %q, want none", auth)

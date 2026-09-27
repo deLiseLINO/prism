@@ -856,7 +856,7 @@ func TestContextWindowHierarchyAndGlobalEndpoint(t *testing.T) {
 				Wire:   config.WireCodex,
 				Models: []string{"gpt-5.2", "gpt-5.2-codex"},
 				ModelSettings: map[string]config.ModelSettings{
-					"gpt-5.2": {ContextWindow: 200000, ImageInput: true, ReasoningEfforts: []string{"low", "high"}},
+					"gpt-5.2": {ContextWindow: 200000, ImageInput: boolPtr(true), ReasoningEfforts: []string{"low", "high"}},
 				},
 			},
 		},
@@ -871,7 +871,7 @@ func TestContextWindowHierarchyAndGlobalEndpoint(t *testing.T) {
 	}
 	p := got.Providers[0]
 	s := p.ModelSettings["gpt-5.2"]
-	if s.ContextWindow != 200000 || !s.ImageInput || len(s.ReasoningEfforts) != 2 {
+	if s.ContextWindow != 200000 || s.ImageInput == nil || !*s.ImageInput || len(s.ReasoningEfforts) != 2 {
 		t.Fatalf("model settings = %+v", s)
 	}
 
@@ -905,7 +905,7 @@ func TestVisionSidecarEndpoint(t *testing.T) {
 				BaseURL: "http://up.example/v1",
 				Models:  []string{"glm-5.3", "gpt-5.6-luna"},
 				ModelSettings: map[string]config.ModelSettings{
-					"gpt-5.6-luna": {ImageInput: true},
+					"gpt-5.6-luna": {ImageInput: boolPtr(true)},
 				},
 			},
 		},
@@ -1071,11 +1071,17 @@ func TestStatsJSONFieldsSnakeCase(t *testing.T) {
 	}
 }
 
+func boolPtr(v bool) *bool { return &v }
+
 type fakeSyncer struct {
-	models map[string][]string
+	models map[string][]ListedModel
+	err    error
 }
 
-func (f *fakeSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]string, error) {
+func (f *fakeSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]ListedModel, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.models[id], nil
 }
 
@@ -1095,7 +1101,7 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 				DisabledModels: []string{"gemini-3.7-flash-low"},
 				ModelSettings: map[string]config.ModelSettings{
 					"gemini-3.7-flash-high": {ContextWindow: 12345, ReasoningEfforts: []string{"low", "high"}},
-					"claude-opus-4":         {ImageInput: true},
+					"claude-opus-4":         {ImageInput: boolPtr(true)},
 				},
 			},
 		},
@@ -1105,8 +1111,8 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}},
-		&fakeAuth{}, integrations.NewRegistry(), &fakeSyncer{models: map[string][]string{
-			"ag": {"gemini-3.7-flash", "claude-opus-4"},
+		&fakeAuth{}, integrations.NewRegistry(), &fakeSyncer{models: map[string][]ListedModel{
+			"ag": {{ID: "gemini-3.7-flash"}, {ID: "claude-opus-4"}},
 		}}, nil)
 	handler := srv.Handler()
 	rec := httptest.NewRecorder()
@@ -1137,7 +1143,7 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 	if _, raw := p.ModelSettings["gemini-3.7-flash-high"]; raw {
 		t.Fatalf("raw settings key survived: %+v", p.ModelSettings)
 	}
-	if s, ok := p.ModelSettings["claude-opus-4"]; !ok || !s.ImageInput {
+	if s, ok := p.ModelSettings["claude-opus-4"]; !ok || s.ImageInput == nil || !*s.ImageInput {
 		t.Fatalf("non-family settings entry must survive: %+v", p.ModelSettings)
 	}
 	wantRaw := []string{"gemini-3.7-flash-high", "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-tiered"}
@@ -1301,4 +1307,196 @@ func TestModelModeSwitchRoundTripsModelList(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut,
 		"/api/v1/providers/codex/model-mode?expectedGeneration=1", strings.NewReader(`{"mode":"raw"}`)))
 	assertErrorBody(t, rec, http.StatusBadRequest, "invalid_value")
+}
+
+func TestSyncModelsReplacesDiscoveredAndKeepsOverrides(t *testing.T) {
+	m, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldWindow := 999
+	on := true
+	seed := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"custom": {
+				Wire:    config.WireOpenAIChat,
+				BaseURL: "http://up.example/v1",
+				Models:  []string{"kept", "gone"},
+				Discovered: map[string]config.DiscoveredFacts{
+					"gone": {ContextWindow: &oldWindow, Image: &on},
+					"kept": {ContextWindow: &oldWindow},
+				},
+				ModelSettings: map[string]config.ModelSettings{
+					"kept": {ContextWindow: 50000, ImageInput: boolPtr(false)},
+				},
+			},
+		},
+	}
+	snap, err := m.Update(seed, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := 128000
+	off := false
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}},
+		&fakeAuth{}, integrations.NewRegistry(), &fakeSyncer{models: map[string][]ListedModel{
+			"custom": {
+				{ID: "kept", ContextWindow: &window, Image: &on},
+				{ID: "thin"},
+				{ID: "text", Image: &off},
+			},
+		}}, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/providers/custom/sync-models?expectedGeneration="+
+		strconv.FormatUint(snap.Generation, 10), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored := m.Get().Config.Providers["custom"]
+	if _, ok := stored.Discovered["gone"]; ok {
+		t.Fatalf("absent model kept facts: %+v", stored.Discovered)
+	}
+	if stored.Discovered["kept"].ContextWindow == nil || *stored.Discovered["kept"].ContextWindow != 128000 || stored.Discovered["kept"].Image == nil || !*stored.Discovered["kept"].Image {
+		t.Fatalf("kept facts = %+v", stored.Discovered["kept"])
+	}
+	if _, ok := stored.Discovered["thin"]; ok {
+		t.Fatalf("id-only row stored zeros: %+v", stored.Discovered["thin"])
+	}
+	if stored.Discovered["text"].Image == nil || *stored.Discovered["text"].Image || stored.Discovered["text"].ContextWindow != nil {
+		t.Fatalf("text facts = %+v", stored.Discovered["text"])
+	}
+	settings := stored.ModelSettings["kept"]
+	if settings.ContextWindow != 50000 || settings.ImageInput == nil || *settings.ImageInput {
+		t.Fatalf("manual override lost: %+v", settings)
+	}
+	if stored.ModelSettings["kept"].ImageInput == stored.Discovered["kept"].Image {
+		t.Fatal("override pointer aliased discovered image")
+	}
+}
+
+func TestSyncModelsFailureWritesNothing(t *testing.T) {
+	m, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := 111
+	seed := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"custom": {
+				Wire:       config.WireOpenAIChat,
+				BaseURL:    "http://up.example/v1",
+				Models:     []string{"kept"},
+				Discovered: map[string]config.DiscoveredFacts{"kept": {ContextWindow: &window}},
+				ModelSettings: map[string]config.ModelSettings{
+					"kept": {ContextWindow: 222},
+				},
+			},
+		},
+	}
+	snap, err := m.Update(seed, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}},
+		&fakeAuth{}, integrations.NewRegistry(), &fakeSyncer{err: errors.New("upstream down")}, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/providers/custom/sync-models?expectedGeneration="+
+		strconv.FormatUint(snap.Generation, 10), nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+	stored := m.Get()
+	if stored.Generation != snap.Generation {
+		t.Fatal("failed sync bumped generation")
+	}
+	p := stored.Config.Providers["custom"]
+	if p.Discovered["kept"].ContextWindow == nil || *p.Discovered["kept"].ContextWindow != 111 || p.ModelSettings["kept"].ContextWindow != 222 || len(p.Models) != 1 {
+		t.Fatalf("failed sync mutated provider: %+v", p)
+	}
+}
+
+func TestProviderPutPreservesDiscovered(t *testing.T) {
+	env := newEnv(t)
+	window := 128000
+	on := true
+	if _, err := env.cfg.Update(config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"custom": {
+				Wire:       config.WireOpenAIChat,
+				BaseURL:    "http://up.example/v1",
+				Models:     []string{"m"},
+				Discovered: map[string]config.DiscoveredFacts{"m": {ContextWindow: &window, Image: &on}},
+				ModelSettings: map[string]config.ModelSettings{
+					"m": {ContextWindow: 4000, ImageInput: boolPtr(false)},
+				},
+			},
+		},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do(t, http.MethodPut, "/api/v1/providers/custom", `{"id":"custom","wire":"chat","models":["m"],"disabledModels":[],"expectedGeneration":1}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put without settings status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored := env.cfg.Get().Config.Providers["custom"]
+	if stored.ModelSettings["m"].ContextWindow != 4000 || stored.ModelSettings["m"].ImageInput == nil || *stored.ModelSettings["m"].ImageInput {
+		t.Fatalf("settings lost: %+v", stored.ModelSettings)
+	}
+	if stored.Discovered["m"].ContextWindow == nil || *stored.Discovered["m"].ContextWindow != 128000 || stored.Discovered["m"].Image == nil || !*stored.Discovered["m"].Image {
+		t.Fatalf("discovered lost: %+v", stored.Discovered)
+	}
+	rec = env.do(t, http.MethodPut, "/api/v1/providers/custom", `{"id":"custom","wire":"chat","models":["m"],"disabledModels":[],"modelSettings":{"m":{"contextWindow":9000}},"expectedGeneration":2}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put with settings status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored = env.cfg.Get().Config.Providers["custom"]
+	if stored.ModelSettings["m"].ContextWindow != 9000 || stored.ModelSettings["m"].ImageInput != nil {
+		t.Fatalf("settings not replaced: %+v", stored.ModelSettings["m"])
+	}
+	if stored.Discovered["m"].Image == nil || !*stored.Discovered["m"].Image {
+		t.Fatalf("discovered cleared by settings replace: %+v", stored.Discovered)
+	}
+	view := decodeBody[ProviderMutationResponse](t, rec).Provider
+	if view.ResolvedImage["m"] != true {
+		t.Fatalf("resolvedImage = %v, want discovered true", view.ResolvedImage)
+	}
+	if _, ok := view.Discovered["m"]; !ok {
+		t.Fatal("provider view omitted discovered")
+	}
+}
+
+func TestFoldDiscoveredFillsUnknownLogicalFields(t *testing.T) {
+	window := 128000
+	logicalWindow := 64000
+	on := true
+	off := false
+	doc := config.Document{Providers: map[string]config.Provider{
+		"ag": {
+			Wire: config.WireAntigravity,
+			Discovered: map[string]config.DiscoveredFacts{
+				"gemini-3.7-flash":         {ContextWindow: &logicalWindow},
+				"gemini-3.7-flash-high":    {ContextWindow: &window, Image: &on},
+				"claude-opus-4-6-thinking": {Image: &off},
+			},
+		},
+	}}
+	foldDiscovered(&doc, "ag")
+	p := doc.Providers["ag"]
+	flash := p.Discovered["gemini-3.7-flash"]
+	if flash.ContextWindow == nil || *flash.ContextWindow != logicalWindow {
+		t.Fatalf("logical window overwritten: %+v", flash)
+	}
+	if flash.Image == nil || !*flash.Image {
+		t.Fatalf("raw image did not fill unknown logical field: %+v", flash)
+	}
+	if _, ok := p.Discovered["gemini-3.7-flash-high"]; ok {
+		t.Fatal("raw key survived fold")
+	}
+	opus := p.Discovered["claude-opus-4-6"]
+	if opus.Image == nil || *opus.Image || opus.ContextWindow != nil {
+		t.Fatalf("raw-only fold = %+v", opus)
+	}
 }

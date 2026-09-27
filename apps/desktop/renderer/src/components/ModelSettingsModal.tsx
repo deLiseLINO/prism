@@ -20,14 +20,19 @@ function fmt(n: number): string {
 export interface ModelSettingsDraft {
   readonly contextWindow: number | null
   readonly imageInput: boolean
+  readonly imageTouched: boolean
   readonly effortsOverride: boolean
   readonly efforts: ReadonlySet<string>
 }
 
-export function draftFromSettings(settings: ModelSettingsView | undefined): ModelSettingsDraft {
+export function draftFromSettings(
+  settings: ModelSettingsView | undefined,
+  resolvedImage = false,
+): ModelSettingsDraft {
   return {
     contextWindow: settings?.contextWindow ?? null,
-    imageInput: settings?.imageInput ?? false,
+    imageInput: settings?.imageInput ?? resolvedImage,
+    imageTouched: settings?.imageInput !== undefined,
     effortsOverride: (settings?.reasoningEfforts?.length ?? 0) > 0,
     efforts: new Set(settings?.reasoningEfforts ?? []),
   }
@@ -36,7 +41,7 @@ export function draftFromSettings(settings: ModelSettingsView | undefined): Mode
 export function draftToSettings(draft: ModelSettingsDraft): ModelSettingsView {
   return {
     ...(draft.contextWindow === null ? {} : { contextWindow: draft.contextWindow }),
-    imageInput: draft.imageInput,
+    ...(draft.imageTouched ? { imageInput: draft.imageInput } : {}),
     ...(draft.effortsOverride ? { reasoningEfforts: [...draft.efforts] } : {}),
   }
 }
@@ -46,6 +51,8 @@ export interface ModelSettingsModalProps {
   readonly model: string
   readonly isNew: boolean
   readonly fallbackContextWindow: number
+  readonly discoveredContextWindow?: number
+  readonly resolvedImage?: boolean
   readonly initial: ModelSettingsView | undefined
   readonly busy: boolean
   readonly onCancel: () => void
@@ -57,12 +64,14 @@ export function ModelSettingsModal({
   model,
   isNew,
   fallbackContextWindow,
+  discoveredContextWindow,
+  resolvedImage = false,
   initial,
   busy,
   onCancel,
   onSave,
 }: ModelSettingsModalProps): JSX.Element {
-  const [draft, setDraft] = useState<ModelSettingsDraft>(() => draftFromSettings(initial))
+  const [draft, setDraft] = useState<ModelSettingsDraft>(() => draftFromSettings(initial, resolvedImage))
   const [custom, setCustom] = useState(() => {
     const value = initial?.contextWindow
     const preset = CONTEXT_PRESETS.find((p) => p.value === value)
@@ -156,7 +165,7 @@ export function ModelSettingsModal({
             <div
               className="msm-row msm-row--click"
               onClick={(event) =>
-                rowToggle(event, () => setDraft((d) => ({ ...d, imageInput: !d.imageInput })))
+                rowToggle(event, () => setDraft((d) => ({ ...d, imageTouched: true, imageInput: !d.imageInput })))
               }
             >
               <span>
@@ -166,7 +175,7 @@ export function ModelSettingsModal({
               <span className="msm-row-right">
                 <Toggle
                   checked={draft.imageInput}
-                  onChange={(imageInput) => setDraft((d) => ({ ...d, imageInput }))}
+                  onChange={(imageInput) => setDraft((d) => ({ ...d, imageTouched: true, imageInput }))}
                   label="Image input"
                   visuallyHidden
                 />
@@ -220,14 +229,18 @@ export function ModelSettingsModal({
                   value={custom}
                   onChange={(event) => onCustomInput(event.target.value)}
                   inputMode="numeric"
-                  placeholder={isPreset ? String(draft.contextWindow) : '512000'}
+                  placeholder={String(discoveredContextWindow ?? fallbackContextWindow)}
                   aria-label="Custom context window"
                 />
                 <span className="msm-suffix">tokens</span>
               </div>
               <p className="msm-note">
                 Effective <b className="num">{fmt(effective)} tokens</b>
-                {ctxOver ? ' · applies to this model' : ' · falls back to the global default'}
+                {ctxOver
+                  ? ' · applies to this model'
+                  : discoveredContextWindow !== undefined
+                    ? ` · listing ${fmt(discoveredContextWindow)}`
+                    : ` · global ${fmt(fallbackContextWindow)}`}
               </p>
             </div>
           </section>
@@ -287,7 +300,7 @@ export function ModelSettingsModal({
           </section>
         </div>
         <footer className="msm-foot">
-          <Button tone="ghost" size="sm" onClick={() => setDraft(draftFromSettings(undefined))} disabled={busy}>
+          <Button tone="ghost" size="sm" onClick={() => setDraft(draftFromSettings(initial, resolvedImage))} disabled={busy}>
             Reset to defaults
           </Button>
           <span className="msm-spacer" />

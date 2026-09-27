@@ -14,7 +14,7 @@ func TestTargetCarriesModelImageInput(t *testing.T) {
 				Wire:    config.WireOpenAIChat,
 				BaseURL: "http://localhost",
 				ModelSettings: map[string]config.ModelSettings{
-					"vision-model": {ImageInput: true},
+					"vision-model": {ImageInput: boolPtr(true)},
 				},
 			},
 		},
@@ -33,5 +33,35 @@ func TestTargetCarriesModelImageInput(t *testing.T) {
 	}
 	if plan.Targets[0].ImageInput {
 		t.Fatal("ImageInput = true, want false")
+	}
+}
+
+func TestTargetUsesDiscoveredImage(t *testing.T) {
+	on := true
+	off := false
+	doc := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"p": {
+				Wire:    config.WireOpenAIChat,
+				BaseURL: "http://localhost",
+				Discovered: map[string]config.DiscoveredFacts{
+					"listed": {Image: &on},
+					"forced": {Image: &on},
+				},
+				ModelSettings: map[string]config.ModelSettings{
+					"forced": {ImageInput: &off},
+				},
+			},
+		},
+	}
+	p := &ConfigPlanner{get: func() config.Document { return doc }}
+	plan, ok := p.Plan("p/listed")
+	if !ok || !plan.Targets[0].ImageInput {
+		t.Fatal("discovered image did not make the target image-capable")
+	}
+	plan, ok = p.Plan("p/forced")
+	if !ok || plan.Targets[0].ImageInput {
+		t.Fatal("explicit false did not reject discovered image")
 	}
 }

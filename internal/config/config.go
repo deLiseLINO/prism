@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -107,17 +108,18 @@ const (
 func (m ModelMode) Valid() bool { return m == "" || m == ModelModeLogical || m == ModelModeRaw }
 
 type Provider struct {
-	Wire           Wire                     `json:"wire"`
-	BaseURL        string                   `json:"baseURL,omitempty"`
-	APIKeyRef      string                   `json:"apiKeyRef,omitempty"`
-	DefaultModel   string                   `json:"defaultModel,omitempty"`
-	ModelMode      ModelMode                `json:"modelMode,omitempty"`
-	Models         []string                 `json:"models,omitempty"`
-	DisabledModels []string                 `json:"disabledModels,omitempty"`
-	SyncedModels   []string                 `json:"syncedModels,omitempty"`
-	ModelSettings  map[string]ModelSettings `json:"modelSettings,omitempty"`
-	Enabled        *bool                    `json:"enabled,omitempty"`
-	Pool           *PoolSettings            `json:"pool,omitempty"`
+	Wire           Wire                       `json:"wire"`
+	BaseURL        string                     `json:"baseURL,omitempty"`
+	APIKeyRef      string                     `json:"apiKeyRef,omitempty"`
+	DefaultModel   string                     `json:"defaultModel,omitempty"`
+	ModelMode      ModelMode                  `json:"modelMode,omitempty"`
+	Models         []string                   `json:"models,omitempty"`
+	DisabledModels []string                   `json:"disabledModels,omitempty"`
+	SyncedModels   []string                   `json:"syncedModels,omitempty"`
+	Discovered     map[string]DiscoveredFacts `json:"discovered,omitempty"`
+	ModelSettings  map[string]ModelSettings   `json:"modelSettings,omitempty"`
+	Enabled        *bool                      `json:"enabled,omitempty"`
+	Pool           *PoolSettings              `json:"pool,omitempty"`
 }
 
 func (p Provider) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
@@ -126,8 +128,28 @@ const DefaultContextWindow = 256000
 
 type ModelSettings struct {
 	ContextWindow    int      `json:"contextWindow,omitempty"`
-	ImageInput       bool     `json:"imageInput,omitempty"`
+	ImageInput       *bool    `json:"imageInput,omitempty"`
 	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
+}
+
+type DiscoveredFacts struct {
+	ContextWindow *int  `json:"contextWindow,omitempty"`
+	Image         *bool `json:"image,omitempty"`
+}
+
+func (d *DiscoveredFacts) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		ContextWindow *int  `json:"contextWindow"`
+		Image         *bool `json:"image"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	d.Image = raw.Image
+	if raw.ContextWindow != nil && *raw.ContextWindow > 0 {
+		d.ContextWindow = raw.ContextWindow
+	}
+	return nil
 }
 
 func (d Document) ResolveContextWindow(providerID, model string) int {
@@ -135,11 +157,26 @@ func (d Document) ResolveContextWindow(providerID, model string) int {
 		if s, ok := p.ModelSettings[model]; ok && s.ContextWindow > 0 {
 			return s.ContextWindow
 		}
+		if facts, ok := p.Discovered[model]; ok && facts.ContextWindow != nil && *facts.ContextWindow > 0 {
+			return *facts.ContextWindow
+		}
 	}
 	if d.ContextWindow > 0 {
 		return d.ContextWindow
 	}
 	return DefaultContextWindow
+}
+
+func (d Document) ResolveImageInput(providerID, model string) bool {
+	if p, ok := d.Providers[providerID]; ok {
+		if s, ok := p.ModelSettings[model]; ok && s.ImageInput != nil {
+			return *s.ImageInput
+		}
+		if facts, ok := p.Discovered[model]; ok && facts.Image != nil && *facts.Image {
+			return true
+		}
+	}
+	return false
 }
 
 type PoolSettings struct {
@@ -427,7 +464,7 @@ func (d Document) validateVisionSidecar() error {
 	if contains(p.DisabledModels, model) {
 		return fmt.Errorf("%w: visionSidecar.target model %q is disabled", ErrInvalidTarget, model)
 	}
-	if !p.ModelSettings[model].ImageInput {
+	if !d.ResolveImageInput(providerID, model) {
 		return fmt.Errorf("%w: visionSidecar.target model %q requires imageInput", ErrInvalidTarget, model)
 	}
 	return nil
