@@ -330,14 +330,18 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 					continue
 				}
 				settings := p.ModelSettings[model]
-				out = append(out, integrations.Model{
+				entry := integrations.Model{
 					ID:                     id + "/" + model,
 					Name:                   id + "/" + model,
 					ContextWindow:          snap.Config.ResolveContextWindow(id, model),
 					ImageInput:             snap.Config.ResolveImageInput(id, model),
 					ReasoningEfforts:       settings.ReasoningEfforts,
 					DefaultReasoningEffort: defaultReasoningEffort(settings.ReasoningEfforts),
-				})
+				}
+				if snap.Config.ResolveWire(id, model) == config.WireAnthropicMessages {
+					entry.API = "anthropic-messages"
+				}
+				out = append(out, entry)
 			}
 		}
 		return out
