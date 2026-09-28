@@ -300,7 +300,7 @@ func TestPreCommitFailoverInvisible(t *testing.T) {
 			{Provider: "p1", Model: "m1"},
 			{Provider: "p2", Model: "m1"},
 		},
-		Policy: routing.TurnPolicy{MaxAccountFailovers: 1, MaxTargetFailovers: 1},
+		Policy: routing.TurnPolicy{MaxTargetFailovers: 1},
 	}
 	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": plan}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", failing); err != nil {
@@ -329,6 +329,39 @@ func TestPreCommitFailoverInvisible(t *testing.T) {
 	}
 	if failing.callsMade() != 1 || ok.callsMade() != 1 {
 		t.Fatalf("calls failing=%d ok=%d", failing.callsMade(), ok.callsMade())
+	}
+}
+
+func TestResponsesRequireSelectionAndKeepSelectedAccountAfterFailure(t *testing.T) {
+	selected := &recordingRunner{runner: &fakeRunner{scripts: []fakeScript{
+		{err: provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer}},
+		{events: []canon.Event{canon.TurnFinished{Status: canon.Completed()}}},
+		{events: []canon.Event{canon.TurnFinished{Status: canon.Completed()}}},
+	}}}
+	plan := singlePlan("p1")
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": plan}, func(reg *provider.Registry) {
+		if err := reg.Register("p1", selected); err != nil {
+			t.Fatal(err)
+		}
+	})
+	register := h.pool.(interface{ Register(account.Account) })
+	register.Register(activeAccount("a5", "p1"))
+	request := func() *httptest.ResponseRecorder {
+		return postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"hi"}`)
+	}
+	if rec := request(); !strings.Contains(rec.Body.String(), "pool exhausted") || selected.runner.callsMade() != 0 {
+		t.Fatalf("unselected request = %d %s, runner calls=%d", rec.Code, rec.Body.String(), selected.runner.callsMade())
+	}
+	plan.Targets[0].Policy.PinnedAccount = "a1"
+	if rec := request(); !strings.Contains(rec.Body.String(), "server") || len(selected.reqs) != 1 || selected.reqs[0].Lease.Account != "a1" {
+		t.Fatalf("selected failure = %d %s, leases=%+v", rec.Code, rec.Body.String(), selected.reqs)
+	}
+	if rec := request(); rec.Code != http.StatusOK || len(selected.reqs) != 2 || selected.reqs[1].Lease.Account != "a1" {
+		t.Fatalf("retry = %d %s, leases=%+v", rec.Code, rec.Body.String(), selected.reqs)
+	}
+	plan.Targets[0].Policy.PinnedAccount = "a5"
+	if rec := request(); rec.Code != http.StatusOK || len(selected.reqs) != 3 || selected.reqs[2].Lease.Account != "a5" {
+		t.Fatalf("new selection = %d %s, leases=%+v", rec.Code, rec.Body.String(), selected.reqs)
 	}
 }
 

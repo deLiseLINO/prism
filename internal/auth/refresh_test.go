@@ -119,7 +119,7 @@ func newRefreshHarness(t *testing.T, provider account.ProviderID) *harness {
 	dir := t.TempDir()
 	file := store.NewFileCredentialStore(dir)
 	repo := account.OpenMeta(filepath.Join(dir, "accounts.json"))
-	pool := account.New([]byte("test-secret"), clock.Now)
+	pool := account.New()
 	var cfg ProviderConfig
 	var flow Flow
 	var err error

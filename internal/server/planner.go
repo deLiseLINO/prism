@@ -87,7 +87,7 @@ func targetFor(d config.Document, providerID, model string) (provider.Target, er
 	if !p.IsEnabled() || slices.Contains(p.DisabledModels, model) {
 		return provider.Target{}, config.ErrInvalidTarget
 	}
-	t := provider.Target{
+	return provider.Target{
 		Provider:   account.ProviderID(providerID),
 		Wire:       wireFor(p.Wire),
 		BaseURL:    p.BaseURL,
@@ -95,41 +95,14 @@ func targetFor(d config.Document, providerID, model string) (provider.Target, er
 		Model:      canon.ModelID(model),
 		ImageInput: d.ResolveImageInput(providerID, model),
 		Policy:     selectionPolicy(p.Pool),
-	}
-	if p.Pool != nil {
-		t.MaxFailovers = p.Pool.MaxFailovers
-	}
-	return t, nil
+	}, nil
 }
 
 func selectionPolicy(ps *config.PoolSettings) account.SelectionPolicy {
 	if ps == nil {
 		return account.SelectionPolicy{}
 	}
-	pol := account.SelectionPolicy{
-		Strategy:            account.StrategyQuota,
-		AutoSwitch:          account.AutoSwitchOn,
-		AutoSwitchThreshold: ps.AutoSwitchThreshold,
-		Affinity:            account.AffinitySticky,
-		CooldownDefault:     ps.CooldownDefault,
-		CooldownMax:         ps.CooldownMax,
-	}
-	switch ps.Strategy {
-	case config.PoolRoundRobin:
-		pol.Strategy = account.StrategyRoundRobin
-	case config.PoolFillFirst:
-		pol.Strategy = account.StrategyFillFirst
-	}
-	if !ps.AutoSwitchEnabled() {
-		pol.AutoSwitch = account.AutoSwitchOff
-	}
-	if ps.Affinity == config.AffinityOff {
-		pol.Affinity = account.AffinityOff
-	}
-	if ps.PinnedAccount != "" {
-		pol.PinnedAccount = account.AccountID(ps.PinnedAccount)
-	}
-	return pol
+	return account.SelectionPolicy{PinnedAccount: account.AccountID(ps.PinnedAccount)}
 }
 
 func targetDisabled(d config.Document, providerID, model string) bool {

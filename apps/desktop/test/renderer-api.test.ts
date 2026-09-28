@@ -216,13 +216,8 @@ describe('renderer api wrapper', () => {
   it('unwraps provider mutation responses with their hidden pool durations intact', async () => {
     const { api } = await loadApi()
     const pool = {
-      strategy: 'quota',
-      autoSwitchThreshold: 0.8,
+      pinnedAccount: '',
       accountsPath: '',
-      maxFailovers: 3,
-      cooldownDefault: 300000000000,
-      cooldownMax: 900000000000,
-      probeEvery: 60000000000,
     }
     setReply({
       ok: true,
@@ -320,13 +315,8 @@ describe('renderer api wrapper', () => {
   it('preserves hidden apiKeyRef and pool durations when editing through the fetch-write seam', async () => {
     const { api } = await loadApi()
     const existingPool = {
-      strategy: 'quota',
-      autoSwitchThreshold: 0.8,
+      pinnedAccount: '',
       accountsPath: '',
-      maxFailovers: 3,
-      cooldownDefault: 300000000000,
-      cooldownMax: 900000000000,
-      probeEvery: 60000000000,
     }
     setReply({
       ok: true,
@@ -547,15 +537,8 @@ describe('provider pin write', () => {
     disabledModels: [],
     enabled: true,
     pool: {
-      strategy: 'quota',
-      autoSwitchThreshold: 0.85,
-      affinity: 'sticky',
       pinnedAccount: '',
       accountsPath: '',
-      maxFailovers: 3,
-      cooldownDefault: 300_000_000_000,
-      cooldownMax: 3_600_000_000_000,
-      probeEvery: 60_000_000_000,
     },
     credential: { state: 'set' },
   }
@@ -570,7 +553,7 @@ describe('provider pin write', () => {
     expect(write.models).toEqual(['gemini-3-pro'])
     expect(write.expectedGeneration).toBe(7)
     expect(write.pool?.pinnedAccount).toBe('antigravity:probe')
-    expect(write.pool?.strategy).toBe('quota')
+    expect(write.pool?.accountsPath).toBe('')
     expect(write.credential).toBeUndefined()
   })
 
@@ -581,6 +564,6 @@ describe('provider pin write', () => {
       pinnedAccount: '',
     })
     expect(write.pool?.pinnedAccount).toBe('')
-    expect(write.pool?.maxFailovers).toBe(3)
+    expect(write.pool?.accountsPath).toBe('')
   })
 })

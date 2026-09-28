@@ -16,19 +16,10 @@ export interface ManagementReply {
 }
 
 // Pool fields rendered from internal/config.PoolSettings. Optional fields use `?` to mirror the
-// `omitempty` JSON tags on the daemon side. The daemon always serializes the cooldown/probe
-// durations and the failover settings as plain nanosecond integers, so they are required here.
+// `omitempty` JSON tags on the daemon side.
 export interface PoolSettingsView {
-  readonly strategy: 'quota' | 'round_robin' | 'fill_first'
-  readonly autoSwitch?: boolean
-  readonly autoSwitchThreshold: number
-  readonly affinity?: 'sticky' | 'off'
   readonly pinnedAccount?: string
-  readonly accountsPath: string
-  readonly maxFailovers: number
-  readonly cooldownDefault: number
-  readonly cooldownMax: number
-  readonly probeEvery: number
+  readonly accountsPath?: string
 }
 
 // Provider response shape (internal/management/schema.go Provider). The daemon never echoes

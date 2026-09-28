@@ -235,18 +235,6 @@ func (m Model) handlePinConfirm(keyStr string) (tea.Model, tea.Cmd) {
 		m.ShowInfo = false
 		m.PinConfirm = false
 		return m, PinProviderAccountCmd(m.api, providerID, accountKey)
-	case "a":
-		account := m.activeAccount()
-		if account == nil {
-			m.PinConfirm = false
-			return m, nil
-		}
-		m.Loading = true
-		m.Err = nil
-		m.Notice = ""
-		m.ShowInfo = false
-		m.PinConfirm = false
-		return m, PinProviderAccountCmd(m.api, account.Provider, "")
 	}
 	return m, nil
 }

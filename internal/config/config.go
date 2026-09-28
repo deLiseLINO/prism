@@ -7,7 +7,6 @@ import (
 	"net"
 	"slices"
 	"strings"
-	"time"
 	"unicode"
 
 	"prism/internal/catalog"
@@ -42,28 +41,12 @@ const (
 	ComboRoundRobin ComboStrategy = "round_robin"
 )
 
-type PoolStrategy string
-
-const (
-	PoolQuota      PoolStrategy = "quota"
-	PoolRoundRobin PoolStrategy = "round_robin"
-	PoolFillFirst  PoolStrategy = "fill_first"
-)
-
-type PoolAffinity string
-
-const (
-	AffinitySticky PoolAffinity = "sticky"
-	AffinityOff    PoolAffinity = "off"
-)
 
 var (
 	ErrStaleGeneration      = errors.New("config: stale generation")
 	ErrCorrupt              = errors.New("config: corrupt document")
 	ErrUnknownWire          = errors.New("config: unknown wire")
 	ErrUnknownComboStrategy = errors.New("config: unknown combo strategy")
-	ErrUnknownPoolStrategy  = errors.New("config: unknown pool strategy")
-	ErrUnknownAffinity      = errors.New("config: unknown affinity")
 	ErrMalformedAlias       = errors.New("config: malformed alias")
 	ErrInvalidTarget        = errors.New("config: invalid route target")
 	ErrInvalidValue         = errors.New("config: invalid value")
@@ -238,19 +221,9 @@ func (d Document) ResolveImageSource(providerID, model string) ImageSource {
 }
 
 type PoolSettings struct {
-	Strategy            PoolStrategy  `json:"strategy"`
-	AutoSwitch          *bool         `json:"autoSwitch,omitempty"`
-	AutoSwitchThreshold float64       `json:"autoSwitchThreshold"`
-	Affinity            PoolAffinity  `json:"affinity,omitempty"`
-	PinnedAccount       string        `json:"pinnedAccount,omitempty"`
-	AccountsPath        string        `json:"accountsPath"`
-	MaxFailovers        int           `json:"maxFailovers"`
-	CooldownDefault     time.Duration `json:"cooldownDefault"`
-	CooldownMax         time.Duration `json:"cooldownMax"`
-	ProbeEvery          time.Duration `json:"probeEvery"`
+	PinnedAccount string `json:"pinnedAccount,omitempty"`
+	AccountsPath  string `json:"accountsPath,omitempty"`
 }
-
-func (p PoolSettings) AutoSwitchEnabled() bool { return p.AutoSwitch == nil || *p.AutoSwitch }
 
 type Target struct {
 	Provider string `json:"provider"`
@@ -453,32 +426,8 @@ func (d Document) validateTarget(provider, model string) error {
 }
 
 func (p PoolSettings) validate() error {
-	switch p.Strategy {
-	case PoolQuota, PoolRoundRobin, PoolFillFirst:
-	default:
-		return fmt.Errorf("%w: strategy %q", ErrUnknownPoolStrategy, p.Strategy)
-	}
-	if p.AutoSwitchThreshold < 0 || p.AutoSwitchThreshold > 1 {
-		return fmt.Errorf("%w: autoSwitchThreshold %f", ErrInvalidValue, p.AutoSwitchThreshold)
-	}
-	switch p.Affinity {
-	case "", AffinitySticky, AffinityOff:
-	default:
-		return fmt.Errorf("%w: affinity %q", ErrUnknownAffinity, p.Affinity)
-	}
-	if p.PinnedAccount != "" {
-		if strings.ContainsFunc(p.PinnedAccount, unicode.IsSpace) {
-			return fmt.Errorf("%w: pinnedAccount %q", ErrInvalidValue, p.PinnedAccount)
-		}
-	}
-	if p.MaxFailovers < 0 {
-		return fmt.Errorf("%w: maxFailovers %d", ErrInvalidValue, p.MaxFailovers)
-	}
-	if p.CooldownDefault < 0 || p.CooldownMax < 0 || p.ProbeEvery < 0 {
-		return fmt.Errorf("%w: negative duration", ErrInvalidValue)
-	}
-	if p.CooldownMax > 0 && p.CooldownDefault > p.CooldownMax {
-		return fmt.Errorf("%w: cooldownDefault exceeds cooldownMax", ErrInvalidValue)
+	if p.PinnedAccount != "" && strings.ContainsFunc(p.PinnedAccount, unicode.IsSpace) {
+		return fmt.Errorf("%w: pinnedAccount %q", ErrInvalidValue, p.PinnedAccount)
 	}
 	return nil
 }

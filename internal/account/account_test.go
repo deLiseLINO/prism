@@ -10,12 +10,6 @@ import (
 	"prism/internal/quota"
 )
 
-type fakeClock struct{ t time.Time }
-
-func (c *fakeClock) Now() time.Time { return c.t }
-
-func (c *fakeClock) Advance(d time.Duration) { c.t = c.t.Add(d) }
-
 func limitPtr(v int64) *int64 { return &v }
 
 func acct(id AccountID, prio int, state State, limit int64, used int64) Account {
@@ -40,9 +34,14 @@ func req(session string) AcquireRequest {
 	}
 }
 
+func pin(session string, id AccountID) AcquireRequest {
+	r := req(session)
+	r.Policy.PinnedAccount = id
+	return r
+}
+
 func TestVersionSplitCredGenPinnedByLease(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	ctx := context.Background()
 	a := acct("a1", 1, Active, 200, 0)
 	a.CredGen = 1
@@ -77,7 +76,7 @@ func TestVersionSplitCredGenPinnedByLease(t *testing.T) {
 	if l2.CredGen != 2 || l2.Version != 2 {
 		t.Fatalf("lease after refresh: got gen/ver %d/%d, want 2/2", l2.CredGen, l2.Version)
 	}
-	if err := p.Record(ctx, l1, RateLimited{RetryAfter: time.Minute}); err != nil {
+	if err := p.Record(ctx, l1, AuthRejected{}); err != nil {
 		t.Fatalf("stale record: %v", err)
 	}
 	snap = p.Snapshot().Accounts[0]
@@ -87,8 +86,7 @@ func TestVersionSplitCredGenPinnedByLease(t *testing.T) {
 }
 
 func TestRecordStaleOutcomeNeverMutatesState(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	ctx := context.Background()
 	p.Register(acct("a1", 1, Active, 200, 0))
 
@@ -109,7 +107,7 @@ func TestRecordStaleOutcomeNeverMutatesState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire restored: %v", err)
 	}
-	if err := p.Record(ctx, l1, RateLimited{RetryAfter: time.Minute}); err != nil {
+	if err := p.Record(ctx, l1, AuthRejected{}); err != nil {
 		t.Fatalf("stale record: %v", err)
 	}
 	snap := p.Snapshot().Accounts[0]
@@ -119,146 +117,84 @@ func TestRecordStaleOutcomeNeverMutatesState(t *testing.T) {
 	if snap.InFlight != 0 {
 		t.Fatalf("stale outcome did not release in-flight lease: got %d", snap.InFlight)
 	}
-	if err := p.Record(ctx, l2, RateLimited{RetryAfter: time.Minute}); err != nil {
+	if err := p.Record(ctx, l2, TurnSucceeded{}); err != nil {
 		t.Fatalf("current record: %v", err)
 	}
 	snap = p.Snapshot().Accounts[0]
-	if snap.State != CoolingDown || snap.Version != 3 {
-		t.Fatalf("current outcome: got state %d version %d, want CoolingDown/3", snap.State, snap.Version)
+	if snap.State != Active || snap.Version != 2 || snap.InFlight != 0 {
+		t.Fatalf("success on active account: got state %d version %d in-flight %d, want Active/2/0", snap.State, snap.Version, snap.InFlight)
 	}
 }
 
-func TestAffinityStickyAcrossSessionsAndExpiresAtTTL(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+func TestSingleAccountIsImplicit(t *testing.T) {
+	p := New()
 	ctx := context.Background()
-	p.Register(acct("a", 2, Active, 200, 0))
-	p.Register(acct("b", 1, Active, 200, 0))
+	p.Register(acct("only", 1, Active, 200, 0))
 
-	l1, err := p.Acquire(ctx, req("s1"))
+	l, err := p.Acquire(ctx, req("s1"))
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if l1.Account != "a" {
-		t.Fatalf("first acquire: got %s, want a", l1.Account)
-	}
-	l2, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("re-acquire: %v", err)
-	}
-	if l2.Account != "a" {
-		t.Fatalf("session stuck: got %s, want a", l2.Account)
-	}
-	l3, err := p.Acquire(ctx, req("s2"))
-	if err != nil {
-		t.Fatalf("acquire other session: %v", err)
-	}
-	if l3.Account != "a" {
-		t.Fatalf("other session: got %s, want a", l3.Account)
-	}
-
-	demoted := p.Snapshot().Accounts[0]
-	demoted.Priority = 0
-	p.Register(demoted)
-	l4, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire after demotion: %v", err)
-	}
-	if l4.Account != "a" {
-		t.Fatalf("session kept account while usable: got %s, want a", l4.Account)
-	}
-
-	clock.Advance(affinityIdleTTL + time.Minute)
-	l5, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire after ttl: %v", err)
-	}
-	if l5.Account != "b" {
-		t.Fatalf("affinity not expired: got %s, want b", l5.Account)
+	if l.Account != "only" {
+		t.Fatalf("implicit account: got %s, want only", l.Account)
 	}
 }
 
-func TestAffinityDroppedOnAuthRejected(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+func TestMultipleAccountsRequireExplicitSelection(t *testing.T) {
+	p := New()
 	ctx := context.Background()
-	p.Register(acct("a", 2, Active, 200, 0))
+	p.Register(acct("a", 9, Active, 200, 0))
 	p.Register(acct("b", 1, Active, 200, 0))
 
-	l1, err := p.Acquire(ctx, req("s1"))
+	if _, err := p.Acquire(ctx, req("s1")); !errors.Is(err, ErrNoAccount) {
+		t.Fatalf("unselected multi-account acquire: got %v, want ErrNoAccount", err)
+	}
+	l, err := p.Acquire(ctx, pin("s1", "b"))
+	if err != nil {
+		t.Fatalf("explicit acquire: %v", err)
+	}
+	if l.Account != "b" {
+		t.Fatalf("explicit selection: got %s, want b", l.Account)
+	}
+}
+
+func TestSelectedAccountFailureDoesNotSwitch(t *testing.T) {
+	p := New()
+	ctx := context.Background()
+	p.Register(acct("a", 1, Active, 200, 0))
+	p.Register(acct("b", 9, Active, 200, 0))
+
+	l1, err := p.Acquire(ctx, pin("s1", "a"))
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if l1.Account != "a" {
-		t.Fatalf("first acquire: got %s, want a", l1.Account)
-	}
-	if err := p.Record(ctx, l1, AuthRejected{}); err != nil {
+	if err := p.Record(ctx, l1, RequestRejected{}); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	restored := p.Snapshot().Accounts[0]
-	restored.Priority = 0
-	restored.State = Active
-	p.Register(restored)
-	l2, err := p.Acquire(ctx, req("s1"))
+	l2, err := p.Acquire(ctx, pin("s1", "a"))
 	if err != nil {
-		t.Fatalf("re-acquire: %v", err)
+		t.Fatalf("re-acquire after failure: %v", err)
 	}
-	if l2.Account != "b" {
-		t.Fatalf("affinity entry survived auth rejection: got %s, want b", l2.Account)
+	if l2.Account != "a" {
+		t.Fatalf("failure switched accounts: got %s, want a", l2.Account)
 	}
-}
-
-func TestProbeLeaseGatedOncePerFiveMinutes(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
-	ctx := context.Background()
-	p.Register(acct("a1", 1, Active, 200, 0))
-
-	l1, err := p.Acquire(ctx, req("s1"))
+	if err := p.Record(ctx, l2, AuthRejected{}); err != nil {
+		t.Fatalf("record auth rejected: %v", err)
+	}
+	if _, err := p.Acquire(ctx, pin("s2", "a")); !errors.Is(err, ErrNoAccount) {
+		t.Fatalf("rejected selection fell through: got %v, want ErrNoAccount", err)
+	}
+	other, err := p.Acquire(ctx, pin("s2", "b"))
 	if err != nil {
-		t.Fatalf("acquire: %v", err)
+		t.Fatalf("other explicit selection: %v", err)
 	}
-	if err := p.Record(ctx, l1, RateLimited{RetryAfter: 30 * time.Minute}); err != nil {
-		t.Fatalf("record rate limited: %v", err)
-	}
-
-	probe1, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("probe acquire: %v", err)
-	}
-	if !probe1.Probe || probe1.Account != "a1" {
-		t.Fatalf("expected probe lease on cooling account, got %+v", probe1)
-	}
-	if err := p.Record(ctx, probe1, ProbeFailed{}); err != nil {
-		t.Fatalf("record probe failed: %v", err)
-	}
-	if _, err := p.Acquire(ctx, req("s1")); !errors.Is(err, ErrNoAccount) {
-		t.Fatalf("second probe within five minutes: got %v, want ErrNoAccount", err)
-	}
-
-	clock.Advance(probeInterval)
-	probe2, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("probe after interval: %v", err)
-	}
-	if !probe2.Probe {
-		t.Fatalf("expected probe lease after interval")
-	}
-	if err := p.Record(ctx, probe2, ProbeSucceeded{}); err != nil {
-		t.Fatalf("record probe succeeded: %v", err)
-	}
-	normal, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire after probe success: %v", err)
-	}
-	if normal.Probe {
-		t.Fatalf("expected normal lease after recovery, got probe")
+	if other.Account != "b" {
+		t.Fatalf("other selection: got %s, want b", other.Account)
 	}
 }
 
 func TestPauseBlocksAndDrainsInFlight(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	ctx := context.Background()
 	p.Register(acct("a1", 1, Active, 200, 0))
 
@@ -297,277 +233,87 @@ func TestPauseBlocksAndDrainsInFlight(t *testing.T) {
 	}
 }
 
-func TestRecordTransitions(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	cases := []struct {
-		name    string
-		outcome Outcome
-		after   func() (State, time.Time, time.Time, StateVersion)
-	}{
-		{
-			name:    "turn succeeded stays active",
-			outcome: TurnSucceeded{},
-			after:   func() (State, time.Time, time.Time, StateVersion) { return Active, time.Time{}, time.Time{}, 1 },
-		},
-		{
-			name:    "auth rejected",
-			outcome: AuthRejected{},
-			after:   func() (State, time.Time, time.Time, StateVersion) { return NeedsReauth, time.Time{}, time.Time{}, 2 },
-		},
-		{
-			name:    "rate limited",
-			outcome: RateLimited{RetryAfter: 30 * time.Second},
-			after: func() (State, time.Time, time.Time, StateVersion) {
-				return CoolingDown, base.Add(30 * time.Second), time.Time{}, 2
-			},
-		},
-		{
-			name:    "quota exhausted",
-			outcome: QuotaExhausted{RetryAfter: 45 * time.Second},
-			after: func() (State, time.Time, time.Time, StateVersion) {
-				return CoolingDown, base.Add(45 * time.Second), time.Time{}, 2
-			},
-		},
-		{
-			name:    "not found skips without state change",
-			outcome: NotFound{},
-			after:   func() (State, time.Time, time.Time, StateVersion) { return Active, time.Time{}, time.Time{}, 1 },
-		},
-		{
-			name:    "request timeout skips without state change",
-			outcome: RequestTimeout{RetryAfter: 5 * time.Second},
-			after:   func() (State, time.Time, time.Time, StateVersion) { return Active, time.Time{}, time.Time{}, 1 },
-		},
-		{
-			name:    "server error soft avoids",
-			outcome: ServerError{},
-			after: func() (State, time.Time, time.Time, StateVersion) {
-				return SoftAvoid, time.Time{}, base.Add(softAvoidWindow), 2
-			},
-		},
-		{
-			name:    "transport failure soft avoids",
-			outcome: TransportFailure{},
-			after: func() (State, time.Time, time.Time, StateVersion) {
-				return SoftAvoid, time.Time{}, base.Add(softAvoidWindow), 2
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			clock := &fakeClock{t: base}
-			p := New([]byte("secret"), clock.Now)
-			ctx := context.Background()
-			p.Register(acct("a1", 1, Active, 200, 0))
-			l, err := p.Acquire(ctx, req("s1"))
-			if err != nil {
-				t.Fatalf("acquire: %v", err)
-			}
-			if err := p.Record(ctx, l, tc.outcome); err != nil {
-				t.Fatalf("record: %v", err)
-			}
-			wantState, wantCooldown, wantSoftAvoid, wantVersion := tc.after()
-			snap := p.Snapshot().Accounts[0]
-			if snap.State != wantState {
-				t.Errorf("state: got %d, want %d", snap.State, wantState)
-			}
-			if !snap.CooldownUntil.Equal(wantCooldown) {
-				t.Errorf("cooldown until: got %s, want %s", snap.CooldownUntil, wantCooldown)
-			}
-			if !snap.SoftAvoidUntil.Equal(wantSoftAvoid) {
-				t.Errorf("soft avoid until: got %s, want %s", snap.SoftAvoidUntil, wantSoftAvoid)
-			}
-			if snap.Version != wantVersion {
-				t.Errorf("version: got %d, want %d", snap.Version, wantVersion)
-			}
-		})
-	}
-}
-
-func TestProbeFailedLeavesCooldownUnchanged(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	clock := &fakeClock{t: base}
-	p := New([]byte("secret"), clock.Now)
+func TestRecordAuthRejectedNeedsReauth(t *testing.T) {
+	p := New()
 	ctx := context.Background()
 	p.Register(acct("a1", 1, Active, 200, 0))
-
-	l1, err := p.Acquire(ctx, req("s1"))
+	l, err := p.Acquire(ctx, req("s1"))
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if err := p.Record(ctx, l1, RateLimited{RetryAfter: 30 * time.Minute}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	probe, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("probe acquire: %v", err)
-	}
-	if err := p.Record(ctx, probe, ProbeFailed{}); err != nil {
-		t.Fatalf("record probe failed: %v", err)
-	}
-	snap := p.Snapshot().Accounts[0]
-	if snap.State != CoolingDown || !snap.CooldownUntil.Equal(base.Add(30*time.Minute)) || snap.Version != 2 {
-		t.Fatalf("probe failed mutated cooldown: got %+v", snap)
-	}
-}
-
-func TestCooldownExtendsOnlyNeverShrinks(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	clock := &fakeClock{t: base}
-	p := New([]byte("secret"), clock.Now)
-	ctx := context.Background()
-	p.Register(acct("a1", 1, Active, 200, 0))
-
-	l1, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if err := p.Record(ctx, l1, RateLimited{RetryAfter: 10 * time.Minute}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	probe, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("probe acquire: %v", err)
-	}
-	if err := p.Record(ctx, probe, RateLimited{RetryAfter: 30 * time.Second}); err != nil {
-		t.Fatalf("record during cooldown: %v", err)
-	}
-	if got := p.Snapshot().Accounts[0].CooldownUntil; !got.Equal(base.Add(10 * time.Minute)) {
-		t.Fatalf("shorter retry-after shrank cooldown: got %s, want %s", got, base.Add(10*time.Minute))
-	}
-	clock.Advance(probeInterval + time.Second)
-	probe2, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("probe acquire: %v", err)
-	}
-	if err := p.Record(ctx, probe2, RateLimited{RetryAfter: 60 * time.Second}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	if got := p.Snapshot().Accounts[0].CooldownUntil; !got.Equal(base.Add(10 * time.Minute)) {
-		t.Fatalf("cooldown shrank on later rate limit: got %s, want %s", got, base.Add(10*time.Minute))
-	}
-}
-
-func TestSoftAvoidWindowDecays(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	clock := &fakeClock{t: base}
-	p := New([]byte("secret"), clock.Now)
-	ctx := context.Background()
-	p.Register(acct("a1", 1, Active, 200, 0))
-
-	l1, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if err := p.Record(ctx, l1, ServerError{}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	if l, err := p.Acquire(ctx, req("s1")); err != nil || !l.Probe {
-		t.Fatalf("expected probe lease during soft avoid, got %+v err %v", l, err)
-	}
-	clock.Advance(softAvoidWindow + time.Second)
-	if _, err := p.Acquire(ctx, req("s1")); err != nil {
-		t.Fatalf("acquire after window decay: %v", err)
-	}
-}
-
-func TestCooldownWindowDecays(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	clock := &fakeClock{t: base}
-	p := New([]byte("secret"), clock.Now)
-	ctx := context.Background()
-	p.Register(acct("a1", 1, Active, 200, 0))
-
-	l1, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if err := p.Record(ctx, l1, RateLimited{RetryAfter: 30 * time.Second}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	if l, err := p.Acquire(ctx, req("s1")); err == nil && !l.Probe {
-		t.Fatalf("acquire during cooldown returned a normal lease")
-	}
-	clock.Advance(31 * time.Second)
-	if _, err := p.Acquire(ctx, req("s1")); err != nil {
-		t.Fatalf("acquire after cooldown: %v", err)
-	}
-}
-
-func TestProbeSucceededClearsSoftAvoid(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	clock := &fakeClock{t: base}
-	p := New([]byte("secret"), clock.Now)
-	ctx := context.Background()
-	p.Register(acct("a1", 1, Active, 200, 0))
-
-	l1, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if err := p.Record(ctx, l1, ServerError{}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	probe, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("probe acquire: %v", err)
-	}
-	if !probe.Probe {
-		t.Fatalf("expected probe lease on soft-avoided account")
-	}
-	if err := p.Record(ctx, probe, ProbeSucceeded{}); err != nil {
+	if err := p.Record(ctx, l, AuthRejected{}); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	snap := p.Snapshot().Accounts[0]
-	if snap.State != Active || !snap.SoftAvoidUntil.IsZero() || snap.Version != 3 {
-		t.Fatalf("probe did not clear soft avoid: got %+v", snap)
+	if snap.State != NeedsReauth || snap.Version != 2 || snap.InFlight != 0 {
+		t.Fatalf("auth rejected: got state %d version %d in-flight %d, want NeedsReauth/2/0", snap.State, snap.Version, snap.InFlight)
 	}
 }
 
-func TestSelectionPrefersPriorityThenHeadroom(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+func TestNonAuthOutcomesDoNotGateSelection(t *testing.T) {
+	cases := []Outcome{TurnSucceeded{}, RequestRejected{}}
+	for _, outcome := range cases {
+		p := New()
+		ctx := context.Background()
+		p.Register(acct("a1", 1, Active, 200, 0))
+		l, err := p.Acquire(ctx, req("s1"))
+		if err != nil {
+			t.Fatalf("acquire: %v", err)
+		}
+		if err := p.Record(ctx, l, outcome); err != nil {
+			t.Fatalf("record %T: %v", outcome, err)
+		}
+		snap := p.Snapshot().Accounts[0]
+		if snap.State != Active || snap.Version != 1 || snap.InFlight != 0 {
+			t.Fatalf("%T gated or mutated selection: got state %d version %d in-flight %d", outcome, snap.State, snap.Version, snap.InFlight)
+		}
+		if _, err := p.Acquire(ctx, req("s2")); err != nil {
+			t.Fatalf("%T blocked the same account: %v", outcome, err)
+		}
+	}
+}
+
+func TestCooldownDoesNotBlockSelectedAccount(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	p := New()
 	ctx := context.Background()
-	p.Register(acct("a", 1, Active, 200, 100))
-	p.Register(acct("b", 2, Active, 200, 150))
-	p.Register(acct("c", 2, Active, 200, 50))
+	cooling := acct("a1", 1, CoolingDown, 200, 0)
+	cooling.CooldownUntil = base.Add(30 * time.Minute)
+	p.Register(cooling)
+	p.Register(acct("a2", 9, Active, 200, 0))
+
+	l, err := p.Acquire(ctx, pin("s1", "a1"))
+	if err != nil {
+		t.Fatalf("cooling selected account: %v", err)
+	}
+	if l.Account != "a1" {
+		t.Fatalf("cooldown switched accounts: got %s, want a1", l.Account)
+	}
+}
+
+func TestTurnSucceededClearsCoolingDown(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	p := New()
+	ctx := context.Background()
+	cooling := acct("a1", 1, CoolingDown, 200, 0)
+	cooling.CooldownUntil = base.Add(30 * time.Minute)
+	p.Register(cooling)
 
 	l, err := p.Acquire(ctx, req("s1"))
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if l.Account != "c" {
-		t.Fatalf("priority tier then headroom: got %s, want c", l.Account)
-	}
 	if err := p.Record(ctx, l, TurnSucceeded{}); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-
-	p.Register(acct("d", 3, Active, 0, 0))
-	l2, err := p.Acquire(ctx, req("s2"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if l2.Account != "d" {
-		t.Fatalf("unlimited quota ranks top: got %s, want d", l2.Account)
-	}
-	if err := p.Record(ctx, l2, TurnSucceeded{}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-
-	p.Register(acct("e", 4, Active, 100, 100))
-	l3, err := p.Acquire(ctx, req("s3"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if l3.Account != "e" {
-		t.Fatalf("highest priority tier wins even with zero headroom: got %s, want e", l3.Account)
+	snap := p.Snapshot().Accounts[0]
+	if snap.State != Active || !snap.CooldownUntil.IsZero() || snap.Version != 2 {
+		t.Fatalf("success did not clear cooling: got %+v", snap)
 	}
 }
 
 func TestManagementMutationsCAS(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	ctx := context.Background()
 	p.Register(acct("a1", 1, Active, 200, 0))
 
@@ -600,8 +346,7 @@ func TestManagementMutationsCAS(t *testing.T) {
 }
 
 func TestSnapshotDeepCopy(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	p.Register(acct("a1", 1, Active, 200, 0))
 
 	snap := p.Snapshot()
@@ -613,16 +358,14 @@ func TestSnapshotDeepCopy(t *testing.T) {
 }
 
 func TestNoAccounts(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	if _, err := p.Acquire(context.Background(), req("s1")); !errors.Is(err, ErrNoAccount) {
 		t.Fatalf("empty pool: got %v, want ErrNoAccount", err)
 	}
 }
 
-func TestNeedsReauthNotEligibleAndNoProbe(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+func TestNeedsReauthNotEligible(t *testing.T) {
+	p := New()
 	ctx := context.Background()
 	p.Register(acct("a1", 1, Active, 200, 0))
 
@@ -638,34 +381,8 @@ func TestNeedsReauthNotEligibleAndNoProbe(t *testing.T) {
 	}
 }
 
-func TestAffinityKeyDistinguishesThreads(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
-	ctx := context.Background()
-	p.Register(acct("a", 1, Active, 200, 0))
-
-	r1 := req("s1")
-	r2 := req("s1")
-	r2.Thread = "t2"
-	if p.affinityKey(r1) == p.affinityKey(r2) {
-		t.Fatalf("thread not part of affinity key")
-	}
-	l1, err := p.Acquire(ctx, r1)
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	l2, err := p.Acquire(ctx, r2)
-	if err != nil {
-		t.Fatalf("acquire other thread: %v", err)
-	}
-	if l1.Account != l2.Account {
-		t.Fatalf("threads should share provider selection but got %s vs %s", l1.Account, l2.Account)
-	}
-}
-
 func TestAdvanceGenerationMovesForwardOnly(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	p.Register(acct("a", 1, Active, 200, 0))
 	if err := p.AdvanceGeneration("a", 2); err != nil {
 		t.Fatalf("advance: %v", err)
@@ -673,7 +390,6 @@ func TestAdvanceGenerationMovesForwardOnly(t *testing.T) {
 	if got := p.Snapshot().Accounts[0].CredGen; got != 2 {
 		t.Fatalf("gen = %d, want 2", got)
 	}
-	// A re-login that registered a newer generation must never regress.
 	p.Register(func() Account { a := acct("a", 1, Active, 200, 0); a.CredGen = 5; return a }())
 	if err := p.AdvanceGeneration("a", 3); err != nil {
 		t.Fatalf("advance behind: %v", err)
@@ -686,50 +402,38 @@ func TestAdvanceGenerationMovesForwardOnly(t *testing.T) {
 	}
 }
 
-func TestMarkNeedsReauthDropsAffinityAndDispatch(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+func TestMarkNeedsReauthBlocksWithoutSwitching(t *testing.T) {
+	p := New()
 	ctx := context.Background()
 	p.Register(acct("a", 2, Active, 200, 0))
 	p.Register(acct("b", 1, Active, 200, 0))
 
-	l1, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if l1.Account != "a" {
-		t.Fatalf("first acquire: got %s, want a", l1.Account)
-	}
 	if err := p.MarkNeedsReauth("a"); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
-	snap := p.Snapshot().Accounts[0]
-	if snap.ID == "a" {
-		if snap.State != NeedsReauth {
-			t.Fatalf("state = %v, want NeedsReauth", snap.State)
-		}
-		if snap.CredGen != 1 {
-			t.Fatalf("gen = %d, want unchanged 1", snap.CredGen)
+	var marked Account
+	for _, snap := range p.Snapshot().Accounts {
+		if snap.ID == "a" {
+			marked = snap
 		}
 	}
-	// Reactivate through a fresh registration (as a re-login would) and make
-	// the other account strictly better: the pinned selection must be gone.
-	restored := p.Snapshot().Accounts[0]
-	restored.Priority = 0
-	restored.State = Active
-	p.Register(restored)
-	l2, err := p.Acquire(ctx, req("s1"))
+	if marked.State != NeedsReauth || marked.CredGen != 1 {
+		t.Fatalf("marked account: got state %d gen %d, want NeedsReauth/1", marked.State, marked.CredGen)
+	}
+	if _, err := p.Acquire(ctx, pin("s1", "a")); !errors.Is(err, ErrNoAccount) {
+		t.Fatalf("needs-reauth selection fell through: got %v, want ErrNoAccount", err)
+	}
+	l, err := p.Acquire(ctx, pin("s1", "b"))
 	if err != nil {
-		t.Fatalf("re-acquire: %v", err)
+		t.Fatalf("other selection: %v", err)
 	}
-	if l2.Account != "b" {
-		t.Fatalf("affinity entry survived needs_reauth: got %s, want b", l2.Account)
+	if l.Account != "b" {
+		t.Fatalf("other selection: got %s, want b", l.Account)
 	}
 }
 
 func TestRecordReleasesLeaseAfterContextCancellation(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	p.Register(acct("a1", 1, Active, 200, 0))
 	lease, err := p.Acquire(context.Background(), req("cancelled"))
 	if err != nil {
@@ -743,22 +447,14 @@ func TestRecordReleasesLeaseAfterContextCancellation(t *testing.T) {
 	}
 }
 
-func TestDeleteAccountRemovesAccountAndDropsAffinity(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+func TestDeleteAccountRemovesAccount(t *testing.T) {
+	p := New()
 	ctx := context.Background()
 	p.Register(acct("b1", 1, Active, 200, 0))
 	p.Register(acct("a1", 2, Active, 200, 0))
 
-	l, err := p.Acquire(ctx, req("s1"))
-	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	if l.Account != "a1" {
-		t.Fatalf("first acquire: got %s, want a1", l.Account)
-	}
-	if err := p.Record(ctx, l, TurnSucceeded{}); err != nil {
-		t.Fatalf("record: %v", err)
+	if _, err := p.Acquire(ctx, req("s1")); !errors.Is(err, ErrNoAccount) {
+		t.Fatalf("unselected multi-account acquire: got %v, want ErrNoAccount", err)
 	}
 	if err := p.DeleteAccount(ctx, "a1"); err != nil {
 		t.Fatalf("delete a1: %v", err)
@@ -770,23 +466,21 @@ func TestDeleteAccountRemovesAccountAndDropsAffinity(t *testing.T) {
 	if len(snap.Accounts) != 1 || snap.Accounts[0].ID != "b1" {
 		t.Fatalf("after delete: got %+v, want only b1", snap.Accounts)
 	}
-	p.Register(acct("a1", 0, Active, 200, 0))
-	l2, err := p.Acquire(ctx, req("s1"))
+	l, err := p.Acquire(ctx, req("s1"))
 	if err != nil {
-		t.Fatalf("acquire after re-register: %v", err)
+		t.Fatalf("acquire remaining account: %v", err)
 	}
-	if l2.Account != "b1" {
-		t.Fatalf("sticky affinity survived delete: got %s, want b1", l2.Account)
+	if l.Account != "b1" {
+		t.Fatalf("remaining account: got %s, want b1", l.Account)
 	}
 }
 
 func TestUpdateQuotaStoresDeepCopy(t *testing.T) {
-	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
-	p := New([]byte("secret"), clock.Now)
+	p := New()
 	p.Register(acct("a1", 1, Active, 200, 0))
 
 	limit := int64(500)
-	windowEnd := clock.Now().Add(time.Hour)
+	windowEnd := time.Unix(1_700_000_000, 0).Add(time.Hour)
 	snap := quota.Snapshot{Used: 120, Limit: &limit, WindowEnd: windowEnd, Source: quota.SourceEndpoint}
 	if err := p.UpdateQuota("a1", snap); err != nil {
 		t.Fatalf("update quota: %v", err)

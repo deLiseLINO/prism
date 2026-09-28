@@ -45,7 +45,7 @@ func newTestSink(t *testing.T, provider account.ProviderID) (*FileSink, *store.F
 	file := store.NewFileCredentialStore(root)
 	repoPath := filepath.Join(root, "meta", string(provider)+".json")
 	repo := account.OpenMeta(repoPath)
-	pool := &regPool{Pool: account.New([]byte("0123456789abcdef0123456789abcdef"), time.Now)}
+	pool := &regPool{Pool: account.New()}
 	sink := NewFileSink(file, map[account.ProviderID]*account.Repository{provider: repo}, pool)
 	return sink, file, repo, pool, repoPath
 }

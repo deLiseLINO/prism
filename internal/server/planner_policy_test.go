@@ -13,7 +13,6 @@ import (
 )
 
 func policyDoc() config.Document {
-	autoOff := false
 	return config.Document{
 		Version: config.SchemaVersion,
 		Providers: map[string]config.Provider{
@@ -23,12 +22,8 @@ func policyDoc() config.Document {
 				Models:         []string{"m1", "m2"},
 				DisabledModels: []string{"m2"},
 				Pool: &config.PoolSettings{
-					Strategy:            config.PoolRoundRobin,
-					AutoSwitch:          &autoOff,
-					AutoSwitchThreshold: 0.9,
-					Affinity:            config.AffinityOff,
-					PinnedAccount:       "acct-1",
-					MaxFailovers:        2,
+					PinnedAccount: "acct-1",
+					AccountsPath:  "accounts.json",
 				},
 			},
 			"p2": {
@@ -59,18 +54,8 @@ func TestPlannerMapsPoolSettingsIntoTargetPolicy(t *testing.T) {
 	if !ok || len(plan.Targets) != 1 {
 		t.Fatalf("direct plan = %+v ok=%t", plan, ok)
 	}
-	want := account.SelectionPolicy{
-		Strategy:            account.StrategyRoundRobin,
-		AutoSwitch:          account.AutoSwitchOff,
-		AutoSwitchThreshold: 0.9,
-		Affinity:            account.AffinityOff,
-		PinnedAccount:       "acct-1",
-	}
-	if plan.Targets[0].Policy != want {
-		t.Fatalf("target policy = %+v, want %+v", plan.Targets[0].Policy, want)
-	}
-	if plan.Targets[0].MaxFailovers != 2 {
-		t.Fatalf("max failovers = %d, want 2", plan.Targets[0].MaxFailovers)
+	if plan.Targets[0].Policy != (account.SelectionPolicy{PinnedAccount: "acct-1"}) {
+		t.Fatalf("selected account = %+v, want acct-1", plan.Targets[0].Policy)
 	}
 }
 

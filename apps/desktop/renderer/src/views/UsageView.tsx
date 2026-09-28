@@ -179,9 +179,6 @@ export function providerWriteFrom(
   }
 }
 
-function hasLoadedQuota(row: UsageAccountView): boolean {
-  return row.quota.source !== 'unknown' && quotaWindows(row.quota).length > 0
-}
 
 export function UsagePanel(): JSX.Element {
   const usage = useAsync<UsageView>(() => api.usage(), [])
@@ -214,8 +211,17 @@ export function UsagePanel(): JSX.Element {
     }
     return pins
   }, [providersReady])
+  const accounts = usage.state.kind === 'ready'
+    ? usage.state.value.accounts.filter(hasLiveQuota)
+    : []
+  const accountCounts: Record<string, number> = {}
+  for (const row of accounts) accountCounts[row.provider] = (accountCounts[row.provider] ?? 0) + 1
+  const missingSelections = usage.state.kind === 'ready' && providers.state.kind === 'ready'
+    ? Object.entries(pinIndex).filter(([provider, pinned]) =>
+        accounts.some((row) => row.provider === provider) &&
+        !accounts.some((row) => row.provider === provider && row.account === pinned))
+    : []
 
-  const accounts = usage.state.kind === 'ready' ? usage.state.value.accounts : []
 
   const refreshQuota = useCallback(
     async (row: UsageAccountView, mode: QuotaLoadMode): Promise<void> => {
@@ -289,12 +295,9 @@ export function UsagePanel(): JSX.Element {
   }, [usage.state, pumpQuotaLoads])
 
   const filtered = useMemo<readonly UsageAccountView[]>(() => {
-    const known = accounts.filter(
-      (row) => hasLiveQuota(row) || hasLoadedQuota(row),
-    )
     const needle = query.trim().toLowerCase()
-    if (needle === '') return known
-    return known.filter(
+    if (needle === '') return accounts
+    return accounts.filter(
       (row) =>
         row.account.toLowerCase().includes(needle) ||
         row.provider.toLowerCase().includes(needle) ||
@@ -302,15 +305,15 @@ export function UsagePanel(): JSX.Element {
         accountLabel(row).toLowerCase().includes(needle),
     )
   }, [accounts, query])
-  const liveAccounts = useMemo(
-    () => accounts.filter(hasLiveQuota),
-    [accounts],
-  )
+  const liveAccounts = accounts
 
-  async function setPin(row: UsageAccountView, pinned: boolean): Promise<void> {
+  async function selectAccount(row: UsageAccountView): Promise<void> {
     const provider = providerById[row.provider]
-    if (provider === undefined || provider.pool === undefined) return
-    const pool = { ...provider.pool, pinnedAccount: pinned ? row.account : '' }
+    if (provider === undefined) return
+    const pool: PoolSettingsView = {
+      accountsPath: provider.pool?.accountsPath ?? '',
+      pinnedAccount: row.account,
+    }
     const result = await pinTask.run(() =>
       api.replaceProvider(
         provider.id,
@@ -323,16 +326,11 @@ export function UsagePanel(): JSX.Element {
 
   async function removeAccount(): Promise<void> {
     if (confirmingDelete === null) return
-    const row = accounts.find((entry) => entry.account === confirmingDelete)
-    const result = await deleteTask.run(() =>
-      api.deleteAccount(confirmingDelete),
-    )
+    const result = await deleteTask.run(() => api.deleteAccount(confirmingDelete))
     if (result === undefined) return
     setConfirmingDelete(null)
-    if (row !== undefined && pinIndex[row.provider] === row.account) {
-      await setPin(row, false)
-    }
     usage.refresh()
+    providers.refresh()
   }
 
   function refreshAll(): void {
@@ -383,6 +381,9 @@ export function UsagePanel(): JSX.Element {
           />
         </div>
       </div>
+      {pinTask.error !== null ? (
+        <div className="alert" role="alert">{describeError(pinTask.error)}</div>
+      ) : null}
       <AsyncBoundary<UsageView>
         state={usage.state}
         loadingLabel="Loading usage…"
@@ -400,6 +401,16 @@ export function UsagePanel(): JSX.Element {
                 onClose={() => setAdding(false)}
               />
             ) : null}
+            {missingSelections.map(([provider, pinned]) => (
+              <div key={provider} className="alert" role="alert">
+                Selected account {pinned} for {provider} is missing. Choose another account to resume requests.
+              </div>
+            ))}
+            {Object.entries(accountCounts).filter(([provider, count]) => count > 1 && pinIndex[provider] === undefined).map(([provider]) => (
+              <div key={provider} className="alert" role="alert">
+                {provider} has multiple accounts. Choose one to enable requests.
+              </div>
+            ))}
             {filtered.length === 0 ? (
               <Empty
                 title={
@@ -418,10 +429,9 @@ export function UsagePanel(): JSX.Element {
                     loading={quotaLoading[row.account] === true}
                     failed={quotaFailed[row.account]}
                     pinned={pinIndex[row.provider] === row.account}
-                    canPin={providerById[row.provider]?.pool !== undefined}
-                    onPinToggle={() =>
-                      void setPin(row, pinIndex[row.provider] !== row.account)
-                    }
+                    implicit={pinIndex[row.provider] === undefined && accountCounts[row.provider] === 1}
+                    canPin={providerById[row.provider] !== undefined}
+                    onPinToggle={() => void selectAccount(row)}
                     confirmingDelete={confirmingDelete === row.account}
                     deleteBusy={deleteTask.running || pinTask.running}
                     deleteError={deleteTask.error}
@@ -445,6 +455,7 @@ interface UsageCardProps {
   readonly loading: boolean
   readonly failed: string | undefined
   readonly pinned: boolean
+  readonly implicit: boolean
   readonly canPin: boolean
   readonly onPinToggle: () => void
   readonly confirmingDelete: boolean
@@ -461,6 +472,7 @@ function UsageCard({
   loading,
   failed,
   pinned,
+  implicit,
   canPin,
   onPinToggle,
   confirmingDelete,
@@ -489,12 +501,9 @@ function UsageCard({
           <span className={`badge badge--${badgeTone(row.state)}`}>
             {stateLabel(row.state)}
           </span>
-          {pinned ? (
-            <span
-              className="badge badge--ok"
-              title="Only this account is used for its provider while pinned."
-            >
-              Pinned
+          {pinned || implicit ? (
+            <span className="badge badge--ok">
+              In use
             </span>
           ) : null}
         </span>
@@ -511,7 +520,7 @@ function UsageCard({
         </div>
       ) : windows.length === 0 ? (
         <div className="usage-empty-card">
-          {failed ? 'Quota unavailable' : 'Loading…'}
+          {failed || !hasLiveQuota(row) ? 'Quota unavailable' : 'Loading…'}
         </div>
       ) : (
         <div className="usage-windows">
@@ -527,7 +536,7 @@ function UsageCard({
         {confirmingDelete ? (
           <Confirm
             title={`Remove ${accountLabel(row)}?`}
-            detail="The account leaves the pool immediately."
+            detail={pinned ? 'Requests will stop until you select another account.' : implicit ? 'Requests will stop until you add another account.' : 'The account leaves the pool immediately.'}
             confirmLabel="Remove"
             busy={deleteBusy}
             onCancel={onCancelDelete}
@@ -535,9 +544,9 @@ function UsageCard({
           />
         ) : (
           <>
-            {canPin ? (
+            {canPin && !pinned && !implicit ? (
               <Button tone="ghost" size="sm" onClick={onPinToggle}>
-                {pinned ? 'Use all accounts' : 'Use only this'}
+                Use this account
               </Button>
             ) : null}
             <Button tone="danger" size="sm" onClick={onDelete}>

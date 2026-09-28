@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"prism/internal/account"
 	"prism/internal/canon"
@@ -13,18 +12,11 @@ import (
 	"prism/internal/requestlog"
 )
 
-const defaultMaxAccountFailovers = 3
-
 type TurnPolicy struct {
-	MaxAccountFailovers int
-	MaxTargetFailovers  int
+	MaxTargetFailovers int
 }
 
 func (p TurnPolicy) withDefaults(targets int) TurnPolicy {
-	accountFailovers := p.MaxAccountFailovers
-	if accountFailovers <= 0 {
-		accountFailovers = defaultMaxAccountFailovers
-	}
 	targetFailovers := p.MaxTargetFailovers
 	if targetFailovers <= 0 {
 		targetFailovers = targets - 1
@@ -32,7 +24,7 @@ func (p TurnPolicy) withDefaults(targets int) TurnPolicy {
 	if targetFailovers < 0 {
 		targetFailovers = 0
 	}
-	return TurnPolicy{MaxAccountFailovers: accountFailovers, MaxTargetFailovers: targetFailovers}
+	return TurnPolicy{MaxTargetFailovers: targetFailovers}
 }
 
 type Plan struct {
@@ -125,7 +117,6 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 	capture := &captureSink{next: sink}
 	attempts := 0
 	var trace []AttemptTrace
-	accountSwitches := 0
 	targetSwitches := 0
 	fail := func(f canon.Failure) TurnResult {
 		return turnFailed(f, attempts, trace)
@@ -142,88 +133,77 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 		if canon.HasImage(req) && !target.ImageInput {
 			return fail(imageUnsupportedFailure(target).Failure)
 		}
-		budget := target.MaxFailovers
-		if budget <= 0 {
-			budget = policy.MaxAccountFailovers
-		}
-		if target.Policy.AutoSwitch == account.AutoSwitchOff {
-			budget = 1
-		}
-		for attempt := 0; attempt < budget; attempt++ {
-			lease, err := r.pool.Acquire(ctx, account.AcquireRequest{
-				Provider:   target.Provider,
-				Model:      target.Model,
-				QuotaGroup: r.group,
-				Session:    f.Session,
-				Thread:     f.Thread,
-				Policy:     target.Policy,
-			})
-			if err != nil {
-				if errors.Is(err, account.ErrNoAccount) {
-					return fail(canon.Failure{Reason: canon.FailQuotaExhausted, Message: "routing: pool exhausted"})
-				}
-				return fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: acquire failed: %v", err)})
-			}
-			attempts++
-			trace = append(trace, AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "failed"})
-			wireReq := req
-			wireReq.Model = target.Model
-			started := j.Now()
-			err = runner.Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f}, capture)
-			logAttempt := func(outcome requestlog.Outcome, msg string) {
-				j.Attempt(requestlog.AttemptInfo{
-					Provider:  target.Provider,
-					AccountID: lease.Account,
-					Model:     target.Model,
-					StartedAt: started,
-					Outcome:   outcome,
-					Error:     msg,
-				})
-			}
-			if err == nil {
-				if !capture.hasFinished {
-					logAttempt(requestlog.AttemptNoTerminal, "routing: runner returned without terminal event")
-					_ = r.pool.Record(ctx, lease, account.RequestRejected{})
-					return fail(canon.Failure{Reason: canon.FailUnknown, Message: "routing: runner returned without terminal event"})
-				}
-				logAttempt(requestlog.AttemptSucceeded, "")
-				_ = r.pool.Record(ctx, lease, account.TurnSucceeded{Usage: capture.finished.Usage})
-				trace[attempts-1] = AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "completed", Usage: capture.finished.Usage}
-				return TurnResult{Terminal: Finished{Event: capture.finished}, Attempts: attempts, Trace: trace}
-			}
-			if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				logAttempt(requestlog.AttemptClientClosed, "routing: client closed the request")
-				return fail(canon.Failure{Reason: canon.FailClientClosed, Message: "routing: client closed the request"})
-			}
-			re, typed := runErrorOf(err)
-			if !typed {
-				logAttempt(requestlog.AttemptRejected, err.Error())
-				_ = r.pool.Record(ctx, lease, account.RequestRejected{})
-				return fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: untyped runner error: %v", err)})
-			}
-			logAttempt(attemptOutcome(re), runErrorMessage(re))
-			if o, mappable := outcomeFor(re, target.Policy); mappable {
-				_ = r.pool.Record(ctx, lease, o)
-			} else {
-				_ = r.pool.Record(ctx, lease, account.RequestRejected{})
-			}
-			if lifecycle.CommitState() >= provider.OutputCommitted || !re.Kind.FailoverAllowed() || !re.Class.FailoverAllowed() {
-				if capture.hasFailed {
-					trace[attempts-1].Usage = capture.failed.Usage
-				}
-				return runErrorTerminal(re, capture, attempts, trace)
-			}
-			if attempt+1 < budget && accountSwitches < policy.MaxAccountFailovers {
-				accountSwitches++
+		lease, err := r.pool.Acquire(ctx, account.AcquireRequest{
+			Provider:   target.Provider,
+			Model:      target.Model,
+			QuotaGroup: r.group,
+			Session:    f.Session,
+			Thread:     f.Thread,
+			Policy:     target.Policy,
+		})
+		if err != nil {
+			if errors.Is(err, account.ErrNoAccount) && ti+1 < len(plan.Targets) && targetSwitches < policy.MaxTargetFailovers {
+				targetSwitches++
 				continue
 			}
-			break
+			if errors.Is(err, account.ErrNoAccount) {
+				return fail(canon.Failure{Reason: canon.FailQuotaExhausted, Message: "routing: pool exhausted"})
+			}
+			return fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: acquire failed: %v", err)})
 		}
-		if ti+1 < len(plan.Targets) && targetSwitches < policy.MaxTargetFailovers {
-			targetSwitches++
-			continue
+		attempts++
+		trace = append(trace, AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "failed"})
+		wireReq := req
+		wireReq.Model = target.Model
+		started := j.Now()
+		err = runner.Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f}, capture)
+		logAttempt := func(outcome requestlog.Outcome, msg string) {
+			j.Attempt(requestlog.AttemptInfo{
+				Provider:  target.Provider,
+				AccountID: lease.Account,
+				Model:     target.Model,
+				StartedAt: started,
+				Outcome:   outcome,
+				Error:     msg,
+			})
 		}
-		return exhausted()
+		if err == nil {
+			if !capture.hasFinished {
+				logAttempt(requestlog.AttemptNoTerminal, "routing: runner returned without terminal event")
+				_ = r.pool.Record(ctx, lease, account.RequestRejected{})
+				return fail(canon.Failure{Reason: canon.FailUnknown, Message: "routing: runner returned without terminal event"})
+			}
+			logAttempt(requestlog.AttemptSucceeded, "")
+			_ = r.pool.Record(ctx, lease, account.TurnSucceeded{Usage: capture.finished.Usage})
+			trace[attempts-1] = AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "completed", Usage: capture.finished.Usage}
+			return TurnResult{Terminal: Finished{Event: capture.finished}, Attempts: attempts, Trace: trace}
+		}
+		if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			logAttempt(requestlog.AttemptClientClosed, "routing: client closed the request")
+			return fail(canon.Failure{Reason: canon.FailClientClosed, Message: "routing: client closed the request"})
+		}
+		re, typed := runErrorOf(err)
+		if !typed {
+			logAttempt(requestlog.AttemptRejected, err.Error())
+			_ = r.pool.Record(ctx, lease, account.RequestRejected{})
+			return fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: untyped runner error: %v", err)})
+		}
+		logAttempt(attemptOutcome(re), runErrorMessage(re))
+		if re.Class == provider.ClassUnauthorized {
+			_ = r.pool.Record(ctx, lease, account.AuthRejected{})
+		} else {
+			_ = r.pool.Record(ctx, lease, account.RequestRejected{})
+		}
+		if capture.hasFailed {
+			trace[attempts-1].Usage = capture.failed.Usage
+		}
+		if lifecycle.CommitState() >= provider.OutputCommitted || !re.Kind.FailoverAllowed() || !re.Class.FailoverAllowed() {
+			return runErrorTerminal(re, capture, attempts, trace)
+		}
+		if ti+1 >= len(plan.Targets) || targetSwitches >= policy.MaxTargetFailovers {
+			return runErrorTerminal(re, capture, attempts, trace)
+		}
+		targetSwitches++
 	}
 	return exhausted()
 }
@@ -245,39 +225,6 @@ func runErrorMessage(re provider.RunError) string {
 		return re.Cause.Error()
 	}
 	return re.Error()
-}
-
-func outcomeFor(re provider.RunError, policy account.SelectionPolicy) (account.Outcome, bool) {
-	cooldown := func(retryAfter time.Duration) time.Duration {
-		d := policy.CooldownDefault
-		if retryAfter > 0 {
-			d = retryAfter
-		}
-		if policy.CooldownMax > 0 && d > policy.CooldownMax {
-			return policy.CooldownMax
-		}
-		return d
-	}
-	switch re.Class {
-	case provider.ClassUnauthorized:
-		return account.AuthRejected{}, true
-	case provider.ClassForbidden:
-		return nil, false
-	case provider.ClassRateLimited:
-		return account.RateLimited{RetryAfter: cooldown(re.RetryAfter)}, true
-	case provider.ClassQuotaExhausted:
-		return account.QuotaExhausted{RetryAfter: cooldown(re.RetryAfter)}, true
-	case provider.ClassNotFound:
-		return account.NotFound{}, true
-	case provider.ClassTimeout:
-		return account.RequestTimeout{RetryAfter: re.RetryAfter}, true
-	case provider.ClassServer:
-		return account.ServerError{}, true
-	case provider.ClassTransport:
-		return account.TransportFailure{}, true
-	default:
-		return nil, false
-	}
 }
 
 func failureReason(c provider.ErrorClass) canon.FailureReason {

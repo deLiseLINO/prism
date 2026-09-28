@@ -29,7 +29,7 @@ func (m Model) actionMenuSections() []actionMenuSection {
 	account := m.activeAccount()
 	if account != nil {
 		currentItems = append(currentItems,
-			actionMenuItem{ID: actionMenuPin, Label: "Pin account (switch)", Shortcut: "s"},
+			actionMenuItem{ID: actionMenuPin, Label: "Use account", Shortcut: "s"},
 			actionMenuItem{ID: actionMenuInfo, Label: "Account details", Shortcut: "i"},
 			actionMenuItem{ID: actionMenuDelete, Label: "Delete account", Shortcut: "x"},
 		)
