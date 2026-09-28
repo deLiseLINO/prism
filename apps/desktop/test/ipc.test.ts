@@ -216,3 +216,17 @@ describe('shell.openExternal IPC forwarding', () => {
     )
   })
 })
+
+describe('report context parsing', () => {
+  it('rejects a context that is not the report shape', async () => {
+    const { parseReport } = await import('../main/ipc')
+    expect(() => parseReport({ target: 'bot', title: 'Login failed', detail: 'failed', context: { steps: 'usage' } })).toThrow(/steps/)
+    expect(() => parseReport({
+      target: 'bot',
+      title: 'Login failed',
+      detail: 'failed',
+      context: { steps: [], failed: { method: 'POST', path: '/api/v1/auth/start?token=1', status: 500, code: 'auth_failed' } },
+    })).toThrow(/path/)
+    expect(parseReport({ title: 'Login failed', detail: 'failed' }).context).toEqual({ steps: [], failed: null })
+  })
+})

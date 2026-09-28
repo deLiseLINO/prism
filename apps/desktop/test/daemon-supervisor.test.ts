@@ -35,6 +35,7 @@ const options = {
   port: 4931,
   daemonConfigPath: null,
   webuiDir: null,
+  logPath: null,
   healthTimeoutMs: 200,
   healthIntervalMs: 20,
   healthProbeTimeoutMs: 50,
