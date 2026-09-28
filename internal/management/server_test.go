@@ -399,6 +399,45 @@ func TestProviderDelete(t *testing.T) {
 	assertErrorBody(t, noGen, http.StatusBadRequest, "invalid_generation")
 }
 
+func TestProviderDeleteDropsRoutesThatPointAtIt(t *testing.T) {
+	env := newEnv(t)
+	if env.do(t, http.MethodPost, "/api/v1/providers", `{"id":"cline-pass","wire":"chat","baseURL":"http://127.0.0.1:8787","models":["cline-free/kimi-k3"],"expectedGeneration":0}`).Code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	doc := env.cfg.Get().Config
+	doc.Routes = map[string]string{"kimi-k3": "cline-pass/cline-free/kimi-k3"}
+	doc.Aliases = map[string]string{"k3": "cline-pass/cline-free/kimi-k3"}
+	doc.Combos = map[string]config.Combo{
+		"only-pass": {Strategy: config.ComboFailover, Targets: []config.Target{{Provider: "cline-pass", Model: "cline-free/kimi-k3"}}},
+		"mixed":     {Strategy: config.ComboFailover, Targets: []config.Target{{Provider: "cline-pass", Model: "cline-free/kimi-k3"}, {Provider: "other", Model: "m"}}},
+	}
+	doc.Providers["other"] = config.Provider{Wire: config.WireOpenAIChat, BaseURL: "http://127.0.0.1:9", Models: []string{"m"}}
+	if _, err := env.cfg.Update(doc, 1); err != nil {
+		t.Fatalf("seed route: %v", err)
+	}
+	rec := env.do(t, http.MethodDelete, "/api/v1/providers/cline-pass?expectedGeneration=2", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got := env.cfg.Get().Config
+	if _, ok := got.Providers["cline-pass"]; ok {
+		t.Fatal("provider still present")
+	}
+	if _, ok := got.Routes["kimi-k3"]; ok {
+		t.Fatal("route still points at deleted provider")
+	}
+	if _, ok := got.Aliases["k3"]; ok {
+		t.Fatal("alias still points at deleted provider")
+	}
+	if _, ok := got.Combos["only-pass"]; ok {
+		t.Fatal("combo that only targeted the deleted provider remains")
+	}
+	mixed, ok := got.Combos["mixed"]
+	if !ok || len(mixed.Targets) != 1 || mixed.Targets[0].Provider != "other" {
+		t.Fatalf("mixed combo: %+v", mixed)
+	}
+}
+
 func TestAccountsListRendersSnapshot(t *testing.T) {
 	env := newEnv(t)
 	rec := env.do(t, http.MethodGet, "/api/v1/accounts", "")
