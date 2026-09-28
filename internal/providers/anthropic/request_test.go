@@ -532,3 +532,24 @@ func TestCountTokens(t *testing.T) {
 		t.Fatalf("count_tokens request = %s %s", gotMethod, gotPath)
 	}
 }
+
+func TestEmptyThinkingIsReplayedWithThinkingField(t *testing.T) {
+	request := baseRequest()
+	request.Input = append(request.Input, canon.ReasoningItem{ID: "r1", Signature: "sig-abc"})
+	out, err := New(Options{}).buildRequest(provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{APIKeyRef: "k", Model: "claude-anthropic--claude-sonnet-4-5"},
+	})
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	messages := decodeBody(t, out.body)["messages"].([]any)
+	blocks := messages[1].(map[string]any)["content"].([]any)
+	block := blocks[0].(map[string]any)
+	if v, ok := block["thinking"]; !ok || v != "" {
+		t.Fatalf("thinking block = %v, want thinking field present and empty", block)
+	}
+	if block["signature"] != "sig-abc" {
+		t.Fatalf("signature = %v", block["signature"])
+	}
+}

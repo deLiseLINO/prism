@@ -27,7 +27,7 @@ type wireBlock struct {
 	Type      string           `json:"type"`
 	Text      string           `json:"text,omitempty"`
 	Source    *wireImageSource `json:"source,omitempty"`
-	Thinking  string           `json:"thinking,omitempty"`
+	Thinking  *string          `json:"thinking,omitempty"`
 	Data      string           `json:"data,omitempty"`
 	Signature string           `json:"signature,omitempty"`
 	ID        string           `json:"id,omitempty"`
@@ -267,7 +267,7 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 				}
 				continue
 			}
-			appendBlock("assistant", wireBlock{Type: "thinking", Thinking: v.Content, Signature: signature})
+			appendBlock("assistant", wireBlock{Type: "thinking", Thinking: &v.Content, Signature: signature})
 		case canon.FunctionCall:
 			args := v.Arguments
 			if len(args) == 0 {
