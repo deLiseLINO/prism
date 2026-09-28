@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"prism/internal/canon"
@@ -121,11 +122,11 @@ func (r *Runner) render(request canon.Request, streaming bool) (*outbound, error
 }
 
 func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireRequest, error) {
-	system, err := systemBlocks(request.Instructions)
+	messages, folded, err := r.messagesFromItems(request.Input)
 	if err != nil {
 		return nil, err
 	}
-	messages, err := r.messagesFromItems(request.Input)
+	system, err := systemBlocks(slices.Concat(request.Instructions, folded))
 	if err != nil {
 		return nil, err
 	}
@@ -224,8 +225,9 @@ func contentBlocks(contents []canon.Content) ([]wireBlock, error) {
 	return blocks, nil
 }
 
-func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, error) {
+func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.Content, error) {
 	var messages []wireMessage
+	var system []canon.Content
 	appendBlock := func(role string, block wireBlock) {
 		if n := len(messages); n > 0 && messages[n-1].Role == role {
 			messages[n-1].Content = append(messages[n-1].Content, block)
@@ -236,13 +238,17 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, error) {
 	for _, item := range items {
 		switch v := item.(type) {
 		case canon.Message:
+			if v.Role == canon.RoleSystem || v.Role == canon.RoleDeveloper {
+				system = append(system, v.Content...)
+				continue
+			}
 			role, err := roleString(v.Role)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			blocks, err := contentBlocks(v.Content)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if len(blocks) == 0 {
 				continue
@@ -253,7 +259,7 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, error) {
 		case canon.ReasoningItem:
 			signature, ok := r.replaySignature(v)
 			if !ok {
-				return nil, fmt.Errorf("anthropic: thinking item %q has no signature for replay", v.ID)
+				return nil, nil, fmt.Errorf("anthropic: thinking item %q has no signature for replay", v.ID)
 			}
 			if env, isEnv := reasonenv.Decode(signature); isEnv && len(env.Red) > 0 {
 				for _, data := range env.Red {
@@ -268,23 +274,23 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, error) {
 				args = []byte("{}")
 			}
 			if !json.Valid(args) {
-				return nil, fmt.Errorf("anthropic: tool call %q has malformed arguments", v.CallID)
+				return nil, nil, fmt.Errorf("anthropic: tool call %q has malformed arguments", v.CallID)
 			}
 			appendBlock("assistant", wireBlock{Type: "tool_use", ID: string(v.CallID), Name: string(v.Name), Input: json.RawMessage(args)})
 		case canon.FunctionOutput:
 			blocks, err := contentBlocks(v.Output)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if len(blocks) == 0 {
-				return nil, fmt.Errorf("anthropic: tool result %q has no representable content", v.CallID)
+				return nil, nil, fmt.Errorf("anthropic: tool result %q has no representable content", v.CallID)
 			}
 			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks})
 		default:
-			return nil, fmt.Errorf("anthropic: unsupported input item %T", item)
+			return nil, nil, fmt.Errorf("anthropic: unsupported input item %T", item)
 		}
 	}
-	return messages, nil
+	return messages, system, nil
 }
 
 func (r *Runner) replaySignature(item canon.ReasoningItem) (string, bool) {

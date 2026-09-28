@@ -162,6 +162,101 @@ func TestEmptyTextBlocksSkipped(t *testing.T) {
 	}
 }
 
+func TestSystemAndDeveloperMessagesFoldIntoSystem(t *testing.T) {
+	text := func(s string) []canon.Content { return []canon.Content{canon.TextContent{Text: s}} }
+	user := canon.Message{ID: "u", Role: canon.RoleUser, Content: text("hi")}
+	cases := []struct {
+		name         string
+		instructions []canon.Content
+		input        []canon.Item
+		wantSystem   []string
+		wantMessages int
+	}{
+		{
+			name:         "system then user",
+			input:        []canon.Item{canon.Message{Role: canon.RoleSystem, Content: text("rules")}, user},
+			wantSystem:   []string{"rules"},
+			wantMessages: 1,
+		},
+		{
+			name:         "developer then user",
+			input:        []canon.Item{canon.Message{Role: canon.RoleDeveloper, Content: text("dev rules")}, user},
+			wantSystem:   []string{"dev rules"},
+			wantMessages: 1,
+		},
+		{
+			name:         "instructions precede folded messages in order",
+			instructions: text("first"),
+			input: []canon.Item{
+				canon.Message{Role: canon.RoleSystem, Content: text("second")},
+				user,
+				canon.Message{Role: canon.RoleDeveloper, Content: text("third")},
+			},
+			wantSystem:   []string{"first", "second", "third"},
+			wantMessages: 1,
+		},
+		{
+			name:         "empty system text skipped",
+			input:        []canon.Item{canon.Message{Role: canon.RoleSystem, Content: text("")}, user},
+			wantMessages: 1,
+		},
+		{
+			name:       "only system message leaves no messages",
+			input:      []canon.Item{canon.Message{Role: canon.RoleSystem, Content: text("rules")}},
+			wantSystem: []string{"rules"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := baseRequest()
+			request.Instructions = tc.instructions
+			request.Input = tc.input
+			out, err := New(Options{}).buildRequest(provider.RunRequest{
+				Request: request,
+				Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
+			})
+			if err != nil {
+				t.Fatalf("buildRequest: %v", err)
+			}
+			body := decodeBody(t, out.body)
+			blocks, _ := body["system"].([]any)
+			if len(blocks) != len(tc.wantSystem) {
+				t.Fatalf("system = %v, want %v", body["system"], tc.wantSystem)
+			}
+			for i, want := range tc.wantSystem {
+				block, _ := blocks[i].(map[string]any)
+				if block["text"] != want {
+					t.Fatalf("system[%d] = %v, want %q", i, block["text"], want)
+				}
+			}
+			messages, _ := body["messages"].([]any)
+			if len(messages) != tc.wantMessages {
+				t.Fatalf("messages = %v, want %d", body["messages"], tc.wantMessages)
+			}
+			for _, m := range messages {
+				if role := m.(map[string]any)["role"]; role != "user" {
+					t.Fatalf("message role = %v, want user", role)
+				}
+			}
+		})
+	}
+}
+
+func TestSystemMessageWithImageFailsLoud(t *testing.T) {
+	request := baseRequest()
+	request.Input = []canon.Item{
+		canon.Message{Role: canon.RoleSystem, Content: []canon.Content{canon.ImageContent{MIMEType: "image/png", Data: []byte{0x89}}}},
+		canon.Message{ID: "u", Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+	}
+	_, err := New(Options{}).buildRequest(provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
+	})
+	if err == nil {
+		t.Fatal("buildRequest with image in system message: want error, got nil")
+	}
+}
+
 func TestToolResultKeepsImageContent(t *testing.T) {
 	runner := New(Options{})
 	request := baseRequest()
