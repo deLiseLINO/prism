@@ -361,12 +361,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v${{ needs.preflight.outputs.version }}"
-          id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json id,isDraft,assets --jq 'select(.isDraft) | select(any(.assets[]; .name == "rc-mac.yml" or .name == "latest-mac.yml")) | .id')
+          id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,assets --jq 'select(.isDraft) | select(any(.assets[]; .name == "rc-mac.yml" or .name == "latest-mac.yml")) | .databaseId')
           if [ -z "$id" ]; then
             echo "release $tag is already public"
             exit 0
           fi
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/$id" -f draft=false >/dev/null
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/$id" -F draft=false >/dev/null
           echo "published $tag"
       - name: Dry run summary
         if: needs.preflight.outputs.dry_run == 'true'
