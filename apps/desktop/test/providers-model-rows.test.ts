@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultEffort, rungChips, visibleModelRows } from '../renderer/src/views/ProvidersView'
+import { clineCatalogModels, defaultEffort, rungChips, visibleModelRows } from '../renderer/src/views/ProvidersView'
 
 describe('default effort rung', () => {
   it('prefers medium, then high, then the first rung', () => {
@@ -31,4 +31,10 @@ describe('model row selection', () => {
     expect(visibleModelRows(['claude-opus-4', 'gemini-3.7-flash'], 'opus')).toEqual(['claude-opus-4'])
     expect(visibleModelRows(['gemini-3.7-flash-low', 'gemini-3.7-flash-high'], 'low')).toEqual(['gemini-3.7-flash-low'])
   })
+})
+
+it('splits cline models into free and pass without touching other ids', () => {
+  const models = ['cline-free/kimi-k3', 'stealth/pixel-canary', 'cline-pass/glm-5.3']
+  expect(clineCatalogModels(models, 'free')).toEqual(['cline-free/kimi-k3'])
+  expect(clineCatalogModels(models, 'pass')).toEqual(['cline-pass/glm-5.3'])
 })
