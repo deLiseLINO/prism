@@ -603,3 +603,82 @@ func TestToolCallWithoutCallIDMintsWireID(t *testing.T) {
 		}
 	})
 }
+
+func TestProviderChatErrorKeepsKeys(t *testing.T) {
+	var buf bytes.Buffer
+	c := New(&buf, false)
+	if err := c.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	raw := []byte(`{"message":"slow down","type":"tokens","code":"rate_limit_exceeded","param":null}`)
+	failure := canon.Failure{
+		Reason:   canon.FailRateLimited,
+		Message:  "slow down",
+		Provider: &canon.ProviderError{Error: raw},
+	}
+	if err := c.Frame(canon.TurnFailed{Failure: failure}); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	body := decode(t, buf.String())["error"].(map[string]any)
+	if body["message"] != "slow down" || body["type"] != "tokens" || body["code"] != "rate_limit_exceeded" {
+		t.Fatalf("error = %v", body)
+	}
+	if _, ok := body["param"]; !ok || body["param"] != nil {
+		t.Fatalf("param = %v, want null", body["param"])
+	}
+	if body["type"] == "rate_limit_error" || body["code"] == "rate_limited" {
+		t.Fatalf("wrote prism code over provider payload: %v", body)
+	}
+}
+
+func TestProviderChatStringErrorOmitsCodeAndType(t *testing.T) {
+	var buf bytes.Buffer
+	c := New(&buf, true)
+	if err := c.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	failure := canon.Failure{
+		Reason:   canon.FailRateLimited,
+		Message:  "quota",
+		Provider: &canon.ProviderError{Error: []byte(`"quota"`)},
+	}
+	if err := c.Frame(canon.TurnFailed{Failure: failure}); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	fs := frames(t, &buf)
+	body := decode(t, fs[len(fs)-1])["error"].(map[string]any)
+	if body["message"] != "quota" {
+		t.Fatalf("message = %v", body["message"])
+	}
+	if _, ok := body["code"]; ok {
+		t.Fatalf("code = %v, want omitted", body["code"])
+	}
+	if _, ok := body["type"]; ok {
+		t.Fatalf("type = %v, want omitted", body["type"])
+	}
+}
+
+func TestPrismFailureStillEmitsOurCode(t *testing.T) {
+	var buf bytes.Buffer
+	c := New(&buf, false)
+	if err := c.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	failure := canon.Failure{Reason: canon.FailQuotaExhausted, Message: "routing: pool exhausted"}
+	if err := c.Frame(canon.TurnFailed{Failure: failure}); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	body := decode(t, buf.String())["error"].(map[string]any)
+	if body["code"] != "quota_exhausted" || body["type"] != "rate_limit_error" || body["message"] != "routing: pool exhausted" {
+		t.Fatalf("prism failure = %v", body)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"prism/internal/account"
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/providers/openaierr"
 )
 
 type responsePayload struct {
@@ -79,14 +80,20 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		ReasoningTokens:   payload.Usage.outputReasoning(),
 	}
 	if payload.Error != nil || payload.Status == "failed" {
-		message := "upstream request failed"
-		if payload.Error != nil && payload.Error.Message != "" {
-			message = payload.Error.Message
+		parsed, ok := openaierr.Parse(raw)
+		if !ok {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: failed response carried no error value"))
 		}
-		if err := emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}, Usage: usage}); err != nil {
+		copied := parsed
+		message := openaierr.Text(parsed)
+		if err := emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message, Provider: &copied}, Usage: usage}); err != nil {
 			return err
 		}
-		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(message))
+		cause := message
+		if cause == "" {
+			cause = "provider error"
+		}
+		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
 	}
 	for _, item := range payload.Output {
 		canonItem, _, err := itemFromWire(item)

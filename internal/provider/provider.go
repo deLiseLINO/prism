@@ -73,6 +73,7 @@ type RunError struct {
 	ReplaySafe bool
 	RetryAfter time.Duration
 	Cause      error
+	Reported   *canon.ProviderError
 }
 
 func (e RunError) Error() string {

@@ -361,8 +361,18 @@ const (
 )
 
 type Failure struct {
-	Reason  FailureReason
-	Message string
+	Reason   FailureReason
+	Message  string
+	Provider *ProviderError
+}
+
+type ProviderError struct {
+	Error         []byte
+	StatusDetails []byte
+}
+
+func (f Failure) HasProvider() bool {
+	return f.Provider != nil && (len(f.Provider.Error) > 0 || len(f.Provider.StatusDetails) > 0)
 }
 
 type FailureReason uint8

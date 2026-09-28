@@ -10,6 +10,7 @@ import (
 
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/providers/openaierr"
 )
 
 var errTerminalDone = errors.New("customresponses: terminal emitted")
@@ -232,41 +233,41 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		case "content_filter":
 			status = canon.Incomplete(canon.IncompleteContentFilter)
 		default:
-			return s.failedTurn(fmt.Sprintf("upstream stream ended early (%s)", reason))
+			return s.failUnknown(fmt.Sprintf("upstream stream ended early (%s)", reason))
 		}
 		if err := s.emit(canon.TurnFinished{Status: status, Usage: usageFrom(response)}); err != nil {
 			return err
 		}
 		return errTerminalDone
 	case "response.failed", "error":
-		message := errorMessage(payload)
-		return s.failedTurn(message)
+		return s.failedTurn([]byte(f.data))
 	default:
 		return nil
 	}
 }
 
-func errorMessage(payload map[string]any) string {
-	if response, ok := payload["response"].(map[string]any); ok {
-		if e, ok := response["error"].(map[string]any); ok {
-			if message, ok := e["message"].(string); ok && message != "" {
-				return message
-			}
-		}
+func (s *streamer) failedTurn(raw []byte) error {
+	parsed, ok := openaierr.Parse(raw)
+	if !ok {
+		return s.protocolError("failed event carried no error value")
 	}
-	if e, ok := payload["error"].(map[string]any); ok {
-		if message, ok := e["message"].(string); ok && message != "" {
-			return message
-		}
-	}
-	return "upstream request failed"
+	copied := parsed
+	return s.emitFailed(canon.Failure{Reason: canon.FailUnknown, Message: openaierr.Text(parsed), Provider: &copied})
 }
 
-func (s *streamer) failedTurn(message string) error {
-	if err := s.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}}); err != nil {
+func (s *streamer) failUnknown(message string) error {
+	return s.emitFailed(canon.Failure{Reason: canon.FailUnknown, Message: message})
+}
+
+func (s *streamer) emitFailed(failure canon.Failure) error {
+	if err := s.emit(canon.TurnFailed{Failure: failure}); err != nil {
 		return err
 	}
-	return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(message))
+	cause := failure.Message
+	if cause == "" {
+		cause = "provider error"
+	}
+	return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
 }
 
 func (s *streamer) protocolError(message string) error {

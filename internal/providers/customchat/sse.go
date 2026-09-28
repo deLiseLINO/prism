@@ -10,6 +10,7 @@ import (
 
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/providers/openaierr"
 )
 
 var errTerminalDone = errors.New("customchat: terminal emitted")
@@ -154,8 +155,8 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0,
 			fmt.Errorf("customchat: malformed upstream stream frame: %w", err))
 	}
-	if errObj, ok := payload["error"].(map[string]any); ok {
-		return s.failedTurn(errorMessage(errObj))
+	if _, ok := payload["error"]; ok {
+		return s.failedTurn([]byte(f.data))
 	}
 	if s.terminalEmitted {
 		return nil
@@ -197,7 +198,7 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		s.finishReason = reason
 		status, known := finishStatus(reason)
 		if !known {
-			return s.failedTurn(fmt.Sprintf("upstream finish reason %q is not representable", reason))
+			return s.failUnknown(fmt.Sprintf("upstream finish reason %q is not representable", reason))
 		}
 		if err := s.finishItems(); err != nil {
 			return err
@@ -348,26 +349,39 @@ func (s *streamer) finishItems() error {
 	return nil
 }
 
-func (s *streamer) failedTurn(message string) error {
+func (s *streamer) failedTurn(raw []byte) error {
 	if s.terminalEmitted {
 		return s.protocolError("upstream emitted a second terminal event")
 	}
+	parsed, ok := openaierr.Parse(raw)
+	if !ok {
+		return s.protocolError("error frame carried no error value")
+	}
+	copied := parsed
+	return s.emitFailed(canon.Failure{Reason: canon.FailUnknown, Message: openaierr.Text(parsed), Provider: &copied})
+}
+
+func (s *streamer) failUnknown(message string) error {
+	if s.terminalEmitted {
+		return s.protocolError("upstream emitted a second terminal event")
+	}
+	return s.emitFailed(canon.Failure{Reason: canon.FailUnknown, Message: message})
+}
+
+func (s *streamer) emitFailed(failure canon.Failure) error {
 	s.terminalEmitted = true
-	if err := s.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}}); err != nil {
+	if err := s.emit(canon.TurnFailed{Failure: failure}); err != nil {
 		return err
 	}
-	return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(message))
+	cause := failure.Message
+	if cause == "" {
+		cause = "provider error"
+	}
+	return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
 }
 
 func (s *streamer) protocolError(message string) error {
 	return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0, errors.New("customchat: "+message))
-}
-
-func errorMessage(errObj map[string]any) string {
-	if message, ok := errObj["message"].(string); ok && message != "" {
-		return message
-	}
-	return "upstream request failed"
 }
 
 func usageFromChat(v any) (canon.Usage, bool) {

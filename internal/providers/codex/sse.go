@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"prism/internal/canon"
+	"prism/internal/providers/openaierr"
 )
 
 type sseEnvelope struct {
@@ -142,7 +143,7 @@ func (d *Decoder) frame(data []byte) error {
 	case "response.incomplete":
 		return d.terminal(raw.Response, false)
 	case "response.failed", "error":
-		return d.failed(raw)
+		return d.failed([]byte(payload))
 	default:
 		d.warn("unknown_sse_type:" + raw.Type)
 		return nil
@@ -228,25 +229,19 @@ func (d *Decoder) terminal(response json.RawMessage, completed bool) error {
 	return d.emit(canon.TurnFinished{Status: canon.Incomplete(reason), Usage: usage})
 }
 
-func (d *Decoder) failed(raw sseEnvelope) error {
+func (d *Decoder) failed(payload []byte) error {
 	if d.done {
 		d.warn("duplicate_terminal")
 		return nil
 	}
+	parsed, ok := openaierr.Parse(payload)
+	if !ok {
+		d.warn("failed_without_error")
+		return nil
+	}
 	d.done = true
-	message := "upstream stream failed"
-	var body map[string]any
-	if err := json.Unmarshal(raw.Response, &body); err == nil {
-		if errObj, ok := body["error"].(map[string]any); ok {
-			if m, ok := errObj["message"].(string); ok && m != "" {
-				message = m
-			}
-		}
-	}
-	if message == "upstream stream failed" && raw.Message != "" {
-		message = raw.Message
-	}
-	return d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}})
+	copied := parsed
+	return d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: openaierr.Text(parsed), Provider: &copied}})
 }
 
 func (d *Decoder) emit(ev canon.Event) error {

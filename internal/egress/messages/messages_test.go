@@ -279,6 +279,37 @@ func TestTurnFailedEmitsTypedError(t *testing.T) {
 	}
 }
 
+func TestProviderErrorKeepsCode(t *testing.T) {
+	raw := []byte(`{"message":"slow down","type":"tokens","code":"rate_limit_exceeded","param":null}`)
+	var buf bytes.Buffer
+	eg := New(&buf, false)
+	if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	err := eg.Frame(canon.TurnFailed{Failure: canon.Failure{
+		Reason:   canon.FailRateLimited,
+		Message:  "slow down",
+		Provider: &canon.ProviderError{Error: raw},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eg.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	body := got["error"].(map[string]any)
+	if body["code"] != "rate_limit_exceeded" || body["type"] != "tokens" || body["message"] != "slow down" {
+		t.Fatalf("error = %v", body)
+	}
+	if _, ok := body["param"]; !ok {
+		t.Fatalf("param dropped: %v", body)
+	}
+}
+
 func TestFailureReasonErrorTypes(t *testing.T) {
 	cases := map[canon.FailureReason]string{
 		canon.FailUnauthorized:      "authentication_error",

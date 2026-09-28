@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -217,22 +218,11 @@ func (e *streamEncoder) Flush() error {
 		}
 		return e.write("message_stop", terminalWire{Type: "message_stop"})
 	case canon.TurnFailed:
+		wire := messagesErrorWire(t.Failure)
 		if !e.streaming {
-			return e.writeJSON(errorWire{
-				Type: "error",
-				Error: errorBody{
-					Type:    failureErrorType(t.Failure.Reason),
-					Message: t.Failure.Message,
-				},
-			})
+			return e.writeJSON(wire)
 		}
-		return e.write("error", errorWire{
-			Type: "error",
-			Error: errorBody{
-				Type:    failureErrorType(t.Failure.Reason),
-				Message: t.Failure.Message,
-			},
-		})
+		return e.write("error", wire)
 	}
 	return &FrameError{Reason: ReasonNoTerminal, Event: "message_delta"}
 }
@@ -419,6 +409,21 @@ func stopReason(s canon.Status, toolUse bool) string {
 	return "end_turn"
 }
 
+func messagesErrorWire(f canon.Failure) any {
+	if !f.HasProvider() || len(f.Provider.Error) == 0 {
+		return errorWire{Type: "error", Error: errorBody{Type: failureErrorType(f.Reason), Message: f.Message}}
+	}
+	raw := bytes.TrimSpace(f.Provider.Error)
+	if len(raw) > 0 && raw[0] == '{' {
+		return map[string]any{"type": "error", "error": json.RawMessage(raw)}
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return errorWire{Type: "error", Error: errorBody{Message: s}}
+	}
+	return errorWire{Type: "error", Error: errorBody{Message: f.Message}}
+}
+
 func failureErrorType(r canon.FailureReason) string {
 	switch r {
 	case canon.FailUnauthorized:
@@ -529,7 +534,7 @@ type errorWire struct {
 }
 
 type errorBody struct {
-	Type    string `json:"type"`
+	Type    string `json:"type,omitempty"`
 	Message string `json:"message"`
 }
 
