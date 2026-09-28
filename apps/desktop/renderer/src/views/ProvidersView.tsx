@@ -90,6 +90,16 @@ export function clineCatalogModels(models: readonly string[], catalog: 'free' | 
   return models.filter((model) => model.startsWith(prefix))
 }
 
+export function disabledAfterCatalogToggle(
+  disabled: readonly string[],
+  visible: readonly string[],
+  turnOff: boolean,
+): string[] {
+  const shown = new Set(visible)
+  const kept = disabled.filter((model) => !shown.has(model))
+  return turnOff ? [...kept, ...visible] : kept
+}
+
 interface DetailProps {
   readonly provider: ProviderView
   readonly generation: number
@@ -154,8 +164,9 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   }
 
   async function setAllModelsDisabled(disabled: boolean): Promise<void> {
-    if (disabledModels.length === (disabled ? models.length : 0)) return
-    const next = disabled ? [...models] : []
+    const scope = provider.wire === 'cline' ? cataloged : models
+    const next = disabledAfterCatalogToggle(disabledModels, scope, disabled)
+    if (next.length === disabledModels.length && next.every((model, i) => model === disabledModels[i])) return
     onOptimistic(provider.id, { disabledModels: next })
     try {
       await api.replaceProvider(provider.id, buildWrite(provider, generation, { disabledModels: next }))
@@ -301,7 +312,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
               type="button"
               className="ibtn"
               onClick={() => void setAllModelsDisabled(true)}
-              disabled={task.running || models.length === 0 || disabledModels.length === models.length}
+              disabled={task.running || cataloged.length === 0 || cataloged.every((model) => disabledModels.includes(model))}
               aria-label="Disable all models"
               title="Disable all"
             >
@@ -311,7 +322,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
               type="button"
               className="ibtn"
               onClick={() => void setAllModelsDisabled(false)}
-              disabled={task.running || models.length === 0 || disabledModels.length === 0}
+              disabled={task.running || cataloged.length === 0 || cataloged.every((model) => !disabledModels.includes(model))}
               aria-label="Enable all models"
               title="Enable all"
             >
