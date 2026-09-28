@@ -607,12 +607,20 @@ func resolvedFacts(doc config.Document, id string, p config.Provider) map[string
 	for _, model := range p.Models {
 		ctx := doc.ResolveContextSource(id, model)
 		img := doc.ResolveImageSource(id, model)
-		out[model] = ResolvedFacts{
+		facts := ResolvedFacts{
 			ContextWindow: ctx.Window,
 			ContextSource: ctx.Source,
 			Image:         img.Image,
 			ImageSource:   img.Source,
 		}
+		if p.Wire.Custom() {
+			facts.Wire = string(doc.ResolveWire(id, model))
+			facts.WireSource = "provider"
+			if p.ModelSettings[model].Wire != "" {
+				facts.WireSource = "model"
+			}
+		}
+		out[model] = facts
 	}
 	return out
 }

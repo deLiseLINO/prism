@@ -93,12 +93,15 @@ export interface ResolvedFacts {
   readonly contextSource: 'listing' | 'catalog' | 'global'
   readonly image: boolean
   readonly imageSource: 'manual' | 'listing' | 'catalog' | 'none'
+  readonly wire?: string
+  readonly wireSource?: 'model' | 'provider'
 }
 
 export interface ModelSettingsView {
   readonly contextWindow?: number
   readonly imageInput?: boolean
   readonly reasoningEfforts?: readonly string[]
+  readonly wire?: 'responses' | 'chat' | 'messages'
 }
 
 // Response of POST /api/v1/providers and PUT /api/v1/providers/{id}: the new generation plus

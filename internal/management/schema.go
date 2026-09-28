@@ -72,6 +72,8 @@ type ResolvedFacts struct {
 	ContextSource string `json:"contextSource"`
 	Image         bool   `json:"image"`
 	ImageSource   string `json:"imageSource"`
+	Wire          string `json:"wire,omitempty"`
+	WireSource    string `json:"wireSource,omitempty"`
 }
 
 type ListedModel struct {

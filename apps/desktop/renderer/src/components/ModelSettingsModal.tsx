@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { ModelSettingsView } from '@prism/contracts'
 import { Button, Toggle } from './Ui'
+import { OVERRIDE_WIRES, isOverridableWire, wireLabel, type OverrideWire } from '../wires'
 
 const CONTEXT_PRESETS: readonly { readonly value: number; readonly label: string }[] = [
   { value: 32000, label: '32k' },
@@ -29,6 +30,7 @@ export interface ModelSettingsDraft {
   readonly imageTouched: boolean
   readonly effortsOverride: boolean
   readonly efforts: ReadonlySet<string>
+  readonly wireOverride: OverrideWire | null
 }
 
 export function draftFromSettings(
@@ -41,14 +43,16 @@ export function draftFromSettings(
     imageTouched: settings?.imageInput !== undefined,
     effortsOverride: (settings?.reasoningEfforts?.length ?? 0) > 0,
     efforts: new Set(settings?.reasoningEfforts ?? []),
+    wireOverride: settings?.wire ?? null,
   }
 }
 
-export function draftToSettings(draft: ModelSettingsDraft): ModelSettingsView {
+export function draftToSettings(draft: ModelSettingsDraft, providerWire: string): ModelSettingsView {
   return {
     ...(draft.contextWindow === null ? {} : { contextWindow: draft.contextWindow }),
     ...(draft.imageTouched ? { imageInput: draft.imageInput } : {}),
     ...(draft.effortsOverride ? { reasoningEfforts: [...draft.efforts] } : {}),
+    ...(draft.wireOverride === null || draft.wireOverride === providerWire ? {} : { wire: draft.wireOverride }),
   }
 }
 
@@ -57,6 +61,7 @@ export interface ModelSettingsModalProps {
   readonly model: string
   readonly isNew: boolean
   readonly fallbackContextWindow: number
+  readonly providerWire: string
   readonly contextSource?: ContextSource
   readonly resolvedImage?: boolean
   readonly initial: ModelSettingsView | undefined
@@ -70,6 +75,7 @@ export function ModelSettingsModal({
   model,
   isNew,
   fallbackContextWindow,
+  providerWire,
   contextSource = 'global',
   resolvedImage = false,
   initial,
@@ -99,6 +105,13 @@ export function ModelSettingsModal({
       return
     }
     setDraft((d) => ({ ...d, contextWindow: d.contextWindow ?? fallbackContextWindow }))
+  }
+
+  function setWireOverride(on: boolean): void {
+    setDraft((d) => ({
+      ...d,
+      wireOverride: on ? (d.wireOverride ?? OVERRIDE_WIRES.find((w) => w.value !== providerWire)?.value ?? null) : null,
+    }))
   }
 
   function pickPreset(value: number): void {
@@ -140,6 +153,7 @@ export function ModelSettingsModal({
 
   const effective = draft.contextWindow ?? fallbackContextWindow
   const ctxOver = draft.contextWindow !== null
+  const wireOver = draft.wireOverride !== null
   const isPreset = CONTEXT_PRESETS.some((p) => p.value === draft.contextWindow)
   const saveDisabled = busy || (draft.effortsOverride && draft.efforts.size === 0)
 
@@ -302,6 +316,51 @@ export function ModelSettingsModal({
               </p>
             </div>
           </section>
+          {isOverridableWire(providerWire) ? (
+            <section className="msm-sec">
+              <div className="msm-sec-label">
+                API
+                <span className="msm-sec-meta">
+                  <span className="msm-tag num">{wireOver ? 'custom' : 'default'}</span>
+                  <span className="msm-k">Effective</span>
+                  <span className="msm-v num">{wireLabel(draft.wireOverride ?? providerWire)}</span>
+                </span>
+              </div>
+              <div className={'msm-ctx' + (wireOver ? ' msm-ctx--over' : '')}>
+                <div
+                  className="msm-override msm-row--click"
+                  onClick={(event) => rowToggle(event, () => setWireOverride(!wireOver))}
+                >
+                  <span>
+                    <span className="msm-row-name">Override provider API</span>
+                    <span className="msm-row-desc">Provider uses {wireLabel(providerWire)}</span>
+                  </span>
+                  <span className="msm-row-right">
+                    <Toggle
+                      checked={wireOver}
+                      onChange={setWireOverride}
+                      label="Override provider API"
+                      visuallyHidden
+                    />
+                  </span>
+                </div>
+                <div className="msm-seg" role="group" aria-label="API">
+                  {OVERRIDE_WIRES.map((wire) => (
+                    <button
+                      key={wire.value}
+                      type="button"
+                      className="msm-seg-btn"
+                      aria-pressed={draft.wireOverride === wire.value}
+                      onClick={() => setDraft((d) => ({ ...d, wireOverride: wire.value }))}
+                    >
+                      {wire.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="msm-note">Requests to this model keep the provider base URL and key.</p>
+              </div>
+            </section>
+          ) : null}
         </div>
         <footer className="msm-foot">
           <Button tone="ghost" size="sm" onClick={() => setDraft(draftFromSettings(initial, resolvedImage))} disabled={busy}>
