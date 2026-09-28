@@ -312,3 +312,76 @@ func TestChangesSignalsAfterAdoptedDiskReload(t *testing.T) {
 		t.Fatalf("adopted snapshot: %q", got)
 	}
 }
+
+func TestCloneDocumentCopiesDiscoveredPointers(t *testing.T) {
+	on := true
+	window := 128000
+	m := &Manager{snap: Snapshot{Config: Document{
+		Version: SchemaVersion,
+		Providers: map[string]Provider{
+			"codex": {
+				Wire: WireCodex,
+				Discovered: map[string]DiscoveredFacts{
+					"gpt-5.2": {ContextWindow: &window, Image: &on},
+				},
+				ModelSettings: map[string]ModelSettings{
+					"gpt-5.2": {ImageInput: &on},
+				},
+			},
+		},
+	}}}
+	got := m.Get().Config
+	src := m.snap.Config.Providers["codex"]
+	cloned := got.Providers["codex"]
+	if cloned.Discovered["gpt-5.2"].ContextWindow == src.Discovered["gpt-5.2"].ContextWindow {
+		t.Fatal("discovered window pointer aliased the snapshot")
+	}
+	if cloned.Discovered["gpt-5.2"].Image == src.Discovered["gpt-5.2"].Image {
+		t.Fatal("discovered image pointer aliased the snapshot")
+	}
+	if cloned.ModelSettings["gpt-5.2"].ImageInput == src.ModelSettings["gpt-5.2"].ImageInput {
+		t.Fatal("image override pointer aliased the snapshot")
+	}
+	*cloned.Discovered["gpt-5.2"].ContextWindow = 1
+	*cloned.Discovered["gpt-5.2"].Image = false
+	*cloned.ModelSettings["gpt-5.2"].ImageInput = false
+	if *src.Discovered["gpt-5.2"].ContextWindow != 128000 || !*src.Discovered["gpt-5.2"].Image || !*src.ModelSettings["gpt-5.2"].ImageInput {
+		t.Fatal("mutating the clone changed the snapshot")
+	}
+}
+
+func TestSetCatalogSurvivesUpdateWithoutWritingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	m, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := true
+	m.SetCatalog(staticCatalog{"glm-5.3": {ContextWindow: 500000, Image: &on}})
+	before, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	gen := m.Get().Generation
+	doc := validDoc()
+	if _, err := m.Update(doc, gen); err != nil {
+		t.Fatal(err)
+	}
+	got := m.Get().Config.ResolveContextWindow("codex-main", "glm-5.3")
+	if got != 500000 {
+		t.Fatalf("window after update = %d, want catalog 500000", got)
+	}
+	if !m.Get().Config.ResolveImageInput("codex-main", "glm-5.3") {
+		t.Fatal("catalog image lost after update")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after), "glm-5.3") || strings.Contains(string(after), "catalog") {
+		t.Fatal("catalog facts written into prism.json")
+	}
+	if gen == 0 && len(before) != 0 {
+		t.Fatal("unexpected config before first update")
+	}
+}

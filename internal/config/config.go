@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"prism/internal/catalog"
 	"prism/internal/integrations"
 )
 
@@ -79,6 +81,7 @@ type Document struct {
 	Hosts         map[string]Host                `json:"hosts,omitempty"`
 	Integrations  map[string]IntegrationSettings `json:"integrations,omitempty"`
 	VisionSidecar VisionSidecarSettings          `json:"visionSidecar,omitempty"`
+	catalog       catalogLookup                  `json:"-"`
 }
 
 type IntegrationSettings struct {
@@ -107,17 +110,18 @@ const (
 func (m ModelMode) Valid() bool { return m == "" || m == ModelModeLogical || m == ModelModeRaw }
 
 type Provider struct {
-	Wire           Wire                     `json:"wire"`
-	BaseURL        string                   `json:"baseURL,omitempty"`
-	APIKeyRef      string                   `json:"apiKeyRef,omitempty"`
-	DefaultModel   string                   `json:"defaultModel,omitempty"`
-	ModelMode      ModelMode                `json:"modelMode,omitempty"`
-	Models         []string                 `json:"models,omitempty"`
-	DisabledModels []string                 `json:"disabledModels,omitempty"`
-	SyncedModels   []string                 `json:"syncedModels,omitempty"`
-	ModelSettings  map[string]ModelSettings `json:"modelSettings,omitempty"`
-	Enabled        *bool                    `json:"enabled,omitempty"`
-	Pool           *PoolSettings            `json:"pool,omitempty"`
+	Wire           Wire                       `json:"wire"`
+	BaseURL        string                     `json:"baseURL,omitempty"`
+	APIKeyRef      string                     `json:"apiKeyRef,omitempty"`
+	DefaultModel   string                     `json:"defaultModel,omitempty"`
+	ModelMode      ModelMode                  `json:"modelMode,omitempty"`
+	Models         []string                   `json:"models,omitempty"`
+	DisabledModels []string                   `json:"disabledModels,omitempty"`
+	SyncedModels   []string                   `json:"syncedModels,omitempty"`
+	Discovered     map[string]DiscoveredFacts `json:"discovered,omitempty"`
+	ModelSettings  map[string]ModelSettings   `json:"modelSettings,omitempty"`
+	Enabled        *bool                      `json:"enabled,omitempty"`
+	Pool           *PoolSettings              `json:"pool,omitempty"`
 }
 
 func (p Provider) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
@@ -126,20 +130,111 @@ const DefaultContextWindow = 256000
 
 type ModelSettings struct {
 	ContextWindow    int      `json:"contextWindow,omitempty"`
-	ImageInput       bool     `json:"imageInput,omitempty"`
+	ImageInput       *bool    `json:"imageInput,omitempty"`
 	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
 }
 
+type DiscoveredFacts struct {
+	ContextWindow *int  `json:"contextWindow,omitempty"`
+	Image         *bool `json:"image,omitempty"`
+}
+
+func (d *DiscoveredFacts) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		ContextWindow *int  `json:"contextWindow"`
+		Image         *bool `json:"image"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	d.Image = raw.Image
+	if raw.ContextWindow != nil && *raw.ContextWindow > 0 {
+		d.ContextWindow = raw.ContextWindow
+	}
+	return nil
+}
+
+type catalogLookup interface {
+	Lookup(modelID string) catalog.Facts
+}
+
+func (d *Document) setCatalog(c catalogLookup) {
+	if d == nil {
+		return
+	}
+	d.catalog = c
+}
+
+func (d Document) catalogFacts(model string) catalog.Facts {
+	if d.catalog == nil {
+		return catalog.Facts{}
+	}
+	return d.catalog.Lookup(model)
+}
+
 func (d Document) ResolveContextWindow(providerID, model string) int {
+	n, _ := d.contextFallback(providerID, model, true)
+	return n
+}
+
+func (d Document) contextFallback(providerID, model string, includeManual bool) (int, string) {
 	if p, ok := d.Providers[providerID]; ok {
-		if s, ok := p.ModelSettings[model]; ok && s.ContextWindow > 0 {
-			return s.ContextWindow
+		if includeManual {
+			if s, ok := p.ModelSettings[model]; ok && s.ContextWindow > 0 {
+				return s.ContextWindow, "manual"
+			}
+		}
+		if facts, ok := p.Discovered[model]; ok && facts.ContextWindow != nil && *facts.ContextWindow > 0 {
+			return *facts.ContextWindow, "listing"
 		}
 	}
-	if d.ContextWindow > 0 {
-		return d.ContextWindow
+	if n := d.catalogFacts(model).ContextWindow; n > 0 {
+		return n, "catalog"
 	}
-	return DefaultContextWindow
+	if d.ContextWindow > 0 {
+		return d.ContextWindow, "global"
+	}
+	return DefaultContextWindow, "global"
+}
+
+func (d Document) ResolveImageInput(providerID, model string) bool {
+	on, _ := d.imageResolution(providerID, model)
+	return on
+}
+
+func (d Document) imageResolution(providerID, model string) (bool, string) {
+	if p, ok := d.Providers[providerID]; ok {
+		if s, ok := p.ModelSettings[model]; ok && s.ImageInput != nil {
+			return *s.ImageInput, "manual"
+		}
+		if facts, ok := p.Discovered[model]; ok && facts.Image != nil {
+			return *facts.Image, "listing"
+		}
+	}
+	if img := d.catalogFacts(model).Image; img != nil && *img {
+		return true, "catalog"
+	}
+	return false, "none"
+}
+
+type ContextSource struct {
+	Window int
+	Source string
+}
+
+type ImageSource struct {
+	Image  bool
+	Source string
+}
+
+func (d Document) ResolveContextSource(providerID, model string) ContextSource {
+	n, src := d.contextFallback(providerID, model, false)
+	return ContextSource{Window: n, Source: src}
+}
+
+func (d Document) ResolveImageSource(providerID, model string) ImageSource {
+	on, src := d.imageResolution(providerID, model)
+	return ImageSource{Image: on, Source: src}
 }
 
 type PoolSettings struct {
@@ -427,7 +522,7 @@ func (d Document) validateVisionSidecar() error {
 	if contains(p.DisabledModels, model) {
 		return fmt.Errorf("%w: visionSidecar.target model %q is disabled", ErrInvalidTarget, model)
 	}
-	if !p.ModelSettings[model].ImageInput {
+	if !d.ResolveImageInput(providerID, model) {
 		return fmt.Errorf("%w: visionSidecar.target model %q requires imageInput", ErrInvalidTarget, model)
 	}
 	return nil

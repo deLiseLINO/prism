@@ -50,6 +50,9 @@ export interface ProviderView {
   // logical id (in raw mode it equals models); it stays absent for every
   // other wire, so old clients parse unchanged.
   readonly rawModels?: readonly string[]
+  readonly discovered?: Readonly<Record<string, DiscoveredFacts>>
+  readonly resolvedImage?: Readonly<Record<string, boolean>>
+  readonly resolvedFacts?: Readonly<Record<string, ResolvedFacts>>
   readonly modelSettings?: Readonly<Record<string, ModelSettingsView>>
   readonly enabled?: boolean
   readonly pool?: PoolSettingsView
@@ -70,7 +73,7 @@ export interface ProvidersView {
 
 // Mirrors internal/management/schema.go VisionSidecarWrite (PUT) and the
 // visionSidecar object embedded in GET /api/v1/providers. Target is
-// `provider/model` naming an enabled model with imageInput, or empty.
+// `provider/model` naming an enabled model whose resolved image is true, or empty.
 export interface VisionSidecarView {
   readonly enabled?: boolean
   readonly target?: string
@@ -87,6 +90,18 @@ export interface VisionSidecarWrite {
 export interface ContextWindowWrite {
   readonly contextWindow: number
   readonly expectedGeneration: number
+}
+
+export interface DiscoveredFacts {
+  readonly contextWindow?: number
+  readonly image?: boolean
+}
+
+export interface ResolvedFacts {
+  readonly contextWindow: number
+  readonly contextSource: 'listing' | 'catalog' | 'global'
+  readonly image: boolean
+  readonly imageSource: 'manual' | 'listing' | 'catalog' | 'none'
 }
 
 export interface ModelSettingsView {

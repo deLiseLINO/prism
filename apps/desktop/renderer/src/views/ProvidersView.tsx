@@ -429,7 +429,9 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
             providerId={provider.id}
             model={modalModel}
             isNew={modalNew}
-            fallbackContextWindow={globalContextWindow}
+            fallbackContextWindow={provider.resolvedFacts?.[modalModel]?.contextWindow ?? globalContextWindow}
+            contextSource={provider.resolvedFacts?.[modalModel]?.contextSource ?? 'global'}
+            resolvedImage={provider.resolvedImage?.[modalModel] === true}
             initial={modalNew ? undefined : settings[modalModel]}
             busy={task.running}
             onCancel={() => {

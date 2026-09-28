@@ -31,13 +31,13 @@ function daemonChip(
   return { tone: 'warn', label: state, pulse: false }
 }
 
-function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
+export function eligibleSidecarModels(providers: readonly ProviderView[]): string[] {
   const ids: string[] = []
   for (const provider of providers) {
     if (provider.enabled === false) continue
     for (const model of provider.models ?? []) {
       if ((provider.disabledModels ?? []).includes(model)) continue
-      if (provider.modelSettings?.[model]?.imageInput) ids.push(`${provider.id}/${model}`)
+      if (provider.resolvedImage?.[model] === true) ids.push(`${provider.id}/${model}`)
     }
   }
   return ids.sort((a, b) => a.localeCompare(b))

@@ -100,9 +100,20 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 	if err := writeAtomic(m.path, fileFormat{Version: SchemaVersion, Generation: gen, Config: next}); err != nil {
 		return Snapshot{}, err
 	}
-	m.snap = Snapshot{Config: cloneDocument(next), Generation: gen}
+	stored := cloneDocument(next)
+	stored.catalog = m.snap.Config.catalog
+	m.snap = Snapshot{Config: stored, Generation: gen}
 	m.notifyChanged()
 	return cloneSnapshot(m.snap), nil
+}
+
+func (m *Manager) SetCatalog(c catalogLookup) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.snap.Config.catalog = c
 }
 
 func (m *Manager) notifyChanged() {
@@ -165,10 +176,13 @@ func cloneDocument(d Document) Document {
 		Hosts:         cloneMap(d.Hosts),
 		Integrations:  cloneMap(d.Integrations),
 		VisionSidecar: d.VisionSidecar,
+		catalog:       d.catalog,
 	}
 	for id, p := range d.Providers {
 		p.Models = append([]string(nil), p.Models...)
 		p.DisabledModels = append([]string(nil), p.DisabledModels...)
+		p.SyncedModels = append([]string(nil), p.SyncedModels...)
+		p.Discovered = cloneDiscovered(p.Discovered)
 		p.ModelSettings = cloneModelSettings(p.ModelSettings)
 		if p.Enabled != nil {
 			v := *p.Enabled
@@ -205,7 +219,37 @@ func cloneModelSettings(m map[string]ModelSettings) map[string]ModelSettings {
 		if v.ReasoningEfforts != nil {
 			v.ReasoningEfforts = append([]string(nil), v.ReasoningEfforts...)
 		}
+		v.ImageInput = cloneBool(v.ImageInput)
 		out[k] = v
 	}
 	return out
+}
+
+func cloneDiscovered(m map[string]DiscoveredFacts) map[string]DiscoveredFacts {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]DiscoveredFacts, len(m))
+	for k, v := range m {
+		v.ContextWindow = cloneInt(v.ContextWindow)
+		v.Image = cloneBool(v.Image)
+		out[k] = v
+	}
+	return out
+}
+
+func cloneBool(v *bool) *bool {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
+}
+
+func cloneInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
 }

@@ -22,7 +22,7 @@ func testVisionSidecarDoc() config.Document {
 				Wire:    config.WireOpenAIChat,
 				BaseURL: "http://localhost",
 				ModelSettings: map[string]config.ModelSettings{
-					"vision-model": {ImageInput: true},
+					"vision-model": {ImageInput: boolPtr(true)},
 				},
 			},
 		},
