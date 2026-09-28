@@ -88,7 +88,7 @@ func (f *clineFlow) BeginDevice(ctx context.Context) (deviceAuth, error) {
 		DeviceCode: out.DeviceCode,
 		UserCode:   out.UserCode,
 		URL:        uri,
-		ExpiresIn:  time.Duration(out.ExpiresIn) * time.Second,
+		ExpiresAt:  f.now().Add(time.Duration(out.ExpiresIn) * time.Second),
 		Interval:   time.Duration(out.Interval) * time.Second,
 	}, nil
 }
@@ -97,12 +97,15 @@ type deviceAuth struct {
 	DeviceCode string
 	UserCode   string
 	URL        string
-	ExpiresIn  time.Duration
+	ExpiresAt  time.Time
 	Interval   time.Duration
 }
 
 func (f *clineFlow) ExchangeDevice(ctx context.Context, started deviceAuth) (account.Credential, error) {
-	deadline := f.now().Add(started.ExpiresIn)
+	deadline := started.ExpiresAt
+	if deadline.IsZero() {
+		deadline = f.now().Add(5 * time.Minute)
+	}
 	interval := started.Interval
 	for {
 		if err := ctx.Err(); err != nil {
@@ -205,7 +208,7 @@ func (f *clineFlow) registerDevice(ctx context.Context, tokens workosTokens) (ac
 	if !out.Success || out.Data.AccessToken == "" || out.Data.RefreshToken == "" {
 		return account.Credential{}, fmt.Errorf("cline token registration returned no tokens")
 	}
-	expiresAt, err := time.Parse(time.RFC3339, out.Data.ExpiresAt)
+	expiresAt, err := parseClineExpiry(out.Data.ExpiresAt)
 	if err != nil {
 		return account.Credential{}, fmt.Errorf("cline token registration returned an unreadable expiry")
 	}
@@ -216,6 +219,25 @@ func (f *clineFlow) registerDevice(ctx context.Context, tokens workosTokens) (ac
 		AccountID: clineUserID(out.Data.UserInfo),
 		Email:     clineEmail(out.Data.UserInfo),
 	}, nil
+}
+
+func parseClineExpiry(raw json.RawMessage) (time.Time, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return time.Time{}, fmt.Errorf("unreadable expiry")
+	}
+	var ms float64
+	if err := json.Unmarshal(raw, &ms); err == nil {
+		return time.UnixMilli(int64(ms)), nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil || s == "" {
+		return time.Time{}, fmt.Errorf("unreadable expiry")
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("unreadable expiry")
+	}
+	return t, nil
 }
 
 func sleep(ctx context.Context, d time.Duration) error {
@@ -236,7 +258,7 @@ type clineRefreshResponse struct {
 	Data    struct {
 		AccessToken  string          `json:"accessToken"`
 		RefreshToken string          `json:"refreshToken"`
-		ExpiresAt    string          `json:"expiresAt"`
+		ExpiresAt    json.RawMessage `json:"expiresAt"`
 		UserInfo     json.RawMessage `json:"userInfo"`
 	} `json:"data"`
 }
@@ -275,7 +297,7 @@ func (f *clineFlow) Refresh(ctx context.Context, prev account.Credential) (accou
 	if !out.Success || out.Data.AccessToken == "" {
 		return account.Credential{}, fmt.Errorf("cline token refresh returned no access token")
 	}
-	expiresAt, err := time.Parse(time.RFC3339, out.Data.ExpiresAt)
+	expiresAt, err := parseClineExpiry(out.Data.ExpiresAt)
 	if err != nil {
 		return account.Credential{}, fmt.Errorf("cline token refresh returned an unreadable expiry")
 	}

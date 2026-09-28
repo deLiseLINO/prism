@@ -176,12 +176,21 @@ func (s *Service) startDevice(ctx context.Context, provider account.ProviderID, 
 	if err != nil {
 		return AuthStart{}, err
 	}
+	s.mu.Lock()
+	if rec, ok := s.pending[sid]; ok && started.ExpiresAt.After(rec.expires) {
+		rec.expires = started.ExpiresAt.Add(time.Minute)
+	}
+	s.mu.Unlock()
 	go s.pollDevice(sid, flow, started)
 	return AuthStart{Session: sid, URL: started.URL, UserCode: started.UserCode}, nil
 }
 
 func (s *Service) pollDevice(sid AuthSessionID, flow DeviceFlow, started deviceAuth) {
-	ctx, cancel := context.WithTimeout(context.Background(), started.ExpiresIn+time.Minute)
+	wait := time.Until(started.ExpiresAt) + time.Minute
+	if wait < time.Minute {
+		wait = 6 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	cred, err := flow.ExchangeDevice(ctx, started)
 	s.mu.Lock()
