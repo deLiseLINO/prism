@@ -115,6 +115,54 @@ func (e *daemonEnv) ensureRepo(providerID account.ProviderID, pool *config.PoolS
 	return repo
 }
 
+func (e *daemonEnv) noteStoredAccount(providerID account.ProviderID) {
+	w, ok := loginWire(providerID)
+	if !ok {
+		return
+	}
+	e.ensureLoginProvider(string(providerID), w)
+	snap := e.cfg.Get()
+	p, ok := snap.Config.Providers[string(providerID)]
+	if !ok {
+		return
+	}
+	if err := e.ensureProvider(context.Background(), string(providerID), p); err != nil {
+		log.Printf("prismd: login provider %s: %v", providerID, err)
+	}
+}
+
+func loginWire(providerID account.ProviderID) (config.Wire, bool) {
+	switch providerID {
+	case "codex":
+		return config.WireCodex, true
+	case "antigravity":
+		return config.WireAntigravity, true
+	case "cline":
+		return config.WireCline, true
+	default:
+		return "", false
+	}
+}
+
+func (e *daemonEnv) ensureLoginProvider(id string, w config.Wire) {
+	snap := e.cfg.Get()
+	if _, ok := snap.Config.Providers[id]; ok {
+		return
+	}
+	doc := snap.Config
+	if doc.Providers == nil {
+		doc.Providers = map[string]config.Provider{}
+	}
+	card := config.Provider{Wire: w}
+	if w == config.WireCline {
+		card.BaseURL = cline.DefaultBaseURL
+	}
+	doc.Providers[id] = card
+	if _, err := e.cfg.Update(doc, snap.Generation); err != nil && !errors.Is(err, config.ErrStaleGeneration) {
+		log.Printf("prismd: login provider %s: %v", id, err)
+	}
+}
+
 func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
 	switch w {
 	case config.WireCodex:

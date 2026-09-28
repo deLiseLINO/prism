@@ -616,7 +616,9 @@ func run(opts options) error {
 	}
 	var authService *auth.Service
 	if len(env.flows) > 0 {
-		authService, err = auth.New(auth.NewFileSink(creds.file, env.repos, pool), env.flows, auth.Options{})
+		sink := auth.NewFileSink(creds.file, env.repos, pool)
+		sink.OnStored(env.noteStoredAccount)
+		authService, err = auth.New(sink, env.flows, auth.Options{})
 		if err != nil {
 			return fmt.Errorf("prismd: auth service: %w", err)
 		}
