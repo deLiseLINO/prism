@@ -254,6 +254,7 @@ export interface ModelSettingsView {
   readonly contextWindow?: number
   readonly imageInput?: boolean
   readonly reasoningEfforts?: readonly string[]
+  readonly wire?: 'responses' | 'chat' | 'messages'
 }
 
 // Internal narrowings consumed by the views.

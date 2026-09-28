@@ -208,7 +208,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   async function saveModelSettings(model: string, draft: ModelSettingsDraft): Promise<void> {
     const settings = cloneModelSettings(provider.modelSettings)
     if (modalNew) {
-      settings[model] = draftToSettings(draft)
+      settings[model] = draftToSettings(draft, provider.wire)
       const nextModels = models.includes(model) ? [...models] : [...models, model]
       onOptimistic(provider.id, { models: nextModels, modelSettings: settings })
       try {
@@ -220,7 +220,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
       onMutated()
       return
     }
-    settings[model] = draftToSettings(draft)
+    settings[model] = draftToSettings(draft, provider.wire)
     onOptimistic(provider.id, { modelSettings: settings })
     try {
       await api.replaceProvider(provider.id, buildWrite(provider, generation, { modelSettings: settings }))
@@ -345,6 +345,8 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
               const manual = syncedModels.length > 0 && !syncedModels.includes(model)
               const fresh = freshModels.includes(model)
               const rungs = rungChips(model, modelSettings)
+              const facts = provider.resolvedFacts?.[model]
+              const wireTag = facts?.wireSource === 'model' && facts.wire !== undefined ? wireLabel(facts.wire) : null
               return (
                 <div
                   className={`prov-mline${off ? ' prov-mline--off' : ''}${fresh ? ' prov-mline--new' : ''} prov-mline--click`}
@@ -365,6 +367,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
                       <span className="pm-name">{model}</span>
                       {fresh ? <span className="badge badge--ok prov-mline-newbadge">new</span> : null}
                       {manual ? <span className="badge badge--muted prov-mline-manual">manual</span> : null}
+                      {wireTag !== null ? <span className="badge badge--muted prov-mline-manual">{wireTag}</span> : null}
                     </div>
                     {rungs.length > 0 ? (
                       <div className="pm-line2">
@@ -454,6 +457,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
             model={modalModel}
             isNew={modalNew}
             fallbackContextWindow={provider.resolvedFacts?.[modalModel]?.contextWindow ?? globalContextWindow}
+            providerWire={provider.wire}
             contextSource={provider.resolvedFacts?.[modalModel]?.contextSource ?? 'global'}
             resolvedImage={provider.resolvedImage?.[modalModel] === true}
             initial={modalNew ? undefined : settings[modalModel]}
