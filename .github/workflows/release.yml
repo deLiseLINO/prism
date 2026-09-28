@@ -348,12 +348,26 @@ jobs:
         with:
           tag_name: v${{ needs.preflight.outputs.version }}
           prerelease: ${{ needs.preflight.outputs.prerelease == 'true' }}
+          draft: ${{ needs.preflight.outputs.prerelease == 'true' }}
           generate_release_notes: true
           previous_tag: ${{ steps.previous.outputs.tag }}
           fail_on_unmatched_files: true
           files: |
             update-feed/*
             dist-release/SHA256SUMS
+      - name: Publish the release after its files exist
+        if: needs.preflight.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ needs.preflight.outputs.version }}"
+          id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json databaseId,isDraft,assets --jq 'select(.isDraft) | select(any(.assets[]; .name == "rc-mac.yml" or .name == "latest-mac.yml")) | .databaseId')
+          if [ -z "$id" ]; then
+            echo "release $tag is already public"
+            exit 0
+          fi
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/$id" -F draft=false >/dev/null
+          echo "published $tag"
       - name: Dry run summary
         if: needs.preflight.outputs.dry_run == 'true'
         run: |
