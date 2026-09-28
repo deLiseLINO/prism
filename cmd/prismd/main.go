@@ -32,6 +32,7 @@ import (
 	"prism/internal/provider"
 	"prism/internal/providers/anthropic"
 	"prism/internal/providers/antigravity"
+	"prism/internal/providers/cline"
 	"prism/internal/providers/codex"
 	"prism/internal/quota"
 	"prism/internal/requestlog"
@@ -111,7 +112,7 @@ func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provi
 
 func (m modelSyncer) remoteModels(ctx context.Context, id string, p config.Provider) ([]listedModel, error) {
 	switch p.Wire {
-	case config.WireCodex, config.WireAntigravity:
+	case config.WireCodex, config.WireAntigravity, config.WireCline:
 		return m.remoteModelsPooled(ctx, id, p)
 	}
 	return m.remoteModelsCustom(ctx, id, p)
@@ -147,13 +148,23 @@ func (m modelSyncer) remoteModelsPooled(ctx context.Context, id string, p config
 		if err != nil {
 			return nil, err
 		}
-		out := make([]listedModel, len(ids))
-		for i, id := range ids {
-			out[i] = listedModel{ID: id}
+		return idsToListed(ids), nil
+	case config.WireCline:
+		ids, err := cline.FetchModels(ctx, m.client, p.BaseURL, cline.EnsureWorkosPrefix(cred.Access))
+		if err != nil {
+			return nil, err
 		}
-		return out, nil
+		return idsToListed(ids), nil
 	}
 	return nil, fmt.Errorf("provider %s wire %q does not support model listing", id, p.Wire)
+}
+
+func idsToListed(ids []string) []listedModel {
+	out := make([]listedModel, len(ids))
+	for i, id := range ids {
+		out[i] = listedModel{ID: id}
+	}
+	return out
 }
 
 func (m modelSyncer) leaseFor(id string, p config.Provider) (account.Lease, bool) {

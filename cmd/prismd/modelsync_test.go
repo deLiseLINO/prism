@@ -131,6 +131,39 @@ func TestModelSyncerListsAntigravityModelsFromUpstream(t *testing.T) {
 	}
 }
 
+func TestModelSyncerListsClineModelsFromStoredAccount(t *testing.T) {
+	var gotPath, gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"free":[{"id":"cline-free/kimi-k3"}],"clinePass":[{"id":"cline-pass/glm-5.3"}],"recommended":[{"id":"skip"}],"clineCloud":[{"id":"skip-cloud"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	pool := account.New()
+	pool.Register(account.Account{ID: "cline:usr-1", Provider: "cline", State: account.Active, CredGen: 4, Version: 1})
+	creds := &stubCreds{cred: account.Credential{Access: "tok"}}
+	syncer := modelSyncer{pool: pool, refresher: creds, client: server.Client()}
+
+	models, err := syncer.RemoteModels(context.Background(), "cline", config.Provider{Wire: config.WireCline, BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("RemoteModels: %v", err)
+	}
+	if gotPath != "/api/v1/ai/cline/recommended-models" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotAuth != "Bearer workos:tok" {
+		t.Fatalf("auth = %q", gotAuth)
+	}
+	if ids := idsOf(models); len(ids) != 2 || ids[0] != "cline-free/kimi-k3" || ids[1] != "cline-pass/glm-5.3" {
+		t.Fatalf("models = %v", ids)
+	}
+	if creds.gotLease.Account != "cline:usr-1" || creds.gotLease.CredGen != 4 {
+		t.Fatalf("refresher lease = %+v", creds.gotLease)
+	}
+}
+
 func TestModelSyncerErrorsWithoutActiveAccount(t *testing.T) {
 	pool := account.New()
 	syncer := modelSyncer{pool: pool, refresher: &stubCreds{}}
