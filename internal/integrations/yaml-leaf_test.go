@@ -135,3 +135,29 @@ func TestYamlLeafReadEndpoint(t *testing.T) {
 		t.Fatalf("expected absent, got %+v", missing)
 	}
 }
+
+func TestYamlLeafPerModelAPI(t *testing.T) {
+	models := []Model{
+		{ID: "router/claude", Name: "router/claude", API: "anthropic-messages"},
+		{ID: "router/gpt", Name: "router/gpt"},
+	}
+	got := RenderProviderLeaf("prism", NewOmpSpec(testPort, models), 2)
+	claude := "      - id: claude-router--claude\n        name: router/claude\n        api: anthropic-messages\n        input:\n"
+	gpt := "      - id: router/gpt\n        name: router/gpt\n        input:\n"
+	if !strings.Contains(got, claude) || !strings.Contains(got, gpt) {
+		t.Fatalf("per-model api misplaced:\n%s", got)
+	}
+	if strings.Count(got, "api: anthropic-messages") != 1 {
+		t.Fatalf("api leaked to other models:\n%s", got)
+	}
+	if !strings.Contains(got, "\n    auth: apiKey\n") {
+		t.Fatalf("provider auth mode missing:\n%s", got)
+	}
+}
+
+func TestYamlLeafNoAuthWithoutPerModelAPI(t *testing.T) {
+	got := RenderProviderLeaf("prism", NewOmpSpec(testPort, testModels()), 2)
+	if strings.Contains(got, "auth:") {
+		t.Fatalf("auth written without a per-model api:\n%s", got)
+	}
+}

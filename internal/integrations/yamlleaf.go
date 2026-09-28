@@ -3,6 +3,7 @@ package integrations
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -145,13 +146,27 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 		body + "api: " + spec.API,
 		body + "apiKey: " + spec.APIKey,
 	}
+	if slices.ContainsFunc(spec.Models, func(m Model) bool { return m.API != "" }) {
+		// A per-model anthropic-messages api makes omp default to Claude-Code
+		// OAuth request shaping (injected system blocks, prefixed tool names);
+		// an explicit auth mode turns that default off.
+		lines = append(lines, body+"auth: apiKey")
+	}
 	if len(spec.Models) == 0 {
 		lines = append(lines, body+"models: []")
 	} else {
 		lines = append(lines, body+"models:")
 		for _, model := range spec.Models {
-			lines = append(lines, item+"- id: "+model.ID)
+			id := model.ID
+			if model.API != "" {
+				// The messages ingress only routes claude-<provider>--<model> aliases.
+				id = ClaudeAlias(model.ID)
+			}
+			lines = append(lines, item+"- id: "+id)
 			lines = append(lines, fields+"name: "+model.Name)
+			if model.API != "" {
+				lines = append(lines, fields+"api: "+model.API)
+			}
 			// omp validates model entries strictly and requires input modalities.
 			lines = append(lines, fields+"input:")
 			lines = append(lines, fields+pad+"- text")

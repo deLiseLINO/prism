@@ -349,3 +349,41 @@ func TestIntegrationModelsDoNotTreatSidecarAsImage(t *testing.T) {
 		t.Fatal("explicit false override lost to discovered image")
 	}
 }
+
+func TestIntegrationModelsMarkMessagesWire(t *testing.T) {
+	dir := t.TempDir()
+	m, err := config.Open(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Update(config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"router": {
+				Wire:    config.WireOpenAIChat,
+				BaseURL: "http://up.example/v1",
+				Models:  []string{"chat", "claude"},
+				ModelSettings: map[string]config.ModelSettings{
+					"claude": {Wire: config.WireAnthropicMessages},
+				},
+			},
+			"gw": {
+				Wire:    config.WireAnthropicMessages,
+				BaseURL: "http://gw.example",
+				Models:  []string{"sonnet"},
+			},
+		},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, model := range integrationModels(m)() {
+		got[model.ID] = model.API
+	}
+	want := map[string]string{"router/chat": "", "router/claude": "anthropic-messages", "gw/sonnet": "anthropic-messages"}
+	for id, api := range want {
+		if got[id] != api {
+			t.Fatalf("%s api = %q, want %q", id, got[id], api)
+		}
+	}
+}

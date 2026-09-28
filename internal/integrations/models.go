@@ -30,6 +30,7 @@ type Model struct {
 	ImageInput             bool
 	ReasoningEfforts       []string
 	DefaultReasoningEffort string
+	API                    string
 }
 
 // DefaultPrismModels mirrors the daemon's default combo targets
