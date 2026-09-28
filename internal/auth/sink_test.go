@@ -17,6 +17,10 @@ type regPool struct {
 	registered []account.Account
 }
 
+func (p *regPool) DeleteAccount(ctx context.Context, id account.AccountID) error {
+	return p.Pool.DeleteAccount(ctx, id)
+}
+
 func (p *regPool) Register(a account.Account) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -168,5 +172,38 @@ func TestFileSinkRegisteredRequiresDurableRow(t *testing.T) {
 	gen, err := repo.CurrentGeneration(provider, "codex:acc-9")
 	if err != nil || gen != 1 {
 		t.Fatalf("gen = %d err = %v", gen, err)
+	}
+}
+
+func TestClinePersistReplacesThePreviousAccount(t *testing.T) {
+	provider := account.ProviderID("cline")
+	sink, file, repo, pool, _ := newTestSink(t, provider)
+	ctx := context.Background()
+	first := testCredential()
+	first.AccountID = "old"
+	stored, err := sink.Persist(ctx, provider, first)
+	if err != nil {
+		t.Fatalf("first persist: %v", err)
+	}
+	pool.Register(stored)
+	next := testCredential()
+	next.AccountID = "new"
+	if _, err := sink.Persist(ctx, provider, next); err != nil {
+		t.Fatalf("second persist: %v", err)
+	}
+	rows, err := repo.Load(provider)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != "cline:new" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if _, ok, err := file.Get(ctx, provider, "cline:old", 1); err != nil || ok {
+		t.Fatalf("old credential still stored: ok=%v err=%v", ok, err)
+	}
+	for _, row := range pool.Snapshot().Accounts {
+		if row.ID == "cline:old" {
+			t.Fatal("old account still in the pool")
+		}
 	}
 }

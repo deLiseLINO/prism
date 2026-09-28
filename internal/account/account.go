@@ -104,6 +104,7 @@ type Pool interface {
 	Pause(ctx context.Context, id AccountID, ifVersion StateVersion) error
 	Resume(ctx context.Context, id AccountID, ifVersion StateVersion) error
 	UpdatePriority(ctx context.Context, id AccountID, p int, ifVersion StateVersion) error
+	DeleteAccount(ctx context.Context, id AccountID) error
 	Snapshot() Snapshot
 }
 

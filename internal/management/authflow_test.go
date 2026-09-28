@@ -28,6 +28,10 @@ type regPool struct {
 	registered []account.Account
 }
 
+func (p *regPool) DeleteAccount(ctx context.Context, id account.AccountID) error {
+	return p.Pool.DeleteAccount(ctx, id)
+}
+
 func (p *regPool) Register(a account.Account) {
 	p.mu.Lock()
 	p.registered = append(p.registered, a)
