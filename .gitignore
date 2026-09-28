@@ -10,3 +10,5 @@ verify/scripts/dist/
 apps/desktop/release/
 tooling.local.yaml
 .agents/
+
+.grok/

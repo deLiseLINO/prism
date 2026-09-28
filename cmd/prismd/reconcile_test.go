@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"prism/internal/account"
+	"prism/internal/auth"
 	"prism/internal/config"
 	"prism/internal/provider"
 	"prism/internal/store"
@@ -162,5 +163,24 @@ func TestReconcileKeepsExistingModels(t *testing.T) {
 	got := mgr.Get().Config.Providers["edge"].Models
 	if len(got) != 1 || got[0] != "pinned" {
 		t.Fatalf("existing models overwritten: %v", got)
+	}
+}
+
+func TestLoginWithoutProviderCardCanPersist(t *testing.T) {
+	env, _ := testEnv(t, config.Document{Version: config.SchemaVersion})
+	env.ensureFlows("cline", config.WireCline)
+	sink := auth.NewFileSink(env.creds.file, env.repos, env.pool)
+	acct, err := sink.Persist(context.Background(), "cline", account.Credential{
+		AccountID: "usr-1",
+		Email:     "a@b.c",
+		Access:    "workos:token",
+		Refresh:   "refresh",
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("persist without a provider card: %v", err)
+	}
+	if acct.ID != "cline:usr-1" || acct.Email != "a@b.c" {
+		t.Fatalf("persisted account: %+v", acct)
 	}
 }
