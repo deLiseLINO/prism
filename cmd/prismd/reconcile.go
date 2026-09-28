@@ -76,17 +76,7 @@ func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Prov
 	if _, ok := e.registry.Lookup(providerID); ok {
 		return nil
 	}
-	repo, ok := e.repos[providerID]
-	if !ok {
-		repoPath := ""
-		if p.Pool != nil && p.Pool.AccountsPath != "" {
-			repoPath = p.Pool.AccountsPath
-		} else {
-			repoPath = filepath.Join(e.credentialPath, "accounts", id+".json")
-		}
-		repo = account.OpenMeta(repoPath)
-		e.repos[providerID] = repo
-	}
+	repo := e.ensureRepo(providerID, p.Pool)
 	accounts, err := repo.Load(providerID)
 	if err != nil {
 		return fmt.Errorf("prismd: provider %s: %w", id, err)
@@ -110,9 +100,25 @@ func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Prov
 	return nil
 }
 
+func (e *daemonEnv) ensureRepo(providerID account.ProviderID, pool *config.PoolSettings) *account.Repository {
+	if repo, ok := e.repos[providerID]; ok {
+		return repo
+	}
+	repoPath := ""
+	if pool != nil && pool.AccountsPath != "" {
+		repoPath = pool.AccountsPath
+	} else {
+		repoPath = filepath.Join(e.credentialPath, "accounts", string(providerID)+".json")
+	}
+	repo := account.OpenMeta(repoPath)
+	e.repos[providerID] = repo
+	return repo
+}
+
 func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
 	switch w {
 	case config.WireCodex:
+		e.ensureRepo(providerID, nil)
 		flow, err := auth.NewCodexFlow(auth.CodexProduction, auth.Options{})
 		if err != nil {
 			log.Printf("prismd: provider %s auth: %v", providerID, err)
@@ -120,6 +126,7 @@ func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
 		}
 		e.flows[providerID] = flow
 	case config.WireAntigravity:
+		e.ensureRepo(providerID, nil)
 		flow, err := auth.NewAntigravityFlow(auth.AntigravityProduction, auth.Options{})
 		if err != nil {
 			log.Printf("prismd: provider %s auth: %v", providerID, err)
@@ -127,6 +134,7 @@ func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
 		}
 		e.flows[providerID] = flow
 	case config.WireCline:
+		e.ensureRepo(providerID, nil)
 		e.flows[providerID] = auth.NewClineFlow(auth.Options{})
 	default:
 		delete(e.flows, providerID)

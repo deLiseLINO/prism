@@ -115,7 +115,7 @@ func TestClineDeviceLoginRegistersTokens(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		fmt.Fprint(w, `{"success":true,"data":{"accessToken":"bare-jwt","refreshToken":"rt-9","expiresAt":"2030-01-01T00:00:00Z","userInfo":{"clineUserId":"u-9","email":"a@example.com"}}}`)
+		fmt.Fprint(w, `{"success":true,"data":{"accessToken":"bare-jwt","refreshToken":"rt-9","expiresAt":1893456000000,"userInfo":{"clineUserId":"u-9","email":"a@example.com"}}}`)
 	}))
 	t.Cleanup(api.Close)
 	originalWorkOS := workOSAPIBase
@@ -129,6 +129,9 @@ func TestClineDeviceLoginRegistersTokens(t *testing.T) {
 	}
 	if started.UserCode != "ABCD-EFGH" || started.URL != "https://auth.example/device?user_code=ABCD-EFGH" {
 		t.Fatalf("start = %+v", started)
+	}
+	if !started.ExpiresAt.After(time.Now().Add(30 * time.Second)) {
+		t.Fatalf("expiresAt = %v, code lifetime was not kept", started.ExpiresAt)
 	}
 	cred, err := flow.ExchangeDevice(context.Background(), started)
 	if err != nil {
