@@ -85,6 +85,11 @@ export function visibleModelRows(
   return models.filter((m) => m.toLowerCase().includes(needle))
 }
 
+export function clineCatalogModels(models: readonly string[], catalog: 'free' | 'pass'): readonly string[] {
+  const prefix = catalog === 'free' ? 'cline-free/' : 'cline-pass/'
+  return models.filter((model) => model.startsWith(prefix))
+}
+
 interface DetailProps {
   readonly provider: ProviderView
   readonly generation: number
@@ -107,6 +112,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   const [syncing, setSyncing] = useState(false)
   const [freshModels, setFreshModels] = useState<readonly string[]>([])
   const [sortDisabled, setSortDisabled] = useState<readonly string[]>(provider.disabledModels ?? [])
+  const [catalog, setCatalog] = useState<'free' | 'pass'>('free')
   const task = useTask()
   const models = provider.models ?? []
   const disabledModels = provider.disabledModels ?? []
@@ -231,7 +237,8 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
 
   const settings = provider.modelSettings ?? {}
   const needle = modelFilter.trim().toLowerCase()
-  const listedModels = visibleModelRows(models, needle)
+  const cataloged = provider.wire === 'cline' ? clineCatalogModels(models, catalog) : models
+  const listedModels = visibleModelRows(cataloged, needle)
 
   return (
     <section className="panel card prov-detail" style={{ '--i': 1 } as CSSProperties}>
@@ -254,8 +261,14 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
       <div className="prov-detail-body">
         <div className="prov-detail-label">
           models
+          {provider.wire === 'cline' ? (
+            <span className="msm-seg prov-catalog" role="group" aria-label="Cline catalog">
+              <button type="button" className="msm-seg-btn" aria-pressed={catalog === 'free'} onClick={() => setCatalog('free')}>free</button>
+              <button type="button" className="msm-seg-btn" aria-pressed={catalog === 'pass'} onClick={() => setCatalog('pass')}>pass</button>
+            </span>
+          ) : null}
           <span className="num">
-            {(needle === '' ? models.length : listedModels.length + ' of ' + models.length) +
+            {(needle === '' ? cataloged.length : listedModels.length + ' of ' + cataloged.length) +
               (hasFamilies ? (rawMode ? ' raw' : ' logical') : '')}
           </span>
           <span className="prov-detail-acts">
