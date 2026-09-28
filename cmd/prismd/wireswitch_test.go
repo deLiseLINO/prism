@@ -97,3 +97,80 @@ func TestWireSwitchSwapsRunnerWithoutRestart(t *testing.T) {
 		t.Fatalf("responses hits = %d, want 1 (no retry on dead wire)", responsesHits)
 	}
 }
+
+func TestModelWireOverrideDispatchesPerModel(t *testing.T) {
+	hits := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits[r.URL.Path]++
+		switch r.URL.Path {
+		case "/v1/responses":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":{"message":"responses endpoint"}}`)
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`+"\n\n")
+			fmt.Fprint(w, `data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	doc := config.Document{Version: config.SchemaVersion, Providers: map[string]config.Provider{
+		"router": {
+			Wire:    config.WireOpenAIResponses,
+			BaseURL: srv.URL + "/v1",
+			Models:  []string{"model-a", "model-b"},
+			ModelSettings: map[string]config.ModelSettings{
+				"model-b": {Wire: config.WireOpenAIChat},
+			},
+		},
+	}}
+	env, mgr := testEnv(t, doc)
+	if err := env.ensureProvider(context.Background(), "router", doc.Providers["router"]); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	runner, ok := env.registry.Lookup("router")
+	if !ok {
+		t.Fatal("router runner not registered")
+	}
+	planner := mgr.Get().Config
+	run := func(model string) error {
+		wire := provider.WireResponses
+		if planner.ResolveWire("router", model) == config.WireOpenAIChat {
+			wire = provider.WireChat
+		}
+		return runner.Run(context.Background(), provider.RunRequest{
+			Request: canon.Request{
+				Model:  canon.ModelID(model),
+				Stream: true,
+				Input: []canon.Item{canon.Message{
+					ID:      "m1",
+					Role:    canon.RoleUser,
+					Content: []canon.Content{canon.TextContent{Text: "hi"}},
+				}},
+			},
+			Target: provider.Target{Provider: "router", Wire: wire, BaseURL: srv.URL + "/v1", Model: canon.ModelID(model)},
+		}, &countSink{})
+	}
+
+	var runErr provider.RunError
+	if err := run("model-a"); !errors.As(err, &runErr) {
+		t.Fatalf("model-a: err = %v, want upstream 400 from responses endpoint", err)
+	}
+	if err := run("model-b"); err != nil {
+		t.Fatalf("model-b over chat: %v", err)
+	}
+	if hits["/v1/responses"] != 1 || hits["/v1/chat/completions"] != 1 {
+		t.Fatalf("hits = %v, want one responses and one chat", hits)
+	}
+}
+
+func TestWireDispatcherRejectsUnroutableWire(t *testing.T) {
+	err := wireDispatcher{}.Run(context.Background(), provider.RunRequest{Target: provider.Target{Provider: "router", Wire: provider.WireCodex}}, &countSink{})
+	if err == nil {
+		t.Fatal("dispatch on a wire without a runner succeeded")
+	}
+}

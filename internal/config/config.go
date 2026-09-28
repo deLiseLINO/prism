@@ -34,6 +34,10 @@ func (w Wire) valid() bool {
 	return false
 }
 
+func (w Wire) Custom() bool {
+	return w == WireOpenAIResponses || w == WireAnthropicMessages || w == WireOpenAIChat
+}
+
 type ComboStrategy string
 
 const (
@@ -115,6 +119,7 @@ type ModelSettings struct {
 	ContextWindow    int      `json:"contextWindow,omitempty"`
 	ImageInput       *bool    `json:"imageInput,omitempty"`
 	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
+	Wire             Wire     `json:"wire,omitempty"`
 }
 
 type DiscoveredFacts struct {
@@ -183,6 +188,14 @@ func (d Document) contextFallback(providerID, model string, includeManual bool) 
 func (d Document) ResolveImageInput(providerID, model string) bool {
 	on, _ := d.imageResolution(providerID, model)
 	return on
+}
+
+func (d Document) ResolveWire(providerID, model string) Wire {
+	p := d.Providers[providerID]
+	if s, ok := p.ModelSettings[model]; ok && s.Wire != "" {
+		return s.Wire
+	}
+	return p.Wire
 }
 
 func (d Document) imageResolution(providerID, model string) (bool, string) {
@@ -263,7 +276,7 @@ func (d Document) validate() error {
 		if !p.Wire.valid() {
 			return fmt.Errorf("%w: providers.%s.wire %q", ErrUnknownWire, id, p.Wire)
 		}
-		if (p.Wire == WireOpenAIResponses || p.Wire == WireOpenAIChat) && p.BaseURL == "" {
+		if needsBaseURL(p.Wire) && p.BaseURL == "" {
 			return fmt.Errorf("%w: providers.%s.baseURL required for wire %q", ErrInvalidValue, id, p.Wire)
 		}
 		for _, m := range p.DisabledModels {
@@ -365,8 +378,24 @@ func (p Provider) validateModelSettings(providerID string) error {
 				return fmt.Errorf("%w: providers.%s.modelSettings[%s].reasoningEfforts %q", ErrInvalidValue, providerID, model, e)
 			}
 		}
+
+		if s.Wire != "" {
+			if !s.Wire.Custom() {
+				return fmt.Errorf("%w: providers.%s.modelSettings[%s].wire %q", ErrUnknownWire, providerID, model, s.Wire)
+			}
+			if !p.Wire.Custom() {
+				return fmt.Errorf("%w: providers.%s.modelSettings[%s].wire not allowed for provider wire %q", ErrInvalidValue, providerID, model, p.Wire)
+			}
+			if needsBaseURL(s.Wire) && p.BaseURL == "" {
+				return fmt.Errorf("%w: providers.%s.baseURL required for modelSettings[%s].wire %q", ErrInvalidValue, providerID, model, s.Wire)
+			}
+		}
 	}
 	return nil
+}
+
+func needsBaseURL(w Wire) bool {
+	return w == WireOpenAIResponses || w == WireOpenAIChat
 }
 
 func validReasoningEffort(e string) bool {

@@ -67,10 +67,6 @@ func newDaemonEnv(credentialPath string, cfg *config.Manager, pool auth.PoolRegi
 	}
 }
 
-func customWire(w config.Wire) bool {
-	return w == config.WireOpenAIResponses || w == config.WireAnthropicMessages || w == config.WireOpenAIChat
-}
-
 func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Provider) error {
 	providerID := account.ProviderID(id)
 	if _, ok := e.registry.Lookup(providerID); ok {
@@ -81,7 +77,7 @@ func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Prov
 	if err != nil {
 		return fmt.Errorf("prismd: provider %s: %w", id, err)
 	}
-	if len(accounts) == 0 && customWire(p.Wire) {
+	if len(accounts) == 0 && p.Wire.Custom() {
 		defaultID := account.AccountID(id + ":default")
 		e.pool.Register(account.Account{ID: defaultID, Provider: providerID, State: account.Active, CredGen: 1, Version: 1})
 	}
@@ -202,14 +198,14 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 		}, nil
 	case config.WireAntigravity:
 		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.client, p.BaseURL)
-	case config.WireOpenAIResponses:
-		return customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}), nil
-	case config.WireOpenAIChat:
-		return customchat.New(customKey{e.creds}.Resolve, customchat.Options{}), nil
+	case config.WireOpenAIResponses, config.WireOpenAIChat, config.WireAnthropicMessages:
+		return wireDispatcher{
+			responses: customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}),
+			chat:      customchat.New(customKey{e.creds}.Resolve, customchat.Options{}),
+			messages:  anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.client}), creds: e.creds, provider: providerID},
+		}, nil
 	case config.WireCline:
 		return clineRunner(e, p), nil
-	case config.WireAnthropicMessages:
-		return anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.client}), creds: e.creds, provider: providerID}, nil
 	default:
 		return nil, fmt.Errorf("prismd: provider %q has unknown wire %q", id, p.Wire)
 	}
@@ -277,7 +273,7 @@ func (e *daemonEnv) reconcileOnce(ctx context.Context) {
 			e.wires[providerID] = p.Wire
 			log.Printf("prismd: provider %s wire %q applied without restart", id, p.Wire)
 		}
-		if customWire(p.Wire) && p.BaseURL != "" {
+		if p.Wire.Custom() && p.BaseURL != "" {
 			e.syncCustomProvider(ctx, id, p)
 		}
 	}

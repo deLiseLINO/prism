@@ -1541,3 +1541,52 @@ func TestFoldDiscoveredFillsUnknownLogicalFields(t *testing.T) {
 		t.Fatalf("raw-only fold = %+v", opus)
 	}
 }
+
+func TestProviderModelWireOverrideRoundTrip(t *testing.T) {
+	env := newEnv(t)
+	if _, err := env.cfg.Update(config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"custom": {Wire: config.WireOpenAIResponses, BaseURL: "http://up.example/v1", Models: []string{"a", "b"}},
+			"codex":  {Wire: config.WireCodex, Models: []string{"gpt-5.2"}},
+		},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do(t, http.MethodPut, "/api/v1/providers/custom", `{"id":"custom","wire":"responses","models":["a","b"],"disabledModels":[],"modelSettings":{"b":{"wire":"chat"}},"expectedGeneration":1}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := env.cfg.Get().Config.ResolveWire("custom", "b"); got != config.WireOpenAIChat {
+		t.Fatalf("stored wire for b = %q, want chat", got)
+	}
+	view := decodeBody[ProviderMutationResponse](t, rec).Provider
+	if view.ModelSettings["b"].Wire != config.WireOpenAIChat {
+		t.Fatalf("view modelSettings = %+v", view.ModelSettings)
+	}
+	if f := view.ResolvedFacts["a"]; f.Wire != "responses" || f.WireSource != "provider" {
+		t.Fatalf("facts a = %+v", f)
+	}
+	if f := view.ResolvedFacts["b"]; f.Wire != "chat" || f.WireSource != "model" {
+		t.Fatalf("facts b = %+v", f)
+	}
+
+	rec = env.do(t, http.MethodPut, "/api/v1/providers/custom", `{"id":"custom","wire":"responses","models":["a","b"],"disabledModels":[],"modelSettings":{"b":{"wire":"codex"}},"expectedGeneration":2}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("locked override wire status = %d, want 400", rec.Code)
+	}
+
+	rec = env.do(t, http.MethodPut, "/api/v1/providers/codex", `{"id":"codex","wire":"codex","models":["gpt-5.2"],"disabledModels":[],"modelSettings":{"gpt-5.2":{"wire":"chat"}},"expectedGeneration":2}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("override on locked provider status = %d, want 400", rec.Code)
+	}
+
+	for _, p := range decodeBody[ProvidersResponse](t, env.do(t, http.MethodGet, "/api/v1/providers", "")).Providers {
+		if p.ID != "codex" {
+			continue
+		}
+		if f := p.ResolvedFacts["gpt-5.2"]; f.Wire != "" || f.WireSource != "" {
+			t.Fatalf("locked provider facts carry wire: %+v", f)
+		}
+	}
+}

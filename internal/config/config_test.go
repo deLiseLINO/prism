@@ -561,3 +561,63 @@ func TestValidateVisionSidecarTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveWirePrecedence(t *testing.T) {
+	doc := Document{Providers: map[string]Provider{
+		"p": {
+			Wire:    WireOpenAIResponses,
+			BaseURL: "http://up.example/v1",
+			ModelSettings: map[string]ModelSettings{
+				"chatty": {Wire: WireOpenAIChat},
+				"plain":  {ContextWindow: 1000},
+			},
+		},
+	}}
+	cases := []struct {
+		provider, model string
+		want            Wire
+	}{
+		{"p", "chatty", WireOpenAIChat},
+		{"p", "plain", WireOpenAIResponses},
+		{"p", "unlisted", WireOpenAIResponses},
+		{"ghost", "chatty", ""},
+	}
+	for _, c := range cases {
+		if got := doc.ResolveWire(c.provider, c.model); got != c.want {
+			t.Fatalf("ResolveWire(%s, %s) = %q, want %q", c.provider, c.model, got, c.want)
+		}
+	}
+}
+
+func TestValidateModelWireOverride(t *testing.T) {
+	doc := func(p Provider) Document {
+		return Document{Version: SchemaVersion, Providers: map[string]Provider{"p": p}}
+	}
+	override := func(w Wire) map[string]ModelSettings {
+		return map[string]ModelSettings{"m": {Wire: w}}
+	}
+	cases := []struct {
+		name string
+		p    Provider
+		want error
+	}{
+		{"valid chat on responses", Provider{Wire: WireOpenAIResponses, BaseURL: "http://up", Models: []string{"m"}, ModelSettings: override(WireOpenAIChat)}, nil},
+		{"valid messages without base url", Provider{Wire: WireAnthropicMessages, Models: []string{"m"}, ModelSettings: override(WireAnthropicMessages)}, nil},
+		{"unknown override", Provider{Wire: WireOpenAIResponses, BaseURL: "http://up", Models: []string{"m"}, ModelSettings: override("grpc")}, ErrUnknownWire},
+		{"locked override wire", Provider{Wire: WireOpenAIResponses, BaseURL: "http://up", Models: []string{"m"}, ModelSettings: override(WireCodex)}, ErrUnknownWire},
+		{"locked provider codex", Provider{Wire: WireCodex, Models: []string{"m"}, ModelSettings: override(WireOpenAIChat)}, ErrInvalidValue},
+		{"locked provider antigravity", Provider{Wire: WireAntigravity, Models: []string{"m"}, ModelSettings: override(WireOpenAIChat)}, ErrInvalidValue},
+		{"locked provider cline", Provider{Wire: WireCline, Models: []string{"m"}, ModelSettings: override(WireOpenAIChat)}, ErrInvalidValue},
+		{"chat override without base url", Provider{Wire: WireAnthropicMessages, Models: []string{"m"}, ModelSettings: override(WireOpenAIChat)}, ErrInvalidValue},
+		{"responses override without base url", Provider{Wire: WireAnthropicMessages, Models: []string{"m"}, ModelSettings: override(WireOpenAIResponses)}, ErrInvalidValue},
+	}
+	for _, c := range cases {
+		err := doc(c.p).validate()
+		if c.want == nil && err != nil {
+			t.Fatalf("%s: unexpected error %v", c.name, err)
+		}
+		if c.want != nil && !errors.Is(err, c.want) {
+			t.Fatalf("%s: err = %v, want %v", c.name, err, c.want)
+		}
+	}
+}

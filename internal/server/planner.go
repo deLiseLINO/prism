@@ -89,7 +89,7 @@ func targetFor(d config.Document, providerID, model string) (provider.Target, er
 	}
 	return provider.Target{
 		Provider:   account.ProviderID(providerID),
-		Wire:       wireFor(p.Wire),
+		Wire:       wireFor(d.ResolveWire(providerID, model)),
 		BaseURL:    p.BaseURL,
 		APIKeyRef:  p.APIKeyRef,
 		Model:      canon.ModelID(model),
