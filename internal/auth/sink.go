@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"prism/internal/account"
@@ -12,6 +13,7 @@ import (
 type PoolRegistrar interface {
 	account.Pool
 	Register(a account.Account)
+	DeleteAccount(ctx context.Context, id account.AccountID) error
 }
 
 // FileSink implements Sink over the file credential store, the account
@@ -64,6 +66,11 @@ func (s *FileSink) Persist(ctx context.Context, provider account.ProviderID, cre
 	if err := repo.SetState(provider, id, account.Active); err != nil {
 		return account.Account{}, err
 	}
+	if provider == "cline" {
+		if err := s.replaceProviderAccounts(ctx, provider, id); err != nil {
+			return account.Account{}, err
+		}
+	}
 	if s.onStored != nil {
 		s.onStored(provider)
 	}
@@ -75,6 +82,32 @@ func (s *FileSink) Persist(ctx context.Context, provider account.ProviderID, cre
 		CredGen:  gen,
 		Version:  1,
 	}, nil
+}
+
+func (s *FileSink) replaceProviderAccounts(ctx context.Context, provider account.ProviderID, keep account.AccountID) error {
+	repo, ok := s.repos[provider]
+	if !ok {
+		return nil
+	}
+	rows, err := repo.Load(provider)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.ID == keep {
+			continue
+		}
+		if err := s.file.Delete(ctx, provider, row.ID); err != nil {
+			return err
+		}
+		if err := repo.Delete(provider, row.ID); err != nil && !errors.Is(err, account.ErrNotFound) {
+			return err
+		}
+		if err := s.pool.DeleteAccount(ctx, row.ID); err != nil && !errors.Is(err, account.ErrNotFound) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *FileSink) Register(a account.Account) {

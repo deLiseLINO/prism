@@ -64,6 +64,8 @@ func (p *fakePool) UpdatePriority(context.Context, account.AccountID, int, accou
 
 func (p *fakePool) Snapshot() account.Snapshot { return account.Snapshot{} }
 
+func (p *fakePool) DeleteAccount(context.Context, account.AccountID) error { return nil }
+
 type fakeRunners map[account.ProviderID]provider.Runner
 
 func (f fakeRunners) Lookup(id account.ProviderID) (provider.Runner, bool) {

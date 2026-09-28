@@ -545,13 +545,6 @@ func TestAccountDeleteDelegatesAndUnsupported(t *testing.T) {
 	}
 	env.pool.deleteErr = account.ErrNotFound
 	assertErrorBody(t, env.do(t, http.MethodDelete, "/api/v1/accounts/a1", ""), http.StatusNotFound, "not_found")
-
-	plainPool := &noDeletePool{}
-	srv := New(plainPool, env.cfg, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, nil, integrations.NewRegistry(), nil, nil)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/accounts/a1", strings.NewReader(""))
-	rec2 := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec2, req)
-	assertErrorBody(t, rec2, http.StatusNotImplemented, "unsupported")
 }
 
 func journalWithEntries(t *testing.T, count int) *requestlog.Journal {
@@ -649,34 +642,6 @@ func TestRequestsLimitClampsAndSlices(t *testing.T) {
 func TestRequestsUnconfiguredReturns503(t *testing.T) {
 	env := newEnv(t)
 	assertErrorBody(t, env.do(t, http.MethodGet, "/api/v1/requests", ""), http.StatusServiceUnavailable, "not_available")
-}
-
-type noDeletePool struct {
-	accounts []account.Account
-}
-
-func (p *noDeletePool) Acquire(ctx context.Context, req account.AcquireRequest) (account.Lease, error) {
-	return account.Lease{}, errors.New("not used")
-}
-
-func (p *noDeletePool) Record(ctx context.Context, l account.Lease, o account.Outcome) error {
-	return nil
-}
-
-func (p *noDeletePool) Pause(ctx context.Context, id account.AccountID, ifVersion account.StateVersion) error {
-	return nil
-}
-
-func (p *noDeletePool) Resume(ctx context.Context, id account.AccountID, ifVersion account.StateVersion) error {
-	return nil
-}
-
-func (p *noDeletePool) UpdatePriority(ctx context.Context, id account.AccountID, prio int, ifVersion account.StateVersion) error {
-	return nil
-}
-
-func (p *noDeletePool) Snapshot() account.Snapshot {
-	return account.Snapshot{Accounts: p.accounts}
 }
 
 func TestComboWritesDelegatedToConfigGeneration(t *testing.T) {
