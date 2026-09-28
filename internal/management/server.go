@@ -414,6 +414,32 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
 }
 
+func dropTargetsOf(targets map[string]string, providerID string) {
+	prefix := providerID + "/"
+	for key, value := range targets {
+		if strings.HasPrefix(value, prefix) {
+			delete(targets, key)
+		}
+	}
+}
+
+func dropCombosOf(doc *config.Document, providerID string) {
+	for id, combo := range doc.Combos {
+		kept := combo.Targets[:0]
+		for _, target := range combo.Targets {
+			if target.Provider != providerID {
+				kept = append(kept, target)
+			}
+		}
+		if len(kept) == 0 {
+			delete(doc.Combos, id)
+			continue
+		}
+		combo.Targets = kept
+		doc.Combos[id] = combo
+	}
+}
+
 func (s *Server) providersDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	expected, ok := generationFromQuery(w, r)
@@ -427,6 +453,9 @@ func (s *Server) providersDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	doc := snap.Config
 	delete(doc.Providers, id)
+	dropTargetsOf(doc.Routes, id)
+	dropTargetsOf(doc.Aliases, id)
+	dropCombosOf(&doc, id)
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
 		writeConfigError(w, err)
