@@ -60,13 +60,13 @@ async function mount(): Promise<void> {
   await act(async () => { root.render(<UsagePanel />) })
 }
 
-it('marks an implicit single account and shows custom accounts without live quota', async () => {
-  accounts = [row('edge:default', 'edge')]
-  providers = [provider('edge')]
+it('hides providers without quota windows', async () => {
+  accounts = [row('edge:default', 'edge'), row('codex:a')]
+  providers = [provider('edge'), provider('codex')]
   await mount()
-  expect(element.querySelector('.usage-card')?.textContent).toContain('edge:default')
+  expect(element.textContent).not.toContain('edge:default')
+  expect(element.querySelector('.usage-card')?.textContent).toContain('codex:a')
   expect(element.querySelector('.usage-card')?.textContent).toContain('In use')
-  expect(element.querySelector('.usage-card')?.textContent).toContain('Quota unavailable')
 })
 
 it('requires selection with two accounts and persists only the chosen account', async () => {

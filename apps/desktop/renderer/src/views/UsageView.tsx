@@ -211,11 +211,14 @@ export function UsagePanel(): JSX.Element {
     }
     return pins
   }, [providersReady])
-  const accounts = usage.state.kind === 'ready' ? usage.state.value.accounts : []
+  const accounts = usage.state.kind === 'ready'
+    ? usage.state.value.accounts.filter(hasLiveQuota)
+    : []
   const accountCounts: Record<string, number> = {}
   for (const row of accounts) accountCounts[row.provider] = (accountCounts[row.provider] ?? 0) + 1
   const missingSelections = usage.state.kind === 'ready' && providers.state.kind === 'ready'
     ? Object.entries(pinIndex).filter(([provider, pinned]) =>
+        accounts.some((row) => row.provider === provider) &&
         !accounts.some((row) => row.provider === provider && row.account === pinned))
     : []
 
@@ -302,10 +305,7 @@ export function UsagePanel(): JSX.Element {
         accountLabel(row).toLowerCase().includes(needle),
     )
   }, [accounts, query])
-  const liveAccounts = useMemo(
-    () => accounts.filter(hasLiveQuota),
-    [accounts],
-  )
+  const liveAccounts = accounts
 
   async function selectAccount(row: UsageAccountView): Promise<void> {
     const provider = providerById[row.provider]

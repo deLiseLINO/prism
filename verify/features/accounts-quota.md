@@ -1,10 +1,10 @@
 # Accounts and quota
 
-The Accounts view lists every stored account, including providers without live quota windows. It marks the account in use, offers explicit selection when needed, and warns if a selected account was deleted. The daemon pool snapshot backs the list; provider settings back the selection.
+The Accounts view lists stored accounts for providers with quota windows. Today that is `codex` and `antigravity`. Other providers stay hidden. It marks the account in use, offers explicit selection when needed, and warns if a selected account was deleted. The daemon pool snapshot backs the list; provider settings back the selection.
 
 ## Sub-features
 
-- Account rows: id, state badge, quota windows when available, Use this account, and Remove actions. A single unpinned account is marked In use; a provider with multiple unpinned accounts prompts for selection. Other wires without live quota show Quota unavailable.
+- Account rows: id, state badge, quota windows, Use this account, and Remove actions. A single unpinned account is marked In use; a provider with multiple unpinned accounts prompts for selection.
 - Quota rendering: codex/antigravity accounts probe `GET /api/v1/accounts/{id}/quota` live — `unknown` source renders exactly `quota unavailable`, ready values render `used / limit` (`?` when limit is missing) with a fill bar at `min(100, round(used/limit*100))%` plus `window ends … · source …` telemetry; other wires render the accounts-list snapshot — a null limit renders exactly `no quota`, a zero limit renders `used / ?`, otherwise `used / limit` with the same fill bar. The quota object carries `used`, `limit` (nullable), `windowEnd`, and `source` (`header`, `endpoint`, `report`, `probe`, `unknown`).
 - Mutations: pause/resume/priority POST `{version}` under CAS — stale `version` returns 409 `stale_version` and renders a `Re-fetch account` button; remove is a DELETE with no version.
 - Selection: native providers can store several accounts, but requests use only `pinnedAccount`. With one stored account and no pin, that account is used implicitly, including a custom provider with one `:default` account. With more than one, select an account before routing. A deleted selected account leaves requests blocked until another is selected; the Usage view shows the missing selection. Changing the selection writes the full provider under generation CAS. There is no automatic account rotation. Combo failover between provider targets remains available.
