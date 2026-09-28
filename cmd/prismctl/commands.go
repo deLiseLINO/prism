@@ -43,12 +43,6 @@ func (c *command) run(ctx context.Context, rt *cliRuntime) error {
 		return c.runAccountRemove(ctx, rt, p)
 	case "accounts-select":
 		return c.runAccountsSelect(ctx, rt, p)
-	case "accounts-auto-switch":
-		return c.runAccountsAutoSwitch(ctx, rt, p)
-	case "accounts-distribute":
-		return c.runAccountsDistribute(ctx, rt, p)
-	case "accounts-affinity":
-		return c.runAccountsAffinity(ctx, rt, p)
 	case "providers-list":
 		return c.runProvidersList(ctx, rt, p)
 	case "providers-add", "providers-edit":
@@ -359,11 +353,10 @@ func (c *command) runAccountRemove(ctx context.Context, rt *cliRuntime, p printe
 	return p.text("account removed: " + c.account)
 }
 
-// --- account policy (select / auto-switch / distribute / affinity) ---
-// Pool policy fields live on the provider's PoolSettings; the CLI reads the
-// current provider, mutates only the requested field, and writes the whole
-// pool back under the generation CAS — absent fields are preserved by
-// sending the full observed pool.
+// --- account selection ---
+// The pin lives on the provider's PoolSettings. The CLI reads the current
+// provider, sets only PinnedAccount, and writes the whole pool back under
+// the generation CAS so unrelated fields stay intact.
 
 func (c *command) providerPool(ctx context.Context, rt *cliRuntime) (management.ProvidersResponse, management.Provider, error) {
 	list, err := rt.client.providersList(ctx)
@@ -386,14 +379,7 @@ func (c *command) writePool(ctx context.Context, rt *cliRuntime, mutate func(poo
 	if err != nil {
 		return err
 	}
-	pool := config.PoolSettings{
-		Strategy:        config.PoolQuota,
-		Affinity:        config.AffinitySticky,
-		MaxFailovers:    3,
-		CooldownDefault: 300_000_000_000,
-		CooldownMax:     900_000_000_000,
-		ProbeEvery:      60_000_000_000,
-	}
+	pool := config.PoolSettings{}
 	if pr.Pool != nil {
 		pool = *pr.Pool
 	}
@@ -427,28 +413,23 @@ func providerWriteFrom(pr management.Provider) management.ProviderWrite {
 
 func (c *command) runAccountsSelect(ctx context.Context, rt *cliRuntime, p printer) error {
 	pin := c.selectValue
-	if pin != "auto" {
-		// Validate the account belongs to the provider before pinning.
-		list, err := rt.client.accountsList(ctx)
-		if err != nil {
-			return err
-		}
-		found := false
-		for _, a := range list.Accounts {
-			if a.ID == pin {
-				found = true
-				if a.Provider != c.id {
-					return exitErr(exitFailure, "account %s belongs to provider %s, not %s", pin, a.Provider, c.id)
-				}
+	list, err := rt.client.accountsList(ctx)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, a := range list.Accounts {
+		if a.ID == pin {
+			found = true
+			if a.Provider != c.id {
+				return exitErr(exitFailure, "account %s belongs to provider %s, not %s", pin, a.Provider, c.id)
 			}
 		}
-		if !found {
-			return exitErr(exitFailure, "account %s not found", pin)
-		}
-	} else {
-		pin = ""
 	}
-	err := c.writePool(ctx, rt, func(pool *config.PoolSettings) {
+	if !found {
+		return exitErr(exitFailure, "account %s not found", pin)
+	}
+	err = c.writePool(ctx, rt, func(pool *config.PoolSettings) {
 		pool.PinnedAccount = pin
 	})
 	if err != nil {
@@ -457,58 +438,7 @@ func (c *command) runAccountsSelect(ctx context.Context, rt *cliRuntime, p print
 	if c.json {
 		return p.printJSON(map[string]string{"provider": c.id, "pinnedAccount": pin})
 	}
-	if pin == "" {
-		return p.text("provider " + c.id + ": pin cleared (auto selection)")
-	}
 	return p.text("provider " + c.id + ": pinned to " + pin)
-}
-
-func (c *command) runAccountsAutoSwitch(ctx context.Context, rt *cliRuntime, p printer) error {
-	err := c.writePool(ctx, rt, func(pool *config.PoolSettings) {
-		v := c.autoSwitch
-		pool.AutoSwitch = &v
-		if c.thresholdSet {
-			pool.AutoSwitchThreshold = c.threshold
-		}
-	})
-	if err != nil {
-		return err
-	}
-	state := "off"
-	if c.autoSwitch {
-		state = "on"
-	}
-	return p.kv([][2]string{
-		{"provider", c.id},
-		{"autoSwitch", state},
-		{"threshold", fmt.Sprintf("%.4g", c.threshold)},
-	})
-}
-
-func (c *command) runAccountsDistribute(ctx context.Context, rt *cliRuntime, p printer) error {
-	err := c.writePool(ctx, rt, func(pool *config.PoolSettings) {
-		pool.Strategy = config.PoolStrategy(c.strategy)
-	})
-	if err != nil {
-		return err
-	}
-	return p.kv([][2]string{
-		{"provider", c.id},
-		{"strategy", c.strategy},
-	})
-}
-
-func (c *command) runAccountsAffinity(ctx context.Context, rt *cliRuntime, p printer) error {
-	err := c.writePool(ctx, rt, func(pool *config.PoolSettings) {
-		pool.Affinity = config.PoolAffinity(c.affinity)
-	})
-	if err != nil {
-		return err
-	}
-	return p.kv([][2]string{
-		{"provider", c.id},
-		{"affinity", c.affinity},
-	})
 }
 
 // --- providers ---

@@ -235,7 +235,7 @@ func seedDocument() config.Document {
 		Version: config.SchemaVersion,
 		Daemon:  config.Daemon{Listen: "127.0.0.1:8787"},
 		Providers: map[string]config.Provider{
-			"codex":       {Wire: config.WireCodex, Models: []string{"gpt-5.3", "gpt-5.2"}, Pool: &config.PoolSettings{Strategy: config.PoolQuota}},
+			"codex":       {Wire: config.WireCodex, Models: []string{"gpt-5.3", "gpt-5.2"}, Pool: &config.PoolSettings{}},
 			"custom-resp": {Wire: config.WireOpenAIResponses, BaseURL: "http://127.0.0.1:9000/v1", Models: []string{"m-a"}},
 		},
 		Combos: map[string]config.Combo{
@@ -520,7 +520,7 @@ func TestParseFailsBeforeNetwork(t *testing.T) {
 		{"auth"},
 		{"auth", "login", "unknown-provider"},
 		{"accounts"},
-		{"accounts", "distribute", "codex", "bogus"},
+		{"accounts", "select", "codex", "auto"},
 		{"providers", "add", "x"},
 		{"combos", "set", "x"},
 		{"integrations", "apply", "not-a-client"},
@@ -620,45 +620,38 @@ func TestAccountsQuotaAndRemove(t *testing.T) {
 	}
 }
 
-func TestAccountPolicyCommandsPreservePoolFields(t *testing.T) {
+func TestAccountSelectPinsStoredAccount(t *testing.T) {
 	env := newDaemonEnv(t, nil)
-	// select pins an account; distribute and affinity change other pool fields;
-	// each must preserve what the previous command set.
 	if code, _, errOut := env.runCLI(t, "accounts", "select", "codex", "codex:acc-1"); code != exitOK {
 		t.Fatalf("select code=%d stderr=%s", code, errOut)
 	}
-	if code, _, errOut := env.runCLI(t, "accounts", "distribute", "codex", "round-robin"); code != exitOK {
-		t.Fatalf("distribute code=%d stderr=%s", code, errOut)
-	}
-	if code, _, errOut := env.runCLI(t, "accounts", "affinity", "codex", "off"); code != exitOK {
-		t.Fatalf("affinity code=%d stderr=%s", code, errOut)
-	}
-	if code, _, errOut := env.runCLI(t, "accounts", "auto-switch", "codex", "off", "--threshold", "0.9"); code != exitOK {
-		t.Fatalf("auto-switch code=%d stderr=%s", code, errOut)
-	}
 	doc := env.cfg.Get().Config
 	p := doc.Providers["codex"]
-	if p.Pool == nil {
-		t.Fatal("pool nil after policy commands")
+	if p.Pool == nil || p.Pool.PinnedAccount != "codex:acc-1" {
+		t.Fatalf("pin = %+v", p.Pool)
 	}
-	if p.Pool.PinnedAccount != "codex:acc-1" {
-		t.Fatalf("pin lost: %+v", p.Pool)
-	}
-	if p.Pool.Strategy != config.PoolRoundRobin {
-		t.Fatalf("strategy lost: %+v", p.Pool)
-	}
-	if p.Pool.Affinity != config.AffinityOff {
-		t.Fatalf("affinity lost: %+v", p.Pool)
-	}
-	if p.Pool.AutoSwitch == nil || *p.Pool.AutoSwitch {
-		t.Fatal("autoSwitch lost")
-	}
-	if p.Pool.AutoSwitchThreshold != 0.9 {
-		t.Fatalf("threshold lost: %+v", p.Pool)
-	}
-	// unmentioned fields must survive too (models on the provider).
 	if len(p.Models) != 2 {
 		t.Fatalf("models erased: %+v", p)
+	}
+}
+
+func TestAccountSelectAutoRefused(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	before := env.cfg.Get().Config.Providers["codex"]
+	code, _, errOut := env.runCLI(t, "accounts", "select", "codex", "auto")
+	if code != exitUsage {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	after := env.cfg.Get().Config.Providers["codex"]
+	beforePin, afterPin := "", ""
+	if before.Pool != nil {
+		beforePin = before.Pool.PinnedAccount
+	}
+	if after.Pool != nil {
+		afterPin = after.Pool.PinnedAccount
+	}
+	if afterPin != beforePin {
+		t.Fatalf("auto mutated pin from %q to %q", beforePin, afterPin)
 	}
 }
 
@@ -1285,9 +1278,9 @@ func TestParseCommandShapes(t *testing.T) {
 	if cmd.verb != "auth-login" || !cmd.authNoOpen || !cmd.json || cmd.provider != "codex" {
 		t.Fatalf("auth login parse: %+v", cmd)
 	}
-	cmd = mustParse(t, "accounts", "auto-switch", "codex", "on", "--threshold", "0.5")
-	if cmd.verb != "accounts-auto-switch" || !cmd.autoSwitch || !cmd.thresholdSet || cmd.threshold != 0.5 {
-		t.Fatalf("auto-switch parse: %+v", cmd)
+	cmd = mustParse(t, "accounts", "select", "codex", "codex:acc-1")
+	if cmd.verb != "accounts-select" || cmd.id != "codex" || cmd.selectValue != "codex:acc-1" {
+		t.Fatalf("select parse: %+v", cmd)
 	}
 	cmd = mustParse(t, "combos", "set", "c", "--strategy", "failover", "--target", "codex/m:2")
 	if cmd.strategy != "failover" || len(cmd.targets) != 1 || cmd.targets[0].Weight != 2 {

@@ -24,9 +24,6 @@ type command struct {
 	selectValue  string
 	version      uint64
 	priority     int
-	autoSwitch   bool
-	threshold    float64
-	thresholdSet bool
 	strategy     string
 	affinity     string
 
@@ -143,7 +140,6 @@ func globalFlags() map[string]bool {
 		"json":            false,
 		"no-open":         false,
 		"session":         true,
-		"threshold":       true,
 		"version":         true,
 		"priority":        true,
 		"wire":            true,
@@ -158,7 +154,6 @@ func globalFlags() map[string]bool {
 		"alias":           true,
 		"sticky-limit":    true,
 		"strategy":        true,
-		"affinity":        true,
 		"value":           true,
 		"target":          true,
 		"force":           false,
@@ -174,8 +169,7 @@ Commands:
   status                    daemon health and summary
   doctor                    connectivity, version, and config sanity report
   auth login|status         browser OAuth login or session/provider status
-  accounts <sub>            list/pause/resume/priority/quota/remove/select/
-                            auto-switch/distribute/affinity
+  accounts <sub>            list/pause/resume/priority/quota/remove/select
   providers <sub>           list/add/edit/enable/disable/remove
   models <sub>              list/enable/disable
   combos <sub>              list/set/remove
@@ -209,10 +203,7 @@ var helpAccounts = `Usage: prismctl accounts list [--json]
        prismctl accounts priority <account> <N> [--version N] [--json]
        prismctl accounts quota <account> [--json]
        prismctl accounts remove <account> [--json]
-       prismctl accounts select <provider> <account|auto> [--json]
-       prismctl accounts auto-switch <provider> <on|off> [--threshold N] [--json]
-       prismctl accounts distribute <provider> <quota|round-robin|fill-first> [--json]
-       prismctl accounts affinity <provider> <sticky|off> [--json]
+       prismctl accounts select <provider> <account> [--json]
 `
 
 var helpProviders = `Usage: prismctl providers list [--json]
@@ -417,60 +408,13 @@ func parseAccounts(args []string, spec map[string]bool) (*command, error) {
 		return cmd, nil
 	case "select":
 		if len(pos) != 2 {
-			return nil, usageFail(helpAccounts, "accounts select requires <provider> <account|auto>")
+			return nil, usageFail(helpAccounts, "accounts select requires <provider> <account>")
+		}
+		if pos[1] == "auto" {
+			return nil, usageFail(helpAccounts, "accounts select requires a stored account; %q is not an account", pos[1])
 		}
 		cmd.id = pos[0]
 		cmd.selectValue = pos[1]
-		return cmd, nil
-	case "auto-switch":
-		if len(pos) != 2 {
-			return nil, usageFail(helpAccounts, "accounts auto-switch requires <provider> <on|off>")
-		}
-		cmd.id = pos[0]
-		switch pos[1] {
-		case "on":
-			cmd.autoSwitch = true
-		case "off":
-			cmd.autoSwitch = false
-		default:
-			return nil, usageFail(helpAccounts, "auto-switch state must be on or off, got %q", pos[1])
-		}
-		if v, ok := fs.val("threshold"); ok {
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f < 0 || f > 1 {
-				return nil, usageFail(helpAccounts, "threshold must be a number in [0,1], got %q", v)
-			}
-			cmd.threshold = f
-			cmd.thresholdSet = true
-		}
-		return cmd, nil
-	case "distribute":
-		if len(pos) != 2 {
-			return nil, usageFail(helpAccounts, "accounts distribute requires <provider> <quota|round-robin|fill-first>")
-		}
-		cmd.id = pos[0]
-		switch pos[1] {
-		case "quota":
-			cmd.strategy = "quota"
-		case "round-robin":
-			cmd.strategy = "round_robin"
-		case "fill-first":
-			cmd.strategy = "fill_first"
-		default:
-			return nil, usageFail(helpAccounts, "distribution strategy must be quota, round-robin, or fill-first, got %q", pos[1])
-		}
-		return cmd, nil
-	case "affinity":
-		if len(pos) != 2 {
-			return nil, usageFail(helpAccounts, "accounts affinity requires <provider> <sticky|off>")
-		}
-		cmd.id = pos[0]
-		switch pos[1] {
-		case "sticky", "off":
-			cmd.affinity = pos[1]
-		default:
-			return nil, usageFail(helpAccounts, "affinity must be sticky or off, got %q", pos[1])
-		}
 		return cmd, nil
 	default:
 		return nil, usageFail(helpAccounts, "unknown accounts subcommand %q", sub)

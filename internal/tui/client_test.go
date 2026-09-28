@@ -181,7 +181,7 @@ func TestHTTPClientProvidersReplace(t *testing.T) {
 	defer server.Close()
 
 	client := NewHTTPClient(server.URL, "", nil)
-	pool := config.PoolSettings{Strategy: config.PoolQuota, PinnedAccount: "codex:default"}
+	pool := config.PoolSettings{PinnedAccount: "codex:default"}
 	write := management.ProviderWrite{ID: "codex", Wire: "responses", Pool: &pool, ExpectedGeneration: 7}
 	resp, err := client.ProvidersReplace(context.Background(), "codex", write)
 	if err != nil {

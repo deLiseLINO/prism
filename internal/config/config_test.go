@@ -18,7 +18,7 @@ func validDoc() Document {
 		Daemon:  Daemon{Listen: "127.0.0.1:8787"},
 		Providers: map[string]Provider{
 			"codex-main": {Wire: WireCodex, DefaultModel: "gpt-5.2-codex", Models: []string{"gpt-5.2-codex", "gpt-5.2"}},
-			"ag":         {Wire: WireAntigravity, Pool: &PoolSettings{Strategy: PoolQuota, AutoSwitchThreshold: 0.8, MaxFailovers: 3}},
+			"ag":         {Wire: WireAntigravity, Pool: &PoolSettings{AccountsPath: "accounts.json"}},
 		},
 		Combos: map[string]Combo{
 			"primary": {
@@ -72,15 +72,6 @@ func TestValidateRejectsUnknownComboStrategy(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsUnknownPoolStrategy(t *testing.T) {
-	d := validDoc()
-	p := d.Providers["ag"]
-	p.Pool.Strategy = PoolStrategy("random")
-	d.Providers["ag"] = p
-	if err := d.validate(); !errors.Is(err, ErrUnknownPoolStrategy) {
-		t.Fatalf("want ErrUnknownPoolStrategy, got %v", err)
-	}
-}
 
 func TestValidateRejectsMalformedAliasFamily(t *testing.T) {
 	for _, key := range []string{"claude-prov", "claude--model", "claude-p--m--x"} {

@@ -26,6 +26,5 @@ echo "$HEALTH" | grep -q '"status":"ok"' || fail "health body: '$HEALTH'"
 kill -TERM "$PID"
 wait "$PID" || fail "daemon exited nonzero on SIGTERM"
 grep -q 'shutdown complete' "$RUNDIR/out.log" || fail "no graceful shutdown log line"
-test -f "$RUNDIR/creds/secret.bin" || fail "credential store dir was not created"
 
-echo "prismd smoke OK (health 200, SIGTERM graceful, secret persisted)"
+echo "prismd smoke OK (health 200, SIGTERM graceful)"

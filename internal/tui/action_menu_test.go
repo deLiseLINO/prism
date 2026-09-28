@@ -130,7 +130,7 @@ func TestPinFlowConfirmsAndWritesProvider(t *testing.T) {
 	if accountsMsg.Notice == "" && len(msgs) > 0 {
 		t.Fatalf("msgs = %T, want AccountsMsg", msgs)
 	}
-	if accountsMsg.Notice != "codex pinned to codex:default" {
+	if accountsMsg.Notice != "codex selected codex:default" {
 		t.Fatalf("notice = %q", accountsMsg.Notice)
 	}
 	if client.replacedID != "codex" {
@@ -147,38 +147,6 @@ func TestPinFlowConfirmsAndWritesProvider(t *testing.T) {
 	}
 	if client.replacedBody.Credential != "" {
 		t.Fatal("credential must not be copied")
-	}
-}
-
-func TestPinFlowAutoClearsPin(t *testing.T) {
-	client := newFakeClient(management.Account{ID: "codex:default", Provider: "codex", State: "active"})
-	client.providers = []management.Provider{{ID: "codex", Wire: "responses"}}
-	m := testModel(client, management.Account{ID: "codex:default", Provider: "codex", State: "active"})
-	m.beginPinFlow()
-
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	updated := next.(Model)
-	if updated.PinConfirm {
-		t.Fatal("pin confirm still visible")
-	}
-	if cmd == nil {
-		t.Fatal("auto did not schedule write")
-	}
-	msgs := batchMsgs(cmd)
-	var accountsMsg AccountsMsg
-	for _, msg := range msgs {
-		if value, ok := msg.(AccountsMsg); ok {
-			accountsMsg = value
-		}
-	}
-	if accountsMsg.Notice == "" && len(msgs) > 0 {
-		t.Fatalf("msgs = %T, want AccountsMsg", msgs)
-	}
-	if accountsMsg.Notice != "codex pin cleared" {
-		t.Fatalf("notice = %q", accountsMsg.Notice)
-	}
-	if client.replacedBody.Pool == nil || client.replacedBody.Pool.PinnedAccount != "" {
-		t.Fatalf("pool = %+v", client.replacedBody.Pool)
 	}
 }
 

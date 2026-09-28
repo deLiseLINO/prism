@@ -163,22 +163,19 @@ run_ctl routes-list-after 0 routes list
 grep -q "default" "$EVID_WORK/routes-list-after.out" || fail "routes list does not show set route"
 run_ctl routes-remove 0 routes remove default
 
-echo "==> account policy actions against the copy-free isolated daemon"
+echo "==> account actions against the copy-free isolated daemon"
 CODEX_ACCOUNT=$("$CTL" accounts list --json | "$PY3" -c 'import json,sys; d=json.load(sys.stdin); a=[x for x in d.get("accounts",[]) if x.get("provider")=="codex"]; print(a[0]["id"] if a else "")')
 if [ -n "$CODEX_ACCOUNT" ]; then
+  run_ctl accounts-select 0 accounts select codex "$CODEX_ACCOUNT"
   run_ctl accounts-pause 0 accounts pause "$CODEX_ACCOUNT"
   run_ctl accounts-resume 0 accounts resume "$CODEX_ACCOUNT"
   run_ctl accounts-priority 0 accounts priority "$CODEX_ACCOUNT" 5
   run_ctl accounts-quota 0 accounts quota "$CODEX_ACCOUNT"
   run_ctl accounts-remove 0 accounts remove "$CODEX_ACCOUNT"
 else
-  echo "no codex account on isolated daemon; policy actions skipped" | tee "$EVID_WORK/accounts-policy-skipped.txt"
+  echo "no stored codex account; account actions skipped" | tee "$EVID_WORK/accounts-policy-skipped.txt"
 fi
-
-run_ctl accounts-select 0 accounts select codex auto
-run_ctl accounts-auto-switch 0 accounts auto-switch codex on --threshold 0.5
-run_ctl accounts-distribute 0 accounts distribute codex round-robin
-run_ctl accounts-affinity 0 accounts affinity codex sticky
+run_ctl_quiet usage-select-auto 2 accounts select codex auto
 
 echo "==> integrations apply and rollback through the CLI"
 HOME="$RUNDIR/home" run_ctl integrations-apply-grok 0 integrations apply grok

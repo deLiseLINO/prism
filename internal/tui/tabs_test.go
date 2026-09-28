@@ -55,15 +55,17 @@ func TestRenderWindowsLoadingSkeletonShowsBothWindows(t *testing.T) {
 	}
 }
 
-func TestOnlyPinnedAccountHasBadge(t *testing.T) {
+func TestInUseAccountBadge(t *testing.T) {
 	m := testModel(nil, management.Account{ID: "codex:main", Provider: "codex"})
-
-	if got := m.renderAccountBadge(m.Accounts[0]); got != "" {
-		t.Fatalf("unpinned badge = %q, want empty", got)
+	if got := m.renderAccountBadge(m.Accounts[0]); !strings.Contains(got, "*") {
+		t.Fatalf("implicit selection badge = %q, want *", got)
 	}
-
-	m.PinnedAccounts = map[string]string{"codex": "codex:main"}
-	if got := m.renderAccountBadge(m.Accounts[0]); !strings.Contains(got, "P") {
-		t.Fatalf("pinned badge = %q, want P", got)
+	m.Accounts = append(m.Accounts, management.Account{ID: "codex:other", Provider: "codex"})
+	if got := m.renderAccountBadge(m.Accounts[0]); got != "" {
+		t.Fatalf("unselected provider badge = %q, want empty", got)
+	}
+	m.PinnedAccounts = map[string]string{"codex": "codex:other"}
+	if got := m.renderAccountBadge(m.Accounts[1]); !strings.Contains(got, "*") {
+		t.Fatalf("explicit selection badge = %q, want *", got)
 	}
 }

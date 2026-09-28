@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -9,10 +10,6 @@ func TestLegacyProviderDefaultsRemainEnabled(t *testing.T) {
 	p := Provider{Wire: WireCodex, Models: []string{"m1"}}
 	if !p.IsEnabled() {
 		t.Fatal("provider without enabled field must be enabled")
-	}
-	pool := PoolSettings{Strategy: PoolQuota, AutoSwitchThreshold: 0, MaxFailovers: 3}
-	if !pool.AutoSwitchEnabled() {
-		t.Fatal("pool without autoSwitch field must keep auto-switch enabled")
 	}
 	d := Document{
 		Version:   SchemaVersion,
@@ -23,9 +20,8 @@ func TestLegacyProviderDefaultsRemainEnabled(t *testing.T) {
 	}
 }
 
-func TestValidateAcceptsFullSelectionPolicy(t *testing.T) {
+func TestValidateAcceptsSelectionAndAccountsPath(t *testing.T) {
 	disabled := false
-	autoOff := false
 	d := Document{
 		Version: SchemaVersion,
 		Providers: map[string]Provider{
@@ -35,12 +31,8 @@ func TestValidateAcceptsFullSelectionPolicy(t *testing.T) {
 				DisabledModels: []string{"m2"},
 				Enabled:        &disabled,
 				Pool: &PoolSettings{
-					Strategy:            PoolRoundRobin,
-					AutoSwitch:          &autoOff,
-					AutoSwitchThreshold: 0.9,
-					Affinity:            AffinitySticky,
-					PinnedAccount:       "acct-1",
-					MaxFailovers:        2,
+					PinnedAccount: "acct-1",
+					AccountsPath:  "accounts.json",
 				},
 			},
 		},
@@ -74,24 +66,12 @@ func TestValidateRejectsDisabledModelWithoutModels(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsUnknownAffinity(t *testing.T) {
-	d := Document{
-		Version: SchemaVersion,
-		Providers: map[string]Provider{
-			"codex-main": {Wire: WireCodex, Pool: &PoolSettings{Strategy: PoolQuota, Affinity: "least_loaded"}},
-		},
-	}
-	if err := d.validate(); !errors.Is(err, ErrUnknownAffinity) {
-		t.Fatalf("unknown affinity: got %v, want ErrUnknownAffinity", err)
-	}
-}
-
 func TestValidateRejectsInvalidPinnedAccount(t *testing.T) {
 	for _, pinned := range []string{" acct-1", "acct 1", "acct-1\t"} {
 		d := Document{
 			Version: SchemaVersion,
 			Providers: map[string]Provider{
-				"codex-main": {Wire: WireCodex, Pool: &PoolSettings{Strategy: PoolQuota, PinnedAccount: pinned}},
+				"codex-main": {Wire: WireCodex, Pool: &PoolSettings{PinnedAccount: pinned}},
 			},
 		}
 		if err := d.validate(); !errors.Is(err, ErrInvalidValue) {
@@ -100,14 +80,13 @@ func TestValidateRejectsInvalidPinnedAccount(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsInvalidThreshold(t *testing.T) {
-	d := Document{
-		Version: SchemaVersion,
-		Providers: map[string]Provider{
-			"codex-main": {Wire: WireCodex, Pool: &PoolSettings{Strategy: PoolQuota, AutoSwitchThreshold: 1.5}},
-		},
+func TestPoolDecodeIgnoresRemovedFields(t *testing.T) {
+	raw := []byte(`{"strategy":"round_robin","autoSwitch":false,"autoSwitchThreshold":0.9,"affinity":"off","pinnedAccount":"acct-1","accountsPath":"accounts.json","maxFailovers":2,"cooldownDefault":1,"cooldownMax":2,"probeEvery":3}`)
+	var pool PoolSettings
+	if err := json.Unmarshal(raw, &pool); err != nil {
+		t.Fatalf("old pool fields must be ignored: %v", err)
 	}
-	if err := d.validate(); !errors.Is(err, ErrInvalidValue) {
-		t.Fatalf("threshold above one: got %v, want ErrInvalidValue", err)
+	if pool.PinnedAccount != "acct-1" || pool.AccountsPath != "accounts.json" {
+		t.Fatalf("decoded pool = %+v", pool)
 	}
 }

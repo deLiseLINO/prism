@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"prism/internal/account"
 	"prism/internal/auth"
@@ -109,7 +108,7 @@ func newAuthFlowEnv(t *testing.T, accessSecret string) *authFlowEnv {
 	}
 	file := store.NewFileCredentialStore(credsDir)
 	repo := account.OpenMeta(repoPath)
-	pool := &regPool{Pool: account.New([]byte("0123456789abcdef0123456789abcdef"), time.Now)}
+	pool := &regPool{Pool: account.New()}
 	svc, err := auth.New(auth.NewFileSink(file, map[account.ProviderID]*account.Repository{"codex": repo}, pool),
 		map[account.ProviderID]auth.Flow{"codex": flow}, auth.Options{})
 	if err != nil {
@@ -300,7 +299,7 @@ func TestAuthFlowWireAliasResolvesConfiguredProvider(t *testing.T) {
 	}
 	file := store.NewFileCredentialStore(filepath.Join(dir, "creds"))
 	repo := account.OpenMeta(filepath.Join(dir, "accounts", "codex-main.json"))
-	pool := &regPool{Pool: account.New([]byte("0123456789abcdef0123456789abcdef"), time.Now)}
+	pool := &regPool{Pool: account.New()}
 	svc, err := auth.New(auth.NewFileSink(file, map[account.ProviderID]*account.Repository{"codex-main": repo}, pool),
 		map[account.ProviderID]auth.Flow{"codex-main": flow}, auth.Options{})
 	if err != nil {

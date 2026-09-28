@@ -93,7 +93,11 @@ func (m Model) renderDeleteConfirmModal() string {
 	if account != nil {
 		accountID = account.ID
 	}
-	message := fmt.Sprintf("Delete account %s?\nThis removes it from the prism pool.\n[enter] Confirm   [esc] Cancel", accountID)
+	message := fmt.Sprintf("Delete account %s?\nThis removes it from the prism pool.", accountID)
+	if account != nil && (m.PinnedAccounts[account.Provider] == accountID || m.PinnedAccounts[account.Provider] == "" && m.providerAccountCount(account.Provider) == 1) {
+		message += "\nRequests will stop until another account is selected or added."
+	}
+	message += "\n[enter] Confirm   [esc] Cancel"
 	return renderMessageModal("Delete account", message, WarningStyle, m.Width)
 }
 
@@ -104,8 +108,8 @@ func (m Model) renderPinConfirmModal() string {
 		accountID = account.ID
 		provider = account.Provider
 	}
-	message := fmt.Sprintf("Pin %s to %s?\n[enter] Pinned   [a] Auto (clear pin)   [esc] Cancel", provider, accountID)
-	return renderMessageModal("Pin account", message, WarningStyle, m.Width)
+	message := fmt.Sprintf("Use %s for %s?\n[enter] Select   [esc] Cancel", accountID, provider)
+	return renderMessageModal("Select account", message, WarningStyle, m.Width)
 }
 
 func (m Model) renderInfoModal() string {
@@ -186,7 +190,7 @@ func (m Model) renderHelpModal() string {
 		renderHelpLine("r", "Refresh active account"),
 		renderHelpLine("R", "Refresh all accounts"),
 		renderHelpLine("p", "Pause or resume account"),
-		renderHelpLine("s", "Pin account provider"),
+		renderHelpLine("s", "Use selected account"),
 		renderHelpLine("n", "Add account"),
 		renderHelpLine("x", "Delete account"),
 		renderHelpLine("i", "Account info"),

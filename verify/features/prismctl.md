@@ -7,7 +7,7 @@
 - `status` — daemon health plus provider/account/generation summary.
 - `doctor` — connectivity, CLI version, and config sanity (flags wire/endpoint mistakes).
 - `auth login <codex|antigravity> [--no-open]` / `auth status [session]` — browser OAuth or provider/session state.
-- `accounts list|pause|resume|priority|quota|remove|select|auto-switch|distribute|affinity` — the account family.
+- `accounts list|pause|resume|priority|quota|remove|select` — the account family. `select <provider> <account>` pins a stored account for that provider. `auto` is a usage error.
 - `providers list|add|edit|enable|disable|remove` — provider CRUD (`--wire`, `--endpoint`/`--base-url`, `--default-model`, `--model`, `--credential-file`/`--stdin`).
 - `models list|enable|disable` — catalog and per-provider model toggles.
 - `combos list|set|remove` — `--strategy failover|round_robin`, `--target provider/model[:weight]`, `--sticky-limit`, `--alias`.
@@ -31,9 +31,9 @@ bash verify/scripts/prismctl-proof.sh
 
 - every read command exits 0 (`status`, `doctor`, `usage`, `help`, `accounts/providers/models/combos/routes list`, `integrations status [client]`, `auth status`), with `--json` variants decoding as JSON and naming catalog models;
 - `auth login codex --no-open` prints the authorization URL, stays pending, is stopped by the harness, and no codex account ever appears — the cancelled-login contract, same as the UI auth proof;
-- the full mutation ladder against the sandbox daemon: `providers add/edit/enable/disable/remove` (read back between each), `models enable/disable`, `combos set/remove`, `routes set/remove`, `accounts select/auto-switch/distribute/affinity` (pool policy without needing an account);
+- the full mutation ladder against the sandbox daemon: `providers add/edit/enable/disable/remove` (read back between each), `models enable/disable`, `combos set/remove`, `routes set/remove`, `accounts select` of a stored account when one exists;
 - `integrations apply grok` + `integrations rollback grok` through the CLI, against an isolated HOME;
-- usage errors exit 2 (bad provider, bad wire, bad strategy, bad client, unknown command, no command) and a dead daemon exits 5.
+- usage errors exit 2 (bad provider, bad wire, bad strategy, bad client, `accounts select` with `auto`, unknown command, no command) and a dead daemon exits 5.
 
 Manual probe when iterating: `go build -o /tmp/prismctl ./cmd/prismctl && PRISM_URL=http://127.0.0.1:18791 /tmp/prismctl status --json`.
 
@@ -41,7 +41,7 @@ Manual probe when iterating: `go build -o /tmp/prismctl ./cmd/prismctl && PRISM_
 
 - The daemon base URL comes only from `PRISM_URL`: a verification daemon on 18787 needs `PRISM_URL` set or every command exits 5 (`daemon unreachable`).
 - Exit 3 (stale CAS) is not an error to fix but a state to assert: the message tells the user to re-run, and the re-run succeeds because the fetch re-reads the generation.
-- `accounts select/auto-switch/distribute/affinity`, `providers enable/disable`, and `models enable/disable` read then write every observed field so absent fields preserve — a hand-built minimal write body can silently clear pool settings. Mirror the CLI's own read-then-write pattern in any probe. Plain `providers add`/`edit` send only the flags given.
+- `accounts select`, `providers enable/disable`, and `models enable/disable` read then write every observed field so absent fields preserve. A hand-built minimal write body can clear pool settings. Mirror the CLI's own read-then-write pattern in any probe. Plain `providers add` and `edit` send only the flags given. `accounts select auto` does not clear a pin.
 - `--endpoint` and `--base-url` are aliases; using both in one invocation is a usage error (exit 2).
 - `accounts quota` is per-account; `usage` is the whole pool. They read different endpoints.
 - `integrations apply` can refuse (exit 4) — against a user-edited managed block that is the correct outcome, matching the UI's alert.

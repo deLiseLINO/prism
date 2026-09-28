@@ -162,13 +162,12 @@ func TestRunErrorAcceptedReplaySafeSemantics(t *testing.T) {
 
 func TestTargetFieldCompleteness(t *testing.T) {
 	target := Target{
-		Provider:     "codex-main",
-		Wire:         WireCodex,
-		BaseURL:      "https://example.internal",
-		APIKeyRef:    "env:OPENAI_API_KEY",
-		Model:        "gpt-5.2",
-		Timeout:      30 * time.Second,
-		MaxFailovers: 3,
+		Provider:  "codex-main",
+		Wire:      WireCodex,
+		BaseURL:   "https://example.internal",
+		APIKeyRef: "env:OPENAI_API_KEY",
+		Model:     "gpt-5.2",
+		Timeout:   30 * time.Second,
 	}
 	if target.Provider != "codex-main" {
 		t.Fatal("Target.Provider not preserved")
@@ -187,9 +186,6 @@ func TestTargetFieldCompleteness(t *testing.T) {
 	}
 	if target.Timeout != 30*time.Second {
 		t.Fatal("Target.Timeout not preserved")
-	}
-	if target.MaxFailovers != 3 {
-		t.Fatal("Target.MaxFailovers not preserved")
 	}
 }
 
@@ -253,9 +249,6 @@ func (s *captureSink) Emit(ev canon.Event) error {
 
 func TestRunnerContractEmitsAndReturns(t *testing.T) {
 	runner := funcRunner(func(ctx context.Context, req RunRequest, sink Sink) error {
-		if req.Target.MaxFailovers != 3 {
-			t.Fatal("RunRequest did not carry target failover budget")
-		}
 		if req.Lease.Provider == "" {
 			t.Fatal("RunRequest did not carry lease")
 		}
@@ -267,7 +260,7 @@ func TestRunnerContractEmitsAndReturns(t *testing.T) {
 	sink := &captureSink{}
 	req := RunRequest{
 		Request: canon.Request{Model: "gpt-5.2"},
-		Target:  Target{Provider: "codex-main", Model: "gpt-5.2", MaxFailovers: 3},
+		Target:  Target{Provider: "codex-main", Model: "gpt-5.2"},
 		Lease:   account.Lease{Provider: "codex-main", Account: "codex-main:a1", CredGen: 7, Version: 2},
 		Facts:   execution.Facts{RequestID: "req-1", Session: "s1", Thread: "t1"},
 	}

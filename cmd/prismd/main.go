@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"maps"
 	"net"
@@ -158,37 +156,34 @@ func (m modelSyncer) remoteModelsPooled(ctx context.Context, id string, p config
 	return nil, fmt.Errorf("provider %s wire %q does not support model listing", id, p.Wire)
 }
 
-// leaseFor picks the account a model listing would run through: the pinned
-// account when one is configured and usable, else the best active account
-// by the pool's own ordering.
 func (m modelSyncer) leaseFor(id string, p config.Provider) (account.Lease, bool) {
 	if m.pool == nil {
 		return account.Lease{}, false
 	}
 	snap := m.pool.Snapshot()
 	providerID := account.ProviderID(id)
-	if p.Pool != nil && p.Pool.PinnedAccount != "" {
-		for _, a := range snap.Accounts {
-			if a.Provider != providerID || string(a.ID) != p.Pool.PinnedAccount || a.State != account.Active {
-				continue
-			}
-			return account.Lease{Provider: providerID, Account: a.ID, CredGen: a.CredGen}, true
-		}
+	selected := ""
+	if p.Pool != nil {
+		selected = p.Pool.PinnedAccount
 	}
-	var best *account.Account
+	var chosen *account.Account
 	for i := range snap.Accounts {
 		a := &snap.Accounts[i]
-		if a.Provider != providerID || a.State != account.Active {
+		if a.Provider != providerID {
 			continue
 		}
-		if best == nil || a.Priority > best.Priority || (a.Priority == best.Priority && string(a.ID) < string(best.ID)) {
-			best = a
+		if selected != "" && string(a.ID) != selected {
+			continue
 		}
+		if selected == "" && chosen != nil {
+			return account.Lease{}, false
+		}
+		chosen = a
 	}
-	if best == nil {
+	if chosen == nil || chosen.State == account.Paused || chosen.State == account.NeedsReauth {
 		return account.Lease{}, false
 	}
-	return account.Lease{Provider: providerID, Account: best.ID, CredGen: best.CredGen}, true
+	return account.Lease{Provider: providerID, Account: chosen.ID, CredGen: chosen.CredGen}, true
 }
 
 func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config.Provider) ([]listedModel, error) {
@@ -527,30 +522,6 @@ func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider a
 	return snap, nil
 }
 
-func loadOrCreateSecret(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
-	if err == nil {
-		if len(b) == 0 {
-			return nil, fmt.Errorf("prismd: empty secret file %s", path)
-		}
-		return b, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("prismd: secret file: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("prismd: secret dir: %w", err)
-	}
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return nil, fmt.Errorf("prismd: affinity secret: %w", err)
-	}
-	if err := os.WriteFile(path, secret, 0o600); err != nil {
-		return nil, fmt.Errorf("prismd: secret file: %w", err)
-	}
-	return secret, nil
-}
-
 func defaultStateDir() string {
 	if dir, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(dir, ".prism")
@@ -611,10 +582,6 @@ func main() {
 }
 
 func run(opts options) error {
-	secret, err := loadOrCreateSecret(filepath.Join(opts.credentialPath, "secret.bin"))
-	if err != nil {
-		return err
-	}
 	cfg, err := config.Open(opts.configPath)
 	if err != nil {
 		return err
@@ -626,7 +593,7 @@ func run(opts options) error {
 	cfg.SetCatalog(modelCatalog)
 	d := cfg.Get().Config
 	creds := credentialStore{file: store.NewFileCredentialStore(opts.credentialPath)}
-	pool := account.New(secret, time.Now)
+	pool := account.New()
 	registry := provider.NewRegistry()
 	client := &http.Client{Timeout: 30 * time.Second}
 	quotas := newQuotaTable(pool, cfg, client)
@@ -700,6 +667,9 @@ func run(opts options) error {
 		log.Printf("prismd: agent install and update actions enabled via PRISM_AGENT_ACTIONS")
 	}
 	planner := server.NewConfigPlanner(cfg)
+	if err := os.MkdirAll(opts.credentialPath, 0o700); err != nil {
+		return fmt.Errorf("prismd: credential store directory: %w", err)
+	}
 	usageStore, err := usage.Open(filepath.Join(opts.credentialPath, "usage.db"))
 	if err != nil {
 		return fmt.Errorf("prismd: usage store: %w", err)

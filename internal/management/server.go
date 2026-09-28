@@ -1340,11 +1340,9 @@ func writeConfigError(w http.ResponseWriter, err error) {
 	case errors.Is(err, config.ErrCorrupt),
 		errors.Is(err, config.ErrUnknownWire),
 		errors.Is(err, config.ErrUnknownComboStrategy),
-		errors.Is(err, config.ErrUnknownPoolStrategy),
 		errors.Is(err, config.ErrMalformedAlias),
 		errors.Is(err, config.ErrInvalidTarget),
 		errors.Is(err, config.ErrInvalidValue),
-		errors.Is(err, config.ErrUnknownAffinity),
 		errors.Is(err, config.ErrEmptyField):
 		writeError(w, http.StatusBadRequest, "invalid_document", err.Error())
 	default:

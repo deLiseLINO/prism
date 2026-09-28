@@ -173,8 +173,7 @@ func newTestServer(t *testing.T, clock Clock, plans map[canon.ModelID]routing.Pl
 
 func newTestServerWithUsage(t *testing.T, clock Clock, plans map[canon.ModelID]routing.Plan, register func(reg *provider.Registry), usageStore usage.Store) *harness {
 	t.Helper()
-	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	pool := account.New([]byte("test-secret"), func() time.Time { return base })
+	pool := account.New()
 	pool.Register(activeAccount("a1", "p1"))
 	pool.Register(activeAccount("a2", "p2"))
 	pool.Register(activeAccount("a3", "p3"))

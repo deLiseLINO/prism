@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"prism/internal/account"
 	"prism/internal/config"
@@ -35,25 +34,26 @@ func (s *stubCreds) Credential(ctx context.Context, lease account.Lease) (accoun
 	return s.cred, s.err
 }
 
-func TestModelSyncerLeasePrefersPinnedAccount(t *testing.T) {
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+func TestModelSyncerUsesOnlySelectedAccount(t *testing.T) {
+	pool := account.New()
 	pool.Register(account.Account{ID: "codex:a", Provider: "codex", State: account.Active, CredGen: 1, Version: 1, Priority: 5})
 	pool.Register(account.Account{ID: "codex:b", Provider: "codex", State: account.Active, CredGen: 2, Version: 1})
 	syncer := modelSyncer{pool: pool}
 
 	lease, ok := syncer.leaseFor("codex", config.Provider{Pool: &config.PoolSettings{PinnedAccount: "codex:b"}})
 	if !ok || lease.Account != "codex:b" || lease.CredGen != 2 {
-		t.Fatalf("lease = %+v ok=%v, want pinned codex:b gen 2", lease, ok)
+		t.Fatalf("lease = %+v ok=%v, want selected codex:b gen 2", lease, ok)
 	}
-
-	lease, ok = syncer.leaseFor("codex", config.Provider{})
-	if !ok || lease.Account != "codex:a" {
-		t.Fatalf("lease = %+v ok=%v, want best-priority codex:a", lease, ok)
+	if lease, ok := syncer.leaseFor("codex", config.Provider{}); ok {
+		t.Fatalf("selected account missing but model sync used %+v", lease)
+	}
+	if lease, ok := syncer.leaseFor("codex", config.Provider{Pool: &config.PoolSettings{PinnedAccount: "codex:missing"}}); ok {
+		t.Fatalf("missing selection used %+v", lease)
 	}
 }
 
 func TestModelSyncerLeaseSkipsInactiveAndForeignAccounts(t *testing.T) {
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	pool.Register(account.Account{ID: "codex:paused", Provider: "codex", State: account.Paused, CredGen: 1, Version: 1})
 	pool.Register(account.Account{ID: "ag:x", Provider: "ag", State: account.Active, CredGen: 1, Version: 1})
 	syncer := modelSyncer{pool: pool}
@@ -81,7 +81,7 @@ func TestModelSyncerListsCodexModelsFromUpstream(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	pool.Register(account.Account{ID: "codex:a", Provider: "codex", State: account.Active, CredGen: 1, Version: 1})
 	creds := &stubCreds{cred: account.Credential{Access: "tok", AccountID: "acct-1"}}
 	syncer := modelSyncer{pool: pool, refresher: creds, client: server.Client()}
@@ -111,7 +111,7 @@ func TestModelSyncerListsAntigravityModelsFromUpstream(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	pool.Register(account.Account{ID: "ag:a", Provider: "ag", State: account.Active, CredGen: 3, Version: 1})
 	creds := &stubCreds{cred: account.Credential{Access: "tok", ProjectID: "proj-1"}}
 	syncer := modelSyncer{pool: pool, refresher: creds, client: server.Client()}
@@ -132,7 +132,7 @@ func TestModelSyncerListsAntigravityModelsFromUpstream(t *testing.T) {
 }
 
 func TestModelSyncerErrorsWithoutActiveAccount(t *testing.T) {
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	syncer := modelSyncer{pool: pool, refresher: &stubCreds{}}
 
 	_, err := syncer.RemoteModels(context.Background(), "codex", config.Provider{Wire: config.WireCodex})

@@ -190,10 +190,6 @@ func cloneDocument(d Document) Document {
 		}
 		if p.Pool != nil {
 			pool := *p.Pool
-			if pool.AutoSwitch != nil {
-				v := *pool.AutoSwitch
-				pool.AutoSwitch = &v
-			}
 			p.Pool = &pool
 		}
 		out.Providers[id] = p

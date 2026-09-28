@@ -404,7 +404,7 @@ func FetchPinnedAccountsCmd(client Client) tea.Cmd {
 }
 
 func PinProviderAccountCmd(client Client, providerID, accountKey string) tea.Cmd {
-	if client == nil {
+	if client == nil || accountKey == "" {
 		return nil
 	}
 	return func() tea.Msg {
@@ -430,7 +430,7 @@ func PinProviderAccountCmd(client Client, providerID, accountKey string) tea.Cmd
 			return ErrMsg{Err: fmt.Errorf("provider %s not found", providerID)}
 		}
 
-		pool := defaultProviderPool()
+		pool := config.PoolSettings{}
 		if provider.Pool != nil {
 			pool = *provider.Pool
 		}
@@ -448,27 +448,13 @@ func PinProviderAccountCmd(client Client, providerID, accountKey string) tea.Cmd
 		if err != nil {
 			return ErrMsg{Err: fmt.Errorf("failed to reload accounts: %w", err)}
 		}
-		notice := providerID + " pin cleared"
-		if accountKey != "" {
-			notice = providerID + " pinned to " + accountKey
-		}
+		notice := providerID + " selected " + accountKey
 		return tea.Batch(
 			func() tea.Msg {
 				return AccountsMsg{ActiveKey: accountKey, Accounts: accounts.Accounts, Notice: notice}
 			},
 			FetchPinnedAccountsCmd(client),
 		)()
-	}
-}
-
-func defaultProviderPool() config.PoolSettings {
-	return config.PoolSettings{
-		Strategy:        config.PoolQuota,
-		Affinity:        config.AffinitySticky,
-		MaxFailovers:    3,
-		CooldownDefault: 300_000_000_000,
-		CooldownMax:     900_000_000_000,
-		ProbeEvery:      60_000_000_000,
 	}
 }
 

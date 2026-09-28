@@ -7,7 +7,7 @@ import (
 )
 
 const fullPolicyBody = `{"id":"codex","wire":"codex","models":["m1","m2"],"disabledModels":["m2"],"enabled":false,` +
-	`"pool":{"strategy":"round_robin","autoSwitch":false,"autoSwitchThreshold":0.9,"affinity":"off","pinnedAccount":"acct-1","maxFailovers":2},` +
+	`"pool":{"pinnedAccount":"acct-1","accountsPath":"accounts.json"},` +
 	`"expectedGeneration":0}`
 
 func TestProviderCreateRoundTripsPolicyFields(t *testing.T) {
@@ -27,11 +27,8 @@ func TestProviderCreateRoundTripsPolicyFields(t *testing.T) {
 	if p.Pool == nil {
 		t.Fatal("pool round-trip: got nil")
 	}
-	if p.Pool.Strategy != "round_robin" || p.Pool.AutoSwitchThreshold != 0.9 || p.Pool.Affinity != "off" || p.Pool.PinnedAccount != "acct-1" || p.Pool.MaxFailovers != 2 {
+	if p.Pool.PinnedAccount != "acct-1" || p.Pool.AccountsPath != "accounts.json" {
 		t.Fatalf("pool round-trip: got %+v", p.Pool)
-	}
-	if p.Pool.AutoSwitch == nil || *p.Pool.AutoSwitch {
-		t.Fatalf("pool autoSwitch round-trip: got %v, want false", p.Pool.AutoSwitch)
 	}
 }
 
@@ -55,7 +52,7 @@ func TestProviderReplacePartialTogglePreservesFields(t *testing.T) {
 	if len(p.DisabledModels) != 1 || p.DisabledModels[0] != "m2" {
 		t.Fatalf("disabledModels erased by partial toggle: got %v", p.DisabledModels)
 	}
-	if p.Pool == nil || p.Pool.Strategy != "round_robin" || p.Pool.PinnedAccount != "acct-1" {
+	if p.Pool == nil || p.Pool.PinnedAccount != "acct-1" || p.Pool.AccountsPath != "accounts.json" {
 		t.Fatalf("pool erased by partial toggle: got %+v", p.Pool)
 	}
 
@@ -68,7 +65,7 @@ func TestProviderReplacePartialTogglePreservesFields(t *testing.T) {
 		t.Fatalf("providers = %d, want 1", len(listed.Providers))
 	}
 	got := listed.Providers[0]
-	if got.Pool == nil || got.Pool.Strategy != "round_robin" || len(got.DisabledModels) != 1 {
+	if got.Pool == nil || got.Pool.AccountsPath != "accounts.json" || len(got.DisabledModels) != 1 {
 		t.Fatalf("persisted fields not round-tripped through list: %+v", got)
 	}
 }
@@ -86,7 +83,7 @@ func TestProviderReplaceExplicitEmptyModelsClears(t *testing.T) {
 	if len(body.Provider.Models) != 0 {
 		t.Fatalf("explicit empty models not cleared: got %v", body.Provider.Models)
 	}
-	if body.Provider.Pool == nil || body.Provider.Pool.Strategy != "round_robin" {
+	if body.Provider.Pool == nil || body.Provider.Pool.PinnedAccount != "acct-1" {
 		t.Fatalf("pool lost on explicit replace: got %+v", body.Provider.Pool)
 	}
 }
@@ -96,7 +93,7 @@ func TestProviderReplaceRejectsInvalidPoolSettings(t *testing.T) {
 	if rec := env.do(t, http.MethodPost, "/api/v1/providers", fullPolicyBody); rec.Code != http.StatusOK {
 		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	bad := fmt.Sprintf(`{"wire":"codex","pool":{"strategy":"round_robin","affinity":"least_loaded"},"expectedGeneration":%d}`, 1)
+	bad := fmt.Sprintf(`{"wire":"codex","pool":{"pinnedAccount":"acct 1"},"expectedGeneration":%d}`, 1)
 	rec := env.do(t, http.MethodPut, "/api/v1/providers/codex", bad)
 	assertErrorBody(t, rec, http.StatusBadRequest, "invalid_document")
 }

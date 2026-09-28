@@ -399,7 +399,7 @@ func (s *Server) compactViaProvider(w http.ResponseWriter, r *http.Request, comp
 		Input:        req.Input,
 	})
 	if err != nil {
-		_ = s.pool.Record(r.Context(), lease, account.ServerError{})
+		_ = s.pool.Record(r.Context(), lease, account.RequestRejected{})
 		writeJSON(w, http.StatusBadGateway, errorEnvelope{Error: errorObject{
 			Code:    "compact_failed",
 			Message: err.Error(),

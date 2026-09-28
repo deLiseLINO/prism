@@ -115,12 +115,12 @@ func poolWith(pid account.ProviderID, n int) *fakePool {
 	return p
 }
 
-func testTarget(pid account.ProviderID, maxFailovers int) provider.Target {
-	return provider.Target{Provider: pid, Model: "gpt-5.2", MaxFailovers: maxFailovers}
+func testTarget(pid account.ProviderID) provider.Target {
+	return provider.Target{Provider: pid, Model: "gpt-5.2"}
 }
 
-func singlePlan(pid account.ProviderID, maxFailovers int, policy TurnPolicy) fakePlanner {
-	return fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget(pid, maxFailovers)}, Policy: policy}}
+func singlePlan(pid account.ProviderID, policy TurnPolicy) fakePlanner {
+	return fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget(pid)}, Policy: policy}}
 }
 
 func testFacts() execution.Facts {
@@ -167,13 +167,8 @@ func emitThenFail(evs []canon.Event, re provider.RunError) runnerFunc {
 	})
 }
 
-func gatedRunner(evs []canon.Event, re provider.RunError, succeedSecond bool) runnerFunc {
-	calls := 0
+func gatedRunner(evs []canon.Event, re provider.RunError) runnerFunc {
 	return runnerFunc(func(_ provider.RunRequest, sink provider.Sink) error {
-		calls++
-		if succeedSecond && calls > 1 {
-			return sink.Emit(canon.TurnFinished{Status: canon.Completed()})
-		}
 		for _, ev := range evs {
 			if err := sink.Emit(ev); err != nil {
 				return err
@@ -193,7 +188,7 @@ func TestTurnSuccessRecordsUsageForwardsEventsAndAcquiresWithFacts(t *testing.T)
 	sink := &recordingSink{}
 	pool := poolWith("codex", 1)
 	runners := fakeRunners{"codex": successRunner(usage)}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, sink)
 	fin, ok := res.Terminal.(Finished)
 	if !ok {
@@ -244,7 +239,7 @@ func TestTurnSendsTargetModelOnTheWire(t *testing.T) {
 	})
 	pool := poolWith("codex", 1)
 	runners := fakeRunners{"codex": runner}
-	planner := fakePlanner{"codex/gpt-5.6": Plan{Targets: []provider.Target{{Provider: "codex", Model: "gpt-5.6", MaxFailovers: 0}}}}
+	planner := fakePlanner{"codex/gpt-5.6": Plan{Targets: []provider.Target{{Provider: "codex", Model: "gpt-5.6"}}}}
 	res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "codex/gpt-5.6"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
 	if _, ok := res.Terminal.(Finished); !ok {
 		t.Fatalf("terminal is %T, want Finished", res.Terminal)
@@ -254,97 +249,29 @@ func TestTurnSendsTargetModelOnTheWire(t *testing.T) {
 	}
 }
 
-func TestQuotaOutcomeWithoutRetryAfterAppliesPolicyCooldownDefault(t *testing.T) {
-	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassQuotaExhausted, ReplaySafe: true}
-	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}}}
-	runners := fakeRunners{"codex": runnerFunc(func(provider.RunRequest, provider.Sink) error { return runErr })}
-	target := provider.Target{Provider: "codex", Model: "gpt-5.2", Policy: account.SelectionPolicy{CooldownDefault: 90 * time.Second}}
-	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}, Policy: TurnPolicy{MaxAccountFailovers: 1}}}
-	res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+func TestRateLimitRecordsRequestRejectedOnSelectedAccount(t *testing.T) {
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second}
+	pool := poolWith("codex", 2)
+	runners := fakeRunners{"codex": failThenSuccess(1, runErr, canon.Usage{OutputTokens: 3})}
+	planner := singlePlan("codex", TurnPolicy{})
+	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
+	if res.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", res.Attempts)
+	}
 	if _, ok := res.Terminal.(Failed); !ok {
 		t.Fatalf("terminal is %T, want Failed", res.Terminal)
 	}
-	want := account.QuotaExhausted{RetryAfter: 90 * time.Second}
-	if len(pool.records) != 1 || pool.records[0].outcome != account.Outcome(want) {
-		t.Fatalf("recorded outcome = %+v, want %+v", pool.records, want)
+	if len(pool.calls) != 1 || pool.calls[0].Provider != "codex" {
+		t.Fatalf("acquires = %+v, want one on codex", pool.calls)
 	}
-}
-
-func TestCooldownMaxCapsRetryAfterForRateLimitedAndQuotaExhausted(t *testing.T) {
-	cases := []struct {
-		name       string
-		class      provider.ErrorClass
-		retryAfter time.Duration
-		want       account.Outcome
-	}{
-		{
-			name:       "rateLimited capped",
-			class:      provider.ClassRateLimited,
-			retryAfter: 24 * time.Hour,
-			want:       account.Outcome(account.RateLimited{RetryAfter: 15 * time.Minute}),
-		},
-		{
-			name:       "quotaExhausted capped",
-			class:      provider.ClassQuotaExhausted,
-			retryAfter: 24 * time.Hour,
-			want:       account.Outcome(account.QuotaExhausted{RetryAfter: 15 * time.Minute}),
-		},
-		{
-			name:       "rateLimited below cap passes through",
-			class:      provider.ClassRateLimited,
-			retryAfter: 7 * time.Second,
-			want:       account.Outcome(account.RateLimited{RetryAfter: 7 * time.Second}),
-		},
-		{
-			name:       "quotaExhausted below cap passes through",
-			class:      provider.ClassQuotaExhausted,
-			retryAfter: 7 * time.Second,
-			want:       account.Outcome(account.QuotaExhausted{RetryAfter: 7 * time.Second}),
-		},
+	if len(pool.records) != 1 {
+		t.Fatalf("pool records = %d, want 1", len(pool.records))
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runErr := provider.RunError{Kind: provider.Retryable, Class: tc.class, ReplaySafe: true, RetryAfter: tc.retryAfter}
-			pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}}}
-			runners := fakeRunners{"codex": failRunner(runErr)}
-			target := provider.Target{Provider: "codex", Model: "gpt-5.2", Policy: account.SelectionPolicy{CooldownMax: 15 * time.Minute}}
-			planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}, Policy: TurnPolicy{MaxAccountFailovers: 1}}}
-			res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
-			if _, ok := res.Terminal.(Failed); !ok {
-				t.Fatalf("terminal is %T, want Failed", res.Terminal)
-			}
-			if len(pool.records) != 1 || pool.records[0].outcome != tc.want {
-				t.Fatalf("recorded outcome = %+v, want %+v", pool.records, tc.want)
-			}
-		})
+	if _, ok := pool.records[0].outcome.(account.RequestRejected); !ok {
+		t.Fatalf("recorded outcome is %T, want RequestRejected", pool.records[0].outcome)
 	}
-}
-
-func TestTurnAccountFailoverPreservesRetryAfter(t *testing.T) {
-	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second}
-	usage := canon.Usage{OutputTokens: 3}
-	pool := poolWith("codex", 2)
-	runners := fakeRunners{"codex": failThenSuccess(1, runErr, usage)}
-	planner := singlePlan("codex", 0, TurnPolicy{})
-	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
-	if res.Attempts != 2 {
-		t.Fatalf("attempts = %d, want 2", res.Attempts)
-	}
-	if _, ok := res.Terminal.(Finished); !ok {
-		t.Fatalf("terminal is %T, want Finished", res.Terminal)
-	}
-	if len(pool.calls) != 2 || pool.calls[0].Provider != "codex" || pool.calls[1].Provider != "codex" {
-		t.Fatalf("acquires = %+v, want two on codex", pool.calls)
-	}
-	if len(pool.records) != 2 {
-		t.Fatalf("pool records = %d, want 2", len(pool.records))
-	}
-	want := account.RateLimited{RetryAfter: 7 * time.Second}
-	if pool.records[0].outcome != account.Outcome(want) {
-		t.Fatalf("recorded outcome = %+v, want %+v", pool.records[0].outcome, want)
-	}
-	if _, ok := pool.records[1].outcome.(account.TurnSucceeded); !ok {
-		t.Fatalf("second recorded outcome is %T, want TurnSucceeded", pool.records[1].outcome)
+	if pool.records[0].lease.Account != "codex:acct-0" {
+		t.Fatalf("recorded account = %s, want the only attempted account", pool.records[0].lease.Account)
 	}
 }
 
@@ -353,7 +280,7 @@ func TestTurnTargetFailoverMovesToNextTarget(t *testing.T) {
 	usage := canon.Usage{OutputTokens: 2}
 	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("antigravity", 0)}}}
 	runners := fakeRunners{"codex": failRunner(runErr), "antigravity": successRunner(usage)}
-	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex", 1), testTarget("antigravity", 1)}}}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex"), testTarget("antigravity")}}}
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", res.Attempts)
@@ -366,14 +293,31 @@ func TestTurnTargetFailoverMovesToNextTarget(t *testing.T) {
 	}
 }
 
-func TestTurnJournalRecordsFailoverTrail(t *testing.T) {
+func TestUnavailableTargetFallsThroughToNextTarget(t *testing.T) {
+	usage := canon.Usage{OutputTokens: 2}
+	pool := &fakePool{results: []leaseResult{{err: account.ErrNoAccount}, {lease: testLease("antigravity", 0)}}}
+	runners := fakeRunners{"codex": successRunner(canon.Usage{}), "antigravity": successRunner(usage)}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex"), testTarget("antigravity")}}}
+	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
+	if res.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", res.Attempts)
+	}
+	if len(pool.calls) != 2 || pool.calls[0].Provider != "codex" || pool.calls[1].Provider != "antigravity" {
+		t.Fatalf("acquires = %+v, want codex then antigravity", pool.calls)
+	}
+	if _, ok := res.Terminal.(Finished); !ok {
+		t.Fatalf("terminal is %T, want Finished", res.Terminal)
+	}
+}
+
+func TestTurnJournalRecordsTargetFailoverTrail(t *testing.T) {
 	clock := &fakeJournalClock{t: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)}
 	j := requestlog.New(8, clock.Now)
-	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second}
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, ReplaySafe: true}
 	usage := canon.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}
-	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("codex", 1)}}}
-	runners := fakeRunners{"codex": failThenSuccess(1, runErr, usage)}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("antigravity", 0)}}}
+	runners := fakeRunners{"codex": failRunner(runErr), "antigravity": successRunner(usage)}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex"), testTarget("antigravity")}}}
 	res := NewRouter(pool, runners, planner, "default", j).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
 	if _, ok := res.Terminal.(Finished); !ok {
 		t.Fatalf("terminal is %T, want Finished", res.Terminal)
@@ -396,8 +340,8 @@ func TestTurnJournalRecordsFailoverTrail(t *testing.T) {
 		t.Fatalf("attempts = %d, want 2", len(e.Attempts))
 	}
 	first, second := e.Attempts[0], e.Attempts[1]
-	if first.Outcome != requestlog.AttemptRateLimited {
-		t.Fatalf("first outcome = %v, want rate_limited", first.Outcome)
+	if first.Outcome != requestlog.AttemptTransport {
+		t.Fatalf("first outcome = %v, want upstream transport", first.Outcome)
 	}
 	if first.Error != runErr.Error() {
 		t.Fatalf("first error = %q, want RunError.Error()", first.Error)
@@ -408,8 +352,8 @@ func TestTurnJournalRecordsFailoverTrail(t *testing.T) {
 	if second.Error != "" {
 		t.Fatalf("second error = %q, want empty", second.Error)
 	}
-	if first.AccountID != "codex:acct-0" || second.AccountID != "codex:acct-1" {
-		t.Fatalf("accounts = %q, %q, want distinct leases", first.AccountID, second.AccountID)
+	if first.AccountID != "codex:acct-0" || second.AccountID != "antigravity:acct-0" {
+		t.Fatalf("accounts = %q, %q, want one account per target", first.AccountID, second.AccountID)
 	}
 	if first.Model != "gpt-5.2" {
 		t.Fatalf("attempt model = %q, want wire model", first.Model)
@@ -421,7 +365,7 @@ func TestTurnJournalFailedTurnMapsTerminalReason(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: errors.New("bad request")}
 	pool := poolWith("codex", 1)
 	runners := fakeRunners{"codex": failRunner(runErr)}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := NewRouter(pool, runners, planner, "default", j).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
 	if _, ok := res.Terminal.(Failed); !ok {
 		t.Fatalf("terminal is %T, want Failed", res.Terminal)
@@ -469,34 +413,30 @@ func (c *fakeJournalClock) Now() time.Time { return c.t }
 func TestTurnCommitStateAndRunErrorGateFailover(t *testing.T) {
 	failure := canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailServerOverloaded, Message: "upstream died"}}
 	cases := []struct {
-		name          string
-		state         provider.CommitState
-		events        []canon.Event
-		runErr        provider.RunError
-		succeedSecond bool
-		attempts      int
-		success       bool
-		reason        canon.FailureReason
-		message       string
-		records       int
+		name     string
+		state    provider.CommitState
+		events   []canon.Event
+		runErr   provider.RunError
+		attempts int
+		reason   canon.FailureReason
+		message  string
+		records  int
 	}{
 		{
-			name:          "notStarted retryable server fails over",
-			state:         provider.NotStarted,
-			runErr:        provider.RunError{Kind: provider.Retryable, Class: provider.ClassServer},
-			succeedSecond: true,
-			attempts:      2,
-			success:       true,
-			records:       2,
+			name:     "notStarted retryable server stays on the account",
+			state:    provider.NotStarted,
+			runErr:   provider.RunError{Kind: provider.Retryable, Class: provider.ClassServer},
+			attempts: 1,
+			reason:   canon.FailServerOverloaded,
+			records:  1,
 		},
 		{
-			name:          "responseStarted retryable server still fails over",
-			state:         provider.ResponseStarted,
-			runErr:        provider.RunError{Kind: provider.Retryable, Class: provider.ClassServer},
-			succeedSecond: true,
-			attempts:      2,
-			success:       true,
-			records:       2,
+			name:     "responseStarted retryable server stays on the account",
+			state:    provider.ResponseStarted,
+			runErr:   provider.RunError{Kind: provider.Retryable, Class: provider.ClassServer},
+			attempts: 1,
+			reason:   canon.FailServerOverloaded,
+			records:  1,
 		},
 		{
 			name:     "outputCommitted never restarts",
@@ -562,31 +502,21 @@ func TestTurnCommitStateAndRunErrorGateFailover(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			pool := poolWith("codex", 5)
-			runners := fakeRunners{"codex": gatedRunner(tc.events, tc.runErr, tc.succeedSecond)}
-			planner := singlePlan("codex", 0, TurnPolicy{})
+			runners := fakeRunners{"codex": gatedRunner(tc.events, tc.runErr)}
+			planner := singlePlan("codex", TurnPolicy{})
 			res := runTurn(t, pool, runners, planner, tc.state, &recordingSink{})
 			if res.Attempts != tc.attempts {
 				t.Fatalf("attempts = %d, want %d", res.Attempts, tc.attempts)
 			}
-			if tc.success {
-				fin, ok := res.Terminal.(Finished)
-				if !ok {
-					t.Fatalf("terminal is %T, want Finished", res.Terminal)
-				}
-				if fin.Event.Status.Kind() != canon.StatusCompleted {
-					t.Fatalf("terminal status = %d, want completed", fin.Event.Status.Kind())
-				}
-			} else {
-				f, ok := res.Terminal.(Failed)
-				if !ok {
-					t.Fatalf("terminal is %T, want Failed", res.Terminal)
-				}
-				if f.Event.Failure.Reason != tc.reason {
-					t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, tc.reason)
-				}
-				if tc.message != "" && f.Event.Failure.Message != tc.message {
-					t.Fatalf("failure message = %q, want %q", f.Event.Failure.Message, tc.message)
-				}
+			f, ok := res.Terminal.(Failed)
+			if !ok {
+				t.Fatalf("terminal is %T, want Failed", res.Terminal)
+			}
+			if f.Event.Failure.Reason != tc.reason {
+				t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, tc.reason)
+			}
+			if tc.message != "" && f.Event.Failure.Message != tc.message {
+				t.Fatalf("failure message = %q, want %q", f.Event.Failure.Message, tc.message)
 			}
 			if len(pool.records) != tc.records {
 				t.Fatalf("pool records = %d, want %d", len(pool.records), tc.records)
@@ -595,56 +525,33 @@ func TestTurnCommitStateAndRunErrorGateFailover(t *testing.T) {
 	}
 }
 
-func TestTargetMaxFailoversCapsAttemptsAndAbortsPoolExhausted(t *testing.T) {
+func TestSameProviderFailureDoesNotAcquireAnotherAccount(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: time.Second}
 	pool := poolWith("antigravity", 6)
 	runners := fakeRunners{"antigravity": failRunner(runErr)}
-	planner := singlePlan("antigravity", 3, TurnPolicy{})
-	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
-	if res.Attempts != 3 {
-		t.Fatalf("attempts = %d, want 3", res.Attempts)
-	}
-	if len(pool.calls) != 3 {
-		t.Fatalf("acquires = %d, want 3", len(pool.calls))
-	}
-	f, ok := res.Terminal.(Failed)
-	if !ok {
-		t.Fatalf("terminal is %T, want Failed", res.Terminal)
-	}
-	if f.Event.Failure.Reason != canon.FailQuotaExhausted {
-		t.Fatalf("failure reason = %d, want pool exhausted style %d", f.Event.Failure.Reason, canon.FailQuotaExhausted)
-	}
-	if len(pool.records) != 3 {
-		t.Fatalf("pool records = %d, want 3", len(pool.records))
-	}
-}
-
-func TestRequestAccountBudgetCapsSwitchesBeforeTargetBudget(t *testing.T) {
-	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true}
-	pool := poolWith("codex", 6)
-	runners := fakeRunners{"codex": failRunner(runErr)}
-	planner := singlePlan("codex", 5, TurnPolicy{MaxAccountFailovers: 2})
-	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
-	if res.Attempts != 3 {
-		t.Fatalf("attempts = %d, want 3", res.Attempts)
-	}
-	f, ok := res.Terminal.(Failed)
-	if !ok {
-		t.Fatalf("terminal is %T, want Failed", res.Terminal)
-	}
-	if f.Event.Failure.Reason != canon.FailQuotaExhausted {
-		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailQuotaExhausted)
-	}
-}
-
-func TestPoolExhaustedMidTurnAborts(t *testing.T) {
-	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true}
-	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {err: account.ErrNoAccount}}}
-	runners := fakeRunners{"codex": failRunner(runErr)}
-	planner := singlePlan("codex", 3, TurnPolicy{})
+	planner := singlePlan("antigravity", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", res.Attempts)
+	}
+	if len(pool.calls) != 1 {
+		t.Fatalf("acquires = %d, want 1", len(pool.calls))
+	}
+	if _, ok := res.Terminal.(Failed); !ok {
+		t.Fatalf("terminal is %T, want Failed", res.Terminal)
+	}
+	if len(pool.records) != 1 || pool.records[0].lease.Account != "antigravity:acct-0" {
+		t.Fatalf("records = %+v, want the first account only", pool.records)
+	}
+}
+
+func TestPoolExhaustedOnAcquireAborts(t *testing.T) {
+	pool := &fakePool{results: []leaseResult{{err: account.ErrNoAccount}}}
+	runners := fakeRunners{"codex": successRunner(canon.Usage{})}
+	planner := singlePlan("codex", TurnPolicy{})
+	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
+	if res.Attempts != 0 {
+		t.Fatalf("attempts = %d, want 0", res.Attempts)
 	}
 	f, ok := res.Terminal.(Failed)
 	if !ok {
@@ -659,7 +566,7 @@ func TestTargetSwitchBudgetExhaustedAborts(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassServer}
 	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("antigravity", 0)}}}
 	runners := fakeRunners{"codex": failRunner(runErr), "antigravity": failRunner(runErr)}
-	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex", 1), testTarget("antigravity", 1)}}}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex"), testTarget("antigravity")}}}
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", res.Attempts)
@@ -668,8 +575,11 @@ func TestTargetSwitchBudgetExhaustedAborts(t *testing.T) {
 	if !ok {
 		t.Fatalf("terminal is %T, want Failed", res.Terminal)
 	}
-	if f.Event.Failure.Reason != canon.FailQuotaExhausted {
-		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailQuotaExhausted)
+	if f.Event.Failure.Reason != canon.FailServerOverloaded {
+		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailServerOverloaded)
+	}
+	if len(pool.calls) != 2 {
+		t.Fatalf("acquires = %d, want one per target", len(pool.calls))
 	}
 }
 
@@ -683,9 +593,9 @@ func TestDefaultTargetBudgetReachesThirdTarget(t *testing.T) {
 	}}
 	runners := fakeRunners{"codex": failRunner(runErr), "antigravity": failRunner(runErr), "openai-2": successRunner(usage)}
 	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{
-		testTarget("codex", 1),
-		testTarget("antigravity", 1),
-		testTarget("openai-2", 1),
+		testTarget("codex"),
+		testTarget("antigravity"),
+		testTarget("openai-2"),
 	}}}
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 3 {
@@ -699,7 +609,7 @@ func TestDefaultTargetBudgetReachesThirdTarget(t *testing.T) {
 func TestUntypedRunnerErrorStopsTurnReleasingLease(t *testing.T) {
 	pool := poolWith("codex", 2)
 	runners := fakeRunners{"codex": failRunner(errors.New("boom"))}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", res.Attempts)
@@ -721,7 +631,7 @@ func TestSinkErrorStopsTurn(t *testing.T) {
 	pool := poolWith("codex", 2)
 	re := provider.RunError{Kind: provider.Retryable, Class: provider.ClassServer}
 	runners := fakeRunners{"codex": emitThenFail([]canon.Event{canon.TextDelta{ItemID: "i1", Text: "hi"}}, re)}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, sink)
 	if res.Attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", res.Attempts)
@@ -741,7 +651,7 @@ func TestSinkErrorStopsTurn(t *testing.T) {
 func TestSuccessWithoutTerminalReleasesLease(t *testing.T) {
 	pool := poolWith("codex", 2)
 	runners := fakeRunners{"codex": failRunner(nil)}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", res.Attempts)
@@ -761,7 +671,7 @@ func TestSuccessWithoutTerminalReleasesLease(t *testing.T) {
 func TestAcquireFailureStopsTurn(t *testing.T) {
 	pool := &fakePool{results: []leaseResult{{err: errors.New("db down")}}}
 	runners := fakeRunners{"codex": successRunner(canon.Usage{})}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 0 {
 		t.Fatalf("attempts = %d, want 0", res.Attempts)
@@ -811,7 +721,7 @@ func TestEmptyPlanFails(t *testing.T) {
 func TestMissingRunnerFails(t *testing.T) {
 	pool := poolWith("codex", 1)
 	runners := fakeRunners{}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	f, ok := res.Terminal.(Failed)
 	if !ok {
@@ -829,7 +739,7 @@ func TestTurnReleasesLeaseForNonMappableError(t *testing.T) {
 	pid := account.ProviderID("p1")
 	pool := poolWith(pid, 1)
 	err := provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest}
-	runTurn(t, pool, fakeRunners{pid: failRunner(err)}, singlePlan(pid, 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	runTurn(t, pool, fakeRunners{pid: failRunner(err)}, singlePlan(pid, TurnPolicy{}), provider.NotStarted, &recordingSink{})
 	if len(pool.records) != 1 {
 		t.Fatalf("records = %d, want lease release", len(pool.records))
 	}
@@ -838,7 +748,7 @@ func TestTurnReleasesLeaseForNonMappableError(t *testing.T) {
 func TestTurnReleasesLeaseForUntypedRunnerError(t *testing.T) {
 	pid := account.ProviderID("p1")
 	pool := poolWith(pid, 1)
-	runTurn(t, pool, fakeRunners{pid: failRunner(errors.New("boom"))}, singlePlan(pid, 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	runTurn(t, pool, fakeRunners{pid: failRunner(errors.New("boom"))}, singlePlan(pid, TurnPolicy{}), provider.NotStarted, &recordingSink{})
 	if len(pool.records) != 1 {
 		t.Fatalf("records = %d, want lease release", len(pool.records))
 	}
@@ -848,7 +758,7 @@ func TestTurnReleasesLeaseWhenRunnerOmitsTerminal(t *testing.T) {
 	pid := account.ProviderID("p1")
 	pool := poolWith(pid, 1)
 	runner := runnerFunc(func(provider.RunRequest, provider.Sink) error { return nil })
-	runTurn(t, pool, fakeRunners{pid: runner}, singlePlan(pid, 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	runTurn(t, pool, fakeRunners{pid: runner}, singlePlan(pid, TurnPolicy{}), provider.NotStarted, &recordingSink{})
 	if len(pool.records) != 1 {
 		t.Fatalf("records = %d, want lease release", len(pool.records))
 	}
@@ -860,7 +770,7 @@ func TestTurnRejectsImageInputForTextOnlyTarget(t *testing.T) {
 		t.Fatal("runner must not be called for a text-only image request")
 		return nil
 	})
-	target := targetWithImageInput(testTarget(pid, 1), false)
+	target := targetWithImageInput(testTarget(pid), false)
 	req := canon.Request{
 		Model: "gpt-5.2",
 		Input: []canon.Item{canon.Message{
@@ -885,7 +795,7 @@ func TestTurnAllowsImageInputForVisionTarget(t *testing.T) {
 	runner := runnerFunc(func(req provider.RunRequest, sink provider.Sink) error {
 		return sink.Emit(canon.TurnFinished{})
 	})
-	target := targetWithImageInput(testTarget(pid, 1), true)
+	target := targetWithImageInput(testTarget(pid), true)
 	req := canon.Request{
 		Model: "gpt-5.2",
 		Input: []canon.Item{canon.Message{
@@ -903,7 +813,7 @@ func TestTurnAllowsImageInputForVisionTarget(t *testing.T) {
 
 func TestTurnTraceOnSuccess(t *testing.T) {
 	usage := canon.Usage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}
-	res := runTurn(t, poolWith("codex", 1), fakeRunners{"codex": successRunner(usage)}, singlePlan("codex", 1, TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	res := runTurn(t, poolWith("codex", 1), fakeRunners{"codex": successRunner(usage)}, singlePlan("codex", TurnPolicy{}), provider.NotStarted, &recordingSink{})
 	if len(res.Trace) != 1 {
 		t.Fatalf("trace length = %d, want 1", len(res.Trace))
 	}
@@ -918,7 +828,7 @@ func TestTurnTraceOnFailover(t *testing.T) {
 	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("antigravity", 0)}}}
 	usage := canon.Usage{OutputTokens: 2, TotalTokens: 2}
 	runners := fakeRunners{"codex": failRunner(runErr), "antigravity": successRunner(usage)}
-	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex", 1), testTarget("antigravity", 1)}}}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex"), testTarget("antigravity")}}}
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if len(res.Trace) != 2 {
 		t.Fatalf("trace length = %d, want 2", len(res.Trace))
@@ -931,22 +841,24 @@ func TestTurnTraceOnFailover(t *testing.T) {
 	}
 }
 
-func TestTurnTraceOnFailureCarriesProviderAttempts(t *testing.T) {
+func TestTurnTraceOnSameProviderFailureStaysOnOneAccount(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true}
 	pool := poolWith("codex", 2)
 	runners := fakeRunners{"codex": failRunner(runErr)}
-	planner := singlePlan("codex", 2, TurnPolicy{MaxAccountFailovers: 1})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if _, ok := res.Terminal.(Failed); !ok {
 		t.Fatalf("terminal = %T, want Failed", res.Terminal)
 	}
-	if len(res.Trace) != 2 {
-		t.Fatalf("trace length = %d, want 2", len(res.Trace))
+	if len(res.Trace) != 1 {
+		t.Fatalf("trace length = %d, want 1", len(res.Trace))
 	}
-	for i, want := range []AttemptTrace{{Provider: "codex", Model: "gpt-5.2", Outcome: "failed"}, {Provider: "codex", Model: "gpt-5.2", Outcome: "failed"}} {
-		if res.Trace[i] != want {
-			t.Fatalf("trace[%d] = %+v, want %+v", i, res.Trace[i], want)
-		}
+	want := AttemptTrace{Provider: "codex", Model: "gpt-5.2", Outcome: "failed"}
+	if res.Trace[0] != want {
+		t.Fatalf("trace = %+v, want %+v", res.Trace[0], want)
+	}
+	if len(pool.calls) != 1 {
+		t.Fatalf("acquires = %d, want 1", len(pool.calls))
 	}
 }
 
@@ -963,7 +875,7 @@ func TestTurnRunErrorCausePassesThroughAsFailureMessage(t *testing.T) {
 	j := requestlog.New(8, time.Now)
 	pool := poolWith("codex", 1)
 	runners := fakeRunners{"codex": failRunner(runErr)}
-	planner := singlePlan("codex", 0, TurnPolicy{})
+	planner := singlePlan("codex", TurnPolicy{})
 	res := NewRouter(pool, runners, planner, "default", j).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
 	f, ok := res.Terminal.(Failed)
 	if !ok {
@@ -989,7 +901,7 @@ func TestTurnPointerRunErrorMapsClassAndPassesCauseThrough(t *testing.T) {
 	runErr := &provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second, Cause: cause}
 	pool := poolWith("anthropic", 1)
 	runners := fakeRunners{"anthropic": failRunner(runErr)}
-	planner := singlePlan("anthropic", 0, TurnPolicy{})
+	planner := singlePlan("anthropic", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.OutputCommitted, &recordingSink{})
 	f, ok := res.Terminal.(Failed)
 	if !ok {
@@ -1004,26 +916,25 @@ func TestTurnPointerRunErrorMapsClassAndPassesCauseThrough(t *testing.T) {
 	if len(pool.records) != 1 {
 		t.Fatalf("pool records = %d, want 1", len(pool.records))
 	}
-	rl, ok := pool.records[0].outcome.(account.RateLimited)
-	if !ok {
-		t.Fatalf("recorded outcome is %T, want RateLimited", pool.records[0].outcome)
-	}
-	if rl.RetryAfter != 7*time.Second {
-		t.Fatalf("rate limit retryAfter = %s, want 7s", rl.RetryAfter)
+	if _, ok := pool.records[0].outcome.(account.RequestRejected); !ok {
+		t.Fatalf("recorded outcome is %T, want RequestRejected", pool.records[0].outcome)
 	}
 }
 
-func TestTurnPointerRunErrorFailsOver(t *testing.T) {
+func TestTurnPointerRunErrorDoesNotSwitchAccounts(t *testing.T) {
 	runErr := &provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: time.Second, Cause: errors.New("anthropic: rate limited")}
 	pool := poolWith("anthropic", 2)
 	runners := fakeRunners{"anthropic": failThenSuccess(1, runErr, canon.Usage{InputTokens: 3})}
-	planner := singlePlan("anthropic", 0, TurnPolicy{})
+	planner := singlePlan("anthropic", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
-	if res.Attempts != 2 {
-		t.Fatalf("attempts = %d, want 2 (pointer run error must fail over)", res.Attempts)
+	if res.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", res.Attempts)
 	}
-	if _, ok := res.Terminal.(Finished); !ok {
-		t.Fatalf("terminal is %T, want Finished", res.Terminal)
+	if _, ok := res.Terminal.(Failed); !ok {
+		t.Fatalf("terminal is %T, want Failed", res.Terminal)
+	}
+	if len(pool.calls) != 1 {
+		t.Fatalf("acquires = %d, want 1", len(pool.calls))
 	}
 }
 
@@ -1032,7 +943,7 @@ func TestForbiddenKeepsAccountUsableAndSurfacesCause(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassForbidden, ReplaySafe: true, Cause: cause}
 	pool := poolWith("custom", 3)
 	runners := fakeRunners{"custom": failRunner(runErr)}
-	planner := singlePlan("custom", 3, TurnPolicy{})
+	planner := singlePlan("custom", TurnPolicy{})
 	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
 	if res.Attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", res.Attempts)

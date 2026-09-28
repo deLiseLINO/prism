@@ -24,7 +24,7 @@ func testEnv(t *testing.T, doc config.Document) (*daemonEnv, *config.Manager) {
 	if _, err := mgr.Update(doc, 0); err != nil {
 		t.Fatalf("update config: %v", err)
 	}
-	pool := account.New([]byte("test-secret-0123456789abcdef"), time.Now)
+	pool := account.New()
 	env := newDaemonEnv(
 		filepath.Join(dir, "credentials"),
 		mgr,

@@ -56,7 +56,7 @@ func TestCatalogExcludesDisabledProvidersAndModels(t *testing.T) {
 }
 
 func TestQuotaTableMirrorsPoolAndSkipsWarningOnlySnapshots(t *testing.T) {
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	pool.Register(account.Account{ID: "codex:a", Provider: "codex", State: account.Active, CredGen: 1, Version: 1})
 	table := newQuotaTable(pool, nil, nil)
 
@@ -88,7 +88,7 @@ func TestQuotaTableMirrorsPoolAndSkipsWarningOnlySnapshots(t *testing.T) {
 }
 
 func TestQuotaTableUnknownAccountIsNotFound(t *testing.T) {
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	pool.Register(account.Account{ID: "codex:a", Provider: "codex", State: account.Active, CredGen: 1, Version: 1})
 	table := newQuotaTable(pool, nil, nil)
 
@@ -141,7 +141,7 @@ func TestQuotaTableProbesAntigravityAccountLive(t *testing.T) {
 	}, 0); err != nil {
 		t.Fatalf("update config: %v", err)
 	}
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	pool.Register(account.Account{ID: "ag:default", Provider: "ag", State: account.Active, CredGen: 1, Version: 1})
 	table := newQuotaTable(pool, mgr, server.Client())
 	table.refresher = fakeRefresher{cred: account.Credential{Access: "tok", ProjectID: "proj-1"}}
@@ -194,7 +194,7 @@ func TestQuotaTableProbeFailureKeepsStoredSnapshot(t *testing.T) {
 	}, 0); err != nil {
 		t.Fatalf("update config: %v", err)
 	}
-	pool := account.New([]byte("secret"), func() time.Time { return time.Unix(0, 0).UTC() })
+	pool := account.New()
 	pool.Register(account.Account{ID: "ag:default", Provider: "ag", State: account.Active, CredGen: 1, Version: 1})
 	limit := int64(10000)
 	if err := pool.UpdateQuota("ag:default", quota.Snapshot{Used: 1234, Limit: &limit, Source: quota.SourceHeader}); err != nil {
@@ -240,7 +240,7 @@ func TestQuotaRefreshBypassesTTL(t *testing.T) {
 	}, 0); err != nil {
 		t.Fatal(err)
 	}
-	pool := account.New([]byte("secret"), time.Now)
+	pool := account.New()
 	pool.Register(account.Account{ID: "ag:default", Provider: "ag", State: account.Active, CredGen: 1, Version: 1})
 	table := newQuotaTable(pool, mgr, server.Client())
 	table.refresher = fakeRefresher{cred: account.Credential{Access: "tok", ProjectID: "proj"}}
