@@ -8,6 +8,7 @@ import (
 
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/providers/openaierr"
 )
 
 type aggregateResponse struct {
@@ -98,14 +99,20 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		return nil
 	}
 	if payload.Error != nil {
-		message := payload.Error.Message
-		if message == "" {
-			message = "upstream request failed"
+		parsed, ok := openaierr.Parse(raw)
+		if !ok {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customchat: error response carried no error value"))
 		}
-		if err := emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}}); err != nil {
+		copied := parsed
+		message := openaierr.Text(parsed)
+		if err := emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message, Provider: &copied}}); err != nil {
 			return err
 		}
-		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(message))
+		cause := message
+		if cause == "" {
+			cause = "provider error"
+		}
+		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
 	}
 	if len(payload.Choices) == 0 {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0,

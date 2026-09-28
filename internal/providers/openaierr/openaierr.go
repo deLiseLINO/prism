@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 
+	"prism/internal/canon"
 	"prism/internal/provider"
 )
 
@@ -27,25 +28,16 @@ func HTTPError(resp *http.Response, runner string) error {
 	msg := fmt.Sprintf("upstream http %d", resp.StatusCode)
 	code := ""
 	accepted := resp.StatusCode >= 500
-	if json.Unmarshal(payload, &parsed) == nil {
-		if len(parsed.Error) > 0 {
-			var obj struct {
-				Message string `json:"message"`
-				Code    string `json:"code"`
-			}
-			var flat string
-			switch {
-			case json.Unmarshal(parsed.Error, &obj) == nil && (obj.Message != "" || obj.Code != ""):
-				if obj.Message != "" {
-					msg = obj.Message
-				}
-				code = obj.Code
-			case json.Unmarshal(parsed.Error, &flat) == nil && flat != "":
-				msg = flat
-			}
-		} else if parsed.Message != "" {
-			msg = parsed.Message
+	var reported *canon.ProviderError
+	if providerErr, ok := Parse(payload); ok {
+		copied := providerErr
+		reported = &copied
+		if text := Text(providerErr); text != "" {
+			msg = text
 		}
+		code = stringCode(providerErr.Error)
+	} else if json.Unmarshal(payload, &parsed) == nil && parsed.Message != "" {
+		msg = parsed.Message
 	}
 	return provider.RunError{
 		Kind:       provider.Retryable,
@@ -53,7 +45,18 @@ func HTTPError(resp *http.Response, runner string) error {
 		Accepted:   accepted,
 		ReplaySafe: true,
 		Cause:      fmt.Errorf("%s: %s", runner, msg),
+		Reported:   reported,
 	}
+}
+
+func stringCode(raw []byte) string {
+	var obj struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(raw, &obj) == nil {
+		return obj.Code
+	}
+	return ""
 }
 
 func ClassForStatus(status int, code string) provider.ErrorClass {
@@ -76,4 +79,3 @@ func ClassForStatus(status int, code string) provider.ErrorClass {
 		return provider.ClassInvalidRequest
 	}
 }
-

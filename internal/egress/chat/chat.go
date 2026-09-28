@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -308,11 +309,37 @@ func (c *Chat) turnFinished(e canon.TurnFinished) error {
 func (c *Chat) turnFailed(e canon.TurnFailed) error {
 	c.terminal = true
 	c.failed = true
+	if e.Failure.HasProvider() {
+		body, err := chatProviderError(e.Failure.Provider.Error)
+		if err != nil {
+			return err
+		}
+		return c.writeJSON(map[string]any{"error": body})
+	}
 	return c.writeJSON(errorEnvelope{Error: errorBody{
 		Message: e.Failure.Message,
 		Type:    errorType(e.Failure.Reason),
 		Code:    failureCode(e.Failure.Reason),
 	}})
+}
+
+func chatProviderError(raw []byte) (any, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil, errors.New("chat egress: provider error is not JSON")
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return map[string]any{"message": s}, nil
+	}
+	if raw[0] != '{' {
+		return nil, errors.New("chat egress: provider error is not an object")
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return nil, errors.New("chat egress: provider error is not an object")
+	}
+	return obj, nil
 }
 
 func incompleteFailure(st canon.Status, usage canon.Usage) canon.TurnFailed {

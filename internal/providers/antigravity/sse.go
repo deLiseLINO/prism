@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"prism/internal/canon"
+	"prism/internal/providers/openaierr"
 )
 
 const maxSSEFrameBytes = 100 * 1024 * 1024
@@ -131,13 +132,27 @@ func (d *streamDecoder) fail(reason canon.FailureReason, message string) error {
 	})
 }
 
+func (d *streamDecoder) failProvider(reason canon.FailureReason, payload []byte) error {
+	parsed, ok := openaierr.Parse(payload)
+	if !ok {
+		return d.fail(reason, "antigravity: malformed upstream SSE data frame")
+	}
+	d.finished = true
+	copied := parsed
+	message := openaierr.Text(parsed)
+	return d.emit(canon.TurnFailed{
+		Failure: canon.Failure{Reason: reason, Message: message, Provider: &copied},
+		Usage:   d.usage,
+	})
+}
+
 func (d *streamDecoder) frame(payload []byte) error {
 	var chunk streamFrame
 	if err := json.Unmarshal(payload, &chunk); err != nil {
 		return d.fail(canon.FailOriginRejected, "antigravity: malformed upstream SSE data frame")
 	}
 	if chunk.Error != nil {
-		return d.fail(canon.FailOriginRejected, "antigravity: upstream error: "+chunk.Error.Message)
+		return d.failProvider(canon.FailOriginRejected, payload)
 	}
 	if chunk.Response == nil {
 		return nil

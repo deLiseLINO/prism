@@ -815,3 +815,80 @@ func TestBufferedFailedTerminalKeepsErrorInBody(t *testing.T) {
 		t.Fatalf("output missing: %v", resp["output"])
 	}
 }
+
+func TestProviderStatusDetailsForwardedWithoutSynthesizedError(t *testing.T) {
+	b := &lockBuffer{}
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	defer e.Close()
+	if err := e.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	details := []byte(`{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}`)
+	failure := canon.Failure{
+		Reason:   canon.FailUnknown,
+		Message:  "Slow down.",
+		Provider: &canon.ProviderError{StatusDetails: details},
+	}
+	if err := e.Frame(canon.TurnFailed{Failure: failure}); err != nil {
+		t.Fatalf("terminal: %v", err)
+	}
+	if err := e.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	var failed frame
+	for _, f := range eventFrames(t, b) {
+		if f.event == "response.failed" {
+			failed = f
+		}
+	}
+	if failed.event == "" {
+		t.Fatal("missing response.failed")
+	}
+	resp := dataMap(t, failed)["response"].(map[string]any)
+	if resp["status"] != "failed" {
+		t.Fatalf("status = %v", resp["status"])
+	}
+	if _, ok := resp["error"]; ok {
+		t.Fatalf("synthesized response.error = %v", resp["error"])
+	}
+	got := resp["status_details"].(map[string]any)["error"].(map[string]any)
+	if got["code"] != "rate_limit_exceeded" || got["message"] != "Slow down." || got["extra"] != float64(1) {
+		t.Fatalf("status_details.error = %v", got)
+	}
+	if _, ok := got["unknown"]; ok {
+		t.Fatal("unexpected unknown key")
+	}
+}
+
+func TestProviderResponseErrorKeepsUnknownKeys(t *testing.T) {
+	b := &lockBuffer{}
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	defer e.Close()
+	if err := e.Begin(header()); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	raw := []byte(`{"message":"boom","code":"server_error","type":"api_error"}`)
+	failure := canon.Failure{
+		Reason:   canon.FailUnknown,
+		Provider: &canon.ProviderError{Error: raw},
+	}
+	if err := e.Frame(canon.TurnFailed{Failure: failure}); err != nil {
+		t.Fatalf("terminal: %v", err)
+	}
+	if err := e.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	var failed frame
+	for _, f := range eventFrames(t, b) {
+		if f.event == "response.failed" {
+			failed = f
+		}
+	}
+	errObj := dataMap(t, failed)["response"].(map[string]any)["error"].(map[string]any)
+	if errObj["message"] != "boom" || errObj["code"] != "server_error" || errObj["type"] != "api_error" {
+		t.Fatalf("error = %v", errObj)
+	}
+	if _, ok := errObj["unknown"]; ok || len(errObj) != 3 {
+		t.Fatalf("error keys = %v", errObj)
+	}
+}

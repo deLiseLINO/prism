@@ -291,9 +291,18 @@ func (e *Egress) turnFailedLocked(t canon.TurnFailed) error {
 		return e.duplicateTerminalLocked(t)
 	}
 	snap := e.snapshotLocked("failed", e.output, usageWire(t.Usage))
-	snap["error"] = map[string]any{
-		"code":    failureReasonWire(t.Failure.Reason),
-		"message": t.Failure.Message,
+	if t.Failure.HasProvider() {
+		if len(t.Failure.Provider.Error) > 0 {
+			snap["error"] = json.RawMessage(t.Failure.Provider.Error)
+		}
+		if len(t.Failure.Provider.StatusDetails) > 0 {
+			snap["status_details"] = map[string]json.RawMessage{"error": json.RawMessage(t.Failure.Provider.StatusDetails)}
+		}
+	} else {
+		snap["error"] = map[string]any{
+			"code":    failureReasonWire(t.Failure.Reason),
+			"message": t.Failure.Message,
+		}
 	}
 	e.terminal = &terminalFrame{name: "response.failed", data: map[string]any{"response": snap}, event: t}
 	return nil

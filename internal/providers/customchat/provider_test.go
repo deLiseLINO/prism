@@ -1236,3 +1236,28 @@ func TestForwardHeadersReachChatUpstream(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTP429ForwardsProviderError(t *testing.T) {
+	body := `{"error":{"message":"slow down","type":"tokens","code":"rate_limit_exceeded","param":null}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+	events := &collector{}
+	r := New(staticKey, Options{})
+	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(false), Target: testTarget(srv.URL)}, events)
+	var runErr provider.RunError
+	if !errors.As(err, &runErr) {
+		t.Fatalf("want RunError, got %v", err)
+	}
+	if runErr.Class != provider.ClassRateLimited {
+		t.Fatalf("class = %v, want rate limited", runErr.Class)
+	}
+	if runErr.Reported == nil || !bytes.Contains(runErr.Reported.Error, []byte(`"rate_limit_exceeded"`)) {
+		t.Fatalf("reported = %+v", runErr.Reported)
+	}
+	if events.TerminalCount() != 0 {
+		t.Fatalf("HTTP error must not emit TurnFailed from the runner")
+	}
+}

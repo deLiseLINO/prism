@@ -9,6 +9,7 @@ import (
 	"prism/internal/canon"
 	"prism/internal/execution"
 	"prism/internal/provider"
+	"prism/internal/providers/openaierr"
 	"prism/internal/requestlog"
 )
 
@@ -303,7 +304,13 @@ func runErrorTerminal(re provider.RunError, capture *captureSink, attempts int, 
 	if capture.hasFailed {
 		return TurnResult{Terminal: Failed{Event: capture.failed}, Attempts: attempts, Trace: trace}
 	}
-	return turnFailed(canon.Failure{Reason: failureReason(re.Class), Message: runErrorMessage(re)}, attempts, trace)
+	failure := canon.Failure{Reason: failureReason(re.Class), Message: runErrorMessage(re)}
+	if re.Reported != nil && (len(re.Reported.Error) > 0 || len(re.Reported.StatusDetails) > 0) {
+		copied := *re.Reported
+		failure.Provider = &copied
+		failure.Message = openaierr.Text(copied)
+	}
+	return turnFailed(failure, attempts, trace)
 }
 
 func turnFailed(f canon.Failure, attempts int, trace []AttemptTrace) TurnResult {
