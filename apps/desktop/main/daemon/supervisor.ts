@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createWriteStream, readFileSync, type WriteStream } from 'node:fs'
 import { DAEMON_HEALTH_PATH, DAEMON_HOST, type DaemonExit, type DaemonStatus } from '@prism/contracts'
 import { locateDaemon, locateWebui } from './locate'
 import { waitForHealth } from './health'
@@ -7,6 +8,7 @@ export interface SupervisorOptions {
   readonly port: number
   readonly daemonConfigPath: string | null
   readonly webuiDir: string | null
+  readonly logPath: string | null
   readonly healthTimeoutMs: number
   readonly healthIntervalMs: number
   readonly healthProbeTimeoutMs: number
@@ -121,13 +123,14 @@ export class DaemonSupervisor {
     if (this.options.daemonConfigPath !== null) args.push('--config', this.options.daemonConfigPath)
     const webuiDir = locateWebui(this.options.webuiDir)
     if (webuiDir !== null) args.push('--webui', webuiDir)
+    const log = await this.openLog()
     const child = spawn(binaryPath, args, {
-      stdio: ['ignore', 'ignore', 'pipe'],
+      stdio: ['ignore', 'ignore', log ?? 'pipe'],
       windowsHide: true,
       shell: false,
     })
     this.child = child
-    this.captureLog(child)
+    if (log === null) this.captureLog(child)
     child.once('error', (error) => {
       this.handleSpawnError(error)
     })
@@ -243,6 +246,24 @@ export class DaemonSupervisor {
   }
   private emit(): void {
     for (const listener of [...this.listeners]) listener(this.status)
+  }
+
+  private openLog(): Promise<WriteStream | null> {
+    if (this.options.logPath === null) return Promise.resolve(null)
+    const stream = createWriteStream(this.options.logPath, { flags: 'a' })
+    const { promise, resolve, reject } = Promise.withResolvers<WriteStream>()
+    stream.once('open', () => resolve(stream))
+    stream.once('error', reject)
+    return promise
+  }
+
+  logFile(): string {
+    if (this.options.logPath === null) return this.log
+    try {
+      return readFileSync(this.options.logPath, 'utf8')
+    } catch {
+      return this.log
+    }
   }
 }
 

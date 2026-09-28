@@ -1,0 +1,8 @@
+{
+  "name": "prism-report",
+  "main": "worker/report.ts",
+  "compatibility_date": "2026-09-27",
+  "kv_namespaces": [
+    { "binding": "REPORTS", "id": "9771046802c7475f89276e6feb0376ea" }
+  ]
+}

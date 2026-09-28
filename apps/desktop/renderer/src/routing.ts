@@ -1,3 +1,5 @@
+import { noteStep } from './diagnostics'
+
 export type Section = 'Overview' | 'Operate' | 'Configure' | 'System'
 
 export type View =
@@ -93,6 +95,7 @@ export function rememberView(view: View): void {
 export function navigateTo(view: View, replace = false): void {
   const next = hashFor(view)
   if (window.location.hash === next) return
+  noteStep({ kind: 'navigate', view })
   if (replace) {
     window.history.replaceState(null, '', next)
     window.dispatchEvent(new HashChangeEvent('hashchange'))

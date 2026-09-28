@@ -49,7 +49,7 @@ export interface PrismBridge {
   }
   readonly report: {
     readonly snapshot: (title: string, detail: string) => Promise<ReportSnapshot>
-    readonly send: (target: ReportTarget, title: string, detail: string) => Promise<void>
+    readonly send: (target: ReportTarget, title: string, detail: string, screenshot: string | null, context?: ReportContext) => Promise<string | null>
   }
 }
 
@@ -60,4 +60,21 @@ export interface ReportSnapshot {
   readonly body: string
   readonly issueUrl: string
   readonly workerConfigured: boolean
+  readonly pageUrl: string | null
+}
+
+export type DiagnosticStep =
+  | { readonly kind: 'navigate'; readonly view: string; readonly at: number }
+  | { readonly kind: 'action'; readonly name: string; readonly at: number }
+
+export interface FailedRequest {
+  readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  readonly path: string
+  readonly status: number
+  readonly code: string
+}
+
+export interface ReportContext {
+  readonly steps: readonly DiagnosticStep[]
+  readonly failed: FailedRequest | null
 }

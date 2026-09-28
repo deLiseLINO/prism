@@ -1,5 +1,5 @@
 import { BrowserWindow, clipboard, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
-import { IpcChannel } from '@prism/contracts'
+import { IpcChannel, type ReportContext } from '@prism/contracts'
 import type { DaemonSupervisor } from './daemon/supervisor'
 import { IntegrationApi, parseIntegrationRequest } from '../shared/integrations'
 import { AgentsApi, parseAgentJobRequest } from '../shared/agents'
@@ -144,20 +144,70 @@ export function registerIpc(wiring: IpcWiring): void {
     const source = reportSource(wiring.supervisor.status, () => wiring.supervisor.logTail())
     return buildSnapshot(source, report.title, report.detail)
   })
-  ipcMain.handle(IpcChannel.reportSend, (event, input: unknown) => {
+  ipcMain.handle(IpcChannel.reportSend, async (event, input: unknown) => {
     trustedSender(event)
     const report = parseReport(input)
-    const source = reportSource(wiring.supervisor.status, () => wiring.supervisor.logTail())
-    return sendReport(source, report.target, report.title, report.detail)
+    const screenshot = await captureWindow(event.sender)
+    const source = reportSource(wiring.supervisor.status, () => wiring.supervisor.logFile())
+    return sendReport(source, report.target, report.title, report.detail, screenshot, report.context)
   })
 }
 
-function parseReport(input: unknown): { title: string; detail: string; target: 'issue' | 'bot' } {
+export function parseReport(input: unknown): { title: string; detail: string; target: 'issue' | 'bot'; context: ReportContext } {
   if (typeof input !== 'object' || input === null) throw new Error('prism: report requires an object')
   const record = input as Record<string, unknown>
   if (typeof record.title !== 'string' || record.title === '') throw new Error('prism: report title requires a string')
   if (typeof record.detail !== 'string') throw new Error('prism: report detail requires a string')
   const target = record.target === undefined ? 'issue' : record.target
   if (target !== 'issue' && target !== 'bot') throw new Error('prism: report target must be issue or bot')
-  return { title: record.title, detail: record.detail, target }
+  return { title: record.title, detail: record.detail, target, context: parseContext(record.context) }
+}
+
+function parseContext(input: unknown): ReportContext {
+  if (input === undefined) return { steps: [], failed: null }
+  if (typeof input !== 'object' || input === null) throw new Error('prism: report context requires an object')
+  const record = input as Record<string, unknown>
+  if (!Array.isArray(record.steps) || record.steps.length > 8) throw new Error('prism: report steps must be an array of at most 8')
+  return { steps: record.steps.map(parseStep), failed: parseFailed(record.failed) }
+}
+
+function parseStep(input: unknown): ReportContext['steps'][number] {
+  if (typeof input !== 'object' || input === null) throw new Error('prism: report step requires an object')
+  const record = input as Record<string, unknown>
+  if (typeof record.at !== 'number' || !Number.isFinite(record.at)) throw new Error('prism: report step requires at')
+  if (record.kind === 'navigate' && typeof record.view === 'string' && isFactValue(record.view)) {
+    return { kind: 'navigate', view: record.view, at: record.at }
+  }
+  if (record.kind === 'action' && typeof record.name === 'string' && isFactValue(record.name)) {
+    return { kind: 'action', name: record.name, at: record.at }
+  }
+  throw new Error('prism: report step is invalid')
+}
+
+function parseFailed(input: unknown): ReportContext['failed'] {
+  if (input === null) return null
+  if (typeof input !== 'object' || input === null) throw new Error('prism: report request requires an object')
+  const record = input as Record<string, unknown>
+  if (record.method !== 'GET' && record.method !== 'POST' && record.method !== 'PUT' && record.method !== 'DELETE') {
+    throw new Error('prism: report request method is invalid')
+  }
+  if (typeof record.path !== 'string' || !isFactValue(record.path) || record.path.includes('?') || record.path.includes('#')) {
+    throw new Error('prism: report request path is invalid')
+  }
+  if (typeof record.status !== 'number' || !Number.isInteger(record.status) || record.status < 0 || record.status > 599) {
+    throw new Error('prism: report request status is invalid')
+  }
+  if (typeof record.code !== 'string' || !isFactValue(record.code)) throw new Error('prism: report request code is invalid')
+  return { method: record.method, path: record.path, status: record.status, code: record.code }
+}
+
+function isFactValue(value: string): boolean {
+  return value !== '' && value.length <= 120 && !value.includes(':') && !value.includes('\n') && !value.includes('\r')
+}
+
+async function captureWindow(sender: WebContents): Promise<string | null> {
+  const window = BrowserWindow.fromWebContents(sender)
+  if (window === null || window.isDestroyed()) return null
+  const image = await window.webContents.capturePage()
+  return image.isEmpty() ? null : `data:image/png;base64,${image.toPNG().toString('base64')}`
 }

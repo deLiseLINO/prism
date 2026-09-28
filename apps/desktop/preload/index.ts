@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webFrame, type IpcRendererEvent } from 'electron'
-import { IpcChannel, type DaemonStatus, type PrismBridge, type UpdaterStatus } from '@prism/contracts'
+import { IpcChannel, type DaemonStatus, type PrismBridge, type ReportContext, type UpdaterStatus } from '@prism/contracts'
 
 const bridge: PrismBridge = {
   daemon: {
@@ -54,7 +54,7 @@ const bridge: PrismBridge = {
   },
   report: {
     snapshot: (title: string, detail: string) => ipcRenderer.invoke(IpcChannel.reportSnapshot, { title, detail }),
-    send: (target: 'issue' | 'bot', title: string, detail: string) => ipcRenderer.invoke(IpcChannel.reportSend, { target, title, detail }),
+    send: (target: 'issue' | 'bot', title: string, detail: string, screenshot: string | null, context?: ReportContext) => ipcRenderer.invoke(IpcChannel.reportSend, { target, title, detail, screenshot, ...(context === undefined ? {} : { context }) }),
   },
 }
 

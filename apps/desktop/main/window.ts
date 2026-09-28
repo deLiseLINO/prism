@@ -11,6 +11,8 @@ import {
   type WindowState,
 } from './window-state'
 import { installExternalNavigationGuard } from './window/navigation'
+import { installWindowLog } from './report'
+
 
 const DEFAULT_WIDTH = 1200
 const DEFAULT_HEIGHT = 800
@@ -156,6 +158,7 @@ export function createMainWindow(): BrowserWindow {
     })
     void window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
   }
+  installWindowLog(window.webContents)
   installExternalNavigationGuard(window, currentOrigin)
   return window
 }

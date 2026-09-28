@@ -27,6 +27,8 @@ import type {
   VisionSidecarWrite,
   ContextWindowWrite,
 } from '@prism/contracts'
+import { noteFailedRequest } from './diagnostics'
+
 import { bridge } from './bridge'
 
 export class ApiError extends Error {
@@ -51,6 +53,15 @@ function asError(reply: ManagementReply): ApiError {
   return new ApiError(reply.status, 'unknown', message)
 }
 
+function errorCode(reply: ManagementReply): string {
+  if (typeof reply.body === 'object' && reply.body !== null && 'error' in reply.body) {
+    const body = reply.body as { error?: { code?: string } }
+    return body.error?.code ?? 'unknown'
+  }
+  return 'unknown'
+}
+
+
 function unwrap<T>(reply: ManagementReply, expected = 200): T {
   if (reply.ok && reply.status === expected) {
     return reply.body as T
@@ -71,6 +82,7 @@ async function call<T>(
     ...(body === undefined ? {} : { body }),
     ...(host !== 'local' ? { host } : {}),
   })
+  if (!reply.ok || reply.status !== expectedStatus) noteFailedRequest({ method, path, status: reply.status, code: errorCode(reply) })
   return unwrap<T>(reply, expectedStatus)
 }
 
@@ -212,14 +224,11 @@ export const api = {
   },
 }
 
-
 async function localCall<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, expectedStatus = 200): Promise<T> {
   const reply = await window.prism.management.call({ method, path, ...(body === undefined ? {} : { body }) })
+  if (!reply.ok || reply.status !== expectedStatus) noteFailedRequest({ method, path, status: reply.status, code: errorCode(reply) })
   return unwrap<T>(reply, expectedStatus)
 }
-
-
-
 
 // DTOs the renderer ships to the daemon. Mirrors internal/management/schema.go shapes.
 // Optional `| null` variants are deliberate: the daemon treats a JSON null exactly like an
