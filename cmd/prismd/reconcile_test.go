@@ -184,3 +184,44 @@ func TestLoginWithoutProviderCardCanPersist(t *testing.T) {
 		t.Fatalf("persisted account: %+v", acct)
 	}
 }
+
+func TestStoredAccountSeedsMissingLoginProvider(t *testing.T) {
+	env, mgr := testEnv(t, config.Document{Version: config.SchemaVersion})
+	env.noteStoredAccount("cline")
+	got, ok := mgr.Get().Config.Providers["cline"]
+	if !ok {
+		t.Fatal("cline card missing after stored account")
+	}
+	if got.Wire != config.WireCline || got.BaseURL != "https://api.cline.bot" {
+		t.Fatalf("cline card: %+v", got)
+	}
+	if _, ok := env.registry.Lookup("cline"); !ok {
+		t.Fatal("cline runner not registered")
+	}
+	env.noteStoredAccount("cline")
+	if len(mgr.Get().Config.Providers) != 1 {
+		t.Fatalf("second account wrote another card: %+v", mgr.Get().Config.Providers)
+	}
+}
+
+func TestStoredAccountLeavesExistingLoginProvider(t *testing.T) {
+	env, mgr := testEnv(t, config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"codex": {Wire: config.WireCodex, DefaultModel: "gpt-5.3"},
+		},
+	})
+	env.noteStoredAccount("codex")
+	got := mgr.Get().Config.Providers["codex"]
+	if got.DefaultModel != "gpt-5.3" || got.Wire != config.WireCodex {
+		t.Fatalf("existing card rewritten: %+v", got)
+	}
+}
+
+func TestStoredAccountIgnoresCustomProvider(t *testing.T) {
+	env, mgr := testEnv(t, config.Document{Version: config.SchemaVersion})
+	env.noteStoredAccount("edge")
+	if len(mgr.Get().Config.Providers) != 0 {
+		t.Fatalf("custom provider seeded: %+v", mgr.Get().Config.Providers)
+	}
+}

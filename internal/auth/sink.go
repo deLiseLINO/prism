@@ -19,13 +19,18 @@ type PoolRegistrar interface {
 // first, then the metadata row; the pool is registered by the service only
 // after both writes succeed.
 type FileSink struct {
-	file  *store.FileCredentialStore
-	repos map[account.ProviderID]*account.Repository
-	pool  PoolRegistrar
+	file     *store.FileCredentialStore
+	repos    map[account.ProviderID]*account.Repository
+	pool     PoolRegistrar
+	onStored func(account.ProviderID)
 }
 
 func NewFileSink(file *store.FileCredentialStore, repos map[account.ProviderID]*account.Repository, pool PoolRegistrar) *FileSink {
 	return &FileSink{file: file, repos: repos, pool: pool}
+}
+
+func (s *FileSink) OnStored(fn func(account.ProviderID)) {
+	s.onStored = fn
 }
 
 func AccountRowID(provider account.ProviderID, identity string) account.AccountID {
@@ -58,6 +63,9 @@ func (s *FileSink) Persist(ctx context.Context, provider account.ProviderID, cre
 	}
 	if err := repo.SetState(provider, id, account.Active); err != nil {
 		return account.Account{}, err
+	}
+	if s.onStored != nil {
+		s.onStored(provider)
 	}
 	return account.Account{
 		ID:       id,
