@@ -142,7 +142,7 @@ func TestYamlLeafPerModelAPI(t *testing.T) {
 		{ID: "router/gpt", Name: "router/gpt"},
 	}
 	got := RenderProviderLeaf("prism", NewOmpSpec(testPort, models), 2)
-	claude := "      - id: claude-router--claude\n        name: router/claude\n        api: anthropic-messages\n        input:\n"
+	claude := "      - id: router/claude\n        name: router/claude\n        api: anthropic-messages\n        input:\n"
 	gpt := "      - id: router/gpt\n        name: router/gpt\n        input:\n"
 	if !strings.Contains(got, claude) || !strings.Contains(got, gpt) {
 		t.Fatalf("per-model api misplaced:\n%s", got)

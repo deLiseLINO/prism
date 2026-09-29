@@ -130,9 +130,6 @@ func decodeRequest(raw []byte) (canon.Request, error) {
 	if wire.Model == "" {
 		return canon.Request{}, &ParseError{Reason: ReasonMissingField, Field: "model"}
 	}
-	if _, _, err := ParseModelAlias(wire.Model); err != nil {
-		return canon.Request{}, err
-	}
 	if wire.MaxTokens == nil {
 		return canon.Request{}, &ParseError{Reason: ReasonMissingField, Field: "max_tokens"}
 	}

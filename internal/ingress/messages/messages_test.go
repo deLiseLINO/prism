@@ -300,11 +300,10 @@ func TestModelAlias(t *testing.T) {
 		}
 	})
 
-	t.Run("Parse rejects non-alias model", func(t *testing.T) {
-		_, _, err := parseBody(t, `{"model":"claude-sonnet-4","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`, nil)
-		pe := parseErr(t, err)
-		if pe.Reason != ReasonInvalidField || pe.Field != "model" {
-			t.Fatalf("parse error = %#v", pe)
+	t.Run("Parse accepts provider/model", func(t *testing.T) {
+		req := mustParse(t, `{"model":"antigravity/gemini-3-pro","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`)
+		if req.Model != "antigravity/gemini-3-pro" {
+			t.Fatalf("model = %q", req.Model)
 		}
 	})
 }
