@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -97,7 +99,7 @@ func TestParseFixture(t *testing.T) {
 	if bare.ContextWindow != 256000 || bare.Image == nil || *bare.Image {
 		t.Fatalf("grok-4 = %+v, want 256000 image false", bare)
 	}
-	if got := x.Lookup("grok-4.7-preview"); got != (Facts{}) {
+	if got := x.Lookup("grok-4.7-preview"); !reflect.DeepEqual(got, Facts{}) {
 		t.Fatalf("prefix match = %+v", got)
 	}
 
@@ -143,7 +145,7 @@ func TestParseFixture(t *testing.T) {
 	if got := x.Lookup("string-window"); got.ContextWindow != 0 || got.Image == nil || !*got.Image {
 		t.Fatalf("string window = %+v", got)
 	}
-	if got := x.Lookup("missing"); got != (Facts{}) {
+	if got := x.Lookup("missing"); !reflect.DeepEqual(got, Facts{}) {
 		t.Fatalf("unknown id = %+v", got)
 	}
 }
@@ -272,7 +274,7 @@ func TestOpenMissingAndCorrupt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := missing.Lookup("grok-4.7"); got != (Facts{}) {
+	if got := missing.Lookup("grok-4.7"); !reflect.DeepEqual(got, Facts{}) {
 		t.Fatalf("missing cache = %+v", got)
 	}
 	path := filepath.Join(dir, cacheName)
@@ -283,7 +285,7 @@ func TestOpenMissingAndCorrupt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := corrupt.Lookup("grok-4.7"); got != (Facts{}) {
+	if got := corrupt.Lookup("grok-4.7"); !reflect.DeepEqual(got, Facts{}) {
 		t.Fatalf("corrupt cache = %+v", got)
 	}
 	left, err := os.ReadFile(path)
@@ -352,4 +354,78 @@ func sameFacts(a, b Facts) bool {
 		return a.Image == nil && b.Image == nil
 	}
 	return *a.Image == *b.Image
+}
+
+func effortBody(values ...string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = `"` + v + `"`
+	}
+	return `[{"type":"effort","values":[` + strings.Join(quoted, ",") + `]}]`
+}
+
+func provider(models ...string) string {
+	return `{"models":{` + strings.Join(models, ",") + `}}`
+}
+
+func effortRow(key, id string, values ...string) string {
+	return `"` + key + `":{"id":"` + id + `","reasoning_options":` + effortBody(values...) + `}`
+}
+
+func TestParseEffortsMajorityAndNormalization(t *testing.T) {
+	body := `{
+	  "a": ` + provider(effortRow("m", "glm-5.3", "high", "low", "max")) + `,
+	  "b": ` + provider(effortRow("m", "glm-5.3", "low", "high", "max")) + `,
+	  "c": ` + provider(effortRow("m", "glm-5.3", "none", "low", "medium", "high")) + `,
+	  "d": ` + provider(effortRow("m", "sol", "none", "low", "turbo", "high")) + `
+	}`
+	rows, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"low", "high", "max"}
+	if got := rows["glm-5.3"].Efforts; !reflect.DeepEqual(got, want) {
+		t.Fatalf("glm-5.3 efforts = %v, want %v", got, want)
+	}
+	if got := rows["sol"].Efforts; !reflect.DeepEqual(got, []string{"low", "high"}) {
+		t.Fatalf("none and unknown rungs must drop: %v", got)
+	}
+}
+
+func TestParseEffortsTieAndProviderSplitStayUnknown(t *testing.T) {
+	tie := `{
+	  "a": ` + provider(effortRow("m", "x", "low", "high")) + `,
+	  "b": ` + provider(effortRow("m", "x", "high", "max")) + `
+	}`
+	rows, err := Parse([]byte(tie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rows["x"]; ok {
+		t.Fatalf("tie stored %+v", rows["x"])
+	}
+
+	split := `{
+	  "split": ` + provider(effortRow("a", "x", "low", "high"), effortRow("b", "x", "high", "max")) + `,
+	  "one": ` + provider(effortRow("m", "x", "low", "high")) + `,
+	  "two": ` + provider(effortRow("m", "x", "low", "high")) + `
+	}`
+	rows, err = Parse([]byte(split))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows["x"].Efforts; !reflect.DeepEqual(got, []string{"low", "high"}) {
+		t.Fatalf("split provider must abstain, got %v", got)
+	}
+}
+
+func TestParseEffortsIgnoresBoolReasoningAndMissingOptions(t *testing.T) {
+	body := `{"a": ` + provider(`"m":{"id":"y","reasoning":true,"limit":{"context":1000}}`) + `}`
+	rows, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows["y"]; len(got.Efforts) != 0 || got.ContextWindow != 1000 {
+		t.Fatalf("y = %+v", got)
+	}
 }
