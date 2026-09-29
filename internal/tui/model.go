@@ -444,7 +444,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.Integrations = msg.Integrations
-		m.IntegrationsCursor = 0
+		if m.IntegrationsCursor >= len(m.Integrations) {
+			m.IntegrationsCursor = 0
+		}
 		m.Loading = false
 		m.Err = nil
 		return m, nil
