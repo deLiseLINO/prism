@@ -1,5 +1,5 @@
 import { app, BrowserWindow, nativeImage } from 'electron'
-import { accessSync, constants, readFileSync } from 'node:fs'
+import { accessSync, appendFileSync, constants, readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { DAEMON_HOST, IpcChannel } from '@prism/contracts'
 import type { HostView } from '@prism/contracts'
@@ -38,12 +38,13 @@ async function bootstrap(): Promise<void> {
   if (process.platform !== 'darwin') app.commandLine.appendSwitch('icon', iconPath)
   let mainWindow: BrowserWindow | null = null
   let quitting = false
+  const daemonLogPath = join(app.getPath('userData'), 'prismd.log')
   const endpoint = `http://${DAEMON_HOST}:${config.port}`
   const supervisor = new DaemonSupervisor(endpoint, {
     port: config.port,
     daemonConfigPath: config.daemonConfigPath,
     webuiDir: config.webuiDir,
-    logPath: join(app.getPath('userData'), 'prismd.log'),
+    logPath: daemonLogPath,
     healthTimeoutMs: HEALTH_TIMEOUT_MS,
     healthIntervalMs: HEALTH_INTERVAL_MS,
     healthProbeTimeoutMs: HEALTH_PROBE_TIMEOUT_MS,
@@ -73,6 +74,13 @@ async function bootstrap(): Promise<void> {
         (process.platform !== 'linux' || canUpdateAppImage()) ? require('electron-updater').autoUpdater : null,
       quitApp: () => app.quit(),
       canInstall: process.platform === 'linux' ? canUpdateAppImage : undefined,
+      log: (line) => {
+        try {
+          appendFileSync(daemonLogPath, `${new Date().toISOString()} updater: ${line}\n`)
+        } catch (error) {
+          console.error('prism: cannot write updater log', error)
+        }
+      },
     },
   )
 

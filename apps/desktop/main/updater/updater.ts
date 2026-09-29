@@ -11,6 +11,7 @@ export interface UpdaterDependencies {
   readonly autoUpdater: AppUpdater | null
   readonly quitApp: () => void
   readonly canInstall?: () => boolean
+  readonly log: (line: string) => void
 }
 
 const QUIT_AND_INSTALL_ERROR = 'prism: no downloaded update to install'
@@ -22,6 +23,7 @@ export class UpdaterService {
   private readonly autoUpdater: AppUpdater | null
   private quit: () => void
   private readonly canInstall?: () => boolean
+  private readonly log: (line: string) => void
   private readonly policy: UpdatePolicy
   private followingRc: boolean
 
@@ -32,6 +34,7 @@ export class UpdaterService {
     this.autoUpdater = deps.autoUpdater
     this.quit = deps.quitApp
     this.canInstall = deps.canInstall
+    this.log = deps.log
     this.model = initialModel(options.currentVersion)
     this.policy = options.policy ?? DEFAULT_UPDATE_POLICY
     this.followingRc = /-rc\.[0-9]+$/.test(this.options.currentVersion)
@@ -104,14 +107,14 @@ export class UpdaterService {
     if (this.autoUpdater === null) return
     if (this.canInstall && !this.canInstall()) {
       const error = 'prism: update directory is not writable'
-      console.error(error)
+      this.log(`install failed: ${error}`)
       this.dispatch({ type: 'install-failure', error })
       return
     }
     try {
       this.autoUpdater.quitAndInstall(false, true)
     } catch (error) {
-      console.error('prism: updater quitAndInstall failed, falling back to app.quit()', error)
+      this.log(`install failed: ${String(error)}`)
       this.dispatch({ type: 'install-failure', error: String(error) })
     }
   }
@@ -151,11 +154,7 @@ export class UpdaterService {
     try {
       await this.autoUpdater.checkForUpdates()
     } catch (error) {
-      this.dispatch(
-        this.model.state === 'downloading' || this.model.state === 'available'
-          ? { type: 'download-failure', error: String(error) }
-          : { type: 'check-failure', error: String(error) },
-      )
+      this.fail(error)
     }
   }
 
@@ -184,18 +183,21 @@ export class UpdaterService {
       const version = typeof info?.version === 'string' ? info.version : this.model.availableVersion ?? this.model.currentVersion
       this.dispatch({ type: 'download-complete', version })
     })
-    autoUpdater.on('error', (error: Error) => {
-      this.dispatch(
-        this.model.state === 'downloading' || this.model.state === 'available'
-          ? { type: 'download-failure', error: String(error) }
-          : { type: 'check-failure', error: String(error) },
-      )
-    })
+    autoUpdater.on('error', (error: Error) => this.fail(error))
+  }
+
+  private fail(error: unknown): void {
+    const stage = this.model.state === 'downloading' || this.model.state === 'available' ? 'download' : 'check'
+    this.log(`${stage} failed (version ${this.options.currentVersion}, channel ${this.autoUpdater?.channel}): ${String(error)}`)
+    this.dispatch(
+      stage === 'download'
+        ? { type: 'download-failure', error: String(error) }
+        : { type: 'check-failure', error: String(error) },
+    )
   }
 
   private emit(): void {
     const status = this.status
     for (const listener of [...this.listeners]) listener(status)
   }
-
 }
