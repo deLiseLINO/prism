@@ -8,42 +8,6 @@ import (
 	"prism/internal/management"
 )
 
-func TestActionMenuSectionsIncludePauseResume(t *testing.T) {
-	m := testModel(nil, management.Account{ID: "acc-1", State: "active"})
-	items := m.actionMenuItems()
-
-	foundPause := false
-	for _, item := range items {
-		if item.ID == actionMenuPause {
-			foundPause = true
-		}
-		if item.ID == actionMenuResume {
-			t.Fatal("active account offered resume")
-		}
-	}
-	if !foundPause {
-		t.Fatal("active account missing pause")
-	}
-}
-
-func TestActionMenuSectionsPausedAccount(t *testing.T) {
-	m := testModel(nil, management.Account{ID: "acc-1", State: "paused"})
-	items := m.actionMenuItems()
-
-	foundResume := false
-	for _, item := range items {
-		if item.ID == actionMenuResume {
-			foundResume = true
-		}
-		if item.ID == actionMenuPause {
-			t.Fatal("paused account offered pause")
-		}
-	}
-	if !foundResume {
-		t.Fatal("paused account missing resume")
-	}
-}
-
 func TestActionMenuNavigation(t *testing.T) {
 	m := testModel(nil, management.Account{ID: "acc-1"})
 	m.openActionMenu()
@@ -106,7 +70,7 @@ func TestPinFlowConfirmsAndWritesProvider(t *testing.T) {
 	m := testModel(client, management.Account{ID: "codex:default", Provider: "codex", State: "active"})
 	m.ProviderFilter = "codex"
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	updated := next.(Model)
 	if !updated.PinConfirm {
 		t.Fatal("pin hotkey did not open confirm")
@@ -153,7 +117,7 @@ func TestPinFlowConfirmsAndWritesProvider(t *testing.T) {
 func TestPinFlowOpensForAntigravityAccount(t *testing.T) {
 	m := testModel(nil, management.Account{ID: "ag:default", Provider: "antigravity", State: "active"})
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	updated := next.(Model)
 	if !updated.PinConfirm {
 		t.Fatal("antigravity account did not open pin confirm")

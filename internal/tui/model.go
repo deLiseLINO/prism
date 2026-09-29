@@ -176,7 +176,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case ",":
 			m.openSettingsOverlay()
 			return m, nil
-		case "s":
+		case "o":
 			return m.beginPinHotkey()
 		case "enter":
 			if m.Err != nil {
@@ -227,10 +227,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.beginAddAccount()
 		case "P":
 			return m.beginProviderSwitch()
-		case "o":
+		case "I":
 			return m.beginIntegrationsFlow()
-		case "p":
-			return m.beginPauseResumeHotkey()
 		case "right", "l", "down", "j":
 			if len(m.Accounts) > 1 {
 				if m.CompactMode {

@@ -139,37 +139,6 @@ func reloadAccountsNoticeCmd(client Client, notice string) tea.Cmd {
 	}
 }
 
-func PauseAccountCmd(client Client, accountKey string, version uint64) tea.Cmd {
-	if client == nil {
-		return nil
-	}
-	return mutateAccountCmd(client, accountKey, version, client.PauseAccount)
-}
-
-func ResumeAccountCmd(client Client, accountKey string, version uint64) tea.Cmd {
-	if client == nil || accountKey == "" {
-		return nil
-	}
-	return mutateAccountCmd(client, accountKey, version, client.ResumeAccount)
-}
-
-func mutateAccountCmd(client Client, accountKey string, version uint64, mutate func(context.Context, string, uint64) (management.Account, error)) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if _, err := mutate(ctx, accountKey, version); err != nil {
-			return ErrMsg{Err: fmt.Errorf("failed to update account: %w", err)}
-		}
-
-		accounts, err := client.Accounts(ctx)
-		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("failed to reload accounts: %w", err)}
-		}
-		return AccountsMsg{ActiveKey: accountKey, Accounts: accounts.Accounts, Notice: "account updated"}
-	}
-}
-
 func DeleteAccountCmd(client Client, accountKey string) tea.Cmd {
 	if client == nil || accountKey == "" {
 		return nil

@@ -150,6 +150,13 @@ func accountLabel(account management.Account) string {
 	return shortAccountID(account.ID)
 }
 
+func accountDisplayName(account management.Account) string {
+	if email := strings.TrimSpace(account.Email); email != "" {
+		return email
+	}
+	return account.ID
+}
+
 func shortAccountID(accountID string) string {
 	trimmed := strings.TrimSpace(accountID)
 	if trimmed == "" {

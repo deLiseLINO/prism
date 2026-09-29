@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -18,18 +16,14 @@ type actionMenuSection struct {
 }
 
 func (m Model) actionMenuSections() []actionMenuSection {
-	currentItems := []actionMenuItem{
-		{ID: actionMenuRefresh, Label: "Refresh quota", Shortcut: "r"},
-	}
-	if account := m.activeAccount(); account != nil && strings.ToLower(account.State) == "paused" {
-		currentItems = append(currentItems, actionMenuItem{ID: actionMenuResume, Label: "Resume account", Shortcut: "p"})
-	} else {
-		currentItems = append(currentItems, actionMenuItem{ID: actionMenuPause, Label: "Pause account", Shortcut: "p"})
-	}
 	account := m.activeAccount()
+	currentItems := make([]actionMenuItem, 0, 5)
+	if account != nil {
+		currentItems = append(currentItems, actionMenuItem{ID: actionMenuPin, Label: "Apply account", Shortcut: "o"})
+	}
+	currentItems = append(currentItems, actionMenuItem{ID: actionMenuRefresh, Label: "Refresh quota", Shortcut: "r"})
 	if account != nil {
 		currentItems = append(currentItems,
-			actionMenuItem{ID: actionMenuPin, Label: "Use account", Shortcut: "s"},
 			actionMenuItem{ID: actionMenuInfo, Label: "Account details", Shortcut: "i"},
 			actionMenuItem{ID: actionMenuDelete, Label: "Delete account", Shortcut: "x"},
 		)
@@ -45,7 +39,7 @@ func (m Model) actionMenuSections() []actionMenuSection {
 			Items: []actionMenuItem{
 				{ID: actionMenuRefreshAll, Label: "Refresh all", Shortcut: "R"},
 				{ID: actionMenuAdd, Label: "Add account", Shortcut: "n"},
-				{ID: actionMenuIntegrations, Label: "Integrations", Shortcut: "o"},
+				{ID: actionMenuIntegrations, Label: "Integrations", Shortcut: "I"},
 				{ID: actionMenuProvider, Label: "Switch provider", Shortcut: "P"},
 				{ID: actionMenuView, Label: "Switch view", Shortcut: "v"},
 				{ID: actionMenuSettings, Label: "Settings", Shortcut: ","},

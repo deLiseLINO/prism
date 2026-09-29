@@ -18,8 +18,6 @@ type Client interface {
 	Usage(ctx context.Context) (management.UsageResponse, error)
 	Accounts(ctx context.Context) (management.AccountsResponse, error)
 	AccountQuota(ctx context.Context, id string) (management.QuotaResponse, error)
-	PauseAccount(ctx context.Context, id string, version uint64) (management.Account, error)
-	ResumeAccount(ctx context.Context, id string, version uint64) (management.Account, error)
 	DeleteAccount(ctx context.Context, id string) error
 	AuthStart(ctx context.Context, provider string) (management.AuthStartResponse, error)
 	AuthStatus(ctx context.Context, provider, session string) (management.AuthStatusResponse, error)
@@ -63,26 +61,6 @@ func (c *HTTPClient) AccountQuota(ctx context.Context, id string) (management.Qu
 	var out management.QuotaResponse
 	err := c.get(ctx, "/api/v1/accounts/"+urlPathEscape(id)+"/quota", &out)
 	return out, err
-}
-
-func (c *HTTPClient) PauseAccount(ctx context.Context, id string, version uint64) (management.Account, error) {
-	return c.accountMutation(ctx, id, "/pause", version)
-}
-
-func (c *HTTPClient) ResumeAccount(ctx context.Context, id string, version uint64) (management.Account, error) {
-	return c.accountMutation(ctx, id, "/resume", version)
-}
-
-func (c *HTTPClient) accountMutation(ctx context.Context, id, action string, version uint64) (management.Account, error) {
-	var out management.Account
-	body, err := json.Marshal(management.VersionWrite{Version: version})
-	if err != nil {
-		return out, err
-	}
-	if err := c.do(ctx, http.MethodPost, "/api/v1/accounts/"+urlPathEscape(id)+action, body, &out); err != nil {
-		return out, err
-	}
-	return out, nil
 }
 
 func (c *HTTPClient) DeleteAccount(ctx context.Context, id string) error {
