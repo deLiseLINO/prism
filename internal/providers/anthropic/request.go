@@ -257,10 +257,7 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 				appendBlock(role, b)
 			}
 		case canon.ReasoningItem:
-			signature, ok := r.replaySignature(v)
-			if !ok {
-				return nil, nil, fmt.Errorf("anthropic: thinking item %q has no signature for replay", v.ID)
-			}
+			signature := r.replaySignature(v)
 			if env, isEnv := reasonenv.Decode(signature); isEnv && len(env.Red) > 0 {
 				for _, data := range env.Red {
 					appendBlock("assistant", wireBlock{Type: "redacted_thinking", Data: data})
@@ -293,16 +290,13 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 	return messages, system, nil
 }
 
-func (r *Runner) replaySignature(item canon.ReasoningItem) (string, bool) {
+func (r *Runner) replaySignature(item canon.ReasoningItem) string {
 	if !item.State.IsEmpty() && item.State.Store == stateStoreName {
 		if blob, ok := r.state.get(item.State.Key); ok {
-			return string(blob), true
+			return string(blob)
 		}
 	}
-	if item.Signature != "" {
-		return item.Signature, true
-	}
-	return "", false
+	return item.Signature
 }
 
 func toolsFrom(tools []canon.Tool) ([]wireTool, error) {
