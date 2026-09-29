@@ -115,6 +115,8 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		ctx, cancel = context.WithTimeout(ctx, req.Target.Timeout)
 		defer cancel()
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, up.URL, bytes.NewReader(up.Body))
 	if err != nil {
 		return runError(provider.TerminalOmitted, provider.ClassInvalidRequest, false, false, 0, err)
@@ -138,7 +140,7 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		return openaierr.HTTPError(resp, "customchat")
 	}
 	if req.Request.Stream {
-		return r.runStream(resp.Body, sink)
+		return r.runStream(provider.IdleBody(resp.Body, provider.StreamIdleTimeout, cancel), sink)
 	}
 	return r.runAggregate(resp.Body, sink)
 }
