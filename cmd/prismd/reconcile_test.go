@@ -34,6 +34,7 @@ func testEnv(t *testing.T, doc config.Document) (*daemonEnv, *config.Manager) {
 		provider.NewRegistry(),
 		credentialStore{file: store.NewFileCredentialStore(filepath.Join(dir, "credentials"))},
 		http.DefaultClient,
+		http.DefaultClient,
 	)
 	return env, mgr
 }

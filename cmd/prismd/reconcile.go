@@ -41,6 +41,7 @@ type daemonEnv struct {
 	registry       *provider.Registry
 	creds          credentialStore
 	client         *http.Client
+	streamClient   *http.Client
 	repos          map[account.ProviderID]*account.Repository
 	flows          map[account.ProviderID]auth.Flow
 	refresher      *auth.Refresher
@@ -50,7 +51,7 @@ type daemonEnv struct {
 	now            func() time.Time
 }
 
-func newDaemonEnv(credentialPath string, cfg *config.Manager, pool auth.PoolRegistrar, quotas *quotaTable, registry *provider.Registry, creds credentialStore, client *http.Client) *daemonEnv {
+func newDaemonEnv(credentialPath string, cfg *config.Manager, pool auth.PoolRegistrar, quotas *quotaTable, registry *provider.Registry, creds credentialStore, client, streamClient *http.Client) *daemonEnv {
 	return &daemonEnv{
 		credentialPath: credentialPath,
 		cfg:            cfg,
@@ -59,6 +60,7 @@ func newDaemonEnv(credentialPath string, cfg *config.Manager, pool auth.PoolRegi
 		registry:       registry,
 		creds:          creds,
 		client:         client,
+		streamClient:   streamClient,
 		repos:          map[account.ProviderID]*account.Repository{},
 		flows:          map[account.ProviderID]auth.Flow{},
 		wires:          map[account.ProviderID]config.Wire{},
@@ -191,18 +193,18 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 	case config.WireCodex:
 		return &codex.Runner{
 			Creds:       codexCreds{ref: e.refresher},
-			Client:      e.client,
+			Client:      e.streamClient,
 			Now:         time.Now,
 			QuotaSink:   e.quotas.record,
 			WarningSink: func(w string) { log.Printf("prismd: codex %s warning: %s", id, w) },
 		}, nil
 	case config.WireAntigravity:
-		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.client, p.BaseURL)
+		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.streamClient, p.BaseURL)
 	case config.WireOpenAIResponses, config.WireOpenAIChat, config.WireAnthropicMessages:
 		return wireDispatcher{
 			responses: customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}),
 			chat:      customchat.New(customKey{e.creds}.Resolve, customchat.Options{}),
-			messages:  anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.client}), creds: e.creds, provider: providerID},
+			messages:  anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.streamClient}), creds: e.creds, provider: providerID},
 		}, nil
 	case config.WireCline:
 		return clineRunner(e, p), nil

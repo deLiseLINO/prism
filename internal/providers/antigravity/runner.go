@@ -157,6 +157,7 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 			}
 		}
 		if resp.StatusCode == http.StatusOK {
+			resp.Body = provider.IdleBody(resp.Body, provider.StreamIdleTimeout, cancel)
 			result := r.stream(resp, sink)
 			cancel()
 			return result
