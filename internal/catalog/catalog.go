@@ -304,7 +304,7 @@ func parseModel(key string, raw json.RawMessage) (parsedModel, bool) {
 	}}, true
 }
 
-var effortRungs = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+var effortRungs = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
 func effortVote(raw json.RawMessage) []string {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -324,9 +324,6 @@ func effortVote(raw json.RawMessage) []string {
 		var out []string
 		for _, rung := range effortRungs {
 			for _, value := range option.Values {
-				if value == "none" {
-					value = "off"
-				}
 				if value == rung {
 					out = append(out, rung)
 					break

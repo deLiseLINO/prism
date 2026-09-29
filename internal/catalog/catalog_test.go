@@ -387,8 +387,8 @@ func TestParseEffortsMajorityAndNormalization(t *testing.T) {
 	if got := rows["glm-5.3"].Efforts; !reflect.DeepEqual(got, want) {
 		t.Fatalf("glm-5.3 efforts = %v, want %v", got, want)
 	}
-	if got := rows["sol"].Efforts; !reflect.DeepEqual(got, []string{"off", "low", "high"}) {
-		t.Fatalf("none must become off and unknown rungs drop: %v", got)
+	if got := rows["sol"].Efforts; !reflect.DeepEqual(got, []string{"low", "high"}) {
+		t.Fatalf("none and unknown rungs must drop: %v", got)
 	}
 }
 
