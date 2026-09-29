@@ -246,7 +246,7 @@ func (m Model) renderActionMenuModal() string {
 				cursor = ">"
 				style = ActionMenuSelectedStyle
 			}
-			line := fmt.Sprintf("%s %d. %-*s %s", cursor, index+1, labelWidth, item.Label, item.Shortcut)
+			line := fmt.Sprintf("%s %2d. %-*s %s", cursor, index+1, labelWidth, item.Label, item.Shortcut)
 			lines = append(lines, style.Render(line))
 			index++
 		}
