@@ -331,3 +331,35 @@ func readAll(t *testing.T, r *http.Request) []byte {
 	}
 	return buf.Bytes()
 }
+
+func TestUnsignedReasoningIsForwardedUpstream(t *testing.T) {
+	var reached bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		body := decodeBody(t, readAll(t, r))
+		messages, _ := body["messages"].([]any)
+		assistant, _ := messages[1].(map[string]any)
+		blocks, _ := assistant["content"].([]any)
+		block, _ := blocks[0].(map[string]any)
+		if _, has := block["signature"]; has {
+			t.Errorf("signature must be omitted, got %v", block["signature"])
+		}
+		w.Write([]byte(sse(
+			ssePart("message_start", `{"type":"message_start","message":{}}`),
+			ssePart("message_stop", `{"type":"message_stop"}`),
+		)))
+	}))
+	defer server.Close()
+	request := baseRequest()
+	request.Input = append(request.Input, canon.ReasoningItem{Content: "foreign reasoning"})
+	err := New(Options{}).Run(t.Context(), provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+	}, &collectingSink{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !reached {
+		t.Fatal("request did not reach upstream")
+	}
+}
