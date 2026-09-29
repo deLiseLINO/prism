@@ -233,6 +233,27 @@ func (d Document) ResolveImageSource(providerID, model string) ImageSource {
 	return ImageSource{Image: on, Source: src}
 }
 
+type EffortsSource struct {
+	Efforts []string
+	Source  string
+}
+
+func (d Document) ResolveReasoningEfforts(providerID, model string) []string {
+	return d.ResolveEffortsSource(providerID, model).Efforts
+}
+
+func (d Document) ResolveEffortsSource(providerID, model string) EffortsSource {
+	if p, ok := d.Providers[providerID]; ok {
+		if s, ok := p.ModelSettings[model]; ok && len(s.ReasoningEfforts) > 0 {
+			return EffortsSource{Efforts: slices.Clone(s.ReasoningEfforts), Source: "manual"}
+		}
+	}
+	if efforts := d.catalogFacts(model).Efforts; len(efforts) > 0 {
+		return EffortsSource{Efforts: efforts, Source: "catalog"}
+	}
+	return EffortsSource{Source: "none"}
+}
+
 type PoolSettings struct {
 	PinnedAccount string `json:"pinnedAccount,omitempty"`
 	AccountsPath  string `json:"accountsPath,omitempty"`

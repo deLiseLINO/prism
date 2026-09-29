@@ -329,14 +329,14 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 				if slices.Contains(p.DisabledModels, model) {
 					continue
 				}
-				settings := p.ModelSettings[model]
+				efforts := snap.Config.ResolveReasoningEfforts(id, model)
 				entry := integrations.Model{
 					ID:                     id + "/" + model,
 					Name:                   id + "/" + model,
 					ContextWindow:          snap.Config.ResolveContextWindow(id, model),
 					ImageInput:             snap.Config.ResolveImageInput(id, model),
-					ReasoningEfforts:       settings.ReasoningEfforts,
-					DefaultReasoningEffort: defaultReasoningEffort(settings.ReasoningEfforts),
+					ReasoningEfforts:       efforts,
+					DefaultReasoningEffort: defaultReasoningEffort(efforts),
 				}
 				if snap.Config.ResolveWire(id, model) == config.WireAnthropicMessages {
 					entry.API = "anthropic-messages"

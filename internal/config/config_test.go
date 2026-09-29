@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -619,5 +620,26 @@ func TestValidateModelWireOverride(t *testing.T) {
 		if c.want != nil && !errors.Is(err, c.want) {
 			t.Fatalf("%s: err = %v, want %v", c.name, err, c.want)
 		}
+	}
+}
+
+func TestManualEffortsBeatCatalog(t *testing.T) {
+	doc := Document{Providers: map[string]Provider{
+		"p": {Models: []string{"a", "b"}, ModelSettings: map[string]ModelSettings{
+			"a": {ReasoningEfforts: []string{"low", "medium"}},
+		}},
+	}}
+	doc.setCatalog(staticCatalog{
+		"a": {Efforts: []string{"low", "high", "max"}},
+		"b": {Efforts: []string{"low", "high", "max"}},
+	})
+	if got := doc.ResolveEffortsSource("p", "a"); got.Source != "manual" || !slices.Equal(got.Efforts, []string{"low", "medium"}) {
+		t.Fatalf("manual = %+v", got)
+	}
+	if got := doc.ResolveEffortsSource("p", "b"); got.Source != "catalog" || !slices.Equal(got.Efforts, []string{"low", "high", "max"}) {
+		t.Fatalf("catalog = %+v", got)
+	}
+	if got := doc.ResolveEffortsSource("p", "c"); got.Source != "none" || got.Efforts != nil {
+		t.Fatalf("unknown = %+v", got)
 	}
 }

@@ -68,12 +68,14 @@ type Provider struct {
 }
 
 type ResolvedFacts struct {
-	ContextWindow int    `json:"contextWindow"`
-	ContextSource string `json:"contextSource"`
-	Image         bool   `json:"image"`
-	ImageSource   string `json:"imageSource"`
-	Wire          string `json:"wire,omitempty"`
-	WireSource    string `json:"wireSource,omitempty"`
+	ContextWindow int      `json:"contextWindow"`
+	ContextSource string   `json:"contextSource"`
+	Image         bool     `json:"image"`
+	ImageSource   string   `json:"imageSource"`
+	Efforts       []string `json:"efforts,omitempty"`
+	EffortsSource string   `json:"effortsSource"`
+	Wire          string   `json:"wire,omitempty"`
+	WireSource    string   `json:"wireSource,omitempty"`
 }
 
 type ListedModel struct {
