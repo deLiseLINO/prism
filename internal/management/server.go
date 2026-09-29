@@ -578,11 +578,14 @@ func resolvedFacts(doc config.Document, id string, p config.Provider) map[string
 	for _, model := range p.Models {
 		ctx := doc.ResolveContextSource(id, model)
 		img := doc.ResolveImageSource(id, model)
+		eff := doc.ResolveEffortsSource(id, model)
 		out[model] = ResolvedFacts{
 			ContextWindow: ctx.Window,
 			ContextSource: ctx.Source,
 			Image:         img.Image,
 			ImageSource:   img.Source,
+			Efforts:       eff.Efforts,
+			EffortsSource: eff.Source,
 		}
 	}
 	return out
