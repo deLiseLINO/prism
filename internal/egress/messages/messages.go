@@ -27,10 +27,11 @@ type Egress interface {
 	Frame(ev canon.Event) error
 	Lifecycle() routing.ResponseLifecycle
 	Flush() error
+	Close()
 }
 
 func New(w io.Writer, stream bool) Egress {
-	return &streamEncoder{w: w, streaming: stream, blocks: map[canon.ItemID]*openBlock{}}
+	return &streamEncoder{w: w, streaming: stream, blocks: map[canon.ItemID]*openBlock{}, stopPing: make(chan struct{})}
 }
 
 type blockKind uint8
@@ -70,6 +71,8 @@ type streamEncoder struct {
 	writeMu   sync.Mutex
 	lastWrite time.Time
 	stopPing  chan struct{}
+	pingDone  chan struct{}
+	closeOnce sync.Once
 }
 
 func (e *streamEncoder) Begin(h ResponseHeader) error {
@@ -96,7 +99,7 @@ func (e *streamEncoder) Begin(h ResponseHeader) error {
 	}); err != nil {
 		return err
 	}
-	e.stopPing = make(chan struct{})
+	e.pingDone = make(chan struct{})
 	go e.pingLoop()
 	return nil
 }
@@ -185,9 +188,7 @@ func (e *streamEncoder) Flush() error {
 		return &FrameError{Reason: ReasonOpenBlocks, Event: "message_delta"}
 	}
 	e.flushed = true
-	if e.stopPing != nil {
-		close(e.stopPing)
-	}
+	e.Close()
 	switch t := e.terminal.(type) {
 	case canon.TurnFinished:
 		e.usage = usageWire{
@@ -361,11 +362,19 @@ func (e *streamEncoder) writeFrame(line string) {
 	e.lastWrite = time.Now()
 }
 
+func (e *streamEncoder) Close() {
+	e.closeOnce.Do(func() { close(e.stopPing) })
+	if e.pingDone != nil {
+		<-e.pingDone
+	}
+}
+
 // pingLoop keeps the client wire warm during silent upstream phases so a
 // client idle timeout can never fire while the daemon is alive. The first
 // ping waits until a real frame has been written, so a pre-stream failure
 // is delivered without noise.
 func (e *streamEncoder) pingLoop() {
+	defer close(e.pingDone)
 	ticker := time.NewTicker(pingEvery)
 	defer ticker.Stop()
 	for {
