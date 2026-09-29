@@ -84,7 +84,7 @@ func (s *messagesSink) Begin() error                         { return s.e.Begin(
 func (s *messagesSink) Frame(ev canon.Event) error           { return s.e.Frame(ev) }
 func (s *messagesSink) Flush() error                         { return s.e.Flush() }
 func (s *messagesSink) Lifecycle() routing.ResponseLifecycle { return s.e.Lifecycle() }
-func (s *messagesSink) Close()                               {}
+func (s *messagesSink) Close()                               { s.e.Close() }
 
 type pipeline struct {
 	sink            streamSink
