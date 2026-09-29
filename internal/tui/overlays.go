@@ -91,10 +91,10 @@ func (m Model) renderDeleteConfirmModal() string {
 	account := m.activeAccount()
 	accountID := "n/a"
 	if account != nil {
-		accountID = account.ID
+		accountID = accountDisplayName(*account)
 	}
 	message := fmt.Sprintf("Delete account %s?\nThis removes it from the prism pool.", accountID)
-	if account != nil && (m.PinnedAccounts[account.Provider] == accountID || m.PinnedAccounts[account.Provider] == "" && m.providerAccountCount(account.Provider) == 1) {
+	if account != nil && (m.PinnedAccounts[account.Provider] == account.ID || m.PinnedAccounts[account.Provider] == "" && m.providerAccountCount(account.Provider) == 1) {
 		message += "\nRequests will stop until another account is selected or added."
 	}
 	message += "\n[enter] Confirm   [esc] Cancel"
@@ -105,7 +105,7 @@ func (m Model) renderPinConfirmModal() string {
 	accountID := "n/a"
 	provider := m.ProviderFilter
 	if account := m.activeAccount(); account != nil {
-		accountID = account.ID
+		accountID = accountDisplayName(*account)
 		provider = account.Provider
 	}
 	message := fmt.Sprintf("Use %s for %s?\n[enter] Select   [esc] Cancel", accountID, provider)
@@ -189,8 +189,7 @@ func (m Model) renderHelpModal() string {
 		renderHelpLine("Enter", "Open account menu"),
 		renderHelpLine("r", "Refresh active account"),
 		renderHelpLine("R", "Refresh all accounts"),
-		renderHelpLine("p", "Pause or resume account"),
-		renderHelpLine("s", "Use selected account"),
+		renderHelpLine("o", "Apply account"),
 		renderHelpLine("n", "Add account"),
 		renderHelpLine("x", "Delete account"),
 		renderHelpLine("i", "Account info"),
@@ -199,7 +198,7 @@ func (m Model) renderHelpModal() string {
 		renderHelpLine(primaryMove, "Move between accounts"),
 		renderHelpLine("v / c", "Toggle view mode"),
 		renderHelpLine("P", "Switch provider"),
-		renderHelpLine("o", "Integrations"),
+		renderHelpLine("I", "Integrations"),
 		renderHelpLine("u", "Usage stats"),
 		renderHelpLine(",", "Settings"),
 		renderHelpLine("?", "Open or close this help"),
@@ -230,7 +229,7 @@ func (m Model) renderActionMenuModal() string {
 	}
 
 	if account := m.activeAccount(); account != nil {
-		lines = append(lines, InfoValueStyle.Render(truncateLabel(account.ID, 44)))
+		lines = append(lines, InfoValueStyle.Render(truncateLabel(accountDisplayName(*account), 44)))
 	}
 	lines = append(lines, "")
 
@@ -247,7 +246,7 @@ func (m Model) renderActionMenuModal() string {
 				cursor = ">"
 				style = ActionMenuSelectedStyle
 			}
-			line := fmt.Sprintf("%s %d. %-*s %s", cursor, index+1, labelWidth, item.Label, item.Shortcut)
+			line := fmt.Sprintf("%s %2d. %-*s %s", cursor, index+1, labelWidth, item.Label, item.Shortcut)
 			lines = append(lines, style.Render(line))
 			index++
 		}

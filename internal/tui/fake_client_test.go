@@ -17,10 +17,7 @@ type fakeClient struct {
 	quota    map[string]management.QuotaView
 	quotaErr map[string]error
 
-	paused   []string
-	resumed  []string
-	deleted  []string
-	versions map[string]uint64
+	deleted []string
 
 	authStart    map[string]management.AuthStartResponse
 	authStartErr map[string]error
@@ -45,7 +42,6 @@ func newFakeClient(accounts ...management.Account) *fakeClient {
 		accounts:     append([]management.Account(nil), accounts...),
 		quota:        make(map[string]management.QuotaView),
 		quotaErr:     make(map[string]error),
-		versions:     make(map[string]uint64),
 		authStart:    make(map[string]management.AuthStartResponse),
 		authStatus:   make(map[string]management.AuthStatusResponse),
 		applyResults: make(map[string]integrations.ApplyResult),
@@ -74,34 +70,6 @@ func (f *fakeClient) AccountQuota(ctx context.Context, id string) (management.Qu
 		return management.QuotaResponse{}, fmt.Errorf("no quota for %s", id)
 	}
 	return management.QuotaResponse{Account: id, Quota: quota}, nil
-}
-
-func (f *fakeClient) PauseAccount(ctx context.Context, id string, version uint64) (management.Account, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.paused = append(f.paused, id)
-	f.versions[id] = version
-	for i := range f.accounts {
-		if f.accounts[i].ID == id {
-			f.accounts[i].State = "paused"
-			return f.accounts[i], nil
-		}
-	}
-	return management.Account{}, fmt.Errorf("unknown account %s", id)
-}
-
-func (f *fakeClient) ResumeAccount(ctx context.Context, id string, version uint64) (management.Account, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.resumed = append(f.resumed, id)
-	f.versions[id] = version
-	for i := range f.accounts {
-		if f.accounts[i].ID == id {
-			f.accounts[i].State = "active"
-			return f.accounts[i], nil
-		}
-	}
-	return management.Account{}, fmt.Errorf("unknown account %s", id)
 }
 
 func (f *fakeClient) DeleteAccount(ctx context.Context, id string) error {

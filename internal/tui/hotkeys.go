@@ -117,7 +117,7 @@ func (m Model) handleIntegrationsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		m.resetIntegrationsState()
 		return m, tea.Quit
-	case "esc", "o":
+	case "esc", "I":
 		m.resetIntegrationsState()
 		return m, nil
 	case "up", "k":

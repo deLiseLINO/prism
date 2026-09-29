@@ -69,34 +69,6 @@ func TestHTTPClientEscapesAccountID(t *testing.T) {
 	}
 }
 
-func TestHTTPClientPauseAccountSendsVersion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q", r.Method)
-		}
-		if r.URL.Path != "/api/v1/accounts/acc-1/pause" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if r.Header.Get("Content-Type") != "application/json" {
-			t.Errorf("content-type = %q", r.Header.Get("Content-Type"))
-		}
-		if !strings.Contains(readBody(r), `"version":7`) {
-			t.Errorf("body = %q", readBody(r))
-		}
-		w.Write([]byte(`{"id":"acc-1","state":"paused"}`))
-	}))
-	defer server.Close()
-
-	client := NewHTTPClient(server.URL, "", nil)
-	account, err := client.PauseAccount(context.Background(), "acc-1", 7)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if account.State != "paused" {
-		t.Fatalf("state = %q", account.State)
-	}
-}
-
 func TestHTTPClientDeleteNoContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {

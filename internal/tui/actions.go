@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,8 +8,6 @@ import (
 
 const (
 	actionMenuRefresh      = "refresh"
-	actionMenuPause        = "pause"
-	actionMenuResume       = "resume"
 	actionMenuPin          = "pin"
 	actionMenuInfo         = "info"
 	actionMenuDelete       = "delete"
@@ -39,10 +36,6 @@ func (m Model) confirmActionMenu() (tea.Model, tea.Cmd) {
 	switch selected.ID {
 	case actionMenuRefresh:
 		return m.beginRefreshActive()
-	case actionMenuPause:
-		return m.beginPauseResume(clientPause)
-	case actionMenuResume:
-		return m.beginPauseResume(clientResume)
 	case actionMenuPin:
 		m.beginPinFlow()
 		return m, nil
@@ -125,47 +118,6 @@ func (m *Model) openActionMenu() {
 func (m *Model) resetActionMenuState() {
 	m.ActionMenuVisible = false
 	m.ActionMenuCursor = 0
-}
-
-type pauseResume int
-
-const (
-	clientPause pauseResume = iota
-	clientResume
-)
-
-func (m Model) beginPauseResume(action pauseResume) (tea.Model, tea.Cmd) {
-	account := m.activeAccount()
-	if account == nil {
-		return m, nil
-	}
-	accountKey := account.ID
-	version := account.Version
-
-	m.Loading = true
-	m.Err = nil
-	m.resetHelpState()
-	m.resetActionMenuState()
-	m.resetDeleteState()
-	m.resetIntegrationsState()
-	m.ShowInfo = false
-	m.Notice = ""
-
-	if action == clientPause {
-		return m, PauseAccountCmd(m.api, accountKey, version)
-	}
-	return m, ResumeAccountCmd(m.api, accountKey, version)
-}
-
-func (m Model) beginPauseResumeHotkey() (tea.Model, tea.Cmd) {
-	account := m.activeAccount()
-	if account == nil {
-		return m, nil
-	}
-	if strings.ToLower(account.State) == "paused" {
-		return m.beginPauseResume(clientResume)
-	}
-	return m.beginPauseResume(clientPause)
 }
 
 func (m Model) beginDeleteFlow() (tea.Model, tea.Cmd) {
