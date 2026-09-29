@@ -43,11 +43,12 @@ class FakeAutoUpdater extends EventEmitter implements AppUpdater {
 async function makeService(autoUpdater: FakeAutoUpdater | null, currentVersion = '1.0.0', canInstall?: () => boolean) {
   const { UpdaterService } = await import('../main/updater/updater')
   const quitApp = vi.fn()
+  const log = vi.fn()
   const service = new UpdaterService(
     { currentVersion, policy: { initialCheckDelayMs: 1000, pollIntervalMs: 5000, rcPollIntervalMs: 2000 } },
-    { autoUpdater, quitApp, canInstall },
+    { autoUpdater, quitApp, canInstall, log },
   )
-  return { service, quitApp }
+  return { service, quitApp, log }
 }
 
 function record(service: { subscribe: (listener: (status: UpdaterStatus) => void) => () => void }): UpdaterStatus[] {
@@ -211,9 +212,9 @@ describe('UpdaterService', () => {
     expect(fake.quitAndInstallSpy).toHaveBeenCalledWith(false, true)
   })
 
-  it('emitter errors while downloading map to error(download)', async () => {
+  it('emitter errors while downloading map to error(download) and are logged', async () => {
     const fake = new FakeAutoUpdater()
-    const { service } = await makeService(fake)
+    const { service, log } = await makeService(fake)
     service.start()
     await vi.advanceTimersByTimeAsync(1000)
     fake.emit('update-available', { version: '1.2.0' })
@@ -221,19 +222,21 @@ describe('UpdaterService', () => {
     expect(service.status.state).toBe('error')
     expect(service.status.errorStage).toBe('download')
     expect(service.status.canRetry).toBe(true)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('download failed (version 1.0.0, channel latest): Error: checksum failed'))
   })
 
-  it('checkForUpdates rejection maps to error(check) and the poll continues', async () => {
+  it('checkForUpdates rejection maps to error(check), is logged, and the poll continues', async () => {
     const fake = new FakeAutoUpdater()
     fake.checkForUpdates = () => {
       fake.emit('checking-for-update')
       return Promise.reject(new Error('no network'))
     }
-    const { service } = await makeService(fake)
+    const { service, log } = await makeService(fake)
     service.start()
     await vi.advanceTimersByTimeAsync(1000)
     expect(service.status.state).toBe('error')
     expect(service.status.errorStage).toBe('check')
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('check failed (version 1.0.0, channel latest): Error: no network'))
     await vi.advanceTimersByTimeAsync(5000)
     expect(service.status.state).toBe('error')
   })
