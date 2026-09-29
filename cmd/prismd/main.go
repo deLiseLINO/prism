@@ -612,7 +612,7 @@ func run(opts options) error {
 	registry := provider.NewRegistry()
 	client := &http.Client{Timeout: 30 * time.Second}
 	quotas := newQuotaTable(pool, cfg, client)
-	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client)
+	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client, &http.Client{})
 	refresher, err := auth.NewRefresher(auth.RefresherOptions{File: creds.file, Repos: env.repos, Pool: pool, Flows: env.flows})
 	if err != nil {
 		return err
