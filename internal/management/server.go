@@ -385,6 +385,11 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	if body.SyncedModels != nil {
 		next.SyncedModels = *body.SyncedModels
 	}
+	if body.Models != nil {
+		next.SyncedModels = slices.DeleteFunc(next.SyncedModels, func(model string) bool {
+			return !slices.Contains(next.Models, model)
+		})
+	}
 	if body.ModelSettings != nil {
 		next.ModelSettings = *body.ModelSettings
 	}
@@ -538,29 +543,41 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	}
 	doc := snap.Config
 	next := doc.Providers[id]
-	// The merge runs in logical id space so family members fold onto one row;
-	// a raw-mode provider converts back after the fold.
+	modelRows := func(model string, mode config.ModelMode) []string {
+		if next.Wire == config.WireAntigravity {
+			return modeRow(model, mode)
+		}
+		return []string{model}
+	}
 	merged := make([]string, 0, len(next.Models)+len(remote))
 	for _, m := range next.Models {
-		if antigravity.DeniedModel(m) {
+		if slices.Contains(next.SyncedModels, m) || antigravity.DeniedModel(m) {
 			continue
 		}
-		for _, id := range modeRow(m, config.ModelModeLogical) {
+		for _, id := range modelRows(m, config.ModelModeLogical) {
 			if !slices.Contains(merged, id) {
 				merged = append(merged, id)
 			}
 		}
 	}
 	for _, row := range remote {
-		if !slices.Contains(merged, row.ID) {
-			merged = append(merged, row.ID)
+		if antigravity.DeniedModel(row.ID) {
+			continue
+		}
+		for _, model := range modelRows(row.ID, config.ModelModeLogical) {
+			if !slices.Contains(merged, model) {
+				merged = append(merged, model)
+			}
 		}
 	}
 	slices.Sort(merged)
 	next.Models = merged
 	synced := make([]string, 0, len(remote))
 	for _, row := range remote {
-		for _, id := range modeRow(row.ID, next.ModelMode) {
+		if antigravity.DeniedModel(row.ID) {
+			continue
+		}
+		for _, id := range modelRows(row.ID, next.ModelMode) {
 			if !slices.Contains(synced, id) {
 				synced = append(synced, id)
 			}
@@ -575,6 +592,31 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		next = switchModelMode(doc.Providers[id], config.ModelModeRaw)
 		doc.Providers[id] = next
 	}
+	next = doc.Providers[id]
+	next.DisabledModels = slices.DeleteFunc(next.DisabledModels, func(model string) bool {
+		return !slices.Contains(next.Models, model)
+	})
+	removed := make(map[string]bool)
+	for _, model := range p.Models {
+		if !slices.Contains(next.Models, model) {
+			removed[model] = true
+			delete(next.ModelSettings, model)
+			for _, logical := range modelRows(model, config.ModelModeLogical) {
+				for _, projected := range modelRows(logical, next.ModelMode) {
+					if !slices.Contains(next.Models, projected) {
+						delete(next.ModelSettings, projected)
+					}
+				}
+			}
+		}
+	}
+	if removed[next.DefaultModel] {
+		next.DefaultModel = ""
+	}
+	doc.Providers[id] = next
+	if len(removed) > 0 {
+		dropRemovedModelTargets(&doc, id, removed)
+	}
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
 		writeConfigError(w, err)
@@ -586,6 +628,38 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+}
+
+func dropRemovedModelTargets(doc *config.Document, providerID string, removed map[string]bool) {
+	targets := make(map[string]bool, len(removed))
+	for model := range removed {
+		targets[providerID+"/"+model] = true
+	}
+	for id, combo := range doc.Combos {
+		kept := slices.DeleteFunc(combo.Targets, func(target config.Target) bool {
+			return target.Provider == providerID && removed[target.Model]
+		})
+		if len(kept) == len(combo.Targets) {
+			continue
+		}
+		if len(kept) == 0 {
+			delete(doc.Combos, id)
+			targets[id] = true
+		} else {
+			combo.Targets = kept
+			doc.Combos[id] = combo
+		}
+	}
+	for _, references := range []map[string]string{doc.Routes, doc.Aliases} {
+		for key, target := range references {
+			if _, survives := doc.Combos[target]; !survives && targets[target] {
+				delete(references, key)
+			}
+		}
+	}
+	if _, survives := doc.Combos[doc.VisionSidecar.Target]; !survives && targets[doc.VisionSidecar.Target] {
+		doc.VisionSidecar = config.VisionSidecarSettings{}
+	}
 }
 
 func resolvedImages(doc config.Document, id string, p config.Provider) map[string]bool {
