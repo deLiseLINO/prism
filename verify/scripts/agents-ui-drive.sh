@@ -81,6 +81,7 @@ echo "==> launching isolated Electron with sandbox PATH"
 SANDBOX_PATH="$RUNDIR/sandbox/tools:$RUNDIR/sandbox/home/.local/bin:/usr/bin:/bin"
 PRISMD_PATH="$RUNDIR/prismd" \
 PRISM_PORT="$PORT" \
+PRISM_AGENT_ACTIONS=1 \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS=1 \
 PATH="$SANDBOX_PATH" \
@@ -107,6 +108,30 @@ cdp_eval() {
   node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1"
 }
 
+echo "==> enabling Other agents and Agent install and update through the real UI"
+cdp_eval "await (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const nav = [...document.querySelectorAll('nav button')].find((node) => node.textContent.includes('Experimental'))
+  if (!nav) throw new Error('Experimental navigation button not found')
+  nav.click()
+  for (let i = 0; i < 40; i++) {
+    if (document.querySelector('main h1')?.textContent.trim() === 'Experimental') break
+    await sleep(100)
+  }
+  for (const label of ['Other agents', 'Agent install and update']) {
+    let input = null
+    for (let i = 0; i < 40 && !input; i++) {
+      input = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes(label))?.querySelector('input')
+      if (!input) await sleep(100)
+    }
+    if (!input) throw new Error(label + ' toggle not found')
+    if (!input.checked) input.click()
+    await sleep(200)
+    if (!input.checked) throw new Error(label + ' did not switch on')
+  }
+  return {enabled: true}
+})()" > "$EVID_WORK/experimental-flags.json" || fail "could not enable experimental flags through UI"
+
 echo "==> opening Integrations through the real UI"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -114,10 +139,10 @@ cdp_eval "await (async () => {
   if (!button) throw new Error('Integrations navigation button not found')
   button.click()
   for (let i = 0; i < 40; i++) {
-    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-row-wrap').length >= 8) break
+    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-row-wrap').length >= 7) break
     await sleep(100)
   }
-  if (document.querySelectorAll('.int-row-wrap').length < 8) throw new Error('integrations rows did not render')
+  if (document.querySelectorAll('.int-row-wrap').length < 7) throw new Error('integrations rows did not render')
   const cell = [...document.querySelectorAll('.int-install')][0]
   if (!cell) throw new Error('install cell missing from rows')
   return {cells: document.querySelectorAll('.int-install').length, first: cell.innerText}

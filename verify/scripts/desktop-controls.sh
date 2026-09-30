@@ -225,6 +225,22 @@ cdp_eval "await (async () => {
 })()" > "$EVID_WORK/provider-delete.json"
 
 echo "==> integrations Rollback through the real UI"
+cdp_eval "await (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const button = [...document.querySelectorAll('nav button')].find((node) => node.textContent.includes('Experimental'))
+  if (!button) throw new Error('Experimental navigation button not found')
+  button.click()
+  for (let i = 0; i < 40; i++) {
+    const input = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes('Other agents'))?.querySelector('input')
+    if (input) {
+      if (!input.checked) input.click()
+      return input.checked
+    }
+    await sleep(100)
+  }
+  throw new Error('Other agents toggle not found')
+})()" > "$EVID_WORK/experimental-agents.json"
+
 goto_view "Integrations"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))

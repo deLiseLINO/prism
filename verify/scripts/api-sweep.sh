@@ -158,6 +158,20 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 assert d.get("input_tokens", 0) > 0, d
 PYEOF
+record count-tokens-plain-id 200 -X POST -H 'Content-Type: application/json' \
+  -d '{"model":"codex/gpt-5.6-luna","max_tokens":16,"messages":[{"role":"user","content":[{"type":"text","text":"count me please"}]}]}' \
+  "$BASE/v1/messages/count_tokens"
+"$PY3" - "$EVID_WORK/count-tokens-plain-id.body" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d.get("input_tokens", 0) > 0, d
+PYEOF
+record count-tokens-plain-id-no-route 404 -X POST -H 'Content-Type: application/json' \
+  -d '{"model":"no-such/model","max_tokens":16,"messages":[{"role":"user","content":[{"type":"text","text":"count me please"}]}]}' \
+  "$BASE/v1/messages/count_tokens"
+record messages-plain-id-no-route 404 -X POST -H 'Content-Type: application/json' \
+  -d '{"model":"no-such/model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}' \
+  "$BASE/v1/messages"
 record count-tokens-no-route 404 -X POST -H 'Content-Type: application/json' \
   -d '{"model":"claude-none--no-such","max_tokens":16,"messages":[{"role":"user","content":[{"type":"text","text":"count me please"}]}]}' \
   "$BASE/v1/messages/count_tokens"

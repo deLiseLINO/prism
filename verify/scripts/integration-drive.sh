@@ -41,6 +41,7 @@ cleanup() {
     kill -TERM "$DAEMON_PID" 2>/dev/null
   fi
   [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
+  [ -f "$RUNDIR/electron/prismd.log" ] && cp "$RUNDIR/electron/prismd.log" "$EVID_WORK/prismd.log"
   [ -f "$RUNDIR/build.log" ] && cp "$RUNDIR/build.log" "$EVID_WORK/build.log"
   [ -f "$RUNDIR/.grok/config.toml" ] && cp "$RUNDIR/.grok/config.toml" "$EVID_WORK/grok-config-at-exit.toml"
   [ -f "$RUNDIR/.claude/settings.json" ] && cp "$RUNDIR/.claude/settings.json" "$EVID_WORK/claude-settings-at-exit.json"
@@ -488,18 +489,19 @@ GROK_BEGIN='# >>> prism managed block (grok) — do not edit (removed by prism r
 cp "$RUNDIR/.grok/config.toml" "$RUNDIR/grok-config-before-damage.toml"
 printf '%s\n' "$GROK_BEGIN" >> "$RUNDIR/.grok/config.toml"
 cp "$RUNDIR/.grok/config.toml" "$RUNDIR/grok-config-damaged.toml"
-LOG_LINES_BEFORE=$(wc -l < "$RUNDIR/app.log" | tr -d ' ')
+DAEMON_LOG="$RUNDIR/electron/prismd.log"
+LOG_LINES_BEFORE=$(wc -l < "$DAEMON_LOG" | tr -d ' ')
 GEN=$(curl -sf "http://127.0.0.1:$PORT/api/v1/providers" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).generation') || fail "could not read providers generation"
 curl -sf -X PUT -H 'Content-Type: application/json' \
   -d "{\"models\":[\"gpt-5.6-luna\",\"gpt-5.6-luna-probe\"],\"enabled\":true,\"expectedGeneration\":$GEN}" \
   "http://127.0.0.1:$PORT/api/v1/providers/codex?expectedGeneration=$GEN" > "$EVID_WORK/provider-codex-damage.json" || fail "provider codex damage-bump failed"
 AUTO_REFUSAL=
 for _ in $(seq 1 100); do
-  if tail -n +$((LOG_LINES_BEFORE + 1)) "$RUNDIR/app.log" 2>/dev/null | grep -q 'auto-apply grok: prism:'; then AUTO_REFUSAL=1; break; fi
+  if tail -n +$((LOG_LINES_BEFORE + 1)) "$DAEMON_LOG" 2>/dev/null | grep -q 'auto-apply grok: prism:'; then AUTO_REFUSAL=1; break; fi
   sleep 0.2
 done
 [ -n "$AUTO_REFUSAL" ] || fail "auto-apply never logged a refusal for the damaged grok fence"
-tail -n +$((LOG_LINES_BEFORE + 1)) "$RUNDIR/app.log" | grep 'auto-apply grok' > "$EVID_WORK/grok-damaged-refusal.log" || true
+tail -n +$((LOG_LINES_BEFORE + 1)) "$DAEMON_LOG" | grep 'auto-apply grok' > "$EVID_WORK/grok-damaged-refusal.log" || true
 cmp -s "$RUNDIR/grok-config-damaged.toml" "$RUNDIR/.grok/config.toml" || fail "auto-apply touched the grok config despite the damaged fence"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -553,7 +555,7 @@ done
 curl -sf "http://127.0.0.1:$PORT/api/v1/integrations" > "$EVID_WORK/integrations-after-restart.json" || fail "integrations status unreachable after restart"
 node -e 'const data = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const grok = data.integrations.find((entry) => entry.id === "grok"); if (!grok || !grok.enabled) { process.exit(1) }' "$EVID_WORK/integrations-after-restart.json" || fail "grok enabled flag lost after the daemon restart"
 cp "$RUNDIR/.grok/config.toml" "$EVID_WORK/grok-config-after-restart.toml"
-cp "$RUNDIR/app.log" "$EVID_WORK/app-log-autoapply.json" 2>/dev/null || true
+cp "$DAEMON_LOG" "$EVID_WORK/prismd-log-autoapply.log" 2>/dev/null || true
 
 echo "==> walking every renderer view through the real UI"
 for VIEW in Overview Accounts Stats Logs Providers Integrations; do
