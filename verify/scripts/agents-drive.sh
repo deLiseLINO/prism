@@ -62,7 +62,7 @@ echo "==> building prismd"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
 
 SANDBOX_PATH="$RUNDIR/sandbox/tools:$RUNDIR/sandbox/home/.local/bin"
-PATH="$SANDBOX_PATH" "$RUNDIR/prismd" --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
+PRISM_AGENT_ACTIONS=1 PATH="$SANDBOX_PATH" "$RUNDIR/prismd" --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 40); do
   curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
@@ -102,6 +102,10 @@ grep -q '"source":"script"' "$EVID_WORK/agents-list.body" || fail "sandbox binar
 record agents-get-grok 200 "$BASE/api/v1/agents/grok"
 record agents-get-unknown 404 "$BASE/api/v1/agents/frobnicate"
 
+if [ "$(uname -s)" = Darwin ]; then
+  echo "VERIFIED_UNREACHABLE: on macOS the codex install plan is brew-cask and prismd merges the login-shell PATH, so the sandbox cannot keep a real brew out of the job; run this drive on Linux (Dockerfile.ubuntu)" >&2
+  exit 3
+fi
 echo "==> install job lifecycle"
 record agents-install-codex 202 -X POST "$BASE/api/v1/agents/codex/install"
 grep -q '"command":"npm install -g @openai/codex"' "$EVID_WORK/agents-install-codex.body" || fail "install should resolve the npm plan: $(cat "$EVID_WORK/agents-install-codex.body")"

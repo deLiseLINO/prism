@@ -106,11 +106,11 @@ cdp_eval "await (async () => {
   if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
   const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Remote machines'))
   if (!card) throw new Error('remote machines flag card not rendered')
-  const toggle = card.querySelector('.toggle input[type=checkbox]')
+  const toggle = card.querySelector('input[type=checkbox]')
   if (!toggle) throw new Error('machines toggle not rendered')
   if (!toggle.checked) toggle.click()
   await sleep(200)
-  if (!card.querySelector('.toggle input[type=checkbox]').checked) throw new Error('toggle did not switch on')
+  if (!card.querySelector('input[type=checkbox]').checked) throw new Error('toggle did not switch on')
   return {enabled: true}
 })()" > "$EVID_WORK/flag-enable.json" || fail "enabling the machines flag failed"
 

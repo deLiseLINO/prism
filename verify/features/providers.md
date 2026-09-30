@@ -4,14 +4,16 @@ The Providers view is the CRUD surface for daemon providers: wires, endpoints, m
 
 ## Sub-features
 
-- List: id, wire, enabled, models, Default model, base URL. The generation stays in component state for CAS writes and is not rendered. Credential state is deliberately not rendered anywhere in the providers UI (list, detail, editor).
-- Create: `POST /api/v1/providers` with `{id, wire, ...}`; wires are `codex`, `antigravity`, `responses`, `messages`, `chat`.
+- List: a rail (`aside.prov-rail`, one `.prov-prow` per provider with id, enabled toggle, wire label, model count, disabled-count line) beside a detail pane (`.prov-detail`) for the active provider. The detail head shows id, wire label plus base URL, and an Enabled/Disabled toggle. Wire labels are `openai-completions` (chat), `openai-responses` (responses), `anthropic` (messages), `cline`; codex and antigravity show their raw name. The generation stays in component state for CAS writes and is not rendered. Credential state is deliberately not rendered anywhere in the providers UI (rail, detail, editor).
+- Create: `POST /api/v1/providers` with `{id, wire, ...}`; wires are `codex`, `antigravity`, `responses`, `messages`, `chat`, `cline`. The editor offers only the four in the wire picker (`openai-completions`, `openai-responses`, `anthropic`, `cline`).
 - Replace: `PUT /api/v1/providers/{id}` with `expectedGeneration`; absent fields preserve existing values (absent=preserve merge).
-- Delete: `DELETE /api/v1/providers/{id}?expectedGeneration=N`; also deletes the stored credential.
+- Delete: `DELETE /api/v1/providers/{id}?expectedGeneration=N` cascades in one generation write. It removes routes and aliases whose value starts with `<id>/`, drops that provider's combo targets, deletes combos left with no targets, then deletes the stored credential. Returns 200. The UI Delete button opens an inline Confirm ("Delete <id>?", confirm label `Delete`).
 - Credentials: paste-once write (`credential` in the write body, or `apiKeyRef`); reads show only masked state (`set`/`unset`) in the API; the value never round-trips and the UI never renders the state.
-- Enable/disable: a single toggle that PUTs `enabled` (and per-model toggles that edit `disabledModels`).
-- Editor form fields: ID, Wire, Base URL, Default model, Models (comma-separated), Disabled models, Credential (password), Credential reference, Enabled toggle. The credential field always shows the placeholder `paste key`; for an existing provider its hint reads `Empty keeps the current value.`
-- Search filters cards by provider id, wire, or model.
+- Enable/disable: the Enabled toggle in the detail head or the rail row PUTs `enabled`. Per-model toggles edit `disabledModels`. Detail also has Disable all and Enable all buttons (`aria-label` "Disable all models" / "Enable all models") and an `N off` count.
+- Editor (`ProviderModal`, dialog `New provider` or `Edit provider <id>`) has exactly four fields: ID (`#prov-id`, disabled when editing), Wire (segmented buttons in `role=group` "Provider wire"; hidden `select#prov-wire`; editing an unknown wire shows a badge instead), Base URL (`#prov-base`), API key (`#prov-cred`, password, placeholder `paste key`). When editing, Base URL and API key both hint `Empty keeps the current value.`. Footer buttons are Cancel and `Create provider` / `Save changes`. Create is disabled while ID is blank, or while the wire is `responses`, `messages`, or `chat` and Base URL is blank (unless the existing provider already has one). Save re-sends the existing models, disabledModels, syncedModels, pool, and modelSettings unchanged. Default models, Models, Disabled models, credential reference, and the Enabled toggle are not in the editor.
+- Adding models: the detail has an add line (`.prov-addinput`, placeholder `model id, e.g. gpt-5.3`) with Add and Configure (opens the model settings modal for a new id). Both disable when the id is blank or already listed.
+- Cline catalog: a `free`/`pass` segmented control (`role=group` "Cline catalog") appears in the detail only for cline providers.
+- Search: `#provider-search` (placeholder `Filter by id, wire, or model`) filters the rail by provider id, wire, or model.
 - Model mode switch (antigravity only): `PUT /api/v1/providers/{id}/model-mode?expectedGeneration=N` with `{"mode":"raw"|"logical"}` moves the stored `models` list between collapsed family ids and raw wire ids in one generation write. Disabled entries and per-model settings travel with their model (family state fans out onto members in raw mode, folds back onto the family id in logical mode). The catalog, routes, and agent integrations observe the new list on the next read; nothing else to re-apply. Non-antigravity wires get 400 `invalid_value`.
 - Sync: `POST /api/v1/providers/{id}/sync-models` merges remote discovery into the stored list, folding raw family members onto their logical id; a raw-mode provider re-expands after the fold. Denied service ids and `isInternal` entries never enter the list, and the merge drops them from stored lists. A successful sync replaces `discovered` from that response. A model that left the list loses its facts. A failed sync writes nothing. Manual `modelSettings` stay put. `PUT` cannot write `discovered`.
 - Catalog fallback: when a model has no manual window and no listing window, the daemon fills the window from a public catalog cache. Each catalog provider casts one vote. A provider that disagrees with itself abstains. The value with the most votes wins when that count is unique. A tie stays unknown. Listing facts and manual settings still win, including a listing that said the model is text-only. Image uses the same vote. The modal caption uses `resolvedFacts.contextSource` (`listing`, `catalog`, or `global`) and does not recompute that chain.
@@ -21,7 +23,7 @@ The Providers view is the CRUD surface for daemon providers: wires, endpoints, m
 
 ## How to get to it (user POV)
 
-Click `Providers` (`#/providers`). `New provider` opens the editor; each provider card has Edit and Delete buttons, an enabled toggle, and per-model toggles.
+Click `Providers` (`#/providers`). `New provider` opens the four-field editor. Click a rail row to select a provider; its detail pane has the Enabled toggle, model list with per-model toggles, Sync (`Refresh models from provider`), Disable all / Enable all, the add-model line, Edit, and Delete. Antigravity providers with families also show a `raw models` / `logical models` button.
 
 ## Driving it with the harness
 
@@ -32,14 +34,15 @@ bash verify/scripts/api-sweep.sh
 bash verify/scripts/model-mode-proof.sh
 ```
 
-`desktop-controls.sh` proves the current UI path for create, per-model toggle, and delete of a throwaway `ui-probe` provider through real clicks. It does not currently prove Edit, the provider enabled toggle, credentials, or search. `prismctl-proof.sh` exercises the CLI mutation ladder; `api-sweep.sh` proves POST/PUT/DELETE and a stale-generation 409; `model-mode-proof.sh` proves the logical↔raw switch round trip through the real UI button, the stored config, and the catalog.
+`desktop-controls.sh` proves the current UI path for create, per-model toggle, and delete of a throwaway `ui-probe` provider through real clicks. It does not currently prove Edit, the provider enabled toggle, credentials, cline catalog, or search. `prismctl-proof.sh` exercises the CLI mutation ladder; `api-sweep.sh` proves POST/PUT/DELETE and a stale-generation 409; `model-mode-proof.sh` proves the logical↔raw switch round trip through the real UI button, the stored config, and the catalog.
 
 Every mutation uses throwaway provider ids (`ui-probe`, `openai-proxy`), never the user's `codex`/`antigravity`, and cleans up in the same run. Never write credentials for the user's real providers during verification.
 
 ## Gotchas
 
 - Generation CAS: every write needs the current `expectedGeneration`; a stale value returns 409 `stale_generation`, not a silent overwrite. The UI surfaces a re-fetch button on that error.
-- A provider whose route still references it cannot be deleted (400 `invalid_document`) — remove the route first.
+- Deleting a provider never fails on references. It succeeds with 200 and cascades to routes, aliases, and combos (see Delete). A proof that seeds a route or combo pointing at the provider must assert those entries are gone afterward.
 - The credential field is write-only: asserting it "round-trips" is wrong by design; assert `credential.state === 'set'` after a write and `unset` after delete through the API. The UI does not render the state anywhere, so a proof must assert its absence in the DOM (no `.prov-prow-sub .badge`, no credential badge in `.prov-detail`, no `Already set` hint in the editor) rather than a rendered value.
-- The editor's Models field is comma-separated text; `splitList` trims and drops empties, so a trailing comma adds nothing. Do not assert an empty-string model failure.
-- `responses`/`chat` wires require a Base URL; the editor hint also names `messages`, but config validation and doctor flag only `responses`/`chat`.
+- Editing an existing provider from the UI keeps its model list, since the editor has no Models field. Change models through the detail pane (toggle, add, remove, Sync) or the API.
+- `responses`/`chat` wires require a Base URL in config validation, doctor, and the API (400 `invalid_value`). The editor also blocks `messages` without a Base URL, which the API allows.
+- The wire picker labels differ from wire ids (`chat` is `openai-completions`, `messages` is `anthropic`). Drive it by the label text or the hidden `select#prov-wire` value.

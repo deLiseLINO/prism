@@ -97,8 +97,8 @@ The proof never opens the authorization URL in a browser, never enters credentia
 `scripts/quota-proof.sh` copies the real `~/.prism` state into the sandbox daemon, then reads quota through both surfaces without any write:
 
 1. Snapshot `GET /api/v1/accounts` before anything else and hash it.
-2. Open `#/usage` (labeled Accounts in the nav) through the nav click, capture every rendered row (account, state, priority, quota cell, cooldown), and screenshot.
-3. For every account: match the UI quota cell against the API value. Codex and antigravity rows use the live per-account quota endpoint: `source: unknown` renders `quota unavailable`, a ready answer renders `used / limit` or `used / ?`. Rows for other wires render exactly `no quota` on a null limit. Match the Usage view's `used` figure and `source` against `GET /api/v1/usage`.
+2. Open `#/usage` (labeled Accounts in the nav) through the nav click, capture every rendered account card (name, state, per-window `% left` bars, cooldown), and screenshot. The grid shows only codex and antigravity accounts.
+3. For every card: match the UI against the API. A card without a snapshot renders `Loading…` or `Quota unavailable`; a ready answer renders one `% left` bar per window. Match each account's remaining percentage against `GET /api/v1/usage` and the per-account quota endpoint.
 4. Fetch `GET /api/v1/accounts/{id}/quota` for each account (the prismctl backing endpoint). The endpoint actively probes the provider when its stored snapshot is stale, so codex and antigravity rows show real numbers on first read.
 5. Re-snapshot accounts and fail if any account field except `quota` changed: quota reads refresh the stored quota snapshot by design; pause, resume, priority, and remove are never invoked.
 
@@ -131,7 +131,7 @@ Each helper prints a permanent evidence directory. Structural and live integrati
 - `codex-config.toml`, `grok-config.toml`, `omp-models.yml`, `claude-settings.json`, `pi-models.json`, `opencode-config.json`, and `hermes-config.yaml`;
 - `codex-login-status.txt`, `grok-models.txt`, `omp-models.txt`, `claude-doctor.txt`, `pi-models.txt`, `opencode-models.txt` (a recorded skip), `hermes-providers.txt`, and `hermes-config-check.txt`;
 - in live mode, `grok-live.txt`, `omp-live.ndjson`, `omp-live.stderr`, `omp-assertion.json`, and `omp-assertion.stderr`;
-- `app.log` and `build.log`;
+- `prismd.log` (daemon stderr) and `build.log`;
 - in auth-proof runs, `auth-codex-pending.json`, `auth-codex-cancelled.json`, `auth-antigravity-pending.json`, `auth-antigravity-cancelled.json`, the matching screenshots, and the pre/post account snapshots;
 - in quota-proof runs, `accounts.json`, `accounts-after.json`, `providers.json`, `accounts-ui-rows.json`, `usage.json`, `usage-ui-rows.json`, `quota-match.json`, URL-encoded `quota-<account>.json` files for live wires, and the Accounts/Usage screenshots;
 - in live-matrix runs, the per-pair directories under `pairs/` (command line, stdout or NDJSON, stderr, daemon log slice, `result.json`), `daemon/health.json`, `daemon/prism.json.sanitized`, `daemon/usage-before.json`, `daemon/usage-after.json`, `run.json`, `manifest.sha256`, and `assertion.json`.

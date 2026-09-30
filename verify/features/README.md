@@ -7,12 +7,12 @@ User-facing features of the Prism system (the Electron desktop app in `apps/desk
 - `renderer-status.md` — the window shows live daemon status, subscribes to supervisor pushes, and the tray tooltip mirrors it.
 - `tray.md` — tray icon, Show Prism, Quit Prism, click-to-show, live tooltip.
 - `auth-flows.md` — add-account login from Accounts: start, pending state, cancel, and the bottom-right error toast when start fails.
-- `accounts-quota.md` — account rows, quota bars and the precise `no quota` state, pause/resume/priority/remove, selection policy, and the read-only quota proof.
+- `accounts-quota.md` — account cards, per-window `% left` bars, Quota unavailable and Loading states, remove confirm, selection policy, and the quota proof. Pause/resume/priority are API and prismctl only.
 - `providers.md` — provider CRUD with generation CAS, credential paste-once, model enable/disable; the per-provider model list and sync live on the provider card (the old read-only Models tab was removed with the split-detail providers view).
-- `combos-routes.md` — combo create/edit/delete and route alias mapping under CAS.
-- `usage.md` — the real per-account usage view backed by the pool snapshot.
+- `combos-routes.md` — combo and route alias API surface (no desktop view), CAS writes, planner resolution order.
+- `usage.md` — the Accounts card grid at `#/usage`, backed by the pool snapshot.
 - `integrations-apply.md` covers applying and rolling back client configs for codex, grok, omp, claude, pi, opencode, and hermes.
-- `hosts-switching.md` — the Integrations host selector: local and remote hosts, switching reloads statuses, apply/rollback act on the selected host, honest unresolved statuses.
+- `hosts-switching.md` — the Machines screen: Manage switches the app to a remote host behind a "Managing <host>" banner, Back to this machine returns. Needs the remoteInstall experimental flag.
 - `agents-install.md` — install and update the agent binaries behind the integrations through the `/api/v1/agents*` routes and `prismctl agents`.
 
 - `client-compatibility.md` — UI-applied Grok and OMP configurations complete real requests, OMP exposes thinking, and the live matrix holds Luna, Gemini 3.7 Flash, and GLM 5.3 sessions alive for >=300 seconds each.

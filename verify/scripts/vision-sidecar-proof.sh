@@ -133,11 +133,11 @@ cdp_eval "await (async () => {
   if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
   const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Vision sidecar'))
   if (!card) throw new Error('vision sidecar flag card not rendered')
-  const toggle = card.querySelector('.toggle input[type=checkbox]')
+  const toggle = card.querySelector('input[type=checkbox]')
   if (!toggle) throw new Error('vision sidecar flag toggle not rendered')
   if (!toggle.checked) toggle.click()
   await sleep(200)
-  if (!card.querySelector('.toggle input[type=checkbox]').checked) throw new Error('toggle did not switch on')
+  if (!card.querySelector('input[type=checkbox]').checked) throw new Error('toggle did not switch on')
   nav('Overview').click()
   for (let i = 0; i < 60; i++) { if (document.querySelector('main h1')?.textContent.trim() === 'Overview') return {enabled: true}; await sleep(100) }
   throw new Error('Overview did not reopen after enabling the flag')
