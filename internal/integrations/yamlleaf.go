@@ -157,12 +157,7 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 	} else {
 		lines = append(lines, body+"models:")
 		for _, model := range spec.Models {
-			id := model.ID
-			if model.API != "" {
-				// The messages ingress only routes claude-<provider>--<model> aliases.
-				id = ClaudeAlias(model.ID)
-			}
-			lines = append(lines, item+"- id: "+id)
+			lines = append(lines, item+"- id: "+model.ID)
 			lines = append(lines, fields+"name: "+model.Name)
 			if model.API != "" {
 				lines = append(lines, fields+"api: "+model.API)
