@@ -180,7 +180,7 @@ Commands:
   agents <sub>              status/install/update/job for agent binaries
   tui [--compact]           interactive terminal UI (default when no command)
   daemon [flags]            run the daemon in the foreground
-  stop                      stop the daemon started in the background by prism
+  service <sub>             start/stop/restart/status of the background daemon
   version                   print the prism version
 
 Every command accepts --json for machine-stable output.
