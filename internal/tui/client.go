@@ -18,6 +18,7 @@ type Client interface {
 	Usage(ctx context.Context) (management.UsageResponse, error)
 	Accounts(ctx context.Context) (management.AccountsResponse, error)
 	AccountQuota(ctx context.Context, id string) (management.QuotaResponse, error)
+	RefreshAccountQuota(ctx context.Context, id string) (management.QuotaResponse, error)
 	DeleteAccount(ctx context.Context, id string) error
 	AuthStart(ctx context.Context, provider string) (management.AuthStartResponse, error)
 	AuthStatus(ctx context.Context, provider, session string) (management.AuthStatusResponse, error)
@@ -60,6 +61,12 @@ func (c *HTTPClient) Accounts(ctx context.Context) (management.AccountsResponse,
 func (c *HTTPClient) AccountQuota(ctx context.Context, id string) (management.QuotaResponse, error) {
 	var out management.QuotaResponse
 	err := c.get(ctx, "/api/v1/accounts/"+urlPathEscape(id)+"/quota", &out)
+	return out, err
+}
+
+func (c *HTTPClient) RefreshAccountQuota(ctx context.Context, id string) (management.QuotaResponse, error) {
+	var out management.QuotaResponse
+	err := c.do(ctx, http.MethodPost, "/api/v1/accounts/"+urlPathEscape(id)+"/quota/refresh", nil, &out)
 	return out, err
 }
 

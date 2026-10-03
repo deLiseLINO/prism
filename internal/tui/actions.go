@@ -196,6 +196,10 @@ func (m Model) beginRefreshActive() (tea.Model, tea.Cmd) {
 		m.LoadingMap = make(map[string]bool)
 	}
 	delete(m.UsageData, m.activeAccountKey())
+	if m.forceRefresh == nil {
+		m.forceRefresh = make(map[string]bool)
+	}
+	m.forceRefresh[m.activeAccountKey()] = true
 	delete(m.ErrorsMap, m.activeAccountKey())
 	delete(m.compactBarAnimations, m.activeAccountKey())
 	m.clearTabWindowAnimations()
@@ -215,6 +219,10 @@ func (m Model) beginRefreshAll() (tea.Model, tea.Cmd) {
 	m.UsageData = make(map[string][]quotaWindow)
 	m.ErrorsMap = make(map[string]error)
 	m.LoadingMap = make(map[string]bool)
+	m.forceRefresh = make(map[string]bool, len(m.Accounts))
+	for i := range m.Accounts {
+		m.forceRefresh[m.Accounts[i].ID] = true
+	}
 	m.compactBarAnimations = make(map[string]compactBarAnimation)
 	m.tabWindowAnimations = make(map[string]tabWindowAnimation)
 	m.animationTicking = false
