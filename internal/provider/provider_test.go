@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/execution"
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func TestCommitStateTotalOrder(t *testing.T) {

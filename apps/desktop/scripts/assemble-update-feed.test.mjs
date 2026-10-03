@@ -49,12 +49,12 @@ describe('PRISM_DAEMON_TARGETS', () => {
   it('rejects an unknown or repeated daemon name before compiling', async () => {
     const { selectDaemonTargets } = await import('../daemon-targets.mjs')
     const targets = [
-      { name: 'prismd-darwin-arm64' },
-      { name: 'prismd-linux-amd64' },
+      { name: 'prism-darwin-arm64' },
+      { name: 'prism-linux-amd64' },
     ]
-    expect(selectDaemonTargets(targets, undefined).map(target => target.name)).toEqual(['prismd-darwin-arm64', 'prismd-linux-amd64'])
-    expect(selectDaemonTargets(targets, 'prismd-darwin-arm64').map(target => target.name)).toEqual(['prismd-darwin-arm64'])
-    expect(() => selectDaemonTargets(targets, 'prismd-nope')).toThrow(/unknown PRISM_DAEMON_TARGETS: prismd-nope/)
-    expect(() => selectDaemonTargets(targets, 'prismd-darwin-arm64,prismd-darwin-arm64')).toThrow(/unknown PRISM_DAEMON_TARGETS/)
+    expect(selectDaemonTargets(targets, undefined).map(target => target.name)).toEqual(['prism-darwin-arm64', 'prism-linux-amd64'])
+    expect(selectDaemonTargets(targets, 'prism-darwin-arm64').map(target => target.name)).toEqual(['prism-darwin-arm64'])
+    expect(() => selectDaemonTargets(targets, 'prism-nope')).toThrow(/unknown PRISM_DAEMON_TARGETS: prism-nope/)
+    expect(() => selectDaemonTargets(targets, 'prism-darwin-arm64,prism-darwin-arm64')).toThrow(/unknown PRISM_DAEMON_TARGETS/)
   })
 })

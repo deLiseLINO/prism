@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host driver for the prism agent-install container matrix.
 #
-#   build          compile prismd/prismctl (static) and build the cell images
+#   build          compile prism (static) and build the cell images
 #   cell <name>    run one cell (see the table below)
 #   all            run every cell sequentially
 #   summary        aggregate outcome.txt files into $EVID/summary.tsv
@@ -20,8 +20,7 @@ BREW_IMAGE=prism-test/brew
 FULL_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 build() {
   mkdir -p "$DIST"
-  CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOARCH) go build -o "$DIST/prismd" ./cmd/prismd
-  CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOARCH) go build -o "$DIST/prismctl" ./cmd/prismctl
+  CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOARCH) go build -o "$DIST/prism" ./cmd/prism
   docker build -t "$NODE_IMAGE" -f "$REPO"/verify/scripts/Dockerfile.node "$REPO"/verify/scripts
   docker build -t "$UBUNTU_IMAGE" -f "$REPO"/verify/scripts/Dockerfile.ubuntu "$REPO"/verify/scripts
   docker build --build-arg "CELL_UID=$(id -u)" -t "$BREW_IMAGE" -f "$REPO"/verify/scripts/Dockerfile.brew "$REPO"/verify/scripts

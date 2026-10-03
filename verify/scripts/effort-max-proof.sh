@@ -38,10 +38,10 @@ cat > "$RUNDIR/.prism/prism.json" <<'CONFIG'
 CONFIG
 sed -i '' "s/__PORT__/$PORT/" "$RUNDIR/.prism/prism.json"
 
-go build -C "$REPO_ROOT" -o "$RUNDIR/prismd" ./cmd/prismd || fail "go build prismd"
+go build -C "$REPO_ROOT" -o "$RUNDIR/prism" ./cmd/prism || fail "go build prism"
 
 echo "==> launching isolated Electron app"
-PRISMD_PATH="$RUNDIR/prismd" \
+PRISMD_PATH="$RUNDIR/prism" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS=1 \

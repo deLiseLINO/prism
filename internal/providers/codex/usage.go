@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 var usagePath = "https://chatgpt.com/backend-api/wham/usage"

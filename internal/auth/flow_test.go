@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

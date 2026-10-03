@@ -1,4 +1,4 @@
-module prism
+module github.com/deLiseLINO/prism
 
 go 1.27.0
 

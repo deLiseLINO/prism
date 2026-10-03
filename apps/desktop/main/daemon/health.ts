@@ -11,7 +11,7 @@ export type HealthOutcome = 'healthy' | 'timeout'
 export async function waitForHealth(options: HealthWaitOptions): Promise<HealthOutcome> {
   const deadline = Date.now() + options.timeoutMs
   while (options.isCurrent()) {
-    if (await probeOnce(options.url, options.probeTimeoutMs)) return 'healthy'
+    if (await probeHealth(options.url, options.probeTimeoutMs)) return 'healthy'
     if (Date.now() >= deadline) break
     const remaining = deadline - Date.now()
     const { promise, resolve } = Promise.withResolvers<void>()
@@ -21,7 +21,7 @@ export async function waitForHealth(options: HealthWaitOptions): Promise<HealthO
   return 'timeout'
 }
 
-async function probeOnce(url: string, timeoutMs: number): Promise<boolean> {
+export async function probeHealth(url: string, timeoutMs: number): Promise<boolean> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
     return response.ok

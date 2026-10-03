@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"prism/internal/canon"
-	"prism/internal/conformance"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/conformance"
 )
 
 type jsonSchemaSpec struct {

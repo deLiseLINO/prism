@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/execution"
-	"prism/internal/provider"
-	"prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 type Header struct {

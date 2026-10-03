@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	egresschat "prism/internal/egress/chat"
-	"prism/internal/execution"
-	ingresschat "prism/internal/ingress/chat"
-	"prism/internal/provider"
-	"prism/internal/stream"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	egresschat "github.com/deLiseLINO/prism/internal/egress/chat"
+	"github.com/deLiseLINO/prism/internal/execution"
+	ingresschat "github.com/deLiseLINO/prism/internal/ingress/chat"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/stream"
 )
 
 func staticKey(ctx context.Context, target provider.Target, lease account.Lease) (string, error) {

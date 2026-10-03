@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/account"
-	"prism/internal/execution"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 type fixedCreds struct{ cred Credential }

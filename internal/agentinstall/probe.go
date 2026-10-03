@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 // integrationsEnv is the seam the package probes PATH through; the concrete

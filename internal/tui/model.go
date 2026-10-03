@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 type Model struct {

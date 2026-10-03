@@ -18,6 +18,7 @@ import { createMainWindow } from './window'
 const HEALTH_TIMEOUT_MS = 15_000
 const HEALTH_INTERVAL_MS = 250
 const HEALTH_PROBE_TIMEOUT_MS = 1_000
+const ADOPTED_POLL_MS = 5_000
 const STOP_GRACE_MS = 5_000
 const RESTART_BASE_MS = 500
 const RESTART_MAX_MS = 10_000
@@ -38,7 +39,7 @@ async function bootstrap(): Promise<void> {
   if (process.platform !== 'darwin') app.commandLine.appendSwitch('icon', iconPath)
   let mainWindow: BrowserWindow | null = null
   let quitting = false
-  const daemonLogPath = join(app.getPath('userData'), 'prismd.log')
+  const daemonLogPath = join(app.getPath('userData'), 'prism.log')
   const endpoint = `http://${DAEMON_HOST}:${config.port}`
   const supervisor = new DaemonSupervisor(endpoint, {
     port: config.port,
@@ -48,6 +49,7 @@ async function bootstrap(): Promise<void> {
     healthTimeoutMs: HEALTH_TIMEOUT_MS,
     healthIntervalMs: HEALTH_INTERVAL_MS,
     healthProbeTimeoutMs: HEALTH_PROBE_TIMEOUT_MS,
+    adoptedPollMs: ADOPTED_POLL_MS,
     stopGraceMs: STOP_GRACE_MS,
     restartBaseMs: RESTART_BASE_MS,
     restartMaxMs: RESTART_MAX_MS,

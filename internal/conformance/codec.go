@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 type UpstreamRequest struct {

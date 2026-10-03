@@ -25,6 +25,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go build ./...
+      - run: go build ./cmd/prism
       - run: go vet ./...
       - run: go test ./...
 
@@ -41,7 +42,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:desktop
-      # Build the whole bundle including the cross-compiled prismd matrix; the
+      # Build the whole bundle including the cross-compiled prism daemon matrix; the
       # Go toolchain is required for build.mjs.
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
@@ -54,7 +55,7 @@ jobs:
       # x64 runners, linux-arm64-unpacked on an arm64 dev machine).
       - run: npx --workspace @prism/desktop electron-builder --linux dir --publish never
         working-directory: apps/desktop
-      - run: test -d "$(ls -d apps/desktop/release/linux*unpacked | head -n1)/resources/prismd"
+      - run: test -d "$(ls -d apps/desktop/release/linux*unpacked | head -n1)/resources/prism"
 
   windows-smoke:
     name: Windows packaging smoke
@@ -74,5 +75,5 @@ jobs:
       - run: npm run build --workspace @prism/desktop
       - run: npx --workspace @prism/desktop electron-builder --win dir --x64 --publish never
         working-directory: apps/desktop
-      - run: if (-not (Test-Path "apps/desktop/release/win-unpacked/resources/prismd")) { Write-Error "prismd missing from packaged resources"; exit 1 }
+      - run: if (-not (Test-Path "apps/desktop/release/win-unpacked/resources/prism")) { Write-Error "prism missing from packaged resources"; exit 1 }
         shell: pwsh

@@ -4,12 +4,12 @@ import (
 	"slices"
 	"strings"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/config"
-	ingressmessages "prism/internal/ingress/messages"
-	"prism/internal/provider"
-	"prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
+	ingressmessages "github.com/deLiseLINO/prism/internal/ingress/messages"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/routing"
 )
 
 type ConfigPlanner struct {

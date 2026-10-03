@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/execution"
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func limitPtr(v int64) *int64 { return &v }

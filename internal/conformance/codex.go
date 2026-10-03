@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func ExoticItemName(item canon.Item) string {

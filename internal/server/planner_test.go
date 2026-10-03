@@ -3,9 +3,9 @@ package server
 import (
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/config"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func TestTargetCarriesModelImageInput(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/store"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/store"
 )
 
 // refreshWait is the pause between refresh-lock acquisition rounds once the

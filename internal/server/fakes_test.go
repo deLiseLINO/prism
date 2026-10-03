@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/management"
-	"prism/internal/provider"
-	"prism/internal/quota"
-	"prism/internal/routing"
-	"prism/internal/usage"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/usage"
 )
 
 type fakePlanner struct {

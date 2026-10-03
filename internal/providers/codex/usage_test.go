@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func TestFetchUsageParsesGoverningWindow(t *testing.T) {

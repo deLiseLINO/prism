@@ -11,12 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/execution"
-	"prism/internal/provider"
-	"prism/internal/reasonenv"
-	"prism/internal/stream"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
+	"github.com/deLiseLINO/prism/internal/stream"
 )
 
 func staticKey(ctx context.Context, target provider.Target, lease account.Lease) (string, error) {

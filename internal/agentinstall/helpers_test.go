@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 // fakeStat answers from a path -> mode map, emulating os.Stat: mode 0 marks

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 func clineFixtureTokenSrv(t *testing.T, status int, body string) *httptest.Server {

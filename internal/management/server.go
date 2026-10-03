@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/auth"
-	"prism/internal/buildinfo"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/provider"
-	"prism/internal/providers/antigravity"
-	"prism/internal/quota"
-	"prism/internal/requestlog"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/auth"
+	"github.com/deLiseLINO/prism/internal/buildinfo"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/antigravity"
+	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/requestlog"
 )
 
 type ConfigStore interface {

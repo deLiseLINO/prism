@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 func (m Model) activeAccount() *management.Account {

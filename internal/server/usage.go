@@ -5,10 +5,10 @@ import (
 	"log"
 	"time"
 
-	"prism/internal/canon"
-	"prism/internal/execution"
-	"prism/internal/routing"
-	"prism/internal/usage"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/usage"
 )
 
 func (s *Server) recordUsage(facts execution.Facts, req canon.Request, proto protocol, res routing.TurnResult, start time.Time) {

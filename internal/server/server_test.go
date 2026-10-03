@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/config"
-	"prism/internal/provider"
-	"prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/routing"
 )
 
 func TestManagementProxied(t *testing.T) {

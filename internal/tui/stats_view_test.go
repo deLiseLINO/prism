@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 func statsTestResponse() management.StatsResponse {

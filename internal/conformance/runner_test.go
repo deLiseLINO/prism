@@ -3,7 +3,7 @@ package conformance
 import (
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func TestGoldenDiff(t *testing.T) {

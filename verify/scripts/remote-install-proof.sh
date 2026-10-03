@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Remote daemon install proof for the Prism desktop. Adds a host pointing at
 # loopback ssh WITHOUT a daemon port, then drives the real UI: the Install
-# prismd button streams the bundled binary over ssh, starts it, flips the host
+# daemon button streams the bundled binary over ssh, starts it, flips the host
 # to external, and Manage routes through the freshly installed daemon.
 set -euo pipefail
 
@@ -36,7 +36,7 @@ cleanup() {
     kill -TERM "$APP_PID" 2>/dev/null
     wait "$APP_PID" 2>/dev/null
   fi
-  INSTALLED_PID=$(pgrep -f "prismd.*--listen 127.0.0.1:$REMOTE_PORT" | head -1 || true)
+  INSTALLED_PID=$(pgrep -f "prism.* daemon --listen 127.0.0.1:$REMOTE_PORT" | head -1 || true)
   [ -n "$INSTALLED_PID" ] && kill -TERM "$INSTALLED_PID" 2>/dev/null
   ssh -o BatchMode=yes localhost "rm -rf ~/.prism/remote" 2>/dev/null
   [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
@@ -68,12 +68,12 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 }
 CONFIG
 
-echo "==> building prismd and desktop"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
+echo "==> building prism and desktop"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 
 echo "==> launching isolated Electron app (remote daemon NOT pre-started)"
-PRISMD_PATH="$RUNDIR/prismd" \
+PRISMD_PATH="$RUNDIR/prism" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_REMOTE_DAEMON_PORT="$REMOTE_PORT" \
@@ -133,7 +133,7 @@ cdp_eval "await (async () => {
 
 grep -q '"enabled":true' "$EVID_WORK/flag-enable.json" || fail "flag toggle evidence missing enabled true"
 
-echo "==> driving the Machines UI: Install prismd on the self host"
+echo "==> driving the Machines UI: Install daemon on the self host"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const nav = (l) => [...document.querySelectorAll('nav button')].find((b) => b.textContent.trim() === l)
@@ -142,14 +142,14 @@ cdp_eval "await (async () => {
   if (document.querySelector('main h1')?.textContent.trim() !== 'Machines') throw new Error('Machines view did not open')
   const row = [...document.querySelectorAll('.int-row-wrap')].find((n) => n.querySelector('.int-name')?.textContent.trim() === 'self')
   if (!row) throw new Error('self host row not rendered')
-  const install = [...row.querySelectorAll('button')].find((b) => /install prismd/i.test(b.textContent))
-  if (!install) throw new Error('Install prismd button not rendered with the flag on and no daemon port')
+  const install = [...row.querySelectorAll('button')].find((b) => /install daemon/i.test(b.textContent))
+  if (!install) throw new Error('Install daemon button not rendered with the flag on and no daemon port')
   install.click()
   await sleep(500)
   return {rowText: row.innerText.replace(/\n/g, ' | ')}
 })()" > "$EVID_WORK/install-click.json" || { cat "$EVID_WORK"/install-click.json 2>/dev/null || true; fail "install click failed in the UI"; }
 
-grep -qE 'Install prismd|Installing' "$EVID_WORK/install-click.json" || fail "install click evidence missing the button"
+grep -qE 'Install daemon|Installing' "$EVID_WORK/install-click.json" || fail "install click evidence missing the button"
 
 echo "==> switching tabs mid-install keeps the busy state, no already-running error"
 cdp_eval "await (async () => {
@@ -165,7 +165,7 @@ cdp_eval "await (async () => {
   if (!row) throw new Error('self row not rendered after tab switch')
   const refusal = row.querySelector('.int-refusal__msg')?.textContent ?? ''
   if (/already running/i.test(refusal)) throw new Error('already-running error surfaced after a tab switch: ' + refusal)
-  const install = [...row.querySelectorAll('button')].find((b) => /installing|install prismd/i.test(b.textContent))
+  const install = [...row.querySelectorAll('button')].find((b) => /installing|install daemon/i.test(b.textContent))
   if (!install) return {settled: true, rowText: row.innerText.replace(/\n/g, ' | ')}
   if (!/installing/i.test(install.textContent)) throw new Error('install button lost its busy state after a tab switch: ' + install.textContent)
   return {busyAfterSwitch: true, rowText: row.innerText.replace(/\n/g, ' | ')}
@@ -181,7 +181,7 @@ cdp_eval "await (async () => {
     if (!row) throw new Error('self row vanished during install')
     const refusal = row.querySelector('.int-refusal__msg')?.textContent ?? ''
     if (refusal !== '') throw new Error('install failed: ' + refusal)
-    const install = [...row.querySelectorAll('button')].find((b) => /installing|install prismd|retry/i.test(b.textContent))
+    const install = [...row.querySelectorAll('button')].find((b) => /installing|install daemon|retry/i.test(b.textContent))
     if (!install) return {done: true, rowText: row.innerText.replace(/\n/g, ' | ')}
     await sleep(1000)
   }
@@ -195,10 +195,10 @@ echo "==> the host flipped to external: daemon port saved, Manage enabled"
 curl -sf "http://127.0.0.1:$PORT/api/v1/hosts" > "$EVID_WORK/hosts-after.json" || fail "hosts list after install"
 grep -q "\"daemonPort\":$REMOTE_PORT" "$EVID_WORK/hosts-after.json" || fail "host self did not flip to its own daemon port"
 
-curl -sf "http://127.0.0.1:$REMOTE_PORT/api/v1/health" > "$EVID_WORK/installed-health.json" || fail "the installed prismd is not answering on $REMOTE_PORT"
-grep -q '"status":"ok"' "$EVID_WORK/installed-health.json" || fail "installed prismd health is not ok"
-ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/prismd && tail -c 2000 ~/.prism/remote/prismd.log" > "$EVID_WORK/installed-prismd.log" 2>/dev/null || true
-ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/prismd" || fail "prismd binary was not placed in ~/.prism/remote on the ssh target"
+curl -sf "http://127.0.0.1:$REMOTE_PORT/api/v1/health" > "$EVID_WORK/installed-health.json" || fail "the installed daemon is not answering on $REMOTE_PORT"
+grep -q '"status":"ok"' "$EVID_WORK/installed-health.json" || fail "installed daemon health is not ok"
+ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/prism && tail -c 2000 ~/.prism/remote/prism.log" > "$EVID_WORK/installed-daemon.log" 2>/dev/null || true
+ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/prism" || fail "prism binary was not placed in ~/.prism/remote on the ssh target"
 
 
 echo "==> Manage routes through the installed daemon"

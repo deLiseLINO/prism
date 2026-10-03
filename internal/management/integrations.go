@@ -3,8 +3,8 @@ package management
 import (
 	"net/http"
 
-	"prism/internal/config"
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 type IntegrationsResponse struct {

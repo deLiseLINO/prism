@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"prism/internal/account"
-	"prism/internal/store"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/store"
 )
 
 // PoolRegistrar is the runtime account pool plus registration.

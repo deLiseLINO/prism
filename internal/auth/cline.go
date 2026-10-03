@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/providers/cline"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/providers/cline"
 )
 
 const clineRefreshSkew = 2 * time.Minute

@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"prism/internal/conformance"
-	"prism/internal/conformance/codec/chat"
-	"prism/internal/conformance/codec/responses"
+	"github.com/deLiseLINO/prism/internal/conformance"
+	"github.com/deLiseLINO/prism/internal/conformance/codec/chat"
+	"github.com/deLiseLINO/prism/internal/conformance/codec/responses"
 )
 
 func main() {

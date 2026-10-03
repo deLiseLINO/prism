@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 const grokFixturePath = "/tmp/grok-req.json"

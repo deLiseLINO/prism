@@ -23,9 +23,9 @@ const scriptDir = fileURLToPath(new URL('.', import.meta.url))
 // must behave identically from any cwd (npm workspace scripts pin it, but
 // `node apps/desktop/build.mjs` from the repo root must not silently write
 // to the wrong tree).
-const prismdDir = path.join(scriptDir, 'resources', 'prismd')
+const prismDir = path.join(scriptDir, 'resources', 'prism')
 const distDir = path.join(scriptDir, 'dist')
-const versionFlag = `-X prism/internal/buildinfo.Version=${releaseVersion}`
+const versionFlag = `-X github.com/deLiseLINO/prism/internal/buildinfo.Version=${releaseVersion}`
 const buildCwd = scriptDir
 // Bundled daemon matrix: every supported platform/arch gets its own binary so
 // the packaged app works on any build host (e.g. an arm64 mac producing an
@@ -34,19 +34,18 @@ const buildCwd = scriptDir
 const { daemonTargets, selectDaemonTargets } = await import('./daemon-targets.mjs')
 const selectedDaemons = selectDaemonTargets(daemonTargets, process.env.PRISM_DAEMON_TARGETS)
 // Stale binaries from a previous daemonTargets matrix must not ship.
-// resources/prismd is gitignored and never cleaned by anything else.
-await rm(prismdDir, { recursive: true, force: true })
+await rm(prismDir, { recursive: true, force: true })
 await rm(path.join(scriptDir, 'resources', 'webui'), { recursive: true, force: true })
 await rm(distDir, { recursive: true, force: true })
-await mkdir(prismdDir, { recursive: true })
+await mkdir(prismDir, { recursive: true })
 for (const { GOOS, GOARCH, name } of selectedDaemons) {
   const started = Date.now()
-  execFileSync(goCommand, ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismdDir, name), '../../cmd/prismd'], {
+  execFileSync(goCommand, ['build', '-trimpath', '-ldflags', versionFlag, '-o', path.join(prismDir, name), '../../cmd/prism'], {
     cwd: buildCwd,
     stdio: 'inherit',
     env: { ...process.env, CGO_ENABLED: '0', GOOS, GOARCH },
   })
-  console.log(`prismd ${name} ${((Date.now() - started) / 1000).toFixed(1)}s`)
+  console.log(`prism ${name} ${((Date.now() - started) / 1000).toFixed(1)}s`)
 }
 
 

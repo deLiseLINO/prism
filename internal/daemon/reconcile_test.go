@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/auth"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/management"
-	"prism/internal/provider"
-	"prism/internal/store"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/auth"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/store"
 )
 
 func testEnv(t *testing.T, doc config.Document) (*daemonEnv, *config.Manager) {

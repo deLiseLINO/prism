@@ -58,15 +58,14 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 }
 CONFIG
 
-echo "==> building prismd and prismctl"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismctl" ./cmd/prismctl) || fail "go build cmd/prismctl"
+echo "==> building prism"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 
 # The daemon resolves client config paths from its own HOME, so the isolated
-# home must be set on the prismd process itself; a HOME on prismctl alone
+# home must be set on the daemon process itself; a HOME on the CLI alone
 # never reaches the apply, which would then read the operator's real
 # ~/.grok/config.toml and refuse on user-owned table collisions.
-HOME="$RUNDIR/home" "$RUNDIR/prismd" --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
+HOME="$RUNDIR/home" "$RUNDIR/prism" daemon --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 40); do
   curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
@@ -75,7 +74,7 @@ done
 curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null || fail "daemon health failed"
 
 export PRISM_URL="http://127.0.0.1:$PORT"
-CTL="$RUNDIR/prismctl"
+CTL="$RUNDIR/prism"
 
 run_ctl() {
   local name=$1 expect=$2

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 const quotaTimeout = 8 * time.Second

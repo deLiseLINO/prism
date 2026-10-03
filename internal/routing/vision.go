@@ -1,8 +1,8 @@
 package routing
 
 import (
-	"prism/internal/canon"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func imageUnsupportedFailure(target provider.Target) canon.TurnFailed {

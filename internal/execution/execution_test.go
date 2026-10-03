@@ -10,7 +10,7 @@ func TestNewForwardSetAllowlist(t *testing.T) {
 	h := http.Header{}
 	h.Set("X-Session-Id", "sess-1")
 	h.Set("originator", "codex_cli_rs")
-	h.Set("User-Agent", "prism/0.1")
+	h.Set("User-Agent", "github.com/deLiseLINO/prism/0.1")
 
 	f, err := NewForwardSet(h)
 	if err != nil {
@@ -22,8 +22,8 @@ func TestNewForwardSetAllowlist(t *testing.T) {
 	if v, ok := f.Get(ForwardOriginator); !ok || v != "codex_cli_rs" {
 		t.Errorf("Get(ForwardOriginator) = %q, %v; want %q, true", v, ok, "codex_cli_rs")
 	}
-	if v, ok := f.Get(ForwardUserAgent); !ok || v != "prism/0.1" {
-		t.Errorf("Get(ForwardUserAgent) = %q, %v; want %q, true", v, ok, "prism/0.1")
+	if v, ok := f.Get(ForwardUserAgent); !ok || v != "github.com/deLiseLINO/prism/0.1" {
+		t.Errorf("Get(ForwardUserAgent) = %q, %v; want %q, true", v, ok, "github.com/deLiseLINO/prism/0.1")
 	}
 }
 
@@ -110,7 +110,7 @@ func TestForwardSetRedactedNeverLeaksValues(t *testing.T) {
 	h := http.Header{}
 	h.Set("X-Session-Id", "attestation-token-super-secret")
 	h.Set("originator", "codex_cli_rs")
-	h.Set("User-Agent", "prism/0.1")
+	h.Set("User-Agent", "github.com/deLiseLINO/prism/0.1")
 	f, err := NewForwardSet(h)
 	if err != nil {
 		t.Fatalf("NewForwardSet: %v", err)
@@ -121,7 +121,7 @@ func TestForwardSetRedactedNeverLeaksValues(t *testing.T) {
 			t.Errorf("Redacted() = %q; want name %q present", redacted, want)
 		}
 	}
-	for _, leak := range []string{"attestation-token-super-secret", "codex_cli_rs", "prism/0.1"} {
+	for _, leak := range []string{"attestation-token-super-secret", "codex_cli_rs", "github.com/deLiseLINO/prism/0.1"} {
 		if strings.Contains(redacted, leak) {
 			t.Errorf("Redacted() = %q leaks value %q", redacted, leak)
 		}

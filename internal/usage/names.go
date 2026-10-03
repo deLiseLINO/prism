@@ -1,6 +1,6 @@
 package usage
 
-import "prism/internal/canon"
+import "github.com/deLiseLINO/prism/internal/canon"
 
 func IncompleteName(r canon.IncompleteReason) string {
 	if r == 0 {

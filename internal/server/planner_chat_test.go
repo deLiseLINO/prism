@@ -3,8 +3,8 @@ package server
 import (
 	"testing"
 
-	"prism/internal/config"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func TestWireForChat(t *testing.T) {

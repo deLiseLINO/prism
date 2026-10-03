@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 var namespaceRoutes = map[canon.ToolName]canon.ToolRoute{

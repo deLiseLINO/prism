@@ -45,7 +45,7 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    DAEMON_PID=$(pgrep -P "$APP_PID" -f prismd 2>/dev/null | head -1)
+    DAEMON_PID=$(pgrep -P "$APP_PID" -f "prism daemon" 2>/dev/null | head -1)
     kill -TERM "$APP_PID" 2>/dev/null
     wait "$APP_PID" 2>/dev/null
   fi
@@ -68,11 +68,11 @@ cp "$SOURCE_STATE/prism.json" "$RUNDIR/.prism/prism.json"
 cp -R "$SOURCE_STATE/credentials" "$RUNDIR/.prism/credentials"
 chmod -R go-rwx "$RUNDIR/.prism"
 
-echo "==> building prismd and desktop"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
+echo "==> building prism and desktop"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 echo "==> launching isolated Electron against a copy of real accounts"
-PRISMD_PATH="$RUNDIR/prismd" \
+PRISMD_PATH="$RUNDIR/prism" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS="$HEADLESS" \

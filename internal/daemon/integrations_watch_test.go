@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/config"
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 type stubWatchModule struct {

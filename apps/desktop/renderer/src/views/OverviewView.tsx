@@ -172,7 +172,7 @@ function DaemonCard({
           <div>
             <div className="ov-title">Daemon</div>
             <p className="ov-sub">
-              local prismd supervised by the desktop app
+              local daemon supervised by the desktop app
             </p>
           </div>
         </div>

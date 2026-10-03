@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/store"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/store"
 )
 
 type regPool struct {

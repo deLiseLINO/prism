@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"prism/internal/agentinstall"
-	"prism/internal/config"
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/agentinstall"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 type fakeInstaller struct {

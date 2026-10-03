@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"sort"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 // Runner executes one install/update argv with the daemon's environment,

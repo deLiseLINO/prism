@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 const namespaceBody = `{"model":"gpt-5.3","input":"hi","tools":[

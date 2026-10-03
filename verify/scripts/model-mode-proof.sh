@@ -62,11 +62,11 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 }
 CONFIG
 
-echo "==> building prismd and desktop"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
+echo "==> building prism and desktop"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 echo "==> launching isolated Electron app"
-PRISMD_PATH="$RUNDIR/prismd" \
+PRISMD_PATH="$RUNDIR/prism" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS="$HEADLESS" \

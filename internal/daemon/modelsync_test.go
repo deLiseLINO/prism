@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/account"
-	"prism/internal/config"
-	"prism/internal/management"
-	"prism/internal/store"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/store"
 )
 
 func idsOf(rows []management.ListedModel) []string {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"prism/internal/execution"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 type Header struct {

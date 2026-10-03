@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/canon"
-	"prism/internal/egress"
-	"prism/internal/execution"
-	"prism/internal/provider"
-	"prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/egress"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/routing"
 )
 
 var _ egress.Egress = (*Egress)(nil)

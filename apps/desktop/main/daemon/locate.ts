@@ -18,12 +18,11 @@ export function locateDaemon(env: NodeJS.ProcessEnv = process.env): DaemonBinary
   }
   const bundled = bundledDaemonPath()
   if (!existsSync(bundled)) {
-    throw new Error(`prism: bundled prismd not found at ${bundled}; run npm run build --workspace @prism/desktop or set ${PRISMD_PATH_ENV}`)
+    throw new Error(`prism: bundled prism binary not found at ${bundled}; run npm run build --workspace @prism/desktop or set ${PRISMD_PATH_ENV}`)
   }
   return { path: bundled, source: 'bundled' }
 }
 
-// Maps the running Electron process to the bundled prismd binary name.
 // build.mjs compiles one binary per supported platform/arch so a packaged app
 // works regardless of the machine that produced the installer.
 export function bundledDaemonBinary(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
@@ -36,13 +35,13 @@ export function bundledDaemonBinary(platform: NodeJS.Platform = process.platform
     throw new Error(`prism: unsupported platform ${platform}`)
   }
   const suffix = platform === 'win32' ? '.exe' : ''
-  return `prismd-${os}-${goarch}${suffix}`
+  return `prism-${os}-${goarch}${suffix}`
 }
 
 function bundledDaemonPath(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'prismd', bundledDaemonBinary(platform, arch))
-    : path.join(app.getAppPath(), 'resources', 'prismd', bundledDaemonBinary(platform, arch))
+    ? path.join(process.resourcesPath, 'prism', bundledDaemonBinary(platform, arch))
+    : path.join(app.getAppPath(), 'resources', 'prism', bundledDaemonBinary(platform, arch))
 }
 
 export function locateWebui(configured: string | null): string | null {

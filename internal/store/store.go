@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 type CredentialStore interface {

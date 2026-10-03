@@ -33,7 +33,7 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    DAEMON_PID=$(pgrep -P "$APP_PID" -f prismd 2>/dev/null | head -1)
+    DAEMON_PID=$(pgrep -P "$APP_PID" -f "prism daemon" 2>/dev/null | head -1)
     kill -TERM "$APP_PID" 2>/dev/null
     wait "$APP_PID" 2>/dev/null
   fi
@@ -41,7 +41,7 @@ cleanup() {
     kill -TERM "$DAEMON_PID" 2>/dev/null
   fi
   [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
-  [ -f "$RUNDIR/electron/prismd.log" ] && cp "$RUNDIR/electron/prismd.log" "$EVID_WORK/prismd.log"
+  [ -f "$RUNDIR/electron/prism.log" ] && cp "$RUNDIR/electron/prism.log" "$EVID_WORK/prism.log"
   [ -f "$RUNDIR/build.log" ] && cp "$RUNDIR/build.log" "$EVID_WORK/build.log"
   [ -f "$RUNDIR/.grok/config.toml" ] && cp "$RUNDIR/.grok/config.toml" "$EVID_WORK/grok-config-at-exit.toml"
   [ -f "$RUNDIR/.claude/settings.json" ] && cp "$RUNDIR/.claude/settings.json" "$EVID_WORK/claude-settings-at-exit.json"
@@ -86,12 +86,12 @@ if [ "$LEGACY" = "1" ]; then
   cp "$REPO_ROOT/verify/fixtures/grok-legacy-prism.toml" "$RUNDIR/.grok/config.toml"
 fi
 
-echo "==> building prismd and desktop"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
+echo "==> building prism and desktop"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 
 echo "==> launching isolated Electron app"
-PRISMD_PATH="$RUNDIR/prismd" \
+PRISMD_PATH="$RUNDIR/prism" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS="$HEADLESS" \
@@ -489,7 +489,7 @@ GROK_BEGIN='# >>> prism managed block (grok) — do not edit (removed by prism r
 cp "$RUNDIR/.grok/config.toml" "$RUNDIR/grok-config-before-damage.toml"
 printf '%s\n' "$GROK_BEGIN" >> "$RUNDIR/.grok/config.toml"
 cp "$RUNDIR/.grok/config.toml" "$RUNDIR/grok-config-damaged.toml"
-DAEMON_LOG="$RUNDIR/electron/prismd.log"
+DAEMON_LOG="$RUNDIR/electron/prism.log"
 LOG_LINES_BEFORE=$(wc -l < "$DAEMON_LOG" | tr -d ' ')
 GEN=$(curl -sf "http://127.0.0.1:$PORT/api/v1/providers" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).generation') || fail "could not read providers generation"
 curl -sf -X PUT -H 'Content-Type: application/json' \
@@ -534,11 +534,11 @@ grep -cF -x "$GROK_BEGIN" "$RUNDIR/.grok/config.toml" | grep -qx 2 || fail "dama
 cp "$RUNDIR/grok-config-before-damage.toml" "$RUNDIR/.grok/config.toml"
 grep -cF -x "$GROK_BEGIN" "$RUNDIR/.grok/config.toml" | grep -qx 1 || fail "fence repair did not leave exactly one begin marker"
 
-echo "==> restart persistence: enabled state survives a prismd crash"
+echo "==> restart persistence: enabled state survives a daemon crash"
 sed -i.bak '/^# >>> prism managed block (grok)/,/^# <<< prism managed block (grok) <<<$/d' "$RUNDIR/.grok/config.toml"
 grep -q "prism managed block" "$RUNDIR/.grok/config.toml" && fail "grok managed block not stripped before the restart"
-DAEMON_PID=$(pgrep -f "$RUNDIR/prismd" | head -1)
-[ -n "$DAEMON_PID" ] || fail "no prismd process found for this run"
+DAEMON_PID=$(pgrep -f "$RUNDIR/prism daemon" | head -1)
+[ -n "$DAEMON_PID" ] || fail "no prism daemon process found for this run"
 kill "$DAEMON_PID"
 HEALTH_BACK=
 for _ in $(seq 1 200); do
@@ -555,7 +555,7 @@ done
 curl -sf "http://127.0.0.1:$PORT/api/v1/integrations" > "$EVID_WORK/integrations-after-restart.json" || fail "integrations status unreachable after restart"
 node -e 'const data = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const grok = data.integrations.find((entry) => entry.id === "grok"); if (!grok || !grok.enabled) { process.exit(1) }' "$EVID_WORK/integrations-after-restart.json" || fail "grok enabled flag lost after the daemon restart"
 cp "$RUNDIR/.grok/config.toml" "$EVID_WORK/grok-config-after-restart.toml"
-cp "$DAEMON_LOG" "$EVID_WORK/prismd-log-autoapply.log" 2>/dev/null || true
+cp "$DAEMON_LOG" "$EVID_WORK/prism-log-autoapply.log" 2>/dev/null || true
 
 echo "==> walking every renderer view through the real UI"
 for VIEW in Overview Accounts Stats Logs Providers Integrations; do

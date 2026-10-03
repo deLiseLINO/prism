@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 var statsRanges = []string{"1h", "24h", "7d", "30d", "all"}

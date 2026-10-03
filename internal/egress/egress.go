@@ -3,8 +3,8 @@ package egress
 import (
 	"time"
 
-	"prism/internal/canon"
-	"prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/routing"
 )
 
 type ResponseHeader struct {

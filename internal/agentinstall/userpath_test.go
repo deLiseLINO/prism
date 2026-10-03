@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 func TestWithUserPathFindsBinaryMissingFromGUIPath(t *testing.T) {

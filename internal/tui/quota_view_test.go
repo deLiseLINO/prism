@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 func TestQuotaWindowsFromViewFallback(t *testing.T) {

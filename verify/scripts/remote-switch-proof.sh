@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remote daemon switching proof for the Prism desktop. Launches two prismd
+# Remote daemon switching proof for the Prism desktop. Launches two prism daemon
 # instances (the app's local one and a "remote" one reached over the loopback
 # ssh forward), seeds a host with daemonPort, then drives the real UI:
 # Manage switches every view to the remote daemon; the banner shows the remote
@@ -88,13 +88,13 @@ cat > "$RUNDIR/.remote/prism.json" <<CONFIG
 }
 CONFIG
 
-echo "==> building prismd and desktop"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
+echo "==> building prism and desktop"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 
 echo "==> launching the remote daemon (loopback stand-in for the remote machine)"
 
-HOME="$RUNDIR" "$RUNDIR/prismd" \
+HOME="$RUNDIR" "$RUNDIR/prism" daemon \
   --listen "127.0.0.1:$REMOTE_PORT" \
   --config "$RUNDIR/.remote/prism.json" \
   --credential-store "$RUNDIR/.remote" > "$RUNDIR/remote.log" 2>&1 &
@@ -107,7 +107,7 @@ done
 curl -sf "http://127.0.0.1:$REMOTE_PORT/api/v1/providers" > "$EVID_WORK/remote-providers.json" || fail "remote daemon did not come up"
 
 echo "==> launching isolated Electron app"
-PRISMD_PATH="$RUNDIR/prismd" \
+PRISMD_PATH="$RUNDIR/prism" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS="$HEADLESS" \

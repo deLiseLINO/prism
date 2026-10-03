@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode"
 
-	"prism/internal/catalog"
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/catalog"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 const SchemaVersion = 1

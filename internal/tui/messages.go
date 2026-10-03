@@ -3,7 +3,7 @@ package tui
 import (
 	"time"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 type DataMsg struct {

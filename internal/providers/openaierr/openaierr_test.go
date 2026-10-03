@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func responseWith(status int, body string) *http.Response {

@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/config"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func policyDoc() config.Document {

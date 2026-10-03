@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/config"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 type countSink struct{ events []canon.Event }

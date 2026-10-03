@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"prism/internal/canon"
-	"prism/internal/conformance"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/conformance"
 )
 
 type body struct {

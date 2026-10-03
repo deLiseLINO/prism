@@ -5,7 +5,7 @@
 // resolves on PATH, so a daemon restart re-derives the truth.
 package agentinstall
 
-import "prism/internal/integrations"
+import "github.com/deLiseLINO/prism/internal/integrations"
 
 type Definition struct {
 	Key        string

@@ -10,7 +10,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 const windowRowIndent = "    "

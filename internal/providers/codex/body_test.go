@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func TestRequestBodyMatchesGolden(t *testing.T) {

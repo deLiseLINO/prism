@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/canon"
-	"prism/internal/reasonenv"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
 type flushRecorder struct {

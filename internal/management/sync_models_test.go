@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/config"
 )
 
 func syncModelsEnv(t *testing.T, doc config.Document) (*testEnv, *fakeSyncer) {

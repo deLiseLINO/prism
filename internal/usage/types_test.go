@@ -3,7 +3,7 @@ package usage
 import (
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func TestIncompleteName(t *testing.T) {

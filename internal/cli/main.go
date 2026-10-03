@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -89,9 +89,9 @@ func run(rt *cliRuntime, args []string) int {
 	if err != nil {
 		var usage *usageError
 		if errors.As(err, &usage) {
-			fmt.Fprintf(rt.stderr, "prismctl: %v\n\n%s", usage.msg, usage.help)
+			fmt.Fprintf(rt.stderr, "prism: %v\n\n%s", usage.msg, usage.help)
 		} else {
-			fmt.Fprintf(rt.stderr, "prismctl: %v\n", err)
+			fmt.Fprintf(rt.stderr, "prism: %v\n", err)
 		}
 		return exitUsage
 	}
@@ -103,14 +103,13 @@ func run(rt *cliRuntime, args []string) int {
 	}
 	var ee *exitError
 	if errors.As(err, &ee) {
-		fmt.Fprintf(rt.stderr, "prismctl: %s\n", ee.msg)
+		fmt.Fprintf(rt.stderr, "prism: %s\n", ee.msg)
 		return ee.code
 	}
-	fmt.Fprintf(rt.stderr, "prismctl: %v\n", err)
+	fmt.Fprintf(rt.stderr, "prism: %v\n", err)
 	return exitFailure
 }
 
-func main() {
-	rt := newRuntime()
-	os.Exit(run(rt, os.Args[1:]))
+func Run(args []string) int {
+	return run(newRuntime(), args)
 }

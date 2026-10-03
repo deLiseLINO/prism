@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/provider"
-	"prism/internal/providers/customchat"
-	"prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/customchat"
+	"github.com/deLiseLINO/prism/internal/routing"
 )
 
 func TestChatWireInboundChatAndResponsesRoutes(t *testing.T) {

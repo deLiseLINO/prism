@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 const metaSchemaVersion = 1

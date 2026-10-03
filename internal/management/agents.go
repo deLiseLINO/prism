@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"prism/internal/agentinstall"
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/agentinstall"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 // AgentActions is the kill switch for agent binary install and update jobs.

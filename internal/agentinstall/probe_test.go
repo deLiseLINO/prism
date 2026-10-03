@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 func TestLookPathMissing(t *testing.T) {

@@ -190,7 +190,7 @@ export function LogsView(): JSX.Element {
         {(value) =>
           value.requests.length === 0 ? (
             <Empty title="No requests yet.">
-              Requests routed through prismd appear here with their full failover trail.
+              Requests routed through the daemon appear here with their full failover trail.
             </Empty>
           ) : (
             <>

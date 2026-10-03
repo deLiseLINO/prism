@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/config"
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/buildinfo"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 // run executes the parsed command against the injected runtime. Handlers
@@ -146,14 +147,14 @@ func (c *command) runDoctor(ctx context.Context, rt *cliRuntime, p printer) erro
 	if c.json {
 		return p.printJSON(map[string]any{
 			"daemon":   h.Status,
-			"version":  prismctlVersion(),
+			"version":  cliVersion(),
 			"models":   len(models.Models),
 			"problems": problems,
 		})
 	}
 	var lines []string
 	lines = append(lines, "daemon: "+h.Status)
-	lines = append(lines, "cli version: "+prismctlVersion())
+	lines = append(lines, "cli version: "+cliVersion())
 	lines = append(lines, fmt.Sprintf("models: %d", len(models.Models)))
 	if len(problems) == 0 {
 		lines = append(lines, "config: ok")
@@ -166,7 +167,7 @@ func (c *command) runDoctor(ctx context.Context, rt *cliRuntime, p printer) erro
 	return p.text(lines...)
 }
 
-func prismctlVersion() string { return "0.1.0" }
+func cliVersion() string { return buildinfo.Version }
 
 // --- auth ---
 
@@ -217,7 +218,7 @@ func (c *command) pollAuth(ctx context.Context, rt *cliRuntime, p printer, sessi
 		case "failed":
 			return exitErr(exitFailure, "login failed for %s", c.provider)
 		case "expired":
-			return exitErr(exitFailure, "login session expired for %s; re-run prismctl auth login", c.provider)
+			return exitErr(exitFailure, "login session expired for %s; re-run prism auth login", c.provider)
 		}
 		select {
 		case <-ctx.Done():
