@@ -102,7 +102,7 @@ func (m Model) renderCompactAccountRow(index int, acc management.Account, accoun
 		s.WriteString(m.renderCompactStatusRow(status, barWidth, percentWidth, resetWidth))
 		return s.String()
 	}
-	if m.LoadingMap[acc.ID] && !m.silentRefresh[acc.ID] {
+	if m.showsLoading(acc.ID) {
 		s.WriteString(m.renderCompactStatusRow("Loading...", barWidth, percentWidth, resetWidth))
 		return s.String()
 	}
@@ -139,7 +139,7 @@ func (m Model) isCompactAccountExhausted(accountKey string) bool {
 			return true
 		}
 	}
-	if m.LoadingMap[accountKey] && !m.silentRefresh[accountKey] {
+	if m.showsLoading(accountKey) {
 		return false
 	}
 	if err := m.ErrorsMap[accountKey]; err != nil {

@@ -77,7 +77,7 @@ func (m Model) fetchNextCmd() tea.Cmd {
 			m.silentRefresh[accountKey] = true
 			return m.fetchAccountCmd(accountKey, false)
 		}
-		if !hasData && !hasErr {
+		if (!hasData && !hasErr) || m.seeded[accountKey] {
 			force := m.forceRefresh[accountKey]
 			delete(m.forceRefresh, accountKey)
 			m.LoadingMap[accountKey] = true
