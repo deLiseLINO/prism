@@ -131,9 +131,12 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 	if err != nil {
 		return nil, err
 	}
-	tools, err := toolsFrom(request.Tools)
+	tools, skipped, err := toolsFrom(request.Tools)
 	if err != nil {
 		return nil, err
+	}
+	if len(skipped) > 0 {
+		r.log.Warn("anthropic: skipped tools the upstream cannot accept", "count", len(skipped), "tools", skipped)
 	}
 	choice, err := toolChoiceFrom(request.ToolChoice)
 	if err != nil {
@@ -397,27 +400,75 @@ func customToolSchema(name canon.ToolName) (json.RawMessage, error) {
 	})
 }
 
-func toolsFrom(tools []canon.Tool) ([]wireTool, error) {
+func toolsFrom(tools []canon.Tool) ([]wireTool, []string, error) {
 	var wire []wireTool
+	var skipped []string
 	for _, t := range tools {
 		switch v := t.(type) {
 		case canon.FunctionTool:
 			schema, err := objectSchema(v.Parameters)
 			if err != nil {
-				return nil, fmt.Errorf("anthropic: tool %q has malformed parameters", v.Name)
+				return nil, nil, fmt.Errorf("anthropic: tool %q has malformed parameters", v.Name)
+			}
+			if !toolNamePattern.MatchString(string(v.Name)) || hasInvalidPropertyKey(schema) {
+				skipped = append(skipped, string(v.Name))
+				continue
 			}
 			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema})
 		case canon.CustomToolDef:
 			schema, err := customToolSchema(v.Name)
 			if err != nil {
-				return nil, fmt.Errorf("anthropic: encode custom tool %q schema: %w", v.Name, err)
+				return nil, nil, fmt.Errorf("anthropic: encode custom tool %q schema: %w", v.Name, err)
+			}
+			if !toolNamePattern.MatchString(string(v.Name)) {
+				skipped = append(skipped, string(v.Name))
+				continue
 			}
 			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema})
 		default:
-			return nil, fmt.Errorf("anthropic: unsupported tool %T", t)
+			return nil, nil, fmt.Errorf("anthropic: unsupported tool %T", t)
 		}
 	}
-	return wire, nil
+	return wire, skipped, nil
+}
+
+var (
+	toolNamePattern    = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+	propertyKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,64}$`)
+)
+
+func hasInvalidPropertyKey(schema json.RawMessage) bool {
+	var node any
+	if err := json.Unmarshal(schema, &node); err != nil {
+		return false
+	}
+	return schemaHasInvalidPropertyKey(node)
+}
+
+func schemaHasInvalidPropertyKey(node any) bool {
+	switch v := node.(type) {
+	case map[string]any:
+		for key, child := range v {
+			if props, ok := child.(map[string]any); ok && key == "properties" {
+				for name, sub := range props {
+					if !propertyKeyPattern.MatchString(name) || schemaHasInvalidPropertyKey(sub) {
+						return true
+					}
+				}
+				continue
+			}
+			if schemaHasInvalidPropertyKey(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if schemaHasInvalidPropertyKey(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var schemaCombinatorKeys = []string{"oneOf", "anyOf", "allOf"}

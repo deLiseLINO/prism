@@ -781,7 +781,7 @@ func TestToolsFromNormalizesRootSchema(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tools, err := toolsFrom([]canon.Tool{canon.FunctionTool{Name: "t", Parameters: []byte(tc.params)}})
+			tools, _, err := toolsFrom([]canon.Tool{canon.FunctionTool{Name: "t", Parameters: []byte(tc.params)}})
 			if err != nil {
 				t.Fatalf("toolsFrom: %v", err)
 			}
@@ -793,8 +793,33 @@ func TestToolsFromNormalizesRootSchema(t *testing.T) {
 }
 
 func TestToolsFromRejectsInvalidJSONParameters(t *testing.T) {
-	_, err := toolsFrom([]canon.Tool{canon.FunctionTool{Name: "t", Parameters: []byte(`{"type":`)}})
+	_, _, err := toolsFrom([]canon.Tool{canon.FunctionTool{Name: "t", Parameters: []byte(`{"type":`)}})
 	if err == nil || !strings.Contains(err.Error(), "malformed parameters") {
 		t.Fatalf("err = %v, want malformed parameters", err)
+	}
+}
+
+func TestToolsFromSkipsToolsTheUpstreamRejects(t *testing.T) {
+	tools, skipped, err := toolsFrom([]canon.Tool{
+		canon.FunctionTool{Name: "ok", Parameters: []byte(`{"type":"object","properties":{"a.b-c_1":{"type":"string"}}}`)},
+		canon.FunctionTool{Name: "bracket_key", Parameters: []byte(`{"type":"object","properties":{"not[assignee_id]":{"type":"string"}}}`)},
+		canon.FunctionTool{Name: "nested_bad_key", Parameters: []byte(`{"type":"object","properties":{"f":{"type":"object","properties":{"$ref":{"type":"string"}}}}}`)},
+		canon.FunctionTool{Name: "bad.name"},
+		canon.FunctionTool{Name: canon.ToolName(strings.Repeat("n", 65))},
+		canon.CustomToolDef{Name: "custom tool"},
+		canon.FunctionTool{Name: "property_named_properties", Parameters: []byte(`{"type":"object","properties":{"properties":{"type":"string"}}}`)},
+	})
+	if err != nil {
+		t.Fatalf("toolsFrom: %v", err)
+	}
+	var kept []string
+	for _, tool := range tools {
+		kept = append(kept, tool.Name)
+	}
+	if got, want := strings.Join(kept, ","), "ok,property_named_properties"; got != want {
+		t.Errorf("kept = %s, want %s", got, want)
+	}
+	if got, want := len(skipped), 5; got != want {
+		t.Errorf("skipped = %v, want %d entries", skipped, want)
 	}
 }
