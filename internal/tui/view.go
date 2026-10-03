@@ -77,7 +77,11 @@ func (m Model) preferredContentWidth() int {
 }
 
 func (m Model) renderHeader() string {
-	return TitleStyle.Render("Prism")
+	return HeaderStyle.Render(
+		TitleStyle.Render("Prism") +
+			TitleSeparatorStyle.Render(" · ") +
+			TitleProviderStyle.Render(m.ProviderFilter),
+	)
 }
 
 func (m Model) renderFooter() string {

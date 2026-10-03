@@ -5,8 +5,15 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("205")).
-			MarginBottom(1)
+			Foreground(lipgloss.Color("205"))
+
+	TitleSeparatorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244"))
+
+	TitleProviderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("39"))
+
+	HeaderStyle = lipgloss.NewStyle().MarginBottom(1)
 
 	TabActiveStyle = lipgloss.NewStyle().
 			Bold(true).
