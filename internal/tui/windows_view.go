@@ -149,9 +149,9 @@ func (m Model) renderWindowsLoadingSkeleton() string {
 	for _, title := range []string{"Gemini Models", "Claude and GPT models"} {
 		s.WriteString(m.renderGroupHeader(title))
 		s.WriteString("\n")
-		s.WriteString(m.renderWindowStatusRow(quotaWindow{WindowSec: windowSecShort}, "Loading..."))
+		s.WriteString(m.renderWindowStatusRow(title, quotaWindow{WindowSec: windowSecShort}, "Loading..."))
 		s.WriteString("\n")
-		s.WriteString(m.renderWindowStatusRow(quotaWindow{WindowSec: windowSecWeekly}, "Loading..."))
+		s.WriteString(m.renderWindowStatusRow(title, quotaWindow{WindowSec: windowSecWeekly}, "Loading..."))
 		s.WriteString("\n")
 	}
 	return s.String()
@@ -222,7 +222,7 @@ func (m Model) renderWindowRow(window quotaWindow) string {
 	s.WriteString(windowRowIndent)
 	s.WriteString(LabelStyle.Render(alignedName))
 	s.WriteString(" ")
-	gradientStart, gradientEnd := barGradientForWindow(window.WindowSec)
+	gradientStart, gradientEnd := barGradientForGroup(windowGroupTitle(window.Label), window.WindowSec)
 	if window.HasPercent {
 		s.WriteString(renderSmoothBar(barWidth, ratio, gradientStart, gradientEnd))
 	} else {
@@ -237,14 +237,14 @@ func (m Model) renderWindowRow(window quotaWindow) string {
 	return s.String()
 }
 
-func (m Model) renderWindowStatusRow(window quotaWindow, status string) string {
+func (m Model) renderWindowStatusRow(groupTitle string, window quotaWindow, status string) string {
 	var s strings.Builder
 	nameWidth, barWidth, percentWidth, resetWidth := m.windowRowLayout(window.WindowSec)
 	leadOffset := m.windowLeadOffset(window.WindowSec)
 	name := truncateLabel(windowRowLabel(window), nameWidth)
 	alignedName := padRight(name, nameWidth)
 	status = truncateLabelStrict(status, resetWidth)
-	gradientStart, gradientEnd := barGradientForWindow(window.WindowSec)
+	gradientStart, gradientEnd := barGradientForGroup(groupTitle, window.WindowSec)
 
 	s.WriteString(strings.Repeat(" ", leadOffset))
 	s.WriteString(windowRowIndent)

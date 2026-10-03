@@ -257,7 +257,13 @@ func (m Model) barWidthForWindow(windowSec int64) int {
 	return m.defaultBarWidth()
 }
 
-func barGradientForWindow(windowSec int64) (string, string) {
+func barGradientForGroup(groupTitle string, windowSec int64) (string, string) {
+	switch groupTitle {
+	case "Gemini Models":
+		return shortBarGradientStart, shortBarGradientEnd
+	case "Claude and GPT models":
+		return defaultBarGradientStart, defaultBarGradientEnd
+	}
 	if windowSec == windowSecShort {
 		return shortBarGradientStart, shortBarGradientEnd
 	}
