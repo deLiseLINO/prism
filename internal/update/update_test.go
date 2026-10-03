@@ -181,7 +181,7 @@ func TestFetchLatest(t *testing.T) {
 		_, _ = w.Write([]byte("class Prism < Formula\n  version \"0.4.0\"\nend\n"))
 	}
 	release := func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v0.3.0"}`))
+		_, _ = w.Write([]byte(`[{"tag_name":"v0.3.0-rc.1"}]`))
 	}
 	src := newSource(t, formula, release)
 	ctx := context.Background()
@@ -189,12 +189,12 @@ func TestFetchLatest(t *testing.T) {
 	if got, err := src.FetchLatest(ctx, MethodBrew); err != nil || got != "0.4.0" {
 		t.Fatalf("brew: %q %v", got, err)
 	}
-	if got, err := src.FetchLatest(ctx, MethodGo); err != nil || got != "0.3.0" {
+	if got, err := src.FetchLatest(ctx, MethodGo); err != nil || got != "0.3.0-rc.1" {
 		t.Fatalf("go: %q %v", got, err)
 	}
 
 	broken := newSource(t, func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "no", http.StatusNotFound) }, release)
-	if got, err := broken.FetchLatest(ctx, MethodBrew); err != nil || got != "0.3.0" {
+	if got, err := broken.FetchLatest(ctx, MethodBrew); err != nil || got != "0.3.0-rc.1" {
 		t.Fatalf("brew fallback: %q %v", got, err)
 	}
 
@@ -202,11 +202,16 @@ func TestFetchLatest(t *testing.T) {
 	if _, err := failing.FetchLatest(ctx, MethodGo); err == nil {
 		t.Fatal("expected error")
 	}
+
+	empty := newSource(t, formula, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`[]`)) })
+	if _, err := empty.FetchLatest(ctx, MethodGo); err == nil {
+		t.Fatal("expected error for no releases")
+	}
 }
 
 func TestRefreshStateKeepsDismissed(t *testing.T) {
 	src := newSource(t, http.NotFound, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v0.5.0"}`))
+		_, _ = w.Write([]byte(`[{"tag_name":"v0.5.0"}]`))
 	})
 	got, err := src.Refresh(context.Background(), State{DismissedVersion: "0.4.0"}, MethodGo)
 	if err != nil {
