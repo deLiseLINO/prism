@@ -134,6 +134,7 @@ func TestStopReasonMapping(t *testing.T) {
 		{"stop_sequence", canon.StatusCompleted, 0},
 		{"tool_use", canon.StatusCompleted, 0},
 		{"max_tokens", canon.StatusIncomplete, canon.IncompleteMaxOutputTokens},
+		{"model_context_window_exceeded", canon.StatusIncomplete, canon.IncompleteMaxOutputTokens},
 		{"refusal", canon.StatusIncomplete, canon.IncompleteContentFilter},
 		{"content_filter", canon.StatusIncomplete, canon.IncompleteContentFilter},
 		{"weird", canon.StatusCompleted, 0},
