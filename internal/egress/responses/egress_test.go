@@ -984,3 +984,53 @@ func TestFailedCodesMatchWhatCodexClassifies(t *testing.T) {
 		e.Close()
 	}
 }
+
+func TestOpenItemsAreClosedBeforeAnAbnormalTerminal(t *testing.T) {
+	for name, terminal := range map[string]canon.Event{
+		"failed":     canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: "cut"}},
+		"incomplete": canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteUpstreamStall)},
+	} {
+		b := &lockBuffer{}
+		e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
+		if err := e.Begin(header()); err != nil {
+			t.Fatal(err)
+		}
+		call := canon.FunctionCall{ID: "fc", CallID: "c", Name: "n"}
+		for _, ev := range []canon.Event{
+			canon.ItemStarted{Item: canon.Message{ID: "m1", Role: canon.RoleAssistant}},
+			canon.TextDelta{ItemID: "m1", Text: "half a sent"},
+			canon.ItemStarted{Item: call},
+			canon.ToolArgumentsDelta{ItemID: "fc", Bytes: []byte(`{"city":`)},
+			terminal,
+		} {
+			if err := e.Frame(ev); err != nil {
+				t.Fatalf("%s: frame %T: %v", name, ev, err)
+			}
+		}
+		if err := e.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		var done []map[string]any
+		var last map[string]any
+		for _, f := range eventFrames(t, b) {
+			switch f.event {
+			case "response.output_item.done":
+				done = append(done, dataMap(t, f)["item"].(map[string]any))
+			case "response.failed", "response.incomplete":
+				last = dataMap(t, f)["response"].(map[string]any)
+			}
+		}
+		if len(done) != 1 || done[0]["type"] != "message" || done[0]["status"] != "incomplete" {
+			t.Fatalf("%s: closed items = %v", name, done)
+		}
+		content := done[0]["content"].([]any)[0].(map[string]any)
+		if content["text"] != "half a sent" {
+			t.Fatalf("%s: partial text = %v", name, content)
+		}
+		output := last["output"].([]any)
+		if len(output) != 1 || output[0].(map[string]any)["type"] != "message" {
+			t.Fatalf("%s: terminal output = %v, want the message only", name, output)
+		}
+		e.Close()
+	}
+}
