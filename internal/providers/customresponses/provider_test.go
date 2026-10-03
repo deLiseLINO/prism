@@ -222,6 +222,38 @@ func TestReasoningReplayIncludesSummary(t *testing.T) {
 	}
 }
 
+func TestReplayDropsItemIDsTheUpstreamCannotResolve(t *testing.T) {
+	req := testRequest(false)
+	req.Input = []canon.Item{
+		canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+		canon.ReasoningItem{ID: "block-0", Summary: []canon.TextContent{{Text: "from another model"}}},
+		canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "native"}}},
+		canon.FunctionCall{ID: "toolu_1", CallID: "call_1", Name: "get_weather", Arguments: []byte(`{}`)},
+		canon.FunctionCall{ID: "fc_2", CallID: "call_2", Name: "get_weather", Arguments: []byte(`{}`)},
+		canon.CustomToolCall{ID: "toolu_3", CallID: "call_3", Name: "apply_patch", Input: "patch"},
+		canon.CustomToolCall{ID: "ctc_4", CallID: "call_4", Name: "apply_patch", Input: "patch"},
+	}
+	raw, err := buildBody(req)
+	if err != nil {
+		t.Fatalf("buildBody: %v", err)
+	}
+	var got struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(got.Input))
+	for _, item := range got.Input {
+		id, _ := item["id"].(string)
+		ids = append(ids, fmt.Sprintf("%s=%s", item["type"], id))
+	}
+	want := "message=,reasoning=,reasoning=rs_1,function_call=,function_call=fc_2,custom_tool_call=,custom_tool_call=ctc_4"
+	if gotIDs := strings.Join(ids, ","); gotIDs != want {
+		t.Fatalf("ids = %s, want %s", gotIDs, want)
+	}
+}
+
 func TestResponsesURLVariants(t *testing.T) {
 	cases := map[string]string{
 		"https://example.com":              "https://example.com/v1/responses",
