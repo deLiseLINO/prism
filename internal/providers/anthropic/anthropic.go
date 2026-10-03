@@ -164,7 +164,7 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return upstreamError(resp)
 	}
-	return r.stream(provider.IdleBody(resp.Body, provider.StreamIdleTimeout, cancel), sink)
+	return r.stream(provider.IdleBody(resp.Body, provider.StreamIdleTimeout, cancel), sink, customToolNames(req.Request.Tools))
 }
 
 func (r *Runner) buildRequest(req provider.RunRequest) (*outbound, error) {

@@ -553,3 +553,126 @@ func TestEmptyThinkingIsReplayedWithThinkingField(t *testing.T) {
 		t.Fatalf("signature = %v", block["signature"])
 	}
 }
+
+func buildBody(t *testing.T, request canon.Request) map[string]any {
+	t.Helper()
+	out, err := New(Options{}).buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k"}})
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	return decodeBody(t, out.body)
+}
+
+func TestCustomToolLowering(t *testing.T) {
+	cases := []struct {
+		name string
+		tool canon.CustomToolDef
+		want string
+	}{
+		{
+			name: "apply_patch",
+			tool: canon.CustomToolDef{Name: "apply_patch", Description: "edit files"},
+			want: "{\"description\":\"edit files\",\"input_schema\":{\"properties\":{\"input\":{\"description\":\"Raw tool input. For apply_patch, begin exactly with `*** Begin Patch` (no trailing `***`), then use its standard patch envelope.\",\"type\":\"string\"}},\"required\":[\"input\"],\"type\":\"object\"},\"name\":\"apply_patch\"}",
+		},
+		{
+			name: "generic",
+			tool: canon.CustomToolDef{Name: "exec", Description: "run code"},
+			want: `{"description":"run code","input_schema":{"properties":{"input":{"description":"Raw freeform input for this tool.","type":"string"}},"required":["input"],"type":"object"},"name":"exec"}`,
+		},
+		{
+			name: "format and grammar ignored",
+			tool: canon.CustomToolDef{
+				Name:    "exec",
+				Format:  canon.FormatText,
+				Grammar: &canon.ToolGrammar{Syntax: "lark", Definition: "start: /.+/"},
+			},
+			want: `{"input_schema":{"properties":{"input":{"description":"Raw freeform input for this tool.","type":"string"}},"required":["input"],"type":"object"},"name":"exec"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := baseRequest()
+			request.Tools = []canon.Tool{tc.tool}
+			body := buildBody(t, request)
+			tools, _ := body["tools"].([]any)
+			if len(tools) != 1 {
+				t.Fatalf("tools = %v", tools)
+			}
+			got, _ := json.Marshal(tools[0])
+			if string(got) != tc.want {
+				t.Fatalf("tool = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCustomToolNamedChoice(t *testing.T) {
+	request := baseRequest()
+	request.Tools = []canon.Tool{canon.CustomToolDef{Name: "apply_patch"}}
+	request.ToolChoice = canon.ToolNamed{Name: "apply_patch"}
+	body := buildBody(t, request)
+	got, _ := json.Marshal(body["tool_choice"])
+	if string(got) != `{"name":"apply_patch","type":"tool"}` {
+		t.Fatalf("tool_choice = %s", got)
+	}
+}
+
+func TestCustomToolHistoryRoundTrip(t *testing.T) {
+	cases := []struct {
+		name  string
+		items []canon.Item
+		want  string
+	}{
+		{
+			name: "quotes newlines and unicode",
+			items: []canon.Item{
+				canon.CustomToolCall{ID: "ct1", CallID: "call_1", Name: "apply_patch", Input: "*** Begin Patch\nsay \"héllo\" \\ 日本\n*** End Patch"},
+				canon.CustomToolOutput{ID: "co1", CallID: "call_1", Output: "done \"ok\"\n"},
+			},
+			want: `[{"content":[{"text":"hi","type":"text"}],"role":"user"},` +
+				`{"content":[{"id":"call_1","input":{"input":"*** Begin Patch\nsay \"héllo\" \\ 日本\n*** End Patch"},"name":"apply_patch","type":"tool_use"}],"role":"assistant"},` +
+				`{"content":[{"content":[{"text":"done \"ok\"\n","type":"text"}],"tool_use_id":"call_1","type":"tool_result"}],"role":"user"}]`,
+		},
+		{
+			name: "empty output has no content blocks",
+			items: []canon.Item{
+				canon.CustomToolCall{ID: "ct1", CallID: "call_2", Name: "exec", Input: ""},
+				canon.CustomToolOutput{ID: "co1", CallID: "call_2", Output: ""},
+			},
+			want: `[{"content":[{"text":"hi","type":"text"}],"role":"user"},` +
+				`{"content":[{"id":"call_2","input":{"input":""},"name":"exec","type":"tool_use"}],"role":"assistant"},` +
+				`{"content":[{"tool_use_id":"call_2","type":"tool_result"}],"role":"user"}]`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := baseRequest()
+			request.Input = append(request.Input, tc.items...)
+			body := buildBody(t, request)
+			got, _ := json.Marshal(body["messages"])
+			if string(got) != tc.want {
+				t.Fatalf("messages = %s\nwant      %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCustomToolMissingCallIDFailsLoud(t *testing.T) {
+	cases := []struct {
+		name string
+		item canon.Item
+	}{
+		{"call", canon.CustomToolCall{ID: "ct1", Name: "exec", Input: "x"}},
+		{"output", canon.CustomToolOutput{ID: "co1", Output: "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := baseRequest()
+			request.Input = append(request.Input, tc.item)
+			_, err := New(Options{}).buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k"}})
+			if err == nil {
+				t.Fatal("buildRequest without call id: want error, got nil")
+			}
+		})
+	}
+}
