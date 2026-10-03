@@ -58,11 +58,11 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 }
 CONFIG
 
-echo "==> building prismd"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
+echo "==> building prism"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 
 SANDBOX_PATH="$RUNDIR/sandbox/tools:$RUNDIR/sandbox/home/.local/bin"
-PRISM_AGENT_ACTIONS=1 PATH="$SANDBOX_PATH" "$RUNDIR/prismd" --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
+PRISM_AGENT_ACTIONS=1 PATH="$SANDBOX_PATH" "$RUNDIR/prism" daemon --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 40); do
   curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
@@ -103,7 +103,7 @@ record agents-get-grok 200 "$BASE/api/v1/agents/grok"
 record agents-get-unknown 404 "$BASE/api/v1/agents/frobnicate"
 
 if [ "$(uname -s)" = Darwin ]; then
-  echo "VERIFIED_UNREACHABLE: on macOS the codex install plan is brew-cask and prismd merges the login-shell PATH, so the sandbox cannot keep a real brew out of the job; run this drive on Linux (Dockerfile.ubuntu)" >&2
+  echo "VERIFIED_UNREACHABLE: on macOS the codex install plan is brew-cask and the daemon merges the login-shell PATH, so the sandbox cannot keep a real brew out of the job; run this drive on Linux (Dockerfile.ubuntu)" >&2
   exit 3
 fi
 echo "==> install job lifecycle"

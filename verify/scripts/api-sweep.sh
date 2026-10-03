@@ -58,10 +58,10 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 }
 CONFIG
 
-echo "==> building prismd"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd) || fail "go build cmd/prismd"
+echo "==> building prism"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 
-"$RUNDIR/prismd" --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
+"$RUNDIR/prism" daemon --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 40); do
   curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break

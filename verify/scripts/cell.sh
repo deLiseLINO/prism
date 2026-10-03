@@ -7,7 +7,7 @@
 # as raw JSON; outcome.txt carries the cell verdict.
 #
 #   CELL         evidence label (required)
-#   PORT         prismd listen port (required)
+#   PORT         daemon listen port (required)
 #   DAEMON_PATH  PATH the daemon resolves tools and agents on (default: inherit)
 #   PRE          setup run before the daemon starts (optional)
 #   MID          setup run after the first status snapshot (optional)
@@ -24,7 +24,7 @@ mkdir -p "$EV"
 exec > >(tee -a "$EV/cell.log") 2>&1
 
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
-prism() { PRISM_URL="$URL" /dist/prismctl "$@"; }
+prism() { PRISM_URL="$URL" /dist/prism "$@"; }
 
 daemon_path() {
   local p=${DAEMON_PATH:-$PATH}
@@ -43,8 +43,8 @@ fi
 
 DP=$(daemon_path)
 mkdir -p /tmp/prism-state
-log "starting prismd on $PORT (PATH=$DP)"
-PRISM_AGENT_ACTIONS=1 PATH="$DP" /dist/prismd \
+log "starting prism daemon on $PORT (PATH=$DP)"
+PRISM_AGENT_ACTIONS=1 PATH="$DP" /dist/prism daemon \
   -listen "127.0.0.1:$PORT" \
   -config /tmp/prism-state/prism.json \
   -credential-store /tmp/prism-state/creds &
@@ -52,10 +52,10 @@ DAEMON_PID=$!
 
 for _ in $(seq 1 50); do
   curl -sf "$URL/api/v1/agents" >/dev/null && break
-  kill -0 "$DAEMON_PID" 2>/dev/null || fail "prismd exited during startup"
+  kill -0 "$DAEMON_PID" 2>/dev/null || fail "prism daemon exited during startup"
   sleep 0.2
 done
-curl -sf "$URL/api/v1/agents" >/dev/null || fail "prismd did not come up"
+curl -sf "$URL/api/v1/agents" >/dev/null || fail "prism daemon did not come up"
 
 prism agents status --json > "$EV/agents-before.json" || fail "initial agents status failed"
 log "initial status captured"

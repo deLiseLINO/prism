@@ -1,5 +1,5 @@
 #!/bin/bash
-# Headless prismd smoke: empty config boots, health answers, SIGTERM is graceful.
+# Headless prism daemon smoke: empty config boots, health answers, SIGTERM is graceful.
 set -u
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
@@ -9,9 +9,9 @@ RUNDIR=$(mktemp -d /tmp/prism-smoke.XXXXXX)
 PORT="${PRISM_SMOKE_PORT:-18789}"
 trap '[ -n "${PID:-}" ] && kill -TERM "$PID" 2>/dev/null; rm -rf "$RUNDIR"' EXIT
 
-( cd "$GO_ROOT" && go build -o "$RUNDIR/prismd" ./cmd/prismd ) || fail "go build cmd/prismd"
+( cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism ) || fail "go build cmd/prism"
 
-"$RUNDIR/prismd" --listen "127.0.0.1:$PORT" --config "$RUNDIR/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
+"$RUNDIR/prism" daemon --listen "127.0.0.1:$PORT" --config "$RUNDIR/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 40); do
   curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
@@ -27,4 +27,4 @@ kill -TERM "$PID"
 wait "$PID" || fail "daemon exited nonzero on SIGTERM"
 grep -q 'shutdown complete' "$RUNDIR/out.log" || fail "no graceful shutdown log line"
 
-echo "prismd smoke OK (health 200, SIGTERM graceful)"
+echo "prism daemon smoke OK (health 200, SIGTERM graceful)"
