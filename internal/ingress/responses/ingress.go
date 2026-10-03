@@ -771,7 +771,8 @@ func (g *Ingress) messageFrom(m map[string]any, path string) (canon.Item, error)
 	if err != nil {
 		return nil, err
 	}
-	return canon.Message{ID: itemID(m["id"]), Role: r, Content: content}, nil
+	phase, _ := m["phase"].(string)
+	return canon.Message{ID: itemID(m["id"]), Role: r, Phase: canon.ParseMessagePhase(phase), Content: content}, nil
 }
 
 func itemID(v any) canon.ItemID {

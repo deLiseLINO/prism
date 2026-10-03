@@ -892,3 +892,67 @@ func TestProviderResponseErrorKeepsUnknownKeys(t *testing.T) {
 		t.Fatalf("error keys = %v", errObj)
 	}
 }
+
+func TestMessagePhaseFollowsTurnShape(t *testing.T) {
+	run := func(events ...canon.Event) []map[string]any {
+		b := &lockBuffer{}
+		e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
+		defer e.Close()
+		if err := e.Begin(header()); err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range events {
+			if err := e.Frame(ev); err != nil {
+				t.Fatalf("frame %T: %v", ev, err)
+			}
+		}
+		if err := e.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		var done []map[string]any
+		for _, f := range parseFrames(t, b) {
+			if f.event == "response.output_item.done" {
+				done = append(done, dataMap(t, f)["item"].(map[string]any))
+			}
+		}
+		return done
+	}
+	msg := func(id canon.ItemID) []canon.Event {
+		m := canon.Message{ID: id, Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "t"}}}
+		return []canon.Event{
+			canon.ItemStarted{Item: canon.Message{ID: id, Role: canon.RoleAssistant}},
+			canon.TextDelta{ItemID: id, Text: "t"},
+			canon.ItemFinished{Item: m},
+		}
+	}
+	call := canon.FunctionCall{ID: "fc", CallID: "c", Name: "n", Arguments: []byte(`{}`)}
+
+	withTool := run(append(msg("m1"), canon.ItemStarted{Item: call}, canon.ItemFinished{Item: call}, canon.TurnFinished{Status: canon.Completed()})...)
+	if len(withTool) != 2 || withTool[0]["phase"] != "commentary" {
+		t.Fatalf("text before tool call: %v", withTool)
+	}
+	if _, ok := withTool[1]["phase"]; ok {
+		t.Fatalf("tool call carries phase: %v", withTool[1])
+	}
+
+	final := run(append(msg("m1"), canon.TurnFinished{Status: canon.Completed()})...)
+	if final[0]["phase"] != "final_answer" {
+		t.Fatalf("closing text: %v", final[0])
+	}
+
+	cut := run(append(msg("m1"), canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens)})...)
+	if _, ok := cut[0]["phase"]; ok {
+		t.Fatalf("truncated text got phase: %v", cut[0])
+	}
+
+	two := run(append(append(msg("m1"), msg("m2")...), canon.TurnFinished{Status: canon.Completed()})...)
+	if two[0]["phase"] != "commentary" || two[1]["phase"] != "final_answer" {
+		t.Fatalf("two messages: %v", two)
+	}
+
+	given := canon.Message{ID: "m1", Role: canon.RoleAssistant, Phase: canon.PhaseFinalAnswer, Content: []canon.Content{canon.TextContent{Text: "t"}}}
+	kept := run(canon.ItemStarted{Item: canon.Message{ID: "m1", Role: canon.RoleAssistant}}, canon.ItemFinished{Item: given}, canon.ItemStarted{Item: call}, canon.ItemFinished{Item: call}, canon.TurnFinished{Status: canon.Completed()})
+	if kept[0]["phase"] != "final_answer" {
+		t.Fatalf("provider phase overridden: %v", kept[0])
+	}
+}

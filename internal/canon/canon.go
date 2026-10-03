@@ -73,9 +73,26 @@ func (ImageContent) content() {}
 
 type Item interface{ item() }
 
+type MessagePhase string
+
+const (
+	PhaseNone        MessagePhase = ""
+	PhaseCommentary  MessagePhase = "commentary"
+	PhaseFinalAnswer MessagePhase = "final_answer"
+)
+
+func ParseMessagePhase(s string) MessagePhase {
+	switch p := MessagePhase(s); p {
+	case PhaseCommentary, PhaseFinalAnswer:
+		return p
+	}
+	return PhaseNone
+}
+
 type Message struct {
 	ID      ItemID
 	Role    Role
+	Phase   MessagePhase
 	Content []Content
 }
 
