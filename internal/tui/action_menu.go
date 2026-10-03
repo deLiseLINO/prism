@@ -33,6 +33,7 @@ func (m Model) actionMenuSections() []actionMenuSection {
 		{ID: actionMenuRefreshAll, Label: "Refresh all", Shortcut: "R"},
 		{ID: actionMenuAdd, Label: "Add account", Shortcut: "n"},
 		{ID: actionMenuIntegrations, Label: "Integrations", Shortcut: "I"},
+		{ID: actionMenuStats, Label: "Usage stats", Shortcut: "U"},
 		{ID: actionMenuProvider, Label: "Switch provider", Shortcut: "P"},
 		{ID: actionMenuView, Label: "Switch view", Shortcut: "v"},
 		{ID: actionMenuSettings, Label: "Settings", Shortcut: ","},
