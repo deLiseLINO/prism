@@ -1,63 +1,59 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EventEmitter } from 'node:events'
 
-const spawnMock = vi.hoisted(() => vi.fn())
+const runCliMock = vi.hoisted(() => vi.fn())
 const locateMock = vi.hoisted(() => vi.fn())
+const stageMock = vi.hoisted(() => vi.fn())
 const locateWebuiMock = vi.hoisted(() => vi.fn())
-const healthMock = vi.hoisted(() => vi.fn())
 const probeMock = vi.hoisted(() => vi.fn())
 
-vi.mock('node:child_process', () => ({
-  spawn: spawnMock,
-}))
+vi.mock('../main/daemon/cli', () => ({ runCli: runCliMock }))
 
 vi.mock('../main/daemon/locate', () => ({
   locateDaemon: locateMock,
+  stageDaemon: stageMock,
   locateWebui: locateWebuiMock,
 }))
 
-vi.mock('../main/daemon/health', () => ({
-  waitForHealth: healthMock,
-  probeHealth: probeMock,
-}))
-
-interface FakeChild extends EventEmitter {
-  readonly pid: number
-  kill: ReturnType<typeof vi.fn>
-}
+vi.mock('../main/daemon/health', () => ({ probeHealth: probeMock }))
 
 interface RecordedStatus {
   readonly state: string
   readonly attempt: number
-  readonly pid: number | null
   readonly lastError: string | null
 }
+
+interface CliReply {
+  readonly code: number | null
+  readonly stdout: string
+  readonly stderr: string
+}
+
+const URL = 'http://127.0.0.1:4931'
+const ok: CliReply = { code: 0, stdout: `${URL}\n`, stderr: '' }
+const failure: CliReply = { code: 1, stdout: '', stderr: 'port 4931 is held by another process' }
 
 const options = {
   port: 4931,
   daemonConfigPath: null,
   webuiDir: null,
   logPath: null,
-  healthTimeoutMs: 200,
-  healthIntervalMs: 20,
+  commandTimeoutMs: 1000,
+  healthPollMs: 1000,
   healthProbeTimeoutMs: 50,
-  adoptedPollMs: 1000,
-  stopGraceMs: 50,
   restartBaseMs: 100,
   restartMaxMs: 1000,
   maxRestarts: 3,
   stabilityWindowMs: 60_000,
 }
 
-let children: FakeChild[] = []
 let recorded: RecordedStatus[] = []
-let healthQueue: Array<'healthy' | 'timeout'> = []
+let replies: CliReply[] = []
 
-async function makeSupervisor(): Promise<import('../main/daemon/supervisor').DaemonSupervisor> {
+async function makeSupervisor(overrides: Partial<typeof options> = {}): Promise<import('../main/daemon/supervisor').DaemonSupervisor> {
   const { DaemonSupervisor } = await import('../main/daemon/supervisor')
-  const supervisor = new DaemonSupervisor('http://127.0.0.1:4931', options)
+  const supervisor = new DaemonSupervisor(URL, { ...options, ...overrides })
   supervisor.subscribe((status) => {
-    recorded.push({ state: status.state, attempt: status.attempt, pid: status.pid, lastError: status.lastError })
+    recorded.push({ state: status.state, attempt: status.attempt, lastError: status.lastError })
   })
   return supervisor
 }
@@ -66,31 +62,20 @@ function lastStatus(): RecordedStatus {
   return recorded[recorded.length - 1]
 }
 
-function setHealth(...outcomes: Array<'healthy' | 'timeout'>): void {
-  healthQueue = [...outcomes]
+function serviceCalls(): string[][] {
+  return runCliMock.mock.calls.map((call) => call[1] as string[])
 }
 
-function crash(child: FakeChild): void {
-  child.emit('exit', 1, null)
-}
-
-describe('DaemonSupervisor restart policy', () => {
+describe('DaemonSupervisor service lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    children = []
     recorded = []
-    healthQueue = []
-    spawnMock.mockReset().mockImplementation(() => {
-      const child = new EventEmitter() as FakeChild
-      Object.defineProperty(child, 'pid', { value: 4242 })
-      child.kill = vi.fn(() => true)
-      children.push(child)
-      return child
-    })
-    locateMock.mockReset().mockReturnValue({ path: '/virtual/prism', source: 'bundled' })
+    replies = []
+    runCliMock.mockReset().mockImplementation(async () => replies.shift() ?? ok)
+    locateMock.mockReset().mockReturnValue({ path: '/virtual/bundled', source: 'bundled' })
+    stageMock.mockReset().mockResolvedValue('/virtual/staged/prism')
     locateWebuiMock.mockReset().mockReturnValue(null)
-    probeMock.mockReset().mockResolvedValue(false)
-    healthMock.mockReset().mockImplementation(() => healthQueue.shift() ?? 'timeout')
+    probeMock.mockReset().mockResolvedValue(true)
     vi.resetModules()
   })
 
@@ -98,164 +83,135 @@ describe('DaemonSupervisor restart policy', () => {
     vi.useRealTimers()
   })
 
-  it('reaches failed after repeated startup crashes count maxRestarts attempts', async () => {
+  it('runs the staged binary with service start and the listen address, reading the url from stdout', async () => {
     const supervisor = await makeSupervisor()
-    await supervisor.start()
-    expect(spawnMock).toHaveBeenCalledTimes(1)
-    expect(children[0].kill).toHaveBeenCalledWith('SIGTERM')
-    crash(children[0])
-    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 1 })
-    await vi.advanceTimersByTimeAsync(199)
-    expect(spawnMock).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(spawnMock).toHaveBeenCalledTimes(2)
-    expect(lastStatus()).toMatchObject({ state: 'starting', attempt: 2 })
-    crash(children[1])
-    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 2 })
-    await vi.advanceTimersByTimeAsync(399)
-    expect(spawnMock).toHaveBeenCalledTimes(2)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(spawnMock).toHaveBeenCalledTimes(3)
-    crash(children[2])
-    expect(lastStatus()).toMatchObject({ state: 'failed' })
-    const failed = supervisor.status
-    expect(failed.state).toBe('failed')
-    expect(failed.pid).toBe(null)
-    expect(failed.lastExit).toEqual({ code: 1, signal: null })
-    expect(failed.lastError).toBe('prism: daemon crashed 3 times without reaching a stable ready state (code=1 signal=none)')
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(spawnMock).toHaveBeenCalledTimes(3)
-  })
-
-  it('exposes the crashed attempt and its capped backoff delay on every retry event', async () => {
-    const { DaemonSupervisor } = await import('../main/daemon/supervisor')
-    const cappedOptions = { ...options, maxRestarts: 5 }
-    const capped = new DaemonSupervisor('http://127.0.0.1:4931', cappedOptions)
-    capped.subscribe((status) => {
-      recorded.push({ state: status.state, attempt: status.attempt, pid: status.pid, lastError: status.lastError })
-    })
-    await capped.start()
-    const expectedDelays = [200, 400, 800, 1000]
-    for (let crashed = 1; crashed <= 4; crashed++) {
-      crash(children[crashed - 1])
-      expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: crashed })
-      await vi.advanceTimersByTimeAsync(expectedDelays[crashed - 1] - 1)
-      expect(spawnMock).toHaveBeenCalledTimes(crashed)
-      await vi.advanceTimersByTimeAsync(1)
-      expect(spawnMock).toHaveBeenCalledTimes(crashed + 1)
-    }
-    crash(children[4])
-    expect(lastStatus()).toMatchObject({ state: 'failed' })
-    expect(capped.status.lastError).toBe('prism: daemon crashed 5 times without reaching a stable ready state (code=1 signal=none)')
-  })
-
-  it('reaches ready without scheduling any retry for a healthy process', async () => {
-    const supervisor = await makeSupervisor()
-    setHealth('healthy')
     const status = await supervisor.start()
-    expect(status).toMatchObject({ state: 'ready', attempt: 1, pid: 4242, endpoint: 'http://127.0.0.1:4931' })
-    expect(status.lastError).toBe(null)
-    expect(status.lastExit).toBe(null)
+    expect(stageMock).toHaveBeenCalledWith({ path: '/virtual/bundled', source: 'bundled' })
+    expect(runCliMock).toHaveBeenCalledWith('/virtual/staged/prism', ['service', 'start', '--listen', '127.0.0.1:4931'], 1000)
+    expect(status).toMatchObject({ state: 'ready', attempt: 1, pid: null, endpoint: URL, lastError: null })
     expect(typeof status.startedAt).toBe('string')
-    expect(children[0].kill).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(spawnMock).toHaveBeenCalledTimes(1)
   })
 
-  it('resets the retry sequence only at the stability window boundary', async () => {
-    const supervisor = await makeSupervisor()
-    setHealth('healthy', 'timeout', 'timeout')
-    await supervisor.start()
-    expect(lastStatus()).toMatchObject({ state: 'ready', attempt: 1 })
-    await vi.advanceTimersByTimeAsync(options.stabilityWindowMs + 1)
-    crash(children[0])
-    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 0 })
-    await vi.advanceTimersByTimeAsync(100)
-    expect(spawnMock).toHaveBeenCalledTimes(2)
-    expect(lastStatus()).toMatchObject({ state: 'starting', attempt: 1 })
-    crash(children[1])
-    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 1 })
-    await vi.advanceTimersByTimeAsync(200)
-    expect(spawnMock).toHaveBeenCalledTimes(3)
-    expect(lastStatus()).toMatchObject({ state: 'starting', attempt: 2 })
-  })
-
-  it('continues the attempt when a ready daemon crashes within the stability window', async () => {
-    const supervisor = await makeSupervisor()
-    setHealth('healthy')
-    await supervisor.start()
-    crash(children[0])
-    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 1 })
-    await vi.advanceTimersByTimeAsync(200)
-    expect(spawnMock).toHaveBeenCalledTimes(2)
-    expect(lastStatus()).toMatchObject({ state: 'starting', attempt: 2 })
-  })
-
-  it('passes the webui bundle directory to the daemon when located', async () => {
+  it('forwards the config path and webui directory', async () => {
     locateWebuiMock.mockReturnValue('/virtual/webui')
-    const supervisor = await makeSupervisor()
-    setHealth('healthy')
+    const supervisor = await makeSupervisor({ daemonConfigPath: '/virtual/config.yaml' })
     await supervisor.start()
-    expect(spawnMock).toHaveBeenCalledWith(
-      '/virtual/prism',
-      ['daemon', '--listen', '127.0.0.1:4931', '--webui', '/virtual/webui'],
-      { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false },
-    )
+    expect(serviceCalls()[0]).toEqual(['service', 'start', '--listen', '127.0.0.1:4931', '--config', '/virtual/config.yaml', '--webui', '/virtual/webui'])
   })
 
-  it('omits the webui flag when no bundle exists', async () => {
+  it('stages the binary once across repeated launches', async () => {
     const supervisor = await makeSupervisor()
-    setHealth('healthy')
     await supervisor.start()
-    expect(spawnMock).toHaveBeenCalledWith(
-      '/virtual/prism',
-      ['daemon', '--listen', '127.0.0.1:4931'],
-      { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false },
-    )
+    await supervisor.restart()
+    expect(stageMock).toHaveBeenCalledTimes(1)
+    expect(serviceCalls().map((args) => args[1])).toEqual(['start', 'restart'])
   })
 
-  it('adopts a healthy daemon without spawning and leaves it running on quit', async () => {
-    probeMock.mockResolvedValue(true)
+  it('leaves the daemon running on quit', async () => {
     const supervisor = await makeSupervisor()
-    const status = await supervisor.start()
-    expect(status).toMatchObject({ state: 'ready', pid: null, endpoint: 'http://127.0.0.1:4931' })
-    expect(spawnMock).not.toHaveBeenCalled()
-    await supervisor.stopForQuit()
-    expect(spawnMock).not.toHaveBeenCalled()
+    await supervisor.start()
+    runCliMock.mockClear()
+    supervisor.release()
+    expect(runCliMock).not.toHaveBeenCalled()
     expect(lastStatus()).toMatchObject({ state: 'quitting' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(runCliMock).not.toHaveBeenCalled()
+    await expect(supervisor.start()).rejects.toThrow('quitting')
   })
 
-  it('stop() on an adopted daemon only releases it', async () => {
-    probeMock.mockResolvedValue(true)
+  it('stop calls service stop and reports stopped', async () => {
     const supervisor = await makeSupervisor()
     await supervisor.start()
     const status = await supervisor.stop()
+    expect(serviceCalls()[1]).toEqual(['service', 'stop'])
     expect(status.state).toBe('stopped')
-    expect(spawnMock).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(runCliMock).toHaveBeenCalledTimes(2)
   })
 
-  it('kills a daemon it spawned itself on quit', async () => {
+  it('surfaces a failing service stop as failed with stderr', async () => {
     const supervisor = await makeSupervisor()
-    setHealth('healthy')
     await supervisor.start()
-    const quit = supervisor.stopForQuit()
-    expect(children[0].kill).toHaveBeenCalledWith('SIGTERM')
-    children[0].emit('exit', 0, null)
-    await quit
+    replies = [failure]
+    const status = await supervisor.stop()
+    expect(status.state).toBe('failed')
+    expect(status.lastError).toContain('port 4931 is held by another process')
   })
 
-  it('fails without respawning when an adopted daemon stops answering, then spawns its own on start', async () => {
-    probeMock.mockResolvedValueOnce(true).mockResolvedValue(false)
+  it('restarts through service restart with the forwarded flags', async () => {
     const supervisor = await makeSupervisor()
     await supervisor.start()
-    await vi.advanceTimersByTimeAsync(options.adoptedPollMs * 3)
+    const status = await supervisor.restart()
+    expect(serviceCalls()[1]).toEqual(['service', 'restart', '--listen', '127.0.0.1:4931'])
+    expect(status.state).toBe('ready')
+  })
+
+  it('backs off then fails with stderr text when service start keeps failing', async () => {
+    replies = [failure, failure, failure]
+    const supervisor = await makeSupervisor()
+    await supervisor.start()
+    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 1 })
+    await vi.advanceTimersByTimeAsync(199)
+    expect(runCliMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runCliMock).toHaveBeenCalledTimes(2)
+    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 2 })
+    await vi.advanceTimersByTimeAsync(400)
+    expect(runCliMock).toHaveBeenCalledTimes(3)
+    expect(lastStatus()).toMatchObject({ state: 'failed' })
+    expect(supervisor.status.lastError).toContain('port 4931 is held by another process')
+    expect(supervisor.logTail()).toContain('port 4931 is held by another process')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(runCliMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('fails immediately when the binary cannot be staged', async () => {
+    stageMock.mockRejectedValue(new Error('prism: cannot stage'))
+    const supervisor = await makeSupervisor()
+    const status = await supervisor.start()
+    expect(status).toMatchObject({ state: 'failed', lastError: 'prism: cannot stage' })
+    expect(runCliMock).not.toHaveBeenCalled()
+  })
+
+  it('reruns service start with backoff after the daemon stops answering', async () => {
+    const supervisor = await makeSupervisor()
+    await supervisor.start()
+    probeMock.mockResolvedValue(false)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 1 })
+    expect(runCliMock).toHaveBeenCalledTimes(1)
+    probeMock.mockResolvedValue(true)
+    await vi.advanceTimersByTimeAsync(199)
+    expect(runCliMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(runCliMock).toHaveBeenCalledTimes(2)
+    expect(serviceCalls()[1][1]).toBe('start')
+    expect(lastStatus()).toMatchObject({ state: 'ready', attempt: 2 })
+  })
+
+  it('resets the attempt count when the daemon was stable before disappearing', async () => {
+    const supervisor = await makeSupervisor()
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(options.stabilityWindowMs + 1)
+    probeMock.mockResolvedValue(false)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(lastStatus()).toMatchObject({ state: 'backoff', attempt: 0 })
+  })
+
+  it('gives up with failed after repeated disappearances inside the stability window', async () => {
+    const supervisor = await makeSupervisor()
+    await supervisor.start()
+    for (const [attempt, delay] of [[1, 200], [2, 400]]) {
+      probeMock.mockResolvedValue(false)
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(lastStatus()).toMatchObject({ state: 'backoff', attempt })
+      probeMock.mockResolvedValue(true)
+      await vi.advanceTimersByTimeAsync(delay)
+      expect(lastStatus()).toMatchObject({ state: 'ready', attempt: attempt + 1 })
+    }
+    probeMock.mockResolvedValue(false)
+    await vi.advanceTimersByTimeAsync(3000)
     expect(lastStatus()).toMatchObject({ state: 'failed' })
     expect(supervisor.status.lastError).toContain('stopped answering')
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(spawnMock).not.toHaveBeenCalled()
-    setHealth('healthy')
-    await supervisor.start()
-    expect(spawnMock).toHaveBeenCalledTimes(1)
-    expect(lastStatus()).toMatchObject({ state: 'ready', pid: 4242 })
   })
 })

@@ -1,26 +1,25 @@
-import { spawn, type ChildProcess } from 'node:child_process'
-import { createWriteStream, readFileSync, type WriteStream } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { DAEMON_HEALTH_PATH, DAEMON_HOST, type DaemonExit, type DaemonStatus } from '@prism/contracts'
-import { locateDaemon, locateWebui } from './locate'
-import { probeHealth, waitForHealth } from './health'
+import { runCli, type CliResult } from './cli'
+import { locateDaemon, locateWebui, stageDaemon } from './locate'
+import { probeHealth } from './health'
 
 export interface SupervisorOptions {
   readonly port: number
   readonly daemonConfigPath: string | null
   readonly webuiDir: string | null
   readonly logPath: string | null
-  readonly healthTimeoutMs: number
-  readonly healthIntervalMs: number
+  readonly commandTimeoutMs: number
+  readonly healthPollMs: number
   readonly healthProbeTimeoutMs: number
-  readonly adoptedPollMs: number
-  readonly stopGraceMs: number
   readonly restartBaseMs: number
   readonly restartMaxMs: number
   readonly maxRestarts: number
   readonly stabilityWindowMs: number
 }
 
-const ADOPTED_MISS_LIMIT = 3
+const HEALTH_MISS_LIMIT = 3
+const LOG_TAIL_LIMIT = 16_000
 
 type Phase =
   | { readonly kind: 'idle' }
@@ -32,16 +31,23 @@ type Phase =
   | { readonly kind: 'failed'; readonly reason: string }
   | { readonly kind: 'quitting' }
 
+type Launch =
+  | { readonly kind: 'url'; readonly url: string }
+  | { readonly kind: 'retry'; readonly detail: string }
+  | { readonly kind: 'fatal'; readonly reason: string }
+
 export class DaemonSupervisor {
   private phase: Phase = { kind: 'idle' }
-  private child: ChildProcess | null = null
+  private epoch = 0
+  private pending: Promise<unknown> | null = null
   private backoffTimer: NodeJS.Timeout | null = null
-  private killTimer: NodeJS.Timeout | null = null
-  private adoptedTimer: NodeJS.Timeout | null = null
-  private startupAborted = false
+  private pollTimer: NodeJS.Timeout | null = null
+  private binary: string | null = null
+  private reportedUrl: string | null = null
   private readyAt = 0
   private startedAt: string | null = null
   private lastExit: DaemonExit | null = null
+  private log = ''
   private readonly listeners = new Set<(status: DaemonStatus) => void>()
 
   constructor(
@@ -54,8 +60,8 @@ export class DaemonSupervisor {
     return {
       state: phase.kind,
       attempt: 'attempt' in phase ? phase.attempt : 0,
-      pid: this.child?.pid ?? null,
-      endpoint: phase.kind === 'idle' ? null : this.endpoint,
+      pid: null,
+      endpoint: phase.kind === 'idle' ? null : (this.reportedUrl ?? this.endpoint),
       startedAt: this.startedAt,
       lastExit: this.lastExit,
       lastError: phase.kind === 'failed' ? phase.reason : null,
@@ -70,242 +76,36 @@ export class DaemonSupervisor {
   }
 
   async start(): Promise<DaemonStatus> {
-    const phase = this.phase
-    if (phase.kind === 'starting' || phase.kind === 'ready') return this.status
-    if (phase.kind === 'quitting') throw new Error('prism: daemon supervisor is quitting')
-    this.clearTimers()
-    this.startupAborted = false
-    this.phase = { kind: 'starting', attempt: 1 }
-    if (await probeHealth(this.healthUrl(), this.options.healthProbeTimeoutMs)) {
-      if (this.isCurrentStart(1)) this.adopt()
-      return this.status
-    }
-    if (!this.isCurrentStart(1)) return this.status
-    await this.launch(1)
-    return this.status
+    return this.begin('start')
+  }
+
+  async restart(): Promise<DaemonStatus> {
+    return this.begin('restart')
   }
 
   async stop(): Promise<DaemonStatus> {
-    this.clearTimers()
-    const phase = this.phase
-    if (phase.kind === 'quitting') {
-      await this.awaitExit()
-      return this.status
-    }
-    if ((phase.kind === 'starting' || phase.kind === 'ready') && this.child === null) {
-      this.phase = { kind: 'stopped' }
-      this.emit()
-      return this.status
-    }
-    if (phase.kind === 'starting' || phase.kind === 'ready') {
-      this.startupAborted = true
-      this.phase = { kind: 'stopping', attempt: phase.attempt }
-      this.emit()
-      this.terminateChild()
-      await this.awaitExit()
-      return this.status
-    }
-    if (phase.kind === 'stopping') {
-      await this.awaitExit()
-      return this.status
-    }
-    this.phase = { kind: 'stopped' }
+    if (this.phase.kind === 'quitting') return this.status
+    this.halt()
+    await this.pending
+    this.phase = { kind: 'stopping', attempt: 0 }
+    this.emit()
+    const stopped = this.runService(['stop'])
+    this.pending = stopped
+    const result = await stopped
+    if (this.phase.kind !== 'stopping') return this.status
+    this.phase = result.code === 0 ? { kind: 'stopped' } : { kind: 'failed', reason: failureText('service stop', result) }
     this.emit()
     return this.status
   }
 
-  async stopForQuit(): Promise<void> {
-    this.clearTimers()
+  release(): void {
+    this.halt()
     this.phase = { kind: 'quitting' }
     this.emit()
-    this.terminateChild()
-    await this.awaitExit()
   }
-
-  private healthUrl(): string {
-    return `${this.endpoint}${DAEMON_HEALTH_PATH}`
-  }
-
-  private adopt(): void {
-    console.log(`prism: adopting daemon already answering at ${this.endpoint}`)
-    this.phase = { kind: 'ready', attempt: 1 }
-    this.startedAt = new Date().toISOString()
-    this.emit()
-    this.watchAdopted(0)
-  }
-
-  private watchAdopted(misses: number): void {
-    this.adoptedTimer = setTimeout(() => {
-      this.adoptedTimer = null
-      void this.pollAdopted(misses)
-    }, this.options.adoptedPollMs)
-  }
-
-  private async pollAdopted(misses: number): Promise<void> {
-    const healthy = await probeHealth(this.healthUrl(), this.options.healthProbeTimeoutMs)
-    if (this.phase.kind !== 'ready' || this.child !== null) return
-    const next = healthy ? 0 : misses + 1
-    if (next < ADOPTED_MISS_LIMIT) {
-      this.watchAdopted(next)
-      return
-    }
-    this.phase = { kind: 'failed', reason: `prism: the daemon at ${this.endpoint} stopped answering; it was started outside the app, so start it again or restart the app` }
-    console.log(this.phase.reason)
-    this.emit()
-  }
-
-  private async launch(attempt: number): Promise<void> {
-    let binaryPath: string
-    try {
-      binaryPath = locateDaemon().path
-    } catch (error) {
-      this.phase = { kind: 'failed', reason: error instanceof Error ? error.message : String(error) }
-      this.emit()
-      return
-    }
-    this.phase = { kind: 'starting', attempt }
-    this.startedAt = new Date().toISOString()
-    this.emit()
-    const args = ['daemon', '--listen', `${DAEMON_HOST}:${this.options.port}`]
-    if (this.options.daemonConfigPath !== null) args.push('--config', this.options.daemonConfigPath)
-    const webuiDir = locateWebui(this.options.webuiDir)
-    if (webuiDir !== null) args.push('--webui', webuiDir)
-    const log = await this.openLog()
-    const child = spawn(binaryPath, args, {
-      stdio: ['ignore', 'ignore', log ?? 'pipe'],
-      windowsHide: true,
-      shell: false,
-    })
-    this.child = child
-    if (log === null) this.captureLog(child)
-    child.once('error', (error) => {
-      this.handleSpawnError(error)
-    })
-    child.once('exit', (code, signal) => {
-      this.handleExit(code, signal)
-    })
-    const outcome = await waitForHealth({
-      url: this.healthUrl(),
-      timeoutMs: this.options.healthTimeoutMs,
-      intervalMs: this.options.healthIntervalMs,
-      probeTimeoutMs: this.options.healthProbeTimeoutMs,
-      isCurrent: () => this.isCurrentStart(attempt),
-    })
-    if (!this.isCurrentStart(attempt)) return
-    if (outcome === 'healthy') {
-      this.phase = { kind: 'ready', attempt }
-      this.readyAt = Date.now()
-      this.emit()
-      return
-    }
-    this.terminateChild()
-  }
-
-  private isCurrentStart(attempt: number): boolean {
-    return this.phase.kind === 'starting' && this.phase.attempt === attempt
-  }
-
-  private handleSpawnError(error: Error): void {
-    if (this.phase.kind !== 'starting') return
-    this.child = null
-    this.clearTimers()
-    this.phase = { kind: 'failed', reason: `prism: daemon spawn failed: ${error.message}` }
-    this.emit()
-  }
-
-  private handleExit(code: number | null, signal: string | null): void {
-    this.child = null
-    this.clearTimers()
-    this.lastExit = { code, signal }
-    const phase = this.phase
-    if (phase.kind === 'quitting') return
-    if (phase.kind === 'stopping') {
-      this.phase = { kind: 'stopped' }
-      this.emit()
-      return
-    }
-    if (phase.kind === 'starting' || phase.kind === 'ready') {
-      const stable = phase.kind === 'ready' && Date.now() - this.readyAt >= this.options.stabilityWindowMs
-      this.handleCrash(stable ? 0 : phase.attempt)
-    }
-  }
-
-  private handleCrash(attempt: number): void {
-    const exit = this.lastExit
-    const detail = exit === null ? 'unknown exit' : `code=${exit.code ?? 'none'} signal=${exit.signal ?? 'none'}`
-    if (attempt >= this.options.maxRestarts) {
-      this.phase = { kind: 'failed', reason: `prism: daemon crashed ${attempt} times without reaching a stable ready state (${detail})` }
-      this.emit()
-      return
-    }
-    this.phase = { kind: 'backoff', attempt }
-    this.emit()
-    const delay = Math.min(this.options.restartBaseMs * 2 ** attempt, this.options.restartMaxMs)
-    this.backoffTimer = setTimeout(() => {
-      this.backoffTimer = null
-      void this.launch(attempt + 1)
-    }, delay)
-  }
-
-  private terminateChild(): void {
-    const child = this.child
-    if (child === null) return
-    child.kill('SIGTERM')
-    this.killTimer = setTimeout(() => {
-      this.killTimer = null
-      child.kill('SIGKILL')
-    }, this.options.stopGraceMs)
-  }
-
-  private awaitExit(): Promise<void> {
-    const child = this.child
-    if (child === null) return Promise.resolve()
-    const { promise, resolve } = Promise.withResolvers<void>()
-    child.once('exit', () => resolve())
-    return promise
-  }
-
-  private clearTimers(): void {
-    if (this.backoffTimer !== null) {
-      clearTimeout(this.backoffTimer)
-      this.backoffTimer = null
-    }
-    if (this.killTimer !== null) {
-      clearTimeout(this.killTimer)
-      this.killTimer = null
-    }
-    if (this.adoptedTimer !== null) {
-      clearTimeout(this.adoptedTimer)
-      this.adoptedTimer = null
-    }
-  }
-
 
   logTail(): string {
     return this.log
-  }
-
-  private log = ''
-
-  private captureLog(child: ChildProcess): void {
-    const stream = child.stderr
-    if (stream === null || stream === undefined) return
-    stream.setEncoding('utf8')
-    stream.on('data', (chunk: string) => {
-      this.log = (this.log + chunk).slice(-16_000)
-    })
-  }
-  private emit(): void {
-    for (const listener of [...this.listeners]) listener(this.status)
-  }
-
-  private openLog(): Promise<WriteStream | null> {
-    if (this.options.logPath === null) return Promise.resolve(null)
-    const stream = createWriteStream(this.options.logPath, { flags: 'a' })
-    const { promise, resolve, reject } = Promise.withResolvers<WriteStream>()
-    stream.once('open', () => resolve(stream))
-    stream.once('error', reject)
-    return promise
   }
 
   logFile(): string {
@@ -316,5 +116,126 @@ export class DaemonSupervisor {
       return this.log
     }
   }
+
+  private async begin(command: 'start' | 'restart'): Promise<DaemonStatus> {
+    const phase = this.phase
+    if (phase.kind === 'quitting') throw new Error('prism: daemon supervisor is quitting')
+    if (command === 'start' && (phase.kind === 'starting' || phase.kind === 'ready')) return this.status
+    this.halt()
+    await this.pending
+    if (this.phase.kind === 'quitting') return this.status
+    await this.launch(1, command)
+    return this.status
+  }
+
+  private halt(): void {
+    this.epoch++
+    if (this.backoffTimer !== null) {
+      clearTimeout(this.backoffTimer)
+      this.backoffTimer = null
+    }
+    if (this.pollTimer !== null) {
+      clearTimeout(this.pollTimer)
+      this.pollTimer = null
+    }
+  }
+
+  private async launch(attempt: number, command: 'start' | 'restart'): Promise<void> {
+    const epoch = this.epoch
+    this.phase = { kind: 'starting', attempt }
+    this.startedAt = new Date().toISOString()
+    this.emit()
+    const launching = this.requestDaemon(command)
+    this.pending = launching
+    const outcome = await launching
+    if (epoch !== this.epoch) return
+    switch (outcome.kind) {
+      case 'url':
+        this.reportedUrl = outcome.url
+        this.phase = { kind: 'ready', attempt }
+        this.readyAt = Date.now()
+        this.emit()
+        this.schedulePoll(epoch, 0)
+        return
+      case 'retry':
+        this.handleLoss(attempt, outcome.detail)
+        return
+      case 'fatal':
+        this.phase = { kind: 'failed', reason: outcome.reason }
+        this.emit()
+    }
+  }
+
+  private async requestDaemon(command: 'start' | 'restart'): Promise<Launch> {
+    const args = [command, '--listen', `${DAEMON_HOST}:${this.options.port}`]
+    if (this.options.daemonConfigPath !== null) args.push('--config', this.options.daemonConfigPath)
+    const webuiDir = locateWebui(this.options.webuiDir)
+    if (webuiDir !== null) args.push('--webui', webuiDir)
+    let result: CliResult
+    try {
+      result = await this.runService(args)
+    } catch (error) {
+      return { kind: 'fatal', reason: error instanceof Error ? error.message : String(error) }
+    }
+    const url = (result.stdout.split('\n', 1)[0] ?? '').trim()
+    if (result.code === 0 && url !== '') return { kind: 'url', url }
+    return { kind: 'retry', detail: failureText(`service ${command}`, result) }
+  }
+
+  private async runService(args: readonly string[]): Promise<CliResult> {
+    this.binary ??= await stageDaemon(locateDaemon())
+    const result = await runCli(this.binary, ['service', ...args], this.options.commandTimeoutMs)
+    this.lastExit = { code: result.code, signal: null }
+    this.appendLog(result.stderr)
+    return result
+  }
+
+  private schedulePoll(epoch: number, misses: number): void {
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null
+      void this.poll(epoch, misses)
+    }, this.options.healthPollMs)
+  }
+
+  private async poll(epoch: number, misses: number): Promise<void> {
+    const healthy = await probeHealth(`${this.reportedUrl ?? this.endpoint}${DAEMON_HEALTH_PATH}`, this.options.healthProbeTimeoutMs)
+    const phase = this.phase
+    if (epoch !== this.epoch || phase.kind !== 'ready') return
+    const next = healthy ? 0 : misses + 1
+    if (next < HEALTH_MISS_LIMIT) {
+      this.schedulePoll(epoch, next)
+      return
+    }
+    const stable = Date.now() - this.readyAt >= this.options.stabilityWindowMs
+    this.handleLoss(stable ? 0 : phase.attempt, `prism: the daemon at ${this.endpoint} stopped answering`)
+  }
+
+  private handleLoss(attempt: number, detail: string): void {
+    if (attempt >= this.options.maxRestarts) {
+      this.phase = { kind: 'failed', reason: `${detail} (gave up after ${attempt} attempts)` }
+      this.emit()
+      return
+    }
+    this.phase = { kind: 'backoff', attempt }
+    this.emit()
+    const delay = Math.min(this.options.restartBaseMs * 2 ** attempt, this.options.restartMaxMs)
+    this.backoffTimer = setTimeout(() => {
+      this.backoffTimer = null
+      void this.launch(attempt + 1, 'start')
+    }, delay)
+  }
+
+  private appendLog(text: string): void {
+    if (text === '') return
+    this.log = (this.log + text).slice(-LOG_TAIL_LIMIT)
+  }
+
+  private emit(): void {
+    for (const listener of [...this.listeners]) listener(this.status)
+  }
 }
 
+function failureText(command: string, result: CliResult): string {
+  const detail = result.stderr.trim()
+  return `prism: ${command} failed (code=${result.code ?? 'none'})${detail === '' ? '' : `: ${detail}`}`
+}

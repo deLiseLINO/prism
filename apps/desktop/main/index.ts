@@ -15,11 +15,9 @@ import { UpdaterService } from './updater/updater'
 import { locateResource } from './daemon/resources'
 import { createMainWindow } from './window'
 
-const HEALTH_TIMEOUT_MS = 15_000
-const HEALTH_INTERVAL_MS = 250
+const COMMAND_TIMEOUT_MS = 20_000
+const HEALTH_POLL_MS = 5_000
 const HEALTH_PROBE_TIMEOUT_MS = 1_000
-const ADOPTED_POLL_MS = 5_000
-const STOP_GRACE_MS = 5_000
 const RESTART_BASE_MS = 500
 const RESTART_MAX_MS = 10_000
 const MAX_RESTARTS = 5
@@ -46,11 +44,9 @@ async function bootstrap(): Promise<void> {
     daemonConfigPath: config.daemonConfigPath,
     webuiDir: config.webuiDir,
     logPath: daemonLogPath,
-    healthTimeoutMs: HEALTH_TIMEOUT_MS,
-    healthIntervalMs: HEALTH_INTERVAL_MS,
+    commandTimeoutMs: COMMAND_TIMEOUT_MS,
+    healthPollMs: HEALTH_POLL_MS,
     healthProbeTimeoutMs: HEALTH_PROBE_TIMEOUT_MS,
-    adoptedPollMs: ADOPTED_POLL_MS,
-    stopGraceMs: STOP_GRACE_MS,
     restartBaseMs: RESTART_BASE_MS,
     restartMaxMs: RESTART_MAX_MS,
     maxRestarts: MAX_RESTARTS,
@@ -109,13 +105,13 @@ async function bootstrap(): Promise<void> {
 
   app.on('before-quit', (event) => {
     if (quitting) return
-    event.preventDefault()
     quitting = true
     proxies.dispose()
-    void supervisor.stopForQuit().finally(() => {
-      if (updater.pendingInstall) updater.performInstall()
-      else app.quit()
-    })
+    supervisor.release()
+    if (updater.pendingInstall) {
+      event.preventDefault()
+      updater.performInstall()
+    }
   })
 
 
