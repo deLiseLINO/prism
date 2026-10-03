@@ -279,9 +279,6 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 			if err != nil {
 				return nil, nil, err
 			}
-			if len(blocks) == 0 {
-				return nil, nil, fmt.Errorf("anthropic: tool result %q has no representable content", v.CallID)
-			}
 			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks})
 		case canon.CustomToolCall:
 			if v.CallID == "" {

@@ -295,7 +295,7 @@ func TestToolResultKeepsImageContent(t *testing.T) {
 	}
 }
 
-func TestEmptyToolResultFailsLoud(t *testing.T) {
+func TestEmptyToolResultIsSentWithoutContent(t *testing.T) {
 	runner := New(Options{})
 	request := baseRequest()
 	request.Input = []canon.Item{
@@ -303,12 +303,25 @@ func TestEmptyToolResultFailsLoud(t *testing.T) {
 		canon.FunctionCall{ID: "fc1", CallID: "toolu_1", Name: "noop", Arguments: []byte(`{}`)},
 		canon.FunctionOutput{ID: "fo1", CallID: "toolu_1", Output: []canon.Content{canon.TextContent{Text: ""}}},
 	}
-	_, err := runner.buildRequest(provider.RunRequest{
+	out, err := runner.buildRequest(provider.RunRequest{
 		Request: request,
 		Target:  provider.Target{APIKeyRef: "sk-test", Model: "claude-anthropic--claude-sonnet-4-5"},
 	})
-	if err == nil {
-		t.Fatal("buildRequest with empty tool result: want error, got nil")
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	messages, _ := decodeBody(t, out.body)["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("messages = %v", messages)
+	}
+	msg, _ := messages[2].(map[string]any)
+	content, _ := msg["content"].([]any)
+	result, _ := content[0].(map[string]any)
+	if result["type"] != "tool_result" || result["tool_use_id"] != "toolu_1" {
+		t.Fatalf("result = %v", result)
+	}
+	if _, has := result["content"]; has {
+		t.Fatalf("empty result carries content: %v", result["content"])
 	}
 }
 
