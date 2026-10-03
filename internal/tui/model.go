@@ -28,6 +28,7 @@ type Model struct {
 	lastRefresh        map[string]time.Time
 	refreshScheduled   map[string]bool
 	silentRefresh      map[string]bool
+	forceRefresh       map[string]bool
 	statsLastRefresh   time.Time
 	statsFetchInflight bool
 
@@ -118,6 +119,7 @@ func InitialModel(client Client, compactMode bool) Model {
 		lastRefresh:          make(map[string]time.Time),
 		refreshScheduled:     make(map[string]bool),
 		silentRefresh:        make(map[string]bool),
+		forceRefresh:         make(map[string]bool),
 		compactBarAnimations: make(map[string]compactBarAnimation),
 		StatsRange:           normalizeStatsRange(uiState.StatsRange),
 		tabWindowAnimations:  make(map[string]tabWindowAnimation),
@@ -315,7 +317,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		activeFetch := tea.Cmd(nil)
 		if account := m.activeAccount(); account != nil {
 			m.LoadingMap[account.ID] = true
-			activeFetch = m.fetchAccountCmd(account.ID)
+			activeFetch = m.fetchAccountCmd(account.ID, false)
 		}
 
 		cmds := []tea.Cmd{activeFetch, m.fetchNextCmd()}

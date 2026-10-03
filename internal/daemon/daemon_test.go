@@ -387,3 +387,29 @@ func TestIntegrationModelsMarkMessagesWire(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaRefreshWithoutQuotaEndpointKeepsStoredSnapshot(t *testing.T) {
+	mgr, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Update(config.Document{
+		Version:   config.SchemaVersion,
+		Providers: map[string]config.Provider{"plain": {Wire: config.WireOpenAIChat, BaseURL: "http://127.0.0.1:1", Models: []string{"m"}}},
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+	pool := account.New()
+	pool.Register(account.Account{ID: "plain:default", Provider: "plain", State: account.Active, CredGen: 1, Version: 1})
+	limit := int64(10000)
+	if err := pool.UpdateQuota("plain:default", quota.Snapshot{Used: 77, Limit: &limit, Source: quota.SourceHeader}); err != nil {
+		t.Fatal(err)
+	}
+	table := newQuotaTable(pool, mgr, http.DefaultClient)
+	table.refresher = fakeRefresher{cred: account.Credential{Access: "tok"}}
+
+	snap, err := table.RefreshQuota(context.Background(), "plain:default")
+	if err != nil || snap.Used != 77 {
+		t.Fatalf("refresh = %+v, err=%v, want stored snapshot and no error", snap, err)
+	}
+}

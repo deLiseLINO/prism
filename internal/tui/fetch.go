@@ -16,7 +16,7 @@ import (
 
 const maxConcurrentLoads = 3
 
-func (m Model) fetchAccountCmd(accountKey string) tea.Cmd {
+func (m Model) fetchAccountCmd(accountKey string, force bool) tea.Cmd {
 	if accountKey == "" || m.api == nil {
 		return nil
 	}
@@ -26,7 +26,11 @@ func (m Model) fetchAccountCmd(accountKey string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		quota, err := client.AccountQuota(ctx, accountKey)
+		fetch := client.AccountQuota
+		if force {
+			fetch = client.RefreshAccountQuota
+		}
+		quota, err := fetch(ctx, accountKey)
 		if err != nil {
 			return ErrMsg{AccountKey: accountKey, Err: err}
 		}
@@ -71,11 +75,13 @@ func (m Model) fetchNextCmd() tea.Cmd {
 			delete(m.refreshScheduled, accountKey)
 			m.LoadingMap[accountKey] = true
 			m.silentRefresh[accountKey] = true
-			return m.fetchAccountCmd(accountKey)
+			return m.fetchAccountCmd(accountKey, false)
 		}
 		if !hasData && !hasErr {
+			force := m.forceRefresh[accountKey]
+			delete(m.forceRefresh, accountKey)
 			m.LoadingMap[accountKey] = true
-			return m.fetchAccountCmd(accountKey)
+			return m.fetchAccountCmd(accountKey, force)
 		}
 		return nil
 	}

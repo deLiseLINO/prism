@@ -296,3 +296,26 @@ func batchMsgs(cmd tea.Cmd) []tea.Msg {
 		return []tea.Msg{typed}
 	}
 }
+
+func TestManualRefreshForcesUpstreamQuota(t *testing.T) {
+	limit := int64(100)
+	accA := management.Account{ID: "codex:a", Provider: "codex"}
+	accB := management.Account{ID: "codex:b", Provider: "codex"}
+	client := newFakeClient(accA, accB)
+	client.quota["codex:a"] = management.QuotaView{Used: 10, Limit: &limit}
+	client.quota["codex:b"] = management.QuotaView{Used: 20, Limit: &limit}
+	m := testModel(client, accA, accB)
+
+	_, cmd := m.beginRefreshActive()
+	batchMsgs(cmd)
+	if len(client.refreshed) != 1 || client.refreshed[0] != "codex:a" {
+		t.Fatalf("r forced %v, want only codex:a", client.refreshed)
+	}
+
+	client.refreshed = nil
+	_, cmd = m.beginRefreshAll()
+	batchMsgs(cmd)
+	if len(client.refreshed) != 2 {
+		t.Fatalf("R forced %v, want both accounts", client.refreshed)
+	}
+}

@@ -131,7 +131,7 @@ func TestFetchAccountCmdReturnsSortedWindows(t *testing.T) {
 	}
 	m := testModel(client, management.Account{ID: "codex:default", Provider: "codex", State: "active"})
 
-	cmd := m.fetchAccountCmd("codex:default")
+	cmd := m.fetchAccountCmd("codex:default", false)
 	if cmd == nil {
 		t.Fatal("fetch cmd is nil")
 	}

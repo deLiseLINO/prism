@@ -422,6 +422,14 @@ func (t *quotaTable) RefreshQuota(ctx context.Context, id account.AccountID) (qu
 	return t.quota(ctx, id, true)
 }
 
+func (t *quotaTable) hasQuotaEndpoint(provider account.ProviderID) bool {
+	if t.cfg == nil {
+		return true
+	}
+	p, ok := t.cfg.Get().Config.Providers[string(provider)]
+	return !ok || p.Wire == config.WireCodex || p.Wire == config.WireAntigravity
+}
+
 func (t *quotaTable) quota(ctx context.Context, id account.AccountID, force bool) (quota.Snapshot, error) {
 	var stored quota.Snapshot
 	var provider account.ProviderID
@@ -435,6 +443,9 @@ func (t *quotaTable) quota(ctx context.Context, id account.AccountID, force bool
 	}
 	if !found {
 		return quota.Snapshot{}, account.ErrNotFound
+	}
+	if !t.hasQuotaEndpoint(provider) {
+		return stored, nil
 	}
 	if !t.probeDue(id, force) {
 		return stored, nil
@@ -496,9 +507,6 @@ func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider a
 	p, ok := t.cfg.Get().Config.Providers[string(provider)]
 	if !ok {
 		return quota.Snapshot{}, fmt.Errorf("quota provider %s not found", provider)
-	}
-	if p.Wire != config.WireCodex && p.Wire != config.WireAntigravity {
-		return quota.Snapshot{}, fmt.Errorf("provider %s does not support quota refresh", provider)
 	}
 	lease := account.Lease{Provider: provider, Account: id, CredGen: credGen}
 	cred, err := t.refresher.Credential(ctx, lease)

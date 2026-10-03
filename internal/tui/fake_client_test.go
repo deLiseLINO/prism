@@ -17,7 +17,8 @@ type fakeClient struct {
 	quota    map[string]management.QuotaView
 	quotaErr map[string]error
 
-	deleted []string
+	deleted   []string
+	refreshed []string
 
 	authStart    map[string]management.AuthStartResponse
 	authStartErr map[string]error
@@ -70,6 +71,13 @@ func (f *fakeClient) AccountQuota(ctx context.Context, id string) (management.Qu
 		return management.QuotaResponse{}, fmt.Errorf("no quota for %s", id)
 	}
 	return management.QuotaResponse{Account: id, Quota: quota}, nil
+}
+
+func (f *fakeClient) RefreshAccountQuota(ctx context.Context, id string) (management.QuotaResponse, error) {
+	f.mu.Lock()
+	f.refreshed = append(f.refreshed, id)
+	f.mu.Unlock()
+	return f.AccountQuota(ctx, id)
 }
 
 func (f *fakeClient) DeleteAccount(ctx context.Context, id string) error {
