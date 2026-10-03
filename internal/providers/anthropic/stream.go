@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/provider"
@@ -91,6 +92,7 @@ type streamState struct {
 	custom    customTools
 	store     *stateStore
 	log       *slog.Logger
+	msgID     string
 	blocks    map[string]*openBlock
 	usage     wireUsage
 	stopSeen  bool
@@ -203,6 +205,9 @@ func (s *streamState) messageStart(payload map[string]any) error {
 		return nil
 	}
 	s.usage.merge(usageFromMap(message["usage"]))
+	if id, _ := message["id"].(string); id != "" {
+		s.msgID = id
+	}
 	return nil
 }
 
@@ -234,6 +239,15 @@ func (s *streamState) blockKey(payload map[string]any) string {
 	return ""
 }
 
+var streamSeq atomic.Uint64
+
+func (s *streamState) blockItemID(key string) canon.ItemID {
+	if s.msgID == "" {
+		s.msgID = fmt.Sprintf("stream-%d", streamSeq.Add(1))
+	}
+	return canon.ItemID(fmt.Sprintf("%s-block-%s", s.msgID, key))
+}
+
 func (s *streamState) contentBlockStart(payload map[string]any) error {
 	block, _ := payload["content_block"].(map[string]any)
 	if block == nil {
@@ -244,15 +258,15 @@ func (s *streamState) contentBlockStart(payload map[string]any) error {
 	open := &openBlock{kind: blockType}
 	switch blockType {
 	case "text":
-		open.itemID = canon.ItemID(fmt.Sprintf("block-%s", key))
+		open.itemID = s.blockItemID(key)
 		s.blocks[key] = open
 		return s.emit(canon.ItemStarted{Item: canon.Message{ID: open.itemID, Role: canon.RoleAssistant}})
 	case "thinking":
-		open.itemID = canon.ItemID(fmt.Sprintf("block-%s", key))
+		open.itemID = s.blockItemID(key)
 		s.blocks[key] = open
 		return s.emit(canon.ItemStarted{Item: canon.ReasoningItem{ID: open.itemID}})
 	case "redacted_thinking":
-		open.itemID = canon.ItemID(fmt.Sprintf("block-%s", key))
+		open.itemID = s.blockItemID(key)
 		data, _ := block["data"].(string)
 		open.signature = reasonenv.EncodeRedacted([]string{data})
 		s.blocks[key] = open

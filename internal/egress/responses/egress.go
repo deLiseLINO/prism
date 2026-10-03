@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/execution"
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/routing"
+	"github.com/google/uuid"
 )
 
 var _ egress.Egress = (*Egress)(nil)
@@ -52,6 +54,7 @@ type terminalFrame struct {
 type openItem struct {
 	index    int
 	kind     string
+	wireID   string
 	text     string
 	partOpen bool
 	wire     map[string]any
@@ -348,11 +351,11 @@ func (e *Egress) itemStartedLocked(t canon.ItemStarted) error {
 	if _, ok := e.items[id]; ok {
 		return fmt.Errorf("egress/responses: duplicate item start %q", id)
 	}
-	it := &openItem{index: e.nextOut, kind: kind}
+	it := &openItem{index: e.nextOut, kind: kind, wireID: wireItemID(id, kind)}
 	e.items[id] = it
 	e.nextOut++
 	e.commitOutputLocked()
-	wire, err := e.openItemWire(t.Item, kind, "in_progress")
+	wire, err := e.openItemWire(t.Item, kind, it.wireID, "in_progress")
 	if err != nil {
 		return err
 	}
@@ -370,7 +373,7 @@ func (e *Egress) textDeltaLocked(t canon.TextDelta) error {
 	}
 	if !it.partOpen {
 		if err := e.writeEventLocked("response.content_part.added", map[string]any{
-			"item_id":       t.ItemID,
+			"item_id":       it.wireID,
 			"output_index":  it.index,
 			"content_index": 0,
 			"part":          map[string]any{"type": "output_text", "text": "", "annotations": []any{}},
@@ -382,7 +385,7 @@ func (e *Egress) textDeltaLocked(t canon.TextDelta) error {
 	it.text += t.Text
 	e.commitOutputLocked()
 	return e.writeEventLocked("response.output_text.delta", map[string]any{
-		"item_id":       t.ItemID,
+		"item_id":       it.wireID,
 		"output_index":  it.index,
 		"content_index": 0,
 		"delta":         t.Text,
@@ -397,7 +400,7 @@ func (e *Egress) reasoningDeltaLocked(t canon.ReasoningDelta) error {
 	it.text += t.Text
 	e.commitOutputLocked()
 	return e.writeEventLocked("response.reasoning_text.delta", map[string]any{
-		"item_id":       t.ItemID,
+		"item_id":       it.wireID,
 		"output_index":  it.index,
 		"content_index": 0,
 		"delta":         t.Text,
@@ -412,7 +415,7 @@ func (e *Egress) toolArgumentsDeltaLocked(t canon.ToolArgumentsDelta) error {
 	it.text += string(t.Bytes)
 	e.commitOutputLocked()
 	return e.writeEventLocked("response.function_call_arguments.delta", map[string]any{
-		"item_id":      t.ItemID,
+		"item_id":      it.wireID,
 		"output_index": it.index,
 		"delta":        string(t.Bytes),
 	})
@@ -426,7 +429,7 @@ func (e *Egress) customToolInputDeltaLocked(t canon.CustomToolInputDelta) error 
 	it.text += t.Text
 	e.commitOutputLocked()
 	return e.writeEventLocked("response.custom_tool_call_input.delta", map[string]any{
-		"item_id":      t.ItemID,
+		"item_id":      it.wireID,
 		"output_index": it.index,
 		"delta":        t.Text,
 	})
@@ -469,7 +472,7 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 	case "message":
 		if it.partOpen {
 			if err := e.writeEventLocked("response.output_text.done", map[string]any{
-				"item_id":       id,
+				"item_id":       it.wireID,
 				"output_index":  it.index,
 				"content_index": 0,
 				"text":          it.text,
@@ -477,7 +480,7 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 				return err
 			}
 			if err := e.writeEventLocked("response.content_part.done", map[string]any{
-				"item_id":       id,
+				"item_id":       it.wireID,
 				"output_index":  it.index,
 				"content_index": 0,
 				"part":          map[string]any{"type": "output_text", "text": it.text, "annotations": []any{}},
@@ -488,7 +491,7 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 	case "reasoning":
 		if it.text != "" {
 			if err := e.writeEventLocked("response.reasoning_text.done", map[string]any{
-				"item_id":       id,
+				"item_id":       it.wireID,
 				"output_index":  it.index,
 				"content_index": 0,
 				"text":          it.text,
@@ -498,7 +501,7 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 		}
 	case "function_call":
 		if err := e.writeEventLocked("response.function_call_arguments.done", map[string]any{
-			"item_id":      id,
+			"item_id":      it.wireID,
 			"output_index": it.index,
 			"arguments":    it.text,
 		}); err != nil {
@@ -506,14 +509,14 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 		}
 	case "custom_tool_call":
 		if err := e.writeEventLocked("response.custom_tool_call_input.done", map[string]any{
-			"item_id":      id,
+			"item_id":      it.wireID,
 			"output_index": it.index,
 			"input":        it.text,
 		}); err != nil {
 			return err
 		}
 	}
-	wire, err := e.openItemWire(t.Item, kind, "completed")
+	wire, err := e.openItemWire(t.Item, kind, it.wireID, "completed")
 	if err != nil {
 		return err
 	}
@@ -616,6 +619,17 @@ func (e *Egress) writeRawLocked(s string) error {
 	return nil
 }
 
+func wireItemID(id canon.ItemID, kind string) string {
+	switch kind {
+	case "message":
+		return "msg_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	case "reasoning":
+		return "rs_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	default:
+		return string(id)
+	}
+}
+
 func itemIdentity(item canon.Item) (canon.ItemID, string, error) {
 	switch t := item.(type) {
 	case canon.Message:
@@ -633,11 +647,11 @@ func itemIdentity(item canon.Item) (canon.ItemID, string, error) {
 	}
 }
 
-func (e *Egress) openItemWire(item canon.Item, kind, status string) (map[string]any, error) {
+func (e *Egress) openItemWire(item canon.Item, kind, wireID, status string) (map[string]any, error) {
 	wire := map[string]any{"type": kind, "status": status}
 	switch t := item.(type) {
 	case canon.Message:
-		wire["id"] = t.ID
+		wire["id"] = wireID
 		wire["role"] = roleWire(t.Role)
 		if t.Phase != canon.PhaseNone {
 			wire["phase"] = string(t.Phase)
@@ -652,7 +666,7 @@ func (e *Egress) openItemWire(item canon.Item, kind, status string) (map[string]
 		}
 		wire["content"] = parts
 	case canon.ReasoningItem:
-		wire["id"] = t.ID
+		wire["id"] = wireID
 		summary := []any{}
 		for _, s := range t.Summary {
 			summary = append(summary, map[string]any{"type": "summary_text", "text": s.Text})
@@ -662,17 +676,17 @@ func (e *Egress) openItemWire(item canon.Item, kind, status string) (map[string]
 			wire["content"] = []any{map[string]any{"type": "reasoning_text", "text": t.Content}}
 		}
 	case canon.FunctionCall:
-		wire["id"] = t.ID
+		wire["id"] = wireID
 		wire["call_id"] = t.CallID
 		e.setToolIdentity(wire, t.Name)
 		wire["arguments"] = string(t.Arguments)
 	case canon.CustomToolCall:
-		wire["id"] = t.ID
+		wire["id"] = wireID
 		wire["call_id"] = t.CallID
 		e.setToolIdentity(wire, t.Name)
 		wire["input"] = t.Input
 	case canon.LocalShellCall:
-		wire["id"] = t.ID
+		wire["id"] = wireID
 		wire["call_id"] = t.CallID
 		wire["action"] = map[string]any{"type": "exec", "command": []string{t.Command}}
 	default:

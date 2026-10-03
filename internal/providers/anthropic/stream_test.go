@@ -65,7 +65,7 @@ func runAgainst(t *testing.T, payload string) (*collectingSink, *Runner) {
 
 func fullStreamPayload() string {
 	return sse(
-		ssePart("message_start", `{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}`),
+		ssePart("message_start", `{"type":"message_start","message":{"id":"msg_a","usage":{"input_tokens":100,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}`),
 		ssePart("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`),
 		ssePart("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`),
 		ssePart("content_block_stop", `{"type":"content_block_stop","index":0}`),
@@ -88,13 +88,13 @@ func TestFullStreamVocabulary(t *testing.T) {
 		t.Fatalf("terminal events = %d, want exactly 1", n)
 	}
 	want := []canon.Event{
-		canon.ItemStarted{Item: canon.Message{ID: "block-0", Role: canon.RoleAssistant}},
-		canon.TextDelta{ItemID: "block-0", Text: "Hello"},
-		canon.ItemFinished{Item: canon.Message{ID: "block-0", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "Hello"}}}},
-		canon.ItemStarted{Item: canon.ReasoningItem{ID: "block-1"}},
-		canon.ReasoningDelta{ItemID: "block-1", Text: "pondering"},
-		canon.ItemStateAvailable{ItemID: "block-1", State: canon.OpaqueRef{Store: stateStoreName, Key: "block-1"}},
-		canon.ItemFinished{Item: canon.ReasoningItem{ID: "block-1", Content: "pondering", Signature: "sig-abc", State: canon.OpaqueRef{Store: stateStoreName, Key: "block-1"}}},
+		canon.ItemStarted{Item: canon.Message{ID: "msg_a-block-0", Role: canon.RoleAssistant}},
+		canon.TextDelta{ItemID: "msg_a-block-0", Text: "Hello"},
+		canon.ItemFinished{Item: canon.Message{ID: "msg_a-block-0", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "Hello"}}}},
+		canon.ItemStarted{Item: canon.ReasoningItem{ID: "msg_a-block-1"}},
+		canon.ReasoningDelta{ItemID: "msg_a-block-1", Text: "pondering"},
+		canon.ItemStateAvailable{ItemID: "msg_a-block-1", State: canon.OpaqueRef{Store: stateStoreName, Key: "msg_a-block-1"}},
+		canon.ItemFinished{Item: canon.ReasoningItem{ID: "msg_a-block-1", Content: "pondering", Signature: "sig-abc", State: canon.OpaqueRef{Store: stateStoreName, Key: "msg_a-block-1"}}},
 		canon.ItemStarted{Item: canon.FunctionCall{ID: "toolu_1", CallID: "toolu_1", Name: "get_weather"}},
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`{"city":`)},
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`"Paris"}`)},
@@ -115,7 +115,7 @@ func TestFullStreamVocabulary(t *testing.T) {
 
 func TestThinkingSignatureCapturedInProviderStore(t *testing.T) {
 	_, runner := runAgainst(t, fullStreamPayload())
-	blob, ok := runner.state.get("block-1")
+	blob, ok := runner.state.get("msg_a-block-1")
 	if !ok {
 		t.Fatalf("signature not stored for block-1")
 	}
@@ -477,4 +477,31 @@ func TestFunctionToolUseUnchangedWithCustomToolsDeclared(t *testing.T) {
 		canon.ItemFinished{Item: canon.FunctionCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "get_weather", Arguments: []byte(`{"input":"x"}`)}},
 		customFinish,
 	})
+}
+
+func TestItemIDsAreUniqueAcrossStreams(t *testing.T) {
+	ids := func() map[canon.ItemID]bool {
+		sink, _ := runAgainst(t, sse(
+			ssePart("message_start", `{"type":"message_start","message":{}}`),
+			ssePart("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`),
+			ssePart("content_block_stop", `{"type":"content_block_stop","index":0}`),
+			ssePart("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`),
+			ssePart("message_stop", `{"type":"message_stop"}`),
+		))
+		out := map[canon.ItemID]bool{}
+		for _, ev := range sink.events {
+			if started, ok := ev.(canon.ItemStarted); ok {
+				if m, ok := started.Item.(canon.Message); ok {
+					out[m.ID] = true
+				}
+			}
+		}
+		return out
+	}
+	first, second := ids(), ids()
+	for id := range first {
+		if second[id] {
+			t.Fatalf("message id %q repeated across streams", id)
+		}
+	}
 }

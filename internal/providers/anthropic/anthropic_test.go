@@ -113,9 +113,9 @@ func TestSignatureReplayFromProviderState(t *testing.T) {
 	defer replayServer.Close()
 	request := baseRequest()
 	request.Input = append(request.Input, canon.ReasoningItem{
-		ID:      "block-1",
+		ID:      "msg_a-block-1",
 		Content: "pondering",
-		State:   canon.OpaqueRef{Store: stateStoreName, Key: "block-1"},
+		State:   canon.OpaqueRef{Store: stateStoreName, Key: "msg_a-block-1"},
 	})
 	err = runner.Run(t.Context(), provider.RunRequest{
 		Request: request,
