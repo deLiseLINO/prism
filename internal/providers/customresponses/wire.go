@@ -136,7 +136,8 @@ func inputFrom(items []canon.Item) ([]inputItem, error) {
 			}
 			out = append(out, inputItem{Type: "message", Role: roleWire(m.Role), Content: parts})
 		case canon.ReasoningItem:
-			if m.ID == "" && len(m.Summary) == 0 {
+			id := itemIDWithPrefix(m.ID, "rs_")
+			if id == "" && len(m.Summary) == 0 {
 				continue
 			}
 			summary := make([]contentPart, 0, len(m.Summary))
@@ -145,18 +146,18 @@ func inputFrom(items []canon.Item) ([]inputItem, error) {
 			}
 			out = append(out, inputItem{
 				Type:    "reasoning",
-				ID:      string(m.ID),
+				ID:      id,
 				Summary: &summary,
 			})
 		case canon.FunctionCall:
 			out = append(out, inputItem{
-				Type: "function_call", ID: string(m.ID), CallID: string(m.CallID),
+				Type: "function_call", ID: itemIDWithPrefix(m.ID, "fc_"), CallID: string(m.CallID),
 				Name: string(m.Name), Arguments: string(m.Arguments),
 			})
 		case canon.FunctionOutput:
 			out = append(out, inputItem{Type: "function_call_output", CallID: string(m.CallID), Output: functionCallOutputWire(m.Output)})
 		case canon.CustomToolCall:
-			out = append(out, inputItem{Type: "custom_tool_call", ID: string(m.ID), CallID: string(m.CallID), Name: string(m.Name), Input: m.Input})
+			out = append(out, inputItem{Type: "custom_tool_call", ID: itemIDWithPrefix(m.ID, "ctc_"), CallID: string(m.CallID), Name: string(m.Name), Input: m.Input})
 		case canon.CustomToolOutput:
 			out = append(out, inputItem{Type: "custom_tool_call_output", CallID: string(m.CallID), Output: m.Output})
 		default:
@@ -164,6 +165,13 @@ func inputFrom(items []canon.Item) ([]inputItem, error) {
 		}
 	}
 	return out, nil
+}
+
+func itemIDWithPrefix(id canon.ItemID, prefix string) string {
+	if strings.HasPrefix(string(id), prefix) {
+		return string(id)
+	}
+	return ""
 }
 
 func functionCallOutputWire(content []canon.Content) any {
