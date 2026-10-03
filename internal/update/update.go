@@ -28,7 +28,7 @@ const (
 
 const (
 	RefreshInterval       = 5 * time.Minute
-	latestReleaseURL      = "https://api.github.com/repos/deLiseLINO/prism/releases/latest"
+	latestReleaseURL      = "https://api.github.com/repos/deLiseLINO/prism/releases?per_page=1"
 	homebrewFormulaURL    = "https://raw.githubusercontent.com/deLiseLINO/homebrew-tap/main/Formula/prism.rb"
 	releasesPageURL       = "https://github.com/deLiseLINO/prism/releases"
 	goInstallTarget       = "github.com/deLiseLINO/prism/cmd/prism@latest"
@@ -217,13 +217,16 @@ func (s Source) fetchReleaseVersion(ctx context.Context) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("release request failed: %s", resp.Status)
 	}
-	var payload struct {
+	var payload []struct {
 		TagName string `json:"tag_name"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return "", err
 	}
-	version := strings.TrimPrefix(strings.TrimSpace(payload.TagName), "v")
+	if len(payload) == 0 {
+		return "", fmt.Errorf("no releases found")
+	}
+	version := strings.TrimPrefix(strings.TrimSpace(payload[0].TagName), "v")
 	if version == "" {
 		return "", fmt.Errorf("latest release tag is empty")
 	}
