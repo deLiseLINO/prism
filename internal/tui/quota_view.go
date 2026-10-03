@@ -74,6 +74,25 @@ func quotaWindowsFromView(q management.QuotaView) []quotaWindow {
 	return []quotaWindow{quotaWindowFromUsedLimit(q.Used, q.Limit, q.WindowEnd)}
 }
 
+func (m Model) showsLoading(accountKey string) bool {
+	if !m.LoadingMap[accountKey] || m.silentRefresh[accountKey] {
+		return false
+	}
+	_, hasData := m.UsageData[accountKey]
+	return !hasData
+}
+
+func (m *Model) seedUsageFromAccounts() {
+	for i := range m.Accounts {
+		q := m.Accounts[i].Quota
+		if len(q.Windows) == 0 && q.Limit == nil && q.WindowEnd.IsZero() {
+			continue
+		}
+		m.UsageData[m.Accounts[i].ID] = quotaWindowsFromView(q)
+		m.seeded[m.Accounts[i].ID] = true
+	}
+}
+
 func quotaWindowFromDetailView(w management.QuotaWindowView) quotaWindow {
 	window := quotaWindowFromUsedLimit(w.Used, w.Limit, w.WindowEnd, w.Label)
 	window.WindowSec = windowSecForLabel(w.Label)

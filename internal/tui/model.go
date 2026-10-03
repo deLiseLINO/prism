@@ -28,6 +28,7 @@ type Model struct {
 	lastRefresh        map[string]time.Time
 	refreshScheduled   map[string]bool
 	silentRefresh      map[string]bool
+	seeded             map[string]bool
 	forceRefresh       map[string]bool
 	statsLastRefresh   time.Time
 	statsFetchInflight bool
@@ -119,6 +120,7 @@ func InitialModel(client Client, compactMode bool) Model {
 		lastRefresh:          make(map[string]time.Time),
 		refreshScheduled:     make(map[string]bool),
 		silentRefresh:        make(map[string]bool),
+		seeded:               make(map[string]bool),
 		forceRefresh:         make(map[string]bool),
 		compactBarAnimations: make(map[string]compactBarAnimation),
 		StatsRange:           normalizeStatsRange(uiState.StatsRange),
@@ -290,6 +292,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Accounts = filterProviderAccounts(msg.Accounts, m.ProviderFilter)
 		m.ActiveAccountIx = 0
 		m.UsageData = make(map[string][]quotaWindow)
+		m.seeded = make(map[string]bool)
 		m.pruneAccountKeyedMaps()
 		m.pruneCompactBarAnimations()
 		m.pruneAutoRefreshTimers()
@@ -307,7 +310,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.normalizeActiveAccountForView(msg.ActiveKey)
-		m.Loading = true
+		m.seedUsageFromAccounts()
+		m.Loading = !m.seeded[m.activeAccountKey()]
 		m.Err = nil
 		m.Notice = msg.Notice
 
@@ -332,9 +336,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		prevWindows, hadPrevData := m.UsageData[msg.AccountKey]
-		wasLoading := m.LoadingMap[msg.AccountKey]
+		wasLoading := m.LoadingMap[msg.AccountKey] && !m.seeded[msg.AccountKey]
 		silent := m.silentRefresh[msg.AccountKey]
 		delete(m.silentRefresh, msg.AccountKey)
+		delete(m.seeded, msg.AccountKey)
 
 		m.UsageData[msg.AccountKey] = msg.Windows
 		m.LoadingMap[msg.AccountKey] = false
@@ -365,6 +370,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ErrorsMap[msg.AccountKey] = msg.Err
 			m.LoadingMap[msg.AccountKey] = false
 			delete(m.silentRefresh, msg.AccountKey)
+			delete(m.seeded, msg.AccountKey)
 			delete(m.compactBarAnimations, msg.AccountKey)
 			if msg.AccountKey == m.activeAccountKey() {
 				m.clearTabWindowAnimations()

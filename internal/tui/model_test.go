@@ -297,6 +297,56 @@ func batchMsgs(cmd tea.Cmd) []tea.Msg {
 	}
 }
 
+func TestAccountsMsgShowsCachedQuotaWhileRefreshing(t *testing.T) {
+	limit := int64(100)
+	cached := management.QuotaView{Used: 40, Limit: &limit}
+	acc := management.Account{ID: "codex:a", Provider: "codex", Quota: cached}
+	client := newFakeClient(acc)
+	client.quota["codex:a"] = management.QuotaView{Used: 10, Limit: &limit}
+	m := testModel(client)
+
+	next, cmd := m.Update(AccountsMsg{Accounts: []management.Account{acc}})
+	seeded := next.(Model)
+
+	if seeded.Loading {
+		t.Fatal("cached quota must render without the loading skeleton")
+	}
+	if got := seeded.UsageData["codex:a"]; len(got) != 1 || got[0].LeftPercent != 60 {
+		t.Fatalf("cached windows = %+v, want 60%% left", got)
+	}
+	if seeded.showsLoading("codex:a") {
+		t.Fatal("cached account must keep its bar while refreshing")
+	}
+	msgs := batchMsgs(cmd)
+	if len(msgs) != 1 {
+		t.Fatalf("msgs = %v, want one background refresh", msgs)
+	}
+	data, ok := msgs[0].(DataMsg)
+	if !ok || data.Windows[0].LeftPercent != 90 {
+		t.Fatalf("refresh = %#v, want fresh 90%% left", msgs[0])
+	}
+	if len(client.refreshed) != 0 {
+		t.Fatalf("startup refresh must use the cached endpoint, forced %v", client.refreshed)
+	}
+
+	refreshed, _ := seeded.Update(data)
+	if got := refreshed.(Model).UsageData["codex:a"][0].LeftPercent; got != 90 {
+		t.Fatalf("after refresh = %v, want 90", got)
+	}
+}
+
+func TestAccountsMsgWithoutCachedQuotaStillShowsSkeleton(t *testing.T) {
+	acc := management.Account{ID: "codex:a", Provider: "codex"}
+	m := testModel(newFakeClient(acc))
+
+	next, _ := m.Update(AccountsMsg{Accounts: []management.Account{acc}})
+	loaded := next.(Model)
+
+	if !loaded.Loading || !loaded.showsLoading("codex:a") {
+		t.Fatal("account with no cached quota must show the loading placeholder")
+	}
+}
+
 func TestManualRefreshForcesUpstreamQuota(t *testing.T) {
 	limit := int64(100)
 	accA := management.Account{ID: "codex:a", Provider: "codex"}

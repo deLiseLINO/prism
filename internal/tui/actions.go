@@ -196,6 +196,7 @@ func (m Model) beginRefreshActive() (tea.Model, tea.Cmd) {
 		m.LoadingMap = make(map[string]bool)
 	}
 	delete(m.UsageData, m.activeAccountKey())
+	delete(m.seeded, m.activeAccountKey())
 	if m.forceRefresh == nil {
 		m.forceRefresh = make(map[string]bool)
 	}
@@ -219,6 +220,7 @@ func (m Model) beginRefreshAll() (tea.Model, tea.Cmd) {
 	m.UsageData = make(map[string][]quotaWindow)
 	m.ErrorsMap = make(map[string]error)
 	m.LoadingMap = make(map[string]bool)
+	m.seeded = make(map[string]bool)
 	m.forceRefresh = make(map[string]bool, len(m.Accounts))
 	for i := range m.Accounts {
 		m.forceRefresh[m.Accounts[i].ID] = true
