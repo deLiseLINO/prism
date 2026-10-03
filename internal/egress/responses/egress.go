@@ -699,9 +699,9 @@ func failureReasonWire(r canon.FailureReason) string {
 	case canon.FailRateLimited:
 		return "rate_limited"
 	case canon.FailQuotaExhausted:
-		return "quota_exhausted"
+		return "insufficient_quota"
 	case canon.FailServerOverloaded:
-		return "server_overloaded"
+		return "server_is_overloaded"
 	case canon.FailContextLength:
 		return "context_length_exceeded"
 	case canon.FailInvalidRequest:

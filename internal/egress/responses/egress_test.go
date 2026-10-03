@@ -956,3 +956,31 @@ func TestMessagePhaseFollowsTurnShape(t *testing.T) {
 		t.Fatalf("provider phase overridden: %v", kept[0])
 	}
 }
+
+func TestFailedCodesMatchWhatCodexClassifies(t *testing.T) {
+	for reason, want := range map[canon.FailureReason]string{
+		canon.FailQuotaExhausted:   "insufficient_quota",
+		canon.FailServerOverloaded: "server_is_overloaded",
+		canon.FailContextLength:    "context_length_exceeded",
+	} {
+		b := &lockBuffer{}
+		e := NewBufferedWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
+		if err := e.Begin(header()); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Frame(canon.TurnFailed{Failure: canon.Failure{Reason: reason, Message: "m"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		var resp map[string]any
+		if err := json.Unmarshal([]byte(b.String()), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if got := resp["error"].(map[string]any)["code"]; got != want {
+			t.Fatalf("reason %v: code = %v, want %s", reason, got, want)
+		}
+		e.Close()
+	}
+}
