@@ -20,7 +20,7 @@ export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: strin
   {
     flag: 'remoteInstall',
     label: 'Remote machines and daemon install',
-    description: 'The Machines tab and one-click prismd install on a remote host over key-auth ssh.',
+    description: 'The Machines tab and one-click daemon install on a remote host over key-auth ssh.',
   },
   {
     flag: 'rcChannel',

@@ -1,10 +1,10 @@
 export const daemonTargets = [
-  { GOOS: 'darwin', GOARCH: 'arm64', name: 'prismd-darwin-arm64' },
-  { GOOS: 'darwin', GOARCH: 'amd64', name: 'prismd-darwin-amd64' },
-  { GOOS: 'linux', GOARCH: 'amd64', name: 'prismd-linux-amd64' },
-  { GOOS: 'linux', GOARCH: 'arm64', name: 'prismd-linux-arm64' },
-  { GOOS: 'windows', GOARCH: 'amd64', name: 'prismd-windows-amd64.exe' },
-  { GOOS: 'windows', GOARCH: 'arm64', name: 'prismd-windows-arm64.exe' },
+  { GOOS: 'darwin', GOARCH: 'arm64', name: 'prism-darwin-arm64' },
+  { GOOS: 'darwin', GOARCH: 'amd64', name: 'prism-darwin-amd64' },
+  { GOOS: 'linux', GOARCH: 'amd64', name: 'prism-linux-amd64' },
+  { GOOS: 'linux', GOARCH: 'arm64', name: 'prism-linux-arm64' },
+  { GOOS: 'windows', GOARCH: 'amd64', name: 'prism-windows-amd64.exe' },
+  { GOOS: 'windows', GOARCH: 'arm64', name: 'prism-windows-arm64.exe' },
 ]
 
 export function selectDaemonTargets(targets, raw) {

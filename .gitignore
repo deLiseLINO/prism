@@ -3,7 +3,7 @@ node_modules/
 dist/
 verify/evidence/
 .run/
-apps/desktop/resources/prismd/
+apps/desktop/resources/prism/
 apps/desktop/resources/webui/
 notes/
 verify/scripts/dist/

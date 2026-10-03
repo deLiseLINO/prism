@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createWriteStream, readFileSync, type WriteStream } from 'node:fs'
 import { DAEMON_HEALTH_PATH, DAEMON_HOST, type DaemonExit, type DaemonStatus } from '@prism/contracts'
 import { locateDaemon, locateWebui } from './locate'
-import { waitForHealth } from './health'
+import { probeHealth, waitForHealth } from './health'
 
 export interface SupervisorOptions {
   readonly port: number
@@ -12,12 +12,15 @@ export interface SupervisorOptions {
   readonly healthTimeoutMs: number
   readonly healthIntervalMs: number
   readonly healthProbeTimeoutMs: number
+  readonly adoptedPollMs: number
   readonly stopGraceMs: number
   readonly restartBaseMs: number
   readonly restartMaxMs: number
   readonly maxRestarts: number
   readonly stabilityWindowMs: number
 }
+
+const ADOPTED_MISS_LIMIT = 3
 
 type Phase =
   | { readonly kind: 'idle' }
@@ -34,6 +37,7 @@ export class DaemonSupervisor {
   private child: ChildProcess | null = null
   private backoffTimer: NodeJS.Timeout | null = null
   private killTimer: NodeJS.Timeout | null = null
+  private adoptedTimer: NodeJS.Timeout | null = null
   private startupAborted = false
   private readyAt = 0
   private startedAt: string | null = null
@@ -71,6 +75,12 @@ export class DaemonSupervisor {
     if (phase.kind === 'quitting') throw new Error('prism: daemon supervisor is quitting')
     this.clearTimers()
     this.startupAborted = false
+    this.phase = { kind: 'starting', attempt: 1 }
+    if (await probeHealth(this.healthUrl(), this.options.healthProbeTimeoutMs)) {
+      if (this.isCurrentStart(1)) this.adopt()
+      return this.status
+    }
+    if (!this.isCurrentStart(1)) return this.status
     await this.launch(1)
     return this.status
   }
@@ -80,6 +90,11 @@ export class DaemonSupervisor {
     const phase = this.phase
     if (phase.kind === 'quitting') {
       await this.awaitExit()
+      return this.status
+    }
+    if ((phase.kind === 'starting' || phase.kind === 'ready') && this.child === null) {
+      this.phase = { kind: 'stopped' }
+      this.emit()
       return this.status
     }
     if (phase.kind === 'starting' || phase.kind === 'ready') {
@@ -107,6 +122,38 @@ export class DaemonSupervisor {
     await this.awaitExit()
   }
 
+  private healthUrl(): string {
+    return `${this.endpoint}${DAEMON_HEALTH_PATH}`
+  }
+
+  private adopt(): void {
+    console.log(`prism: adopting daemon already answering at ${this.endpoint}`)
+    this.phase = { kind: 'ready', attempt: 1 }
+    this.startedAt = new Date().toISOString()
+    this.emit()
+    this.watchAdopted(0)
+  }
+
+  private watchAdopted(misses: number): void {
+    this.adoptedTimer = setTimeout(() => {
+      this.adoptedTimer = null
+      void this.pollAdopted(misses)
+    }, this.options.adoptedPollMs)
+  }
+
+  private async pollAdopted(misses: number): Promise<void> {
+    const healthy = await probeHealth(this.healthUrl(), this.options.healthProbeTimeoutMs)
+    if (this.phase.kind !== 'ready' || this.child !== null) return
+    const next = healthy ? 0 : misses + 1
+    if (next < ADOPTED_MISS_LIMIT) {
+      this.watchAdopted(next)
+      return
+    }
+    this.phase = { kind: 'failed', reason: `prism: the daemon at ${this.endpoint} stopped answering; it was started outside the app, so start it again or restart the app` }
+    console.log(this.phase.reason)
+    this.emit()
+  }
+
   private async launch(attempt: number): Promise<void> {
     let binaryPath: string
     try {
@@ -119,7 +166,7 @@ export class DaemonSupervisor {
     this.phase = { kind: 'starting', attempt }
     this.startedAt = new Date().toISOString()
     this.emit()
-    const args = ['--listen', `${DAEMON_HOST}:${this.options.port}`]
+    const args = ['daemon', '--listen', `${DAEMON_HOST}:${this.options.port}`]
     if (this.options.daemonConfigPath !== null) args.push('--config', this.options.daemonConfigPath)
     const webuiDir = locateWebui(this.options.webuiDir)
     if (webuiDir !== null) args.push('--webui', webuiDir)
@@ -138,7 +185,7 @@ export class DaemonSupervisor {
       this.handleExit(code, signal)
     })
     const outcome = await waitForHealth({
-      url: `${this.endpoint}${DAEMON_HEALTH_PATH}`,
+      url: this.healthUrl(),
       timeoutMs: this.options.healthTimeoutMs,
       intervalMs: this.options.healthIntervalMs,
       probeTimeoutMs: this.options.healthProbeTimeoutMs,
@@ -226,6 +273,10 @@ export class DaemonSupervisor {
     if (this.killTimer !== null) {
       clearTimeout(this.killTimer)
       this.killTimer = null
+    }
+    if (this.adoptedTimer !== null) {
+      clearTimeout(this.adoptedTimer)
+      this.adoptedTimer = null
     }
   }
 

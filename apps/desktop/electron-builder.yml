@@ -7,8 +7,8 @@ files:
   - dist/**
   - package.json
 extraResources:
-  - from: resources/prismd
-    to: prismd
+  - from: resources/prism
+    to: prism
   - from: resources/webui
     to: webui
   - from: resources/icon.png

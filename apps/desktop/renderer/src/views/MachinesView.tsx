@@ -93,7 +93,7 @@ function MachineRow({ host, generation, onChanged, active, onManage, allowInstal
               disabled={busy}
               busy={installing}
             >
-              {installing ? 'Installing…' : installRun.error !== null ? 'Retry install' : 'Install prismd'}
+              {installing ? 'Installing…' : installRun.error !== null ? 'Retry install' : 'Install daemon'}
             </Button>
           ) : null}
 

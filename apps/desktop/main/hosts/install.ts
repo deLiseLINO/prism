@@ -61,9 +61,9 @@ async function runInstall(deps: HostInstallDeps, host: string): Promise<HostInst
 
   const adopted = await healthProbe(address, PROBE_TIMEOUT_MS)
   if (adopted !== null) {
-    logInstall(host, 'adopt', `healthy prismd ${adopted} already running`)
+    logInstall(host, 'adopt', `healthy daemon ${adopted} already running`)
     if (!(await registerExternal(deps, host, address))) {
-      return { ok: false, host, phase: 'register', reason: 'prismd is running on the machine, but saving its port in the config failed; click Install again' }
+      return { ok: false, host, phase: 'register', reason: 'the daemon is running on the machine, but saving its port in the config failed; click Install again' }
     }
     deps.onRegistered()
     return { ok: true, host, version: adopted, adopted: true }
@@ -77,7 +77,7 @@ async function runInstall(deps: HostInstallDeps, host: string): Promise<HostInst
   if (binary === null || !existsSync(binary)) {
     return {
       ok: false, host, phase: 'probe',
-      reason: `no prismd build for this machine's platform (${platform}); Prism bundles linux/amd64 and linux/arm64`,
+      reason: `no prism binary for this machine's platform (${platform}); Prism bundles linux/amd64 and linux/arm64`,
     }
   }
 
@@ -85,14 +85,14 @@ async function runInstall(deps: HostInstallDeps, host: string): Promise<HostInst
   if (home === null) {
     return { ok: false, host, phase: 'upload', reason: 'could not read the remote home directory over ssh' }
   }
-  const binPath = `${home}/.prism/remote/prismd`
+  const binPath = `${home}/.prism/remote/prism`
   logInstall(host, 'upload', `${platform} binary from ${binary}`)
   const uploaded = await streamBinary(address, binary, binPath)
   if (!uploaded.ok) {
     logInstall(host, 'upload', `failed: ${uploaded.reason}`)
     return { ok: false, host, phase: 'upload', reason: uploaded.reason }
   }
-  logInstall(host, 'start', `prismd on 127.0.0.1:${REMOTE_DAEMON_PORT}`)
+  logInstall(host, 'start', `daemon on 127.0.0.1:${REMOTE_DAEMON_PORT}`)
   const started = await startRemote(address, binPath)
   if (!started.ok) {
     logInstall(host, 'start', `failed: ${started.reason}`)
@@ -102,12 +102,12 @@ async function runInstall(deps: HostInstallDeps, host: string): Promise<HostInst
   if (version === null) {
     const log = await remoteLogTail(address, home)
     const tail = log === '' ? '' : `\n${log}`
-    logInstall(host, 'verify', 'prismd did not answer')
-    return { ok: false, host, phase: 'verify', reason: `prismd started but did not answer within ${VERIFY_TIMEOUT_MS / 1000}s; click Install again to re-check${tail}` }
+    logInstall(host, 'verify', 'daemon did not answer')
+    return { ok: false, host, phase: 'verify', reason: `the daemon started but did not answer within ${VERIFY_TIMEOUT_MS / 1000}s; click Install again to re-check${tail}` }
   }
-  logInstall(host, 'verify', `prismd ${version} healthy`)
+  logInstall(host, 'verify', `daemon ${version} healthy`)
   if (!(await registerExternal(deps, host, address))) {
-    return { ok: false, host, phase: 'register', reason: 'prismd is running on the machine, but saving its port in the config failed; click Install again' }
+    return { ok: false, host, phase: 'register', reason: 'the daemon is running on the machine, but saving its port in the config failed; click Install again' }
   }
   logInstall(host, 'register', `host flipped to its own daemon on port ${REMOTE_DAEMON_PORT}`)
   deps.onRegistered()
@@ -132,17 +132,17 @@ async function probePlatform(address: string): Promise<Platform | { reason: stri
   if (os === 'Darwin') {
     const localArch = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'arm64' : ''
     if (arch === localArch) return 'darwin-same'
-    return { reason: `the machine runs macOS/${arch ?? 'unknown'} while this machine is macOS/${process.arch}; copy prismd there manually and set its daemon port in the config` }
+    return { reason: `the machine runs macOS/${arch ?? 'unknown'} while this machine is macOS/${process.arch}; copy the prism binary there manually and set its daemon port in the config` }
   }
-  return { reason: `the machine runs ${os ?? 'unknown'}/${arch ?? 'unknown'}; Prism bundles prismd for linux and same-arch macOS` }
+  return { reason: `the machine runs ${os ?? 'unknown'}/${arch ?? 'unknown'}; Prism bundles its binary for linux and same-arch macOS` }
 }
 
 function remoteBinaryPath(platform: Platform): string | null {
   const dir = app.isPackaged
-    ? path.join(process.resourcesPath, 'prismd')
-    : path.join(app.getAppPath(), 'resources', 'prismd')
+    ? path.join(process.resourcesPath, 'prism')
+    : path.join(app.getAppPath(), 'resources', 'prism')
   if (platform === 'darwin-same') return path.join(dir, bundledDaemonBinary())
-  return path.join(dir, `prismd-${platform}`)
+  return path.join(dir, `prism-${platform}`)
 }
 
 
@@ -200,17 +200,17 @@ async function streamBinary(address: string, srcPath: string, remotePath: string
 }
 
 async function startRemote(address: string, binPath: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const logPath = `${dirOf(binPath)}/prismd.log`
-  const script = `nohup '${binPath}' --listen 127.0.0.1:${REMOTE_DAEMON_PORT} >> '${logPath}' 2>&1 < /dev/null & exit 0`
+  const logPath = `${dirOf(binPath)}/prism.log`
+  const script = `nohup '${binPath}' daemon --listen 127.0.0.1:${REMOTE_DAEMON_PORT} >> '${logPath}' 2>&1 < /dev/null & exit 0`
   const out = await sshOutput(address, script, PROBE_TIMEOUT_MS)
   if (!out.ok) {
-    return { ok: false, reason: `starting prismd failed: ${out.reason}` }
+    return { ok: false, reason: `starting the daemon failed: ${out.reason}` }
   }
   return { ok: true }
 }
 
 async function remoteLogTail(address: string, home: string): Promise<string> {
-  const out = await sshOutput(address, `tail -c 2000 '${home}/.prism/remote/prismd.log' 2>/dev/null`, PROBE_TIMEOUT_MS)
+  const out = await sshOutput(address, `tail -c 2000 '${home}/.prism/remote/prism.log' 2>/dev/null`, PROBE_TIMEOUT_MS)
   return out.ok ? out.stdout.trim() : ''
 }
 

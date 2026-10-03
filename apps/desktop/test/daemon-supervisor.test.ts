@@ -5,6 +5,7 @@ const spawnMock = vi.hoisted(() => vi.fn())
 const locateMock = vi.hoisted(() => vi.fn())
 const locateWebuiMock = vi.hoisted(() => vi.fn())
 const healthMock = vi.hoisted(() => vi.fn())
+const probeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('node:child_process', () => ({
   spawn: spawnMock,
@@ -17,6 +18,7 @@ vi.mock('../main/daemon/locate', () => ({
 
 vi.mock('../main/daemon/health', () => ({
   waitForHealth: healthMock,
+  probeHealth: probeMock,
 }))
 
 interface FakeChild extends EventEmitter {
@@ -39,6 +41,7 @@ const options = {
   healthTimeoutMs: 200,
   healthIntervalMs: 20,
   healthProbeTimeoutMs: 50,
+  adoptedPollMs: 1000,
   stopGraceMs: 50,
   restartBaseMs: 100,
   restartMaxMs: 1000,
@@ -84,8 +87,9 @@ describe('DaemonSupervisor restart policy', () => {
       children.push(child)
       return child
     })
-    locateMock.mockReset().mockReturnValue({ path: '/virtual/prismd', source: 'bundled' })
+    locateMock.mockReset().mockReturnValue({ path: '/virtual/prism', source: 'bundled' })
     locateWebuiMock.mockReset().mockReturnValue(null)
+    probeMock.mockReset().mockResolvedValue(false)
     healthMock.mockReset().mockImplementation(() => healthQueue.shift() ?? 'timeout')
     vi.resetModules()
   })
@@ -193,8 +197,8 @@ describe('DaemonSupervisor restart policy', () => {
     setHealth('healthy')
     await supervisor.start()
     expect(spawnMock).toHaveBeenCalledWith(
-      '/virtual/prismd',
-      ['--listen', '127.0.0.1:4931', '--webui', '/virtual/webui'],
+      '/virtual/prism',
+      ['daemon', '--listen', '127.0.0.1:4931', '--webui', '/virtual/webui'],
       { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false },
     )
   })
@@ -204,9 +208,54 @@ describe('DaemonSupervisor restart policy', () => {
     setHealth('healthy')
     await supervisor.start()
     expect(spawnMock).toHaveBeenCalledWith(
-      '/virtual/prismd',
-      ['--listen', '127.0.0.1:4931'],
+      '/virtual/prism',
+      ['daemon', '--listen', '127.0.0.1:4931'],
       { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, shell: false },
     )
+  })
+
+  it('adopts a healthy daemon without spawning and leaves it running on quit', async () => {
+    probeMock.mockResolvedValue(true)
+    const supervisor = await makeSupervisor()
+    const status = await supervisor.start()
+    expect(status).toMatchObject({ state: 'ready', pid: null, endpoint: 'http://127.0.0.1:4931' })
+    expect(spawnMock).not.toHaveBeenCalled()
+    await supervisor.stopForQuit()
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(lastStatus()).toMatchObject({ state: 'quitting' })
+  })
+
+  it('stop() on an adopted daemon only releases it', async () => {
+    probeMock.mockResolvedValue(true)
+    const supervisor = await makeSupervisor()
+    await supervisor.start()
+    const status = await supervisor.stop()
+    expect(status.state).toBe('stopped')
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('kills a daemon it spawned itself on quit', async () => {
+    const supervisor = await makeSupervisor()
+    setHealth('healthy')
+    await supervisor.start()
+    const quit = supervisor.stopForQuit()
+    expect(children[0].kill).toHaveBeenCalledWith('SIGTERM')
+    children[0].emit('exit', 0, null)
+    await quit
+  })
+
+  it('fails without respawning when an adopted daemon stops answering, then spawns its own on start', async () => {
+    probeMock.mockResolvedValueOnce(true).mockResolvedValue(false)
+    const supervisor = await makeSupervisor()
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(options.adoptedPollMs * 3)
+    expect(lastStatus()).toMatchObject({ state: 'failed' })
+    expect(supervisor.status.lastError).toContain('stopped answering')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(spawnMock).not.toHaveBeenCalled()
+    setHealth('healthy')
+    await supervisor.start()
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    expect(lastStatus()).toMatchObject({ state: 'ready', pid: 4242 })
   })
 })
