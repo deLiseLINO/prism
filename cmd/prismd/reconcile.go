@@ -306,6 +306,7 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 			return
 		}
 		current.Models = models
+		current.SyncedModels = models
 		doc.Providers[id] = current
 		log.Printf("prismd: provider %s models discovered (%d)", id, len(models))
 	}

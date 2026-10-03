@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"prism/internal/account"
 	"prism/internal/auth"
 	"prism/internal/config"
+	"prism/internal/integrations"
+	"prism/internal/management"
 	"prism/internal/provider"
 	"prism/internal/store"
 )
@@ -101,7 +106,12 @@ func TestEnsureProviderRegistersCustomRunner(t *testing.T) {
 }
 
 func TestReconcileFillsEmptyModels(t *testing.T) {
-	srv := modelsServer(t, `{"data":[{"id":"m1"},{"id":"m2"}]}`, nil)
+	var body atomic.Value
+	body.Store(`{"data":[{"id":"m1"},{"id":"m2"}]}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body.Load().(string)))
+	}))
 	defer srv.Close()
 
 	env, mgr := testEnv(t, config.Document{
@@ -111,7 +121,6 @@ func TestReconcileFillsEmptyModels(t *testing.T) {
 		},
 	})
 	env.lastDiscover["edge"] = time.Now().Add(-10 * time.Minute)
-
 	env.reconcileOnce(context.Background())
 
 	got := mgr.Get().Config.Providers["edge"].Models
@@ -120,6 +129,26 @@ func TestReconcileFillsEmptyModels(t *testing.T) {
 	}
 	if _, ok := env.registry.Lookup("edge"); !ok {
 		t.Fatal("runner missing after reconcile")
+	}
+
+	body.Store(`{"data":[{"id":"m2"}]}`)
+	server := management.New(nil, mgr, nil, nil, env.creds, nil, integrations.NewRegistry(),
+		modelSyncer{creds: env.creds, client: srv.Client()}, nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		"/api/v1/providers/edge/sync-models?expectedGeneration="+strconv.FormatUint(mgr.Get().Generation, 10), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var response management.ProviderMutationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Provider.Models; len(got) != 1 || got[0] != "m2" {
+		t.Fatalf("automatically discovered model survived removal: %v", got)
+	}
+	if got := mgr.Get().Config.Providers["edge"].Models; len(got) != 1 || got[0] != "m2" {
+		t.Fatalf("removed model persisted: %v", got)
 	}
 }
 
