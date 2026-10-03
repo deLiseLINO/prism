@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -52,6 +54,7 @@ type openItem struct {
 	kind     string
 	text     string
 	partOpen bool
+	wire     map[string]any
 }
 
 type Egress struct {
@@ -276,6 +279,9 @@ func (e *Egress) turnFinishedLocked(t canon.TurnFinished) error {
 	if err := e.releasePendingLocked(phase); err != nil {
 		return err
 	}
+	if err := e.closeOpenLocked(); err != nil {
+		return err
+	}
 	if e.terminal != nil {
 		return e.duplicateTerminalLocked(t)
 	}
@@ -298,6 +304,9 @@ func (e *Egress) turnFinishedLocked(t canon.TurnFinished) error {
 
 func (e *Egress) turnFailedLocked(t canon.TurnFailed) error {
 	if err := e.releasePendingLocked(canon.PhaseNone); err != nil {
+		return err
+	}
+	if err := e.closeOpenLocked(); err != nil {
 		return err
 	}
 	if e.terminal != nil {
@@ -347,6 +356,7 @@ func (e *Egress) itemStartedLocked(t canon.ItemStarted) error {
 	if err != nil {
 		return err
 	}
+	it.wire = wire
 	return e.writeEventLocked("response.output_item.added", map[string]any{
 		"output_index": it.index,
 		"item":         wire,
@@ -515,6 +525,36 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 	}
 	e.output = append(e.output, wire)
 	delete(e.items, id)
+	return nil
+}
+
+func (e *Egress) closeOpenLocked() error {
+	open := slices.SortedFunc(maps.Values(e.items), func(a, b *openItem) int { return a.index - b.index })
+	clear(e.items)
+	for _, it := range open {
+		if it.kind != "message" && it.kind != "reasoning" {
+			continue
+		}
+		wire := maps.Clone(it.wire)
+		wire["status"] = "incomplete"
+		switch {
+		case it.kind == "message":
+			parts := []any{}
+			if it.partOpen {
+				parts = append(parts, map[string]any{"type": "output_text", "text": it.text, "annotations": []any{}})
+			}
+			wire["content"] = parts
+		case it.text != "":
+			wire["content"] = []any{map[string]any{"type": "reasoning_text", "text": it.text}}
+		}
+		if err := e.writeEventLocked("response.output_item.done", map[string]any{
+			"output_index": it.index,
+			"item":         wire,
+		}); err != nil {
+			return err
+		}
+		e.output = append(e.output, wire)
+	}
 	return nil
 }
 
