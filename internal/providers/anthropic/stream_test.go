@@ -267,3 +267,163 @@ func TestUpstreamSSERateLimitRetryable(t *testing.T) {
 		t.Fatalf("got kind=%d class=%d, want retryable rate limited", re.Kind, re.Class)
 	}
 }
+
+func runWithTools(t *testing.T, payload string, tools []canon.Tool) *collectingSink {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(payload))
+	}))
+	t.Cleanup(server.Close)
+	runner := New(Options{BaseURL: server.URL})
+	sink := &collectingSink{}
+	request := baseRequest()
+	request.Tools = tools
+	if err := runner.Run(t.Context(), provider.RunRequest{
+		Request: request,
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+	}, sink); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return sink
+}
+
+func assertEvents(t *testing.T, got, want []canon.Event) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("events = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		gotJSON, _ := json.Marshal(got[i])
+		wantJSON, _ := json.Marshal(want[i])
+		if !bytes.Equal(gotJSON, wantJSON) {
+			t.Fatalf("event[%d] = %s, want %s", i, gotJSON, wantJSON)
+		}
+	}
+}
+
+func toolUseStream(name string, fragments ...string) string {
+	parts := []string{
+		ssePart("message_start", `{"type":"message_start","message":{}}`),
+		ssePart("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_c1","name":"`+name+`"}}`),
+	}
+	for _, fragment := range fragments {
+		parts = append(parts, ssePart("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":`+fragment+`}}`))
+	}
+	parts = append(parts,
+		ssePart("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		ssePart("message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}`),
+		ssePart("message_stop", `{"type":"message_stop"}`),
+	)
+	return sse(parts...)
+}
+
+var customFinish = canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{OutputTokens: 7, TotalTokens: 7}}
+
+func TestCustomToolStream(t *testing.T) {
+	tools := []canon.Tool{canon.CustomToolDef{Name: "apply_patch"}}
+	cases := []struct {
+		name      string
+		fragments []string
+		input     string
+	}{
+		{
+			name:      "fragmented across escape",
+			fragments: []string{`"{\"inp"`, `"ut\":\"a\\"`, `"nb \\\"q\\\" é\"}"`},
+			input:     "a\nb \"q\" é",
+		},
+		{
+			name:      "single fragment",
+			fragments: []string{`"{\"input\":\"*** Begin Patch\"}"`},
+			input:     "*** Begin Patch",
+		},
+		{
+			name:      "empty input string",
+			fragments: []string{`"{\"input\":\"\"}"`},
+			input:     "",
+		},
+		{
+			name:      "empty buffer",
+			fragments: nil,
+			input:     "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := runWithTools(t, toolUseStream("apply_patch", tc.fragments...), tools)
+			want := []canon.Event{
+				canon.ItemStarted{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "apply_patch"}},
+			}
+			if tc.input != "" {
+				want = append(want, canon.CustomToolInputDelta{ItemID: "toolu_c1", Text: tc.input})
+			}
+			want = append(want,
+				canon.ItemFinished{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "apply_patch", Input: tc.input}},
+				customFinish,
+			)
+			assertEvents(t, sink.events, want)
+		})
+	}
+}
+
+func TestCustomToolStreamRawFallback(t *testing.T) {
+	tools := []canon.Tool{canon.CustomToolDef{Name: "exec"}}
+	cases := []struct {
+		name      string
+		fragments []string
+		input     string
+	}{
+		{"plain text", []string{`"print("`, `"1)"`}, "print(1)"},
+		{"malformed json", []string{`"{oops"`}, "{oops"},
+		{"object without input", []string{`"{\"cmd\":\"ls\"}"`}, `{"cmd":"ls"}`},
+		{"non string input", []string{`"{\"input\":5}"`}, `{"input":5}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := runWithTools(t, toolUseStream("exec", tc.fragments...), tools)
+			assertEvents(t, sink.events, []canon.Event{
+				canon.ItemStarted{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "exec"}},
+				canon.CustomToolInputDelta{ItemID: "toolu_c1", Text: tc.input},
+				canon.ItemFinished{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "exec", Input: tc.input}},
+				customFinish,
+			})
+		})
+	}
+}
+
+func TestCustomToolStreamMixedWithFunctionCall(t *testing.T) {
+	payload := sse(
+		ssePart("message_start", `{"type":"message_start","message":{}}`),
+		ssePart("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_f1","name":"get_weather"}}`),
+		ssePart("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Paris\"}"}}`),
+		ssePart("content_block_stop", `{"type":"content_block_stop","index":0}`),
+		ssePart("content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_c2","name":"exec"}}`),
+		ssePart("content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"input\":\"ls\"}"}}`),
+		ssePart("content_block_stop", `{"type":"content_block_stop","index":1}`),
+		ssePart("message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}`),
+		ssePart("message_stop", `{"type":"message_stop"}`),
+	)
+	sink := runWithTools(t, payload, []canon.Tool{
+		canon.FunctionTool{Name: "get_weather"},
+		canon.CustomToolDef{Name: "exec"},
+	})
+	assertEvents(t, sink.events, []canon.Event{
+		canon.ItemStarted{Item: canon.FunctionCall{ID: "toolu_f1", CallID: "toolu_f1", Name: "get_weather"}},
+		canon.ToolArgumentsDelta{ItemID: "toolu_f1", Bytes: []byte(`{"city":"Paris"}`)},
+		canon.ItemFinished{Item: canon.FunctionCall{ID: "toolu_f1", CallID: "toolu_f1", Name: "get_weather", Arguments: []byte(`{"city":"Paris"}`)}},
+		canon.ItemStarted{Item: canon.CustomToolCall{ID: "toolu_c2", CallID: "toolu_c2", Name: "exec"}},
+		canon.CustomToolInputDelta{ItemID: "toolu_c2", Text: "ls"},
+		canon.ItemFinished{Item: canon.CustomToolCall{ID: "toolu_c2", CallID: "toolu_c2", Name: "exec", Input: "ls"}},
+		customFinish,
+	})
+}
+
+func TestFunctionToolUseUnchangedWithCustomToolsDeclared(t *testing.T) {
+	sink := runWithTools(t, toolUseStream("get_weather", `"{\"input\":\"x\"}"`), []canon.Tool{canon.CustomToolDef{Name: "exec"}})
+	assertEvents(t, sink.events, []canon.Event{
+		canon.ItemStarted{Item: canon.FunctionCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "get_weather"}},
+		canon.ToolArgumentsDelta{ItemID: "toolu_c1", Bytes: []byte(`{"input":"x"}`)},
+		canon.ItemFinished{Item: canon.FunctionCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "get_weather", Arguments: []byte(`{"input":"x"}`)}},
+		customFinish,
+	})
+}

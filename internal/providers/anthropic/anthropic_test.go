@@ -172,7 +172,6 @@ func TestSignatureReplayFromCanonField(t *testing.T) {
 
 func TestUnsupportedItemsRejected(t *testing.T) {
 	cases := []canon.Item{
-		canon.CustomToolCall{ID: "c1", CallID: "c1", Name: "t"},
 		canon.LocalShellCall{ID: "s1", CallID: "s1", Command: "ls"},
 		canon.CompactionMarker{ID: "cm1", Kind: canon.CompactionAuto},
 		canon.ToolSearchCall{ID: "ts1", CallID: "ts1", Query: "q"},

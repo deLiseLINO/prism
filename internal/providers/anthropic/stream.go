@@ -82,10 +82,12 @@ type openBlock struct {
 	text      strings.Builder
 	signature string
 	args      strings.Builder
+	custom    bool
 }
 
 type streamState struct {
 	sink      provider.Sink
+	custom    customTools
 	store     *stateStore
 	log       *slog.Logger
 	blocks    map[string]*openBlock
@@ -141,8 +143,9 @@ func (u *wireUsage) canonUsage() canon.Usage {
 	return out
 }
 
-func (r *Runner) stream(body io.Reader, sink provider.Sink) error {
+func (r *Runner) stream(body io.Reader, sink provider.Sink, custom customTools) error {
 	state := &streamState{
+		custom: custom,
 		sink:   sink,
 		store:  r.state,
 		log:    r.log,
@@ -263,6 +266,10 @@ func (s *streamState) contentBlockStart(payload map[string]any) error {
 		open.callID = canon.CallID(id)
 		open.name = canon.ToolName(name)
 		s.blocks[key] = open
+		if s.custom.has(open.name) {
+			open.custom = true
+			return s.emit(canon.ItemStarted{Item: canon.CustomToolCall{ID: open.itemID, CallID: open.callID, Name: open.name}})
+		}
 		return s.emit(canon.ItemStarted{Item: canon.FunctionCall{ID: open.itemID, CallID: open.callID, Name: open.name}})
 	default:
 		s.log.Warn("anthropic: unknown content block type", slog.String("type", blockType))
@@ -310,6 +317,9 @@ func (s *streamState) contentBlockDelta(payload map[string]any) error {
 			return nil
 		}
 		open.args.WriteString(partial)
+		if open.custom {
+			return nil
+		}
 		return s.emit(canon.ToolArgumentsDelta{ItemID: open.itemID, Bytes: []byte(partial)})
 	default:
 		s.log.Warn("anthropic: unknown delta type", slog.String("type", deltaType))
@@ -354,6 +364,9 @@ func (s *streamState) contentBlockStop(payload map[string]any) error {
 			State:     canon.OpaqueRef{Store: stateStoreName, Key: string(open.itemID)},
 		}})
 	case "tool_use":
+		if open.custom {
+			return s.finishCustomCall(open)
+		}
 		args := open.args.String()
 		if strings.TrimSpace(args) == "" {
 			args = "{}"
@@ -374,6 +387,31 @@ func (s *streamState) contentBlockStop(payload map[string]any) error {
 	default:
 		return nil
 	}
+}
+
+func unwrapCustomInput(buffered string) string {
+	var wrapped struct {
+		Input *string `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(buffered), &wrapped); err != nil || wrapped.Input == nil {
+		return buffered
+	}
+	return *wrapped.Input
+}
+
+func (s *streamState) finishCustomCall(open *openBlock) error {
+	input := unwrapCustomInput(open.args.String())
+	if input != "" {
+		if err := s.emit(canon.CustomToolInputDelta{ItemID: open.itemID, Text: input}); err != nil {
+			return err
+		}
+	}
+	return s.emit(canon.ItemFinished{Item: canon.CustomToolCall{
+		ID:     open.itemID,
+		CallID: open.callID,
+		Name:   open.name,
+		Input:  input,
+	}})
 }
 
 func (s *streamState) messageDelta(payload map[string]any) error {

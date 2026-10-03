@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -283,6 +284,24 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 				return nil, nil, fmt.Errorf("anthropic: tool result %q has no representable content", v.CallID)
 			}
 			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks})
+		case canon.CustomToolCall:
+			if v.CallID == "" {
+				return nil, nil, errors.New("anthropic: custom tool call has no call id")
+			}
+			input, err := json.Marshal(customToolInput{Input: v.Input})
+			if err != nil {
+				return nil, nil, fmt.Errorf("anthropic: encode custom tool call %q: %w", v.CallID, err)
+			}
+			appendBlock("assistant", wireBlock{Type: "tool_use", ID: string(v.CallID), Name: string(v.Name), Input: input})
+		case canon.CustomToolOutput:
+			if v.CallID == "" {
+				return nil, nil, errors.New("anthropic: custom tool output has no call id")
+			}
+			result := wireBlock{Type: "tool_result", ToolUseID: string(v.CallID)}
+			if v.Output != "" {
+				result.Content = []wireBlock{{Type: "text", Text: v.Output}}
+			}
+			appendBlock("user", result)
 		default:
 			return nil, nil, fmt.Errorf("anthropic: unsupported input item %T", item)
 		}
@@ -299,21 +318,81 @@ func (r *Runner) replaySignature(item canon.ReasoningItem) string {
 	return item.Signature
 }
 
+const (
+	applyPatchToolName     = "apply_patch"
+	applyPatchInputDesc    = "Raw tool input. For apply_patch, begin exactly with `*** Begin Patch` (no trailing `***`), then use its standard patch envelope."
+	genericCustomInputDesc = "Raw freeform input for this tool."
+)
+
+type customInputProperty struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+}
+
+type customInputSchema struct {
+	Type       string                         `json:"type"`
+	Properties map[string]customInputProperty `json:"properties"`
+	Required   []string                       `json:"required"`
+}
+
+type customToolInput struct {
+	Input string `json:"input"`
+}
+
+type customTools map[canon.ToolName]struct{}
+
+func customToolNames(tools []canon.Tool) customTools {
+	var names customTools
+	for _, t := range tools {
+		if def, ok := t.(canon.CustomToolDef); ok {
+			if names == nil {
+				names = make(customTools)
+			}
+			names[def.Name] = struct{}{}
+		}
+	}
+	return names
+}
+
+func (c customTools) has(name canon.ToolName) bool {
+	_, ok := c[name]
+	return ok
+}
+
+func customToolSchema(name canon.ToolName) (json.RawMessage, error) {
+	desc := genericCustomInputDesc
+	if name == applyPatchToolName {
+		desc = applyPatchInputDesc
+	}
+	return json.Marshal(customInputSchema{
+		Type:       "object",
+		Properties: map[string]customInputProperty{"input": {Type: "string", Description: desc}},
+		Required:   []string{"input"},
+	})
+}
+
 func toolsFrom(tools []canon.Tool) ([]wireTool, error) {
 	var wire []wireTool
 	for _, t := range tools {
-		fn, ok := t.(canon.FunctionTool)
-		if !ok {
+		switch v := t.(type) {
+		case canon.FunctionTool:
+			params := v.Parameters
+			if len(params) == 0 {
+				params = []byte("{}")
+			}
+			if !json.Valid(params) {
+				return nil, fmt.Errorf("anthropic: tool %q has malformed parameters", v.Name)
+			}
+			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: json.RawMessage(params)})
+		case canon.CustomToolDef:
+			schema, err := customToolSchema(v.Name)
+			if err != nil {
+				return nil, fmt.Errorf("anthropic: encode custom tool %q schema: %w", v.Name, err)
+			}
+			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema})
+		default:
 			return nil, fmt.Errorf("anthropic: unsupported tool %T", t)
 		}
-		params := fn.Parameters
-		if len(params) == 0 {
-			params = []byte("{}")
-		}
-		if !json.Valid(params) {
-			return nil, fmt.Errorf("anthropic: tool %q has malformed parameters", fn.Name)
-		}
-		wire = append(wire, wireTool{Name: string(fn.Name), Description: fn.Description, InputSchema: json.RawMessage(params)})
 	}
 	return wire, nil
 }
