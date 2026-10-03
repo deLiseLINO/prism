@@ -19,6 +19,7 @@ const (
 	actionMenuSettings     = "settings"
 	actionMenuHelp         = "help"
 	actionMenuUpdate       = "update"
+	actionMenuStats        = "stats"
 )
 
 func (m Model) confirmActionMenu() (tea.Model, tea.Cmd) {
@@ -63,6 +64,8 @@ func (m Model) confirmActionMenu() (tea.Model, tea.Cmd) {
 	case actionMenuHelp:
 		m.openHelpOverlay()
 		return m, nil
+	case actionMenuStats:
+		return m.beginStatsFlow()
 	case actionMenuUpdate:
 		m.openUpdatePrompt()
 		return m, nil
