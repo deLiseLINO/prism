@@ -375,7 +375,7 @@ func TestCustomToolStreamRawFallback(t *testing.T) {
 	}{
 		{"plain text", []string{`"print("`, `"1)"`}, "print(1)"},
 		{"malformed json", []string{`"{oops"`}, "{oops"},
-		{"object without input", []string{`"{\"cmd\":\"ls\"}"`}, `{"cmd":"ls"}`},
+		{"object without recognized key", []string{`"{\"foo\":\"ls\"}"`}, `{"foo":"ls"}`},
 		{"non string input", []string{`"{\"input\":5}"`}, `{"input":5}`},
 	}
 	for _, tc := range cases {
@@ -385,6 +385,56 @@ func TestCustomToolStreamRawFallback(t *testing.T) {
 				canon.ItemStarted{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "exec"}},
 				canon.CustomToolInputDelta{ItemID: "toolu_c1", Text: tc.input},
 				canon.ItemFinished{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: "exec", Input: tc.input}},
+				customFinish,
+			})
+		})
+	}
+}
+
+func quotedFragment(t *testing.T, raw string) string {
+	t.Helper()
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal fragment: %v", err)
+	}
+	return string(encoded)
+}
+
+func TestCustomToolInputRepair(t *testing.T) {
+	const body = "*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch"
+	const decorated = "*** Begin Patch ***\n*** Add File: a.txt\n+hi\n*** End Patch ***"
+	const noFile = "*** Begin Patch ***\n*** End Patch ***"
+	cases := []struct {
+		name   string
+		tool   canon.ToolName
+		buffer string
+		want   string
+	}{
+		{"input key", "apply_patch", `{"input":"*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch"}`, body},
+		{"patch alternate key", "apply_patch", `{"patch":"*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch"}`, body},
+		{"content alternate key", "apply_patch", `{"content":"*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch"}`, body},
+		{"two candidate keys", "apply_patch", `{"patch":"a","content":"b"}`, `{"patch":"a","content":"b"}`},
+		{"input wins over alternate", "apply_patch", `{"input":"x","patch":"y"}`, "x"},
+		{"fenced body", "apply_patch", `{"input":"` + "```\\n" + `*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch\n` + "```" + `"}`, body},
+		{"fenced body with language", "apply_patch", `{"input":"` + "```diff\\n" + `*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch\n` + "```" + `"}`, body},
+		{"decorated markers", "apply_patch", `{"input":"*** Begin Patch ***\n*** Add File: a.txt\n+hi\n*** End Patch ***"}`, body},
+		{"decorated markers without file line", "apply_patch", `{"input":"*** Begin Patch ***\n*** End Patch ***"}`, noFile},
+		{"non apply_patch byte exact", "other", `{"input":"*** Begin Patch ***\n*** Add File: a.txt\n+hi\n*** End Patch ***"}`, decorated},
+		{"non apply_patch no alternate", "other", `{"patch":"x"}`, `{"patch":"x"}`},
+		{"non apply_patch no fence strip", "other", `{"input":"` + "```\\nx\\n```" + `"}`, "```\nx\n```"},
+		{"exec alternate cmd", "exec", `{"cmd":"ls"}`, "ls"},
+		{"exec fenced", "exec", `{"input":"` + "```js\\nlet a = 1;\\n```" + `"}`, "let a = 1;"},
+		{"exec keeps decorated markers", "exec", `{"input":"*** Begin Patch ***\n*** Add File: a.txt\n+hi\n*** End Patch ***"}`, decorated},
+		{"truncated json", "apply_patch", `{"input":"*** Begin`, `{"input":"*** Begin`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := []canon.Tool{canon.CustomToolDef{Name: tc.tool}}
+			sink := runWithTools(t, toolUseStream(string(tc.tool), quotedFragment(t, tc.buffer)), tools)
+			assertEvents(t, sink.events, []canon.Event{
+				canon.ItemStarted{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: tc.tool}},
+				canon.CustomToolInputDelta{ItemID: "toolu_c1", Text: tc.want},
+				canon.ItemFinished{Item: canon.CustomToolCall{ID: "toolu_c1", CallID: "toolu_c1", Name: tc.tool, Input: tc.want}},
 				customFinish,
 			})
 		})
