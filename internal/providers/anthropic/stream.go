@@ -503,7 +503,7 @@ func (s *streamState) mapStopReason(reason string) canon.Status {
 	switch reason {
 	case "", "end_turn", "stop_sequence", "tool_use":
 		return canon.Completed()
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded":
 		return canon.Incomplete(canon.IncompleteMaxOutputTokens)
 	case "refusal", "content_filter":
 		return canon.Incomplete(canon.IncompleteContentFilter)
