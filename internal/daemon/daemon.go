@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/agentinstall"
 	"github.com/deLiseLINO/prism/internal/auth"
@@ -37,6 +39,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/quota"
 	"github.com/deLiseLINO/prism/internal/requestlog"
 	"github.com/deLiseLINO/prism/internal/server"
+	"github.com/deLiseLINO/prism/internal/service"
 	"github.com/deLiseLINO/prism/internal/store"
 	"github.com/deLiseLINO/prism/internal/usage"
 	"github.com/deLiseLINO/prism/internal/webui"
@@ -48,6 +51,7 @@ type options struct {
 	credentialPath string
 	mgmtToken      string
 	webuiDir       string
+	register       bool
 	showVersion    bool
 }
 
@@ -538,17 +542,10 @@ func (t *quotaTable) probe(ctx context.Context, id account.AccountID, provider a
 	return snap, nil
 }
 
-func defaultStateDir() string {
-	if dir, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(dir, ".prism")
-	}
-	return ".prism"
-}
-
 func parseFlags(args []string) (options, error) {
-	stateDir := defaultStateDir()
+	stateDir := service.StateDir()
 	opts := options{
-		listen:         "127.0.0.1:10200",
+		listen:         service.DefaultListen,
 		configPath:     filepath.Join(stateDir, "prism.json"),
 		credentialPath: filepath.Join(stateDir, "credentials"),
 		mgmtToken:      os.Getenv("PRISM_MGMT_TOKEN"),
@@ -559,6 +556,7 @@ func parseFlags(args []string) (options, error) {
 	fs.StringVar(&opts.listen, "listen", opts.listen, "HTTP listen address")
 	fs.StringVar(&opts.webuiDir, "webui", "", "serve the web UI bundle from this directory under /ui")
 	fs.StringVar(&opts.mgmtToken, "management-token", opts.mgmtToken, "bearer token required for remote management API access (loopback is exempt)")
+	fs.BoolVar(&opts.register, "register", false, "publish this daemon in the service registry and exit when it is replaced")
 	fs.BoolVar(&opts.showVersion, "version", false, "print version and exit")
 	fs.Usage = func() {
 		out := fs.Output()
@@ -695,7 +693,9 @@ func run(opts options) error {
 	}
 	defer usageStore.Close()
 	rlog := requestlog.New(500, time.Now)
+	daemonID := uuid.NewString()
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, pool: pool, refresher: refresher, client: client}, installer)
+	mgmt.SetID(daemonID)
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
 	mgmt.SetHostRegistries(hostTable)
 	mgmt.SetHostLifecycle(supervisor)
@@ -711,8 +711,20 @@ func run(opts options) error {
 	go env.loop(ctx)
 	go watchIntegrations(ctx, cfg, intg)
 	go refreshModelCatalog(ctx, modelCatalog, client)
+	ln, err := net.Listen("tcp", opts.listen)
+	if err != nil {
+		return err
+	}
+	if opts.register {
+		unregister, err := registerSelf(ctx, stop, daemonID, ln.Addr())
+		if err != nil {
+			ln.Close()
+			return fmt.Errorf("prism: register daemon: %w", err)
+		}
+		defer unregister()
+	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- httpServer.ListenAndServe() }()
+	go func() { errCh <- httpServer.Serve(ln) }()
 	select {
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {

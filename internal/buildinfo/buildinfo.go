@@ -5,15 +5,23 @@ import (
 	"strings"
 )
 
-var Version = "0.0.0-dev"
+const devVersion = "0.0.0-dev"
+
+var Version = devVersion
 
 func init() {
-	if Version != "0.0.0-dev" {
-		return
+	info, ok := debug.ReadBuildInfo()
+	Version = resolve(Version, info, ok)
+}
+
+func resolve(ldflags string, info *debug.BuildInfo, ok bool) string {
+	if v := strings.TrimPrefix(ldflags, "v"); v != devVersion {
+		return v
 	}
-	if info, ok := debug.ReadBuildInfo(); ok {
+	if ok {
 		if v := strings.TrimPrefix(info.Main.Version, "v"); v != "" && v != "(devel)" {
-			Version = v
+			return v
 		}
 	}
+	return devVersion
 }

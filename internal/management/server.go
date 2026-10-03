@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -70,6 +71,7 @@ type Server struct {
 	syncer    ModelSyncer
 	reqlog    *requestlog.Journal
 	installer Installer
+	id        string
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer, installer Installer) *Server {
@@ -85,6 +87,10 @@ func (s *Server) SetHostRegistries(h *HostRegistries) {
 // tunnel) that host mutations trigger after the config write commits.
 func (s *Server) SetHostLifecycle(l HostLifecycle) {
 	s.lifecycle = l
+}
+
+func (s *Server) SetID(id string) {
+	s.id = id
 }
 
 func (s *Server) SetAccountStore(store AccountStore) {
@@ -232,7 +238,7 @@ func (s *Server) matchesRoute(path string) bool {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Version: buildinfo.Version})
+	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok", Version: buildinfo.Version, ID: s.id, PID: os.Getpid()})
 }
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {

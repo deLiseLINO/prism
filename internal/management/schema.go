@@ -22,6 +22,8 @@ type ErrorBody struct {
 type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version,omitempty"`
+	ID      string `json:"id"`
+	PID     int    `json:"pid"`
 }
 
 type Caps struct {
