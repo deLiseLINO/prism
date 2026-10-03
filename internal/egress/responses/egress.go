@@ -59,6 +59,7 @@ type Egress struct {
 	w       io.Writer
 	flusher http.Flusher
 	clock   Clock
+	routes  map[canon.ToolName]canon.ToolRoute
 	client  execution.Client
 	self    *lifecycle
 	buf     bool
@@ -80,29 +81,30 @@ type Egress struct {
 	closeOnce sync.Once
 }
 
-func New(w io.Writer, f execution.Facts) *Egress {
-	return NewWithClock(w, f, realClock{})
+func New(w io.Writer, f execution.Facts, routes map[canon.ToolName]canon.ToolRoute) *Egress {
+	return NewWithClock(w, f, realClock{}, routes)
 }
 
-func NewWithClock(w io.Writer, f execution.Facts, c Clock) *Egress {
-	return newEgress(w, f, c, false)
+func NewWithClock(w io.Writer, f execution.Facts, c Clock, routes map[canon.ToolName]canon.ToolRoute) *Egress {
+	return newEgress(w, f, c, false, routes)
 }
 
 // NewBuffered folds a whole turn into one Responses JSON object written at
 // Flush; per-event SSE emission is suppressed.
-func NewBuffered(w io.Writer, f execution.Facts) *Egress {
-	return NewBufferedWithClock(w, f, realClock{})
+func NewBuffered(w io.Writer, f execution.Facts, routes map[canon.ToolName]canon.ToolRoute) *Egress {
+	return NewBufferedWithClock(w, f, realClock{}, routes)
 }
 
-func NewBufferedWithClock(w io.Writer, f execution.Facts, c Clock) *Egress {
-	return newEgress(w, f, c, true)
+func NewBufferedWithClock(w io.Writer, f execution.Facts, c Clock, routes map[canon.ToolName]canon.ToolRoute) *Egress {
+	return newEgress(w, f, c, true, routes)
 }
 
-func newEgress(w io.Writer, f execution.Facts, c Clock, buffered bool) *Egress {
+func newEgress(w io.Writer, f execution.Facts, c Clock, buffered bool, routes map[canon.ToolName]canon.ToolRoute) *Egress {
 	e := &Egress{
 		w:         w,
 		buf:       buffered,
 		clock:     c,
+		routes:    routes,
 		client:    f.Client,
 		self:      &lifecycle{},
 		items:     make(map[canon.ItemID]*openItem),
@@ -327,7 +329,7 @@ func (e *Egress) itemStartedLocked(t canon.ItemStarted) error {
 	e.items[id] = it
 	e.nextOut++
 	e.commitOutputLocked()
-	wire, err := openItemWire(t.Item, kind, "in_progress")
+	wire, err := e.openItemWire(t.Item, kind, "in_progress")
 	if err != nil {
 		return err
 	}
@@ -466,7 +468,7 @@ func (e *Egress) itemFinishedLocked(t canon.ItemFinished) error {
 			return err
 		}
 	}
-	wire, err := openItemWire(t.Item, kind, "completed")
+	wire, err := e.openItemWire(t.Item, kind, "completed")
 	if err != nil {
 		return err
 	}
@@ -556,7 +558,7 @@ func itemIdentity(item canon.Item) (canon.ItemID, string, error) {
 	}
 }
 
-func openItemWire(item canon.Item, kind, status string) (map[string]any, error) {
+func (e *Egress) openItemWire(item canon.Item, kind, status string) (map[string]any, error) {
 	wire := map[string]any{"type": kind, "status": status}
 	switch t := item.(type) {
 	case canon.Message:
@@ -584,12 +586,12 @@ func openItemWire(item canon.Item, kind, status string) (map[string]any, error) 
 	case canon.FunctionCall:
 		wire["id"] = t.ID
 		wire["call_id"] = t.CallID
-		wire["name"] = t.Name
+		e.setToolIdentity(wire, t.Name)
 		wire["arguments"] = string(t.Arguments)
 	case canon.CustomToolCall:
 		wire["id"] = t.ID
 		wire["call_id"] = t.CallID
-		wire["name"] = t.Name
+		e.setToolIdentity(wire, t.Name)
 		wire["input"] = t.Input
 	case canon.LocalShellCall:
 		wire["id"] = t.ID
@@ -599,6 +601,15 @@ func openItemWire(item canon.Item, kind, status string) (map[string]any, error) 
 		return nil, fmt.Errorf("egress/responses: unsupported output item %T", item)
 	}
 	return wire, nil
+}
+
+func (e *Egress) setToolIdentity(wire map[string]any, name canon.ToolName) {
+	if route, ok := e.routes[name]; ok {
+		wire["name"] = route.Name
+		wire["namespace"] = route.Namespace
+		return
+	}
+	wire["name"] = name
 }
 
 func usageWire(u canon.Usage) map[string]any {

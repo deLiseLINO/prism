@@ -140,7 +140,7 @@ func seqOf(t *testing.T, f frame) int64 {
 
 func TestBeginEmitsPreambleOnce(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -169,7 +169,7 @@ func TestBeginEmitsPreambleOnce(t *testing.T) {
 
 func TestPreambleOnceAcrossFailoverAttempts(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -206,7 +206,7 @@ func TestPreambleOnceAcrossFailoverAttempts(t *testing.T) {
 
 func TestEventOrderAndSequenceNumbers(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	msgID := canon.ItemID("msg_1")
 	if err := e.Begin(header()); err != nil {
@@ -275,7 +275,7 @@ func TestEventOrderAndSequenceNumbers(t *testing.T) {
 
 func TestCommitStateTransitions(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if got := e.Lifecycle().CommitState(); got != provider.NotStarted {
 		t.Fatalf("initial commit state = %d, want NotStarted", got)
@@ -307,7 +307,7 @@ func TestCommitStateTransitions(t *testing.T) {
 func TestHeartbeatCodexAfterSilence(t *testing.T) {
 	b := &lockBuffer{}
 	clock := newFakeClock(time.Unix(0, 0))
-	e := NewWithClock(b, codexFacts(), clock)
+	e := NewWithClock(b, codexFacts(), clock, nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -326,7 +326,7 @@ func TestHeartbeatCodexAfterSilence(t *testing.T) {
 func TestHeartbeatCodexTyped(t *testing.T) {
 	b := &lockBuffer{}
 	clock := newFakeClock(time.Unix(0, 0))
-	e := NewWithClock(b, codexFacts(), clock)
+	e := NewWithClock(b, codexFacts(), clock, nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -358,7 +358,7 @@ func TestHeartbeatCodexTyped(t *testing.T) {
 func TestHeartbeatGrokComment(t *testing.T) {
 	b := &lockBuffer{}
 	clock := newFakeClock(time.Unix(0, 0))
-	e := NewWithClock(b, grokFacts(), clock)
+	e := NewWithClock(b, grokFacts(), clock, nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -379,7 +379,7 @@ func TestHeartbeatGrokComment(t *testing.T) {
 func TestNoHeartbeatAfterTerminal(t *testing.T) {
 	b := &lockBuffer{}
 	clock := newFakeClock(time.Unix(0, 0))
-	e := NewWithClock(b, codexFacts(), clock)
+	e := NewWithClock(b, codexFacts(), clock, nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -405,7 +405,7 @@ func TestNoHeartbeatAfterTerminal(t *testing.T) {
 
 func TestUsageZeroDefaultsPresent(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -434,7 +434,7 @@ func TestUsageZeroDefaultsPresent(t *testing.T) {
 	}
 
 	zero := &lockBuffer{}
-	e2 := NewWithClock(zero, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e2 := NewWithClock(zero, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e2.Close()
 	if err := e2.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -474,7 +474,7 @@ func TestUsageZeroDefaultsPresent(t *testing.T) {
 
 func TestTerminalMapping(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -503,7 +503,7 @@ func TestTerminalMapping(t *testing.T) {
 	}
 
 	fb := &lockBuffer{}
-	fe := NewWithClock(fb, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	fe := NewWithClock(fb, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer fe.Close()
 	if err := fe.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -541,7 +541,7 @@ func TestTerminalMapping(t *testing.T) {
 
 func TestItemVocabulary(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -625,7 +625,7 @@ func TestItemVocabulary(t *testing.T) {
 
 func TestContractErrors(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Frame(canon.TurnFinished{Status: canon.Completed()}); err == nil {
 		t.Fatal("frame before begin must fail")
@@ -655,7 +655,7 @@ func TestContractErrors(t *testing.T) {
 
 func TestDuplicateTerminal(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -693,7 +693,7 @@ func TestDuplicateTerminal(t *testing.T) {
 
 func TestItemStateAvailableEmitsNothing(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -712,7 +712,7 @@ func TestItemStateAvailableEmitsNothing(t *testing.T) {
 
 func TestDeltaForUnknownItemFails(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -724,7 +724,7 @@ func TestDeltaForUnknownItemFails(t *testing.T) {
 
 func TestUnsupportedOutputItemFails(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -736,7 +736,7 @@ func TestUnsupportedOutputItemFails(t *testing.T) {
 
 func TestBufferedFoldsTurnIntoResponseJSON(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewBufferedWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewBufferedWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -789,7 +789,7 @@ func TestBufferedFoldsTurnIntoResponseJSON(t *testing.T) {
 
 func TestBufferedFailedTerminalKeepsErrorInBody(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewBufferedWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewBufferedWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -818,7 +818,7 @@ func TestBufferedFailedTerminalKeepsErrorInBody(t *testing.T) {
 
 func TestProviderStatusDetailsForwardedWithoutSynthesizedError(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
@@ -862,7 +862,7 @@ func TestProviderStatusDetailsForwardedWithoutSynthesizedError(t *testing.T) {
 
 func TestProviderResponseErrorKeepsUnknownKeys(t *testing.T) {
 	b := &lockBuffer{}
-	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)))
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
 	defer e.Close()
 	if err := e.Begin(header()); err != nil {
 		t.Fatalf("begin: %v", err)
