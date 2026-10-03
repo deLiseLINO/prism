@@ -578,7 +578,11 @@ func TestItemVocabulary(t *testing.T) {
 		names = append(names, f.event)
 		if f.event == "response.output_item.done" {
 			item := dataMap(t, f)["item"].(map[string]any)
-			items[item["id"].(string)] = item
+			key := item["id"].(string)
+			if item["type"] == "reasoning" {
+				key = "reasoning"
+			}
+			items[key] = item
 		}
 	}
 	joined := strings.Join(names, ",")
@@ -600,7 +604,7 @@ func TestItemVocabulary(t *testing.T) {
 	if ct := items["ctc_1"]; ct == nil || ct["input"] != "***" {
 		t.Fatalf("custom tool item = %v", ct)
 	}
-	if rs := items["rs_1"]; rs == nil {
+	if rs := items["reasoning"]; rs == nil {
 		t.Fatal("missing reasoning item")
 	} else {
 		summary := rs["summary"].([]any)
@@ -1032,5 +1036,49 @@ func TestOpenItemsAreClosedBeforeAnAbnormalTerminal(t *testing.T) {
 			t.Fatalf("%s: terminal output = %v, want the message only", name, output)
 		}
 		e.Close()
+	}
+}
+
+func TestMessageWireIDsAreUniquePerResponse(t *testing.T) {
+	run := func() (added, deltaItem string) {
+		b := &lockBuffer{}
+		e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
+		defer e.Close()
+		if err := e.Begin(header()); err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		for _, ev := range []canon.Event{
+			canon.ItemStarted{Item: canon.Message{ID: "block-0", Role: canon.RoleAssistant}},
+			canon.TextDelta{ItemID: "block-0", Text: "hi"},
+			canon.ItemFinished{Item: canon.Message{ID: "block-0", Role: canon.RoleAssistant, Phase: canon.PhaseFinalAnswer, Content: []canon.Content{canon.TextContent{Text: "hi"}}}},
+			canon.TurnFinished{Status: canon.Completed()},
+		} {
+			if err := e.Frame(ev); err != nil {
+				t.Fatalf("frame %T: %v", ev, err)
+			}
+		}
+		if err := e.Flush(); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+		for _, f := range eventFrames(t, b) {
+			switch f.event {
+			case "response.output_item.added":
+				added = dataMap(t, f)["item"].(map[string]any)["id"].(string)
+			case "response.output_text.delta":
+				deltaItem = dataMap(t, f)["item_id"].(string)
+			}
+		}
+		return added, deltaItem
+	}
+	firstAdded, firstDelta := run()
+	secondAdded, _ := run()
+	if firstAdded == secondAdded {
+		t.Fatalf("message id %q repeated across responses", firstAdded)
+	}
+	if firstAdded != firstDelta {
+		t.Fatalf("delta item_id %q does not match item id %q", firstDelta, firstAdded)
+	}
+	if !strings.HasPrefix(firstAdded, "msg_") {
+		t.Fatalf("message id %q lacks msg_ prefix", firstAdded)
 	}
 }
