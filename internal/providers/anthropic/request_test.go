@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"prism/internal/canon"
 	"prism/internal/provider"
+	"prism/internal/reasonenv"
 )
 
 func f64(v float64) *float64 { return &v }
@@ -533,9 +535,11 @@ func TestCountTokens(t *testing.T) {
 	}
 }
 
+const realSignature = "EqoBCkYIBhgCKkCq1v2JQ0m8n3Xr7dUeYt5bLwPzHc9sAoFgKiVjNxTRe4MhDl6uZaWyB0Sp1QfGtCk2OvEnI8rXbJmHdLs3UwYaTq7Ne5Pc9ZhKfVgR0oA=="
+
 func TestEmptyThinkingIsReplayedWithThinkingField(t *testing.T) {
 	request := baseRequest()
-	request.Input = append(request.Input, canon.ReasoningItem{ID: "r1", Signature: "sig-abc"})
+	request.Input = append(request.Input, canon.ReasoningItem{ID: "r1", Signature: realSignature})
 	out, err := New(Options{}).buildRequest(provider.RunRequest{
 		Request: request,
 		Target:  provider.Target{APIKeyRef: "k", Model: "claude-anthropic--claude-sonnet-4-5"},
@@ -549,8 +553,68 @@ func TestEmptyThinkingIsReplayedWithThinkingField(t *testing.T) {
 	if v, ok := block["thinking"]; !ok || v != "" {
 		t.Fatalf("thinking block = %v, want thinking field present and empty", block)
 	}
-	if block["signature"] != "sig-abc" {
+	if block["signature"] != realSignature {
 		t.Fatalf("signature = %v", block["signature"])
+	}
+}
+
+func TestReasoningReplayRules(t *testing.T) {
+	cases := []struct {
+		name  string
+		item  canon.ReasoningItem
+		state string
+		want  string
+	}{
+		{"empty item", canon.ReasoningItem{ID: "r1"}, "", `[]`},
+		{"empty signature with text", canon.ReasoningItem{ID: "r1", Content: "pondering"}, "", `[]`},
+		{"text-only envelope", canon.ReasoningItem{ID: "r1", Content: "pondering", Signature: reasonenv.Encode("pondering")}, "", `[]`},
+		{
+			"redacted envelope skips empty entries",
+			canon.ReasoningItem{ID: "r1", Signature: reasonenv.EncodeRedacted([]string{"", "opaque-blob"})},
+			"",
+			`[{"type":"redacted_thinking","data":"opaque-blob"}]`,
+		},
+		{"openai style id", canon.ReasoningItem{ID: "r1", Content: "pondering", Signature: "rs_0123456789abcdef0123"}, "", `[]`},
+		{"short string", canon.ReasoningItem{ID: "r1", Content: "pondering", Signature: "sig-abc"}, "", `[]`},
+		{"foreign charset", canon.ReasoningItem{ID: "r1", Content: "pondering", Signature: "not a signature at all!!"}, "", `[]`},
+		{
+			"realistic signature",
+			canon.ReasoningItem{ID: "r1", Content: "pondering", Signature: realSignature},
+			"",
+			`[{"type":"thinking","thinking":"pondering","signature":"` + realSignature + `"}]`,
+		},
+		{
+			"state store blob trusted",
+			canon.ReasoningItem{ID: "r1", Content: "pondering", State: canon.OpaqueRef{Store: stateStoreName, Key: "r1"}},
+			"sig-abc",
+			`[{"type":"thinking","thinking":"pondering","signature":"sig-abc"}]`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := New(Options{})
+			if tc.state != "" {
+				runner.state.put("r1", []byte(tc.state))
+			}
+			messages, _, err := runner.messagesFromItems([]canon.Item{tc.item})
+			if err != nil {
+				t.Fatalf("messagesFromItems: %v", err)
+			}
+			var blocks []wireBlock
+			for _, m := range messages {
+				blocks = append(blocks, m.Content...)
+			}
+			if blocks == nil {
+				blocks = []wireBlock{}
+			}
+			got, err := json.Marshal(blocks)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("blocks = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -674,5 +738,88 @@ func TestCustomToolMissingCallIDFailsLoud(t *testing.T) {
 				t.Fatal("buildRequest without call id: want error, got nil")
 			}
 		})
+	}
+}
+
+func TestToolsFromNormalizesRootSchema(t *testing.T) {
+	cases := []struct {
+		name   string
+		params string
+		want   string
+	}{
+		{"empty bytes", ``, `{"properties":{},"type":"object"}`},
+		{"empty object", `{}`, `{"properties":{},"type":"object"}`},
+		{"null", `null`, `{"properties":{},"type":"object"}`},
+		{"array", `[]`, `{"properties":{},"type":"object"}`},
+		{"string", `"x"`, `{"properties":{},"type":"object"}`},
+		{"untyped with properties", `{"properties":{"a":{"type":"string"}}}`, `{"properties":{"a":{"type":"string"}},"type":"object"}`},
+		{"type array", `{"type":["object","null"],"properties":{"a":{"type":"string"}}}`, `{"properties":{"a":{"type":"string"}},"type":"object"}`},
+		{"properties null", `{"type":"object","properties":null}`, `{"properties":{},"type":"object"}`},
+		{"required not array", `{"type":"object","properties":{},"required":"a"}`, `{"properties":{},"type":"object"}`},
+		{"required mixed entries", `{"type":"object","properties":{"a":{},"b":{}},"required":["a",1,null,"b"]}`, `{"properties":{"a":{},"b":{}},"required":["a","b"],"type":"object"}`},
+		{"other root keys kept", `{"type":"object","properties":{},"additionalProperties":false}`, `{"additionalProperties":false,"properties":{},"type":"object"}`},
+		{
+			"root anyOf",
+			`{"anyOf":[{"properties":{"a":{"type":"string"}},"required":["a"]},{"properties":{"b":{"type":"number"}}}]}`,
+			`{"properties":{"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}`,
+		},
+		{
+			"root oneOf",
+			`{"type":"object","properties":{"a":{"type":"integer"}},"oneOf":[{"properties":{"a":{"type":"string"},"c":{"type":"boolean"}}},{"properties":{"c":{"type":"null"}}}]}`,
+			`{"properties":{"a":{"type":"integer"},"c":{"type":"boolean"}},"type":"object"}`,
+		},
+		{
+			"root allOf with required",
+			`{"required":["z"],"allOf":[{"properties":{"a":{}},"required":["a","z"]},{"properties":{"b":{}},"required":["b"]},"junk"]}`,
+			`{"properties":{"a":{},"b":{}},"required":["z","a","b"],"type":"object"}`,
+		},
+		{
+			"nested combinator untouched",
+			`{"type":"object","properties":{"a":{"anyOf":[{"type":"string"},{"type":"null"}]}}}`,
+			`{"properties":{"a":{"anyOf":[{"type":"string"},{"type":"null"}]}},"type":"object"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tools, _, err := toolsFrom([]canon.Tool{canon.FunctionTool{Name: "t", Parameters: []byte(tc.params)}})
+			if err != nil {
+				t.Fatalf("toolsFrom: %v", err)
+			}
+			if got := string(tools[0].InputSchema); got != tc.want {
+				t.Fatalf("input_schema = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestToolsFromRejectsInvalidJSONParameters(t *testing.T) {
+	_, _, err := toolsFrom([]canon.Tool{canon.FunctionTool{Name: "t", Parameters: []byte(`{"type":`)}})
+	if err == nil || !strings.Contains(err.Error(), "malformed parameters") {
+		t.Fatalf("err = %v, want malformed parameters", err)
+	}
+}
+
+func TestToolsFromSkipsToolsTheUpstreamRejects(t *testing.T) {
+	tools, skipped, err := toolsFrom([]canon.Tool{
+		canon.FunctionTool{Name: "ok", Parameters: []byte(`{"type":"object","properties":{"a.b-c_1":{"type":"string"}}}`)},
+		canon.FunctionTool{Name: "bracket_key", Parameters: []byte(`{"type":"object","properties":{"not[assignee_id]":{"type":"string"}}}`)},
+		canon.FunctionTool{Name: "nested_bad_key", Parameters: []byte(`{"type":"object","properties":{"f":{"type":"object","properties":{"$ref":{"type":"string"}}}}}`)},
+		canon.FunctionTool{Name: "bad.name"},
+		canon.FunctionTool{Name: canon.ToolName(strings.Repeat("n", 65))},
+		canon.CustomToolDef{Name: "custom tool"},
+		canon.FunctionTool{Name: "property_named_properties", Parameters: []byte(`{"type":"object","properties":{"properties":{"type":"string"}}}`)},
+	})
+	if err != nil {
+		t.Fatalf("toolsFrom: %v", err)
+	}
+	var kept []string
+	for _, tool := range tools {
+		kept = append(kept, tool.Name)
+	}
+	if got, want := strings.Join(kept, ","), "ok,property_named_properties"; got != want {
+		t.Errorf("kept = %s, want %s", got, want)
+	}
+	if got, want := len(skipped), 5; got != want {
+		t.Errorf("skipped = %v, want %d entries", skipped, want)
 	}
 }

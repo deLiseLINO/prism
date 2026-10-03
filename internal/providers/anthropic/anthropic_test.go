@@ -152,7 +152,7 @@ func TestSignatureReplayFromCanonField(t *testing.T) {
 	request.Input = append(request.Input, canon.ReasoningItem{
 		ID:        "r1",
 		Content:   "pondering",
-		Signature: "inline-sig",
+		Signature: realSignature,
 	})
 	err := runner.Run(t.Context(), provider.RunRequest{
 		Request: request,
@@ -165,7 +165,7 @@ func TestSignatureReplayFromCanonField(t *testing.T) {
 	if err := json.Unmarshal(captured, &block); err != nil {
 		t.Fatalf("block = %s", captured)
 	}
-	if block["signature"] != "inline-sig" {
+	if block["signature"] != realSignature {
 		t.Fatalf("signature = %v", block["signature"])
 	}
 }
@@ -331,18 +331,11 @@ func readAll(t *testing.T, r *http.Request) []byte {
 	return buf.Bytes()
 }
 
-func TestUnsignedReasoningIsForwardedUpstream(t *testing.T) {
-	var reached bool
+func TestEmptyReasoningItemIsNotReplayed(t *testing.T) {
+	var messages []any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached = true
 		body := decodeBody(t, readAll(t, r))
-		messages, _ := body["messages"].([]any)
-		assistant, _ := messages[1].(map[string]any)
-		blocks, _ := assistant["content"].([]any)
-		block, _ := blocks[0].(map[string]any)
-		if _, has := block["signature"]; has {
-			t.Errorf("signature must be omitted, got %v", block["signature"])
-		}
+		messages, _ = body["messages"].([]any)
 		w.Write([]byte(sse(
 			ssePart("message_start", `{"type":"message_start","message":{}}`),
 			ssePart("message_stop", `{"type":"message_stop"}`),
@@ -350,7 +343,10 @@ func TestUnsignedReasoningIsForwardedUpstream(t *testing.T) {
 	}))
 	defer server.Close()
 	request := baseRequest()
-	request.Input = append(request.Input, canon.ReasoningItem{Content: "foreign reasoning"})
+	request.Input = append(request.Input,
+		canon.ReasoningItem{ID: "r1"},
+		canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "done"}}},
+	)
 	err := New(Options{}).Run(t.Context(), provider.RunRequest{
 		Request: request,
 		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
@@ -358,7 +354,12 @@ func TestUnsignedReasoningIsForwardedUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !reached {
-		t.Fatal("request did not reach upstream")
+	for _, m := range messages {
+		blocks, _ := m.(map[string]any)["content"].([]any)
+		for _, b := range blocks {
+			if typ, _ := b.(map[string]any)["type"].(string); typ == "thinking" {
+				t.Fatalf("empty reasoning item was sent as a thinking block: %v", m)
+			}
+		}
 	}
 }

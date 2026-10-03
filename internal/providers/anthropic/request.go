@@ -131,9 +131,12 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 	if err != nil {
 		return nil, err
 	}
-	tools, err := toolsFrom(request.Tools)
+	tools, skipped, err := toolsFrom(request.Tools)
 	if err != nil {
 		return nil, err
+	}
+	if len(skipped) > 0 {
+		r.log.Warn("anthropic: skipped tools the upstream cannot accept", "count", len(skipped), "tools", skipped)
 	}
 	choice, err := toolChoiceFrom(request.ToolChoice)
 	if err != nil {
@@ -258,14 +261,10 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 				appendBlock(role, b)
 			}
 		case canon.ReasoningItem:
-			signature := r.replaySignature(v)
-			if env, isEnv := reasonenv.Decode(signature); isEnv && len(env.Red) > 0 {
-				for _, data := range env.Red {
-					appendBlock("assistant", wireBlock{Type: "redacted_thinking", Data: data})
-				}
-				continue
+			signature, fromState := r.replaySignature(v)
+			for _, block := range thinkingBlocks(signature, fromState, v.Content) {
+				appendBlock("assistant", block)
 			}
-			appendBlock("assistant", wireBlock{Type: "thinking", Thinking: &v.Content, Signature: signature})
 		case canon.FunctionCall:
 			args := v.Arguments
 			if len(args) == 0 {
@@ -309,13 +308,43 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 	return messages, system, nil
 }
 
-func (r *Runner) replaySignature(item canon.ReasoningItem) string {
+func (r *Runner) replaySignature(item canon.ReasoningItem) (signature string, fromState bool) {
 	if !item.State.IsEmpty() && item.State.Store == stateStoreName {
 		if blob, ok := r.state.get(item.State.Key); ok {
-			return string(blob)
+			return string(blob), true
 		}
 	}
-	return item.Signature
+	return item.Signature, false
+}
+
+const minSignatureLength = 16
+
+var (
+	openAIIDPrefix   = regexp.MustCompile(`(?i)^(fc|call|msg|rs|resp|reasoning|item|ws|tool|func|function)[-_]`)
+	signatureCharset = regexp.MustCompile(`^[A-Za-z0-9+/_=-]+$`)
+)
+
+func looksLikeAnthropicSignature(signature string) bool {
+	if len(signature) < minSignatureLength || openAIIDPrefix.MatchString(signature) {
+		return false
+	}
+	return signatureCharset.MatchString(signature)
+}
+
+func thinkingBlocks(signature string, fromState bool, content string) []wireBlock {
+	if env, isEnv := reasonenv.Decode(signature); isEnv {
+		var blocks []wireBlock
+		for _, data := range env.Red {
+			if data != "" {
+				blocks = append(blocks, wireBlock{Type: "redacted_thinking", Data: data})
+			}
+		}
+		return blocks
+	}
+	if signature == "" || (!fromState && !looksLikeAnthropicSignature(signature)) {
+		return nil
+	}
+	return []wireBlock{{Type: "thinking", Thinking: &content, Signature: signature}}
 }
 
 const (
@@ -371,30 +400,161 @@ func customToolSchema(name canon.ToolName) (json.RawMessage, error) {
 	})
 }
 
-func toolsFrom(tools []canon.Tool) ([]wireTool, error) {
+func toolsFrom(tools []canon.Tool) ([]wireTool, []string, error) {
 	var wire []wireTool
+	var skipped []string
 	for _, t := range tools {
 		switch v := t.(type) {
 		case canon.FunctionTool:
-			params := v.Parameters
-			if len(params) == 0 {
-				params = []byte("{}")
+			schema, err := objectSchema(v.Parameters)
+			if err != nil {
+				return nil, nil, fmt.Errorf("anthropic: tool %q has malformed parameters", v.Name)
 			}
-			if !json.Valid(params) {
-				return nil, fmt.Errorf("anthropic: tool %q has malformed parameters", v.Name)
+			if !toolNamePattern.MatchString(string(v.Name)) || hasInvalidPropertyKey(schema) {
+				skipped = append(skipped, string(v.Name))
+				continue
 			}
-			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: json.RawMessage(params)})
+			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema})
 		case canon.CustomToolDef:
 			schema, err := customToolSchema(v.Name)
 			if err != nil {
-				return nil, fmt.Errorf("anthropic: encode custom tool %q schema: %w", v.Name, err)
+				return nil, nil, fmt.Errorf("anthropic: encode custom tool %q schema: %w", v.Name, err)
+			}
+			if !toolNamePattern.MatchString(string(v.Name)) {
+				skipped = append(skipped, string(v.Name))
+				continue
 			}
 			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema})
 		default:
-			return nil, fmt.Errorf("anthropic: unsupported tool %T", t)
+			return nil, nil, fmt.Errorf("anthropic: unsupported tool %T", t)
 		}
 	}
-	return wire, nil
+	return wire, skipped, nil
+}
+
+var (
+	toolNamePattern    = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+	propertyKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,64}$`)
+)
+
+func hasInvalidPropertyKey(schema json.RawMessage) bool {
+	var node any
+	if err := json.Unmarshal(schema, &node); err != nil {
+		return false
+	}
+	return schemaHasInvalidPropertyKey(node)
+}
+
+func schemaHasInvalidPropertyKey(node any) bool {
+	switch v := node.(type) {
+	case map[string]any:
+		for key, child := range v {
+			if props, ok := child.(map[string]any); ok && key == "properties" {
+				for name, sub := range props {
+					if !propertyKeyPattern.MatchString(name) || schemaHasInvalidPropertyKey(sub) {
+						return true
+					}
+				}
+				continue
+			}
+			if schemaHasInvalidPropertyKey(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if schemaHasInvalidPropertyKey(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var schemaCombinatorKeys = []string{"oneOf", "anyOf", "allOf"}
+
+func objectSchema(params []byte) (json.RawMessage, error) {
+	root := map[string]json.RawMessage{}
+	if len(strings.TrimSpace(string(params))) > 0 {
+		var decoded any
+		if err := json.Unmarshal(params, &decoded); err != nil {
+			return nil, err
+		}
+		if _, isObject := decoded.(map[string]any); isObject {
+			if err := json.Unmarshal(params, &root); err != nil {
+				return nil, err
+			}
+		}
+	}
+	properties := rawObject(root["properties"])
+	required := stringEntries(root["required"])
+	for _, key := range schemaCombinatorKeys {
+		var branches []json.RawMessage
+		if err := json.Unmarshal(root[key], &branches); err != nil {
+			continue
+		}
+		for _, branch := range branches {
+			fields := rawObject(branch)
+			for name, prop := range rawObject(fields["properties"]) {
+				if _, exists := properties[name]; !exists {
+					properties[name] = prop
+				}
+			}
+			if key == "allOf" {
+				required = appendUnique(required, stringEntries(fields["required"]))
+			}
+		}
+	}
+	for _, key := range schemaCombinatorKeys {
+		delete(root, key)
+	}
+	root["type"] = json.RawMessage(`"object"`)
+	encodedProperties, err := json.Marshal(properties)
+	if err != nil {
+		return nil, err
+	}
+	root["properties"] = encodedProperties
+	delete(root, "required")
+	if len(required) > 0 {
+		encodedRequired, err := json.Marshal(required)
+		if err != nil {
+			return nil, err
+		}
+		root["required"] = encodedRequired
+	}
+	return json.Marshal(root)
+}
+
+func rawObject(raw json.RawMessage) map[string]json.RawMessage {
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return map[string]json.RawMessage{}
+	}
+	return fields
+}
+
+func stringEntries(raw json.RawMessage) []string {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil
+	}
+	var out []string
+	for _, entry := range entries {
+		var s string
+		if err := json.Unmarshal(entry, &s); err == nil && string(entry) != "null" {
+			out = appendUnique(out, []string{s})
+		}
+	}
+	return out
+}
+
+func appendUnique(dst, src []string) []string {
+	for _, s := range src {
+		if !slices.Contains(dst, s) {
+			dst = append(dst, s)
+		}
+	}
+	return dst
 }
 
 func toolChoiceFrom(choice canon.ToolChoice) (*wireToolChoice, error) {

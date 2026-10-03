@@ -74,7 +74,7 @@ func TestRedactedThinkingRoundTripOnWire(t *testing.T) {
 	if !strings.Contains(body, `"type":"redacted_thinking"`) || !strings.Contains(body, "opaque-blob") {
 		t.Fatalf("replayed wire missing redacted_thinking block: %s", body)
 	}
-	if !strings.Contains(body, `"type":"thinking"`) || !strings.Contains(body, "introspect") {
-		t.Fatalf("replayed wire missing plain thinking block: %s", body)
+	if strings.Contains(body, `"type":"thinking"`) || strings.Contains(body, "introspect") {
+		t.Fatalf("text-only envelope must not be replayed: %s", body)
 	}
 }
