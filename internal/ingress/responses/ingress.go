@@ -658,6 +658,9 @@ func (g *Ingress) inputFrom(root map[string]any, req *canon.Request) error {
 func (g *Ingress) itemFrom(m map[string]any, i int) (canon.Item, error) {
 	path := fmt.Sprintf("input[%d]", i)
 	typ, _ := m["type"].(string)
+	if _, hasRole := m["role"]; typ == "" && hasRole {
+		typ = "message"
+	}
 	switch typ {
 	case "message":
 		return g.messageFrom(m, path)

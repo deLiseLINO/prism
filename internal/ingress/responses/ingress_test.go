@@ -578,3 +578,17 @@ func TestMessagePhaseParsesFromHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestRoleOnlyInputItemIsMessage(t *testing.T) {
+	req, _, sink := mustParse(t, `{"model":"m","input":[{"role":"user","content":"hi"}]}`, nil)
+	if len(sink.warnings) != 0 || len(req.Input) != 1 {
+		t.Fatalf("input = %d items, warnings = %v", len(req.Input), sink.warnings)
+	}
+	msg, ok := req.Input[0].(canon.Message)
+	if !ok || msg.Role != canon.RoleUser || len(msg.Content) != 1 {
+		t.Fatalf("item = %#v", req.Input[0])
+	}
+	if text, _ := msg.Content[0].(canon.TextContent); text.Text != "hi" {
+		t.Fatalf("content = %#v", msg.Content[0])
+	}
+}
