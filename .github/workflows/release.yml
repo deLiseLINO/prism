@@ -439,7 +439,7 @@ jobs:
     needs: [preflight, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: needs.preflight.outputs.dry_run != 'true' && needs.preflight.outputs.prerelease != 'true' && needs.publish.result == 'success'
+    if: needs.preflight.outputs.dry_run != 'true' && !contains(needs.preflight.outputs.version, '-beta.') && needs.publish.result == 'success'
     steps:
       - name: Download checksums and resolve package data
         id: pkg
