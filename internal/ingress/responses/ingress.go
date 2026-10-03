@@ -287,6 +287,7 @@ func (g *Ingress) toolsFrom(root map[string]any, req *canon.Request) error {
 	if !ok {
 		return nil
 	}
+	flattened := make(map[canon.ToolName]canon.ToolRoute)
 	for i, raw := range tools {
 		tm, ok := raw.(map[string]any)
 		if !ok {
@@ -301,29 +302,11 @@ func (g *Ingress) toolsFrom(root map[string]any, req *canon.Request) error {
 		path := fmt.Sprintf("tools[%d]", i)
 		switch tm["type"] {
 		case "custom":
-			format := canon.FormatText
-			var grammar *canon.ToolGrammar
-			if f, ok := tm["format"].(map[string]any); ok {
-				switch ft, _ := f["type"].(string); ft {
-				case "json":
-					format = canon.FormatJSON
-				case "grammar":
-					syntax, _ := f["syntax"].(string)
-					definition, _ := f["definition"].(string)
-					grammar = &canon.ToolGrammar{Syntax: syntax, Definition: definition}
-				}
+			req.Tools = append(req.Tools, customToolFrom(tm, name, desc))
+		case "namespace":
+			if err := namespaceToolsFrom(tm, path, req, flattened); err != nil {
+				return err
 			}
-			if gr, ok := tm["grammar"].(map[string]any); ok {
-				syntax, _ := gr["syntax"].(string)
-				definition, _ := gr["definition"].(string)
-				grammar = &canon.ToolGrammar{Syntax: syntax, Definition: definition}
-			}
-			req.Tools = append(req.Tools, canon.CustomToolDef{
-				Name:        canon.ToolName(name),
-				Description: desc,
-				Format:      format,
-				Grammar:     grammar,
-			})
 		case "local_shell":
 			req.Tools = append(req.Tools, canon.LocalShellToolDef{})
 		case "tool_search":
@@ -335,34 +318,137 @@ func (g *Ingress) toolsFrom(root map[string]any, req *canon.Request) error {
 		case "web_search", "image_generation":
 			g.warnOf(WarnUnmappedField, path+".type="+fmt.Sprintf("%v", tm["type"]))
 		default:
-			fn := canon.FunctionTool{Name: canon.ToolName(name), Description: desc}
-			if params, present := tm["parameters"]; present && params != nil {
-				if err := validateSchema(params, path+".parameters"); err != nil {
-					return &ParseError{
-						Status: http.StatusBadRequest,
-						Reason: ReasonInvalidField,
-						Field:  path + ".parameters",
-						Err:    err,
-					}
-				}
-				raw, err := json.Marshal(params)
-				if err != nil {
-					return &ParseError{
-						Status: http.StatusBadRequest,
-						Reason: ReasonInvalidField,
-						Field:  path + ".parameters",
-						Err:    err,
-					}
-				}
-				fn.Parameters = raw
-			}
-			if strict, ok := tm["strict"].(bool); ok {
-				fn.Strict = strict
+			fn, err := functionToolFrom(tm, name, desc, path)
+			if err != nil {
+				return err
 			}
 			req.Tools = append(req.Tools, fn)
 		}
 	}
 	return nil
+}
+
+func customToolFrom(tm map[string]any, name, desc string) canon.CustomToolDef {
+	format := canon.FormatText
+	var grammar *canon.ToolGrammar
+	if f, ok := tm["format"].(map[string]any); ok {
+		switch ft, _ := f["type"].(string); ft {
+		case "json":
+			format = canon.FormatJSON
+		case "grammar":
+			syntax, _ := f["syntax"].(string)
+			definition, _ := f["definition"].(string)
+			grammar = &canon.ToolGrammar{Syntax: syntax, Definition: definition}
+		}
+	}
+	if gr, ok := tm["grammar"].(map[string]any); ok {
+		syntax, _ := gr["syntax"].(string)
+		definition, _ := gr["definition"].(string)
+		grammar = &canon.ToolGrammar{Syntax: syntax, Definition: definition}
+	}
+	return canon.CustomToolDef{
+		Name:        canon.ToolName(name),
+		Description: desc,
+		Format:      format,
+		Grammar:     grammar,
+	}
+}
+
+func functionToolFrom(tm map[string]any, name, desc, path string) (canon.FunctionTool, error) {
+	fn := canon.FunctionTool{Name: canon.ToolName(name), Description: desc}
+	if params, present := tm["parameters"]; present && params != nil {
+		if err := validateSchema(params, path+".parameters"); err != nil {
+			return fn, &ParseError{
+				Status: http.StatusBadRequest,
+				Reason: ReasonInvalidField,
+				Field:  path + ".parameters",
+				Err:    err,
+			}
+		}
+		raw, err := json.Marshal(params)
+		if err != nil {
+			return fn, &ParseError{
+				Status: http.StatusBadRequest,
+				Reason: ReasonInvalidField,
+				Field:  path + ".parameters",
+				Err:    err,
+			}
+		}
+		fn.Parameters = raw
+	}
+	if strict, ok := tm["strict"].(bool); ok {
+		fn.Strict = strict
+	}
+	return fn, nil
+}
+
+const reservedNamespace = "functions"
+
+func isBareNamespace(namespace string) bool {
+	return namespace == "" || namespace == reservedNamespace
+}
+
+func replayedToolName(m map[string]any, name string) string {
+	ns, _ := m["namespace"].(string)
+	return wireToolName(ns, name)
+}
+
+func wireToolName(namespace, name string) string {
+	if isBareNamespace(namespace) {
+		return name
+	}
+	return namespace + "__" + name
+}
+
+func namespaceToolsFrom(tm map[string]any, path string, req *canon.Request, flattened map[canon.ToolName]canon.ToolRoute) error {
+	ns, _ := tm["name"].(string)
+	children, _ := tm["tools"].([]any)
+	for j, raw := range children {
+		child, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := child["name"].(string)
+		typ, _ := child["type"].(string)
+		if name == "" || (typ != "function" && typ != "custom") {
+			continue
+		}
+		childPath := fmt.Sprintf("%s.tools[%d]", path, j)
+		wire := wireToolName(ns, name)
+		identity := canon.ToolRoute{Namespace: ns, Name: name}
+		if isBareNamespace(ns) {
+			identity.Namespace = ""
+		}
+		known, seen := flattened[canon.ToolName(wire)]
+		if seen {
+			if known != identity {
+				return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: childPath + ".name"}
+			}
+			continue
+		}
+		desc, _ := child["description"].(string)
+		if typ == "custom" {
+			req.Tools = append(req.Tools, customToolFrom(child, wire, desc))
+		} else {
+			fn, err := functionToolFrom(child, wire, desc, childPath)
+			if err != nil {
+				return err
+			}
+			req.Tools = append(req.Tools, fn)
+		}
+		flattened[canon.ToolName(wire)] = identity
+		if !isBareNamespace(ns) {
+			registerToolRoute(req, canon.ToolName(wire), identity)
+		}
+	}
+	return nil
+}
+
+func registerToolRoute(req *canon.Request, wire canon.ToolName, identity canon.ToolRoute) {
+	if req.ToolRoutes == nil {
+		req.ToolRoutes = make(map[canon.ToolName]canon.ToolRoute)
+	}
+	req.ToolRoutes[wire] = identity
 }
 
 var schemaPrimitiveTypes = map[string]bool{
@@ -585,6 +671,7 @@ func (g *Ingress) itemFrom(m map[string]any, i int) (canon.Item, error) {
 		id, _ := m["id"].(string)
 		callID, _ := m["call_id"].(string)
 		name, _ := m["name"].(string)
+		name = replayedToolName(m, name)
 		input, _ := m["input"].(string)
 		return canon.CustomToolCall{
 			ID:     canon.ItemID(id),
@@ -866,6 +953,7 @@ func textParts(v any, path, wantType string) ([]canon.TextContent, error) {
 func (g *Ingress) functionCallFrom(m map[string]any, path string) (canon.Item, error) {
 	callID, _ := m["call_id"].(string)
 	name, _ := m["name"].(string)
+	name = replayedToolName(m, name)
 	call := canon.FunctionCall{
 		ID:     itemID(m["id"]),
 		CallID: canon.CallID(callID),

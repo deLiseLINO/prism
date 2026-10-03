@@ -18,11 +18,17 @@ type Request struct {
 	Instructions    []Content
 	Input           []Item
 	Tools           []Tool
+	ToolRoutes      map[ToolName]ToolRoute
 	ToolChoice      ToolChoice
 	Reasoning       ReasoningConfig
 	MaxOutputTokens int
 	Sampling        Sampling
 	Text            TextOutput
+}
+
+type ToolRoute struct {
+	Namespace string
+	Name      string
 }
 
 type ReasoningConfig struct {
