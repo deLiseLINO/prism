@@ -39,7 +39,7 @@ func (m Model) actionMenuSections() []actionMenuSection {
 		{ID: actionMenuHelp, Label: "Help", Shortcut: "?"},
 	}
 	if m.updateAvailable() {
-		globalItems = append(globalItems, actionMenuItem{ID: actionMenuUpdate, Label: "Install update", Shortcut: "U"})
+		globalItems = append(globalItems, actionMenuItem{ID: actionMenuUpdate, Label: "Install update", Shortcut: "u"})
 	}
 
 	return []actionMenuSection{
