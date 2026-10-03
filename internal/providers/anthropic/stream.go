@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"prism/internal/canon"
@@ -389,18 +390,84 @@ func (s *streamState) contentBlockStop(payload map[string]any) error {
 	}
 }
 
-func unwrapCustomInput(buffered string) string {
-	var wrapped struct {
-		Input *string `json:"input"`
+var (
+	freeformFallbackKeys = map[canon.ToolName][]string{
+		"exec":        {"code", "script", "js", "javascript", "command", "cmd", "content"},
+		"apply_patch": {"patch", "content"},
 	}
-	if err := json.Unmarshal([]byte(buffered), &wrapped); err != nil || wrapped.Input == nil {
-		return buffered
+	outerCodeFence       = regexp.MustCompile("(?s)^```[^\\r\\n]*\\r?\\n(.*?)\\r?\\n```$")
+	patchEnvelope        = regexp.MustCompile(`(?s)^(\*\*\* Begin Patch(?: \*\*\*)?)(\r?\n)(.*)(\r?\n)(\*\*\* End Patch(?: \*\*\*)?)(\r?\n)?$`)
+	patchOperationLine   = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: [^\r\n]+$`)
+	freeformFenceTargets = map[canon.ToolName]struct{}{"exec": {}, "apply_patch": {}}
+)
+
+func stripOuterCodeFence(text string, tool canon.ToolName) string {
+	if _, ok := freeformFenceTargets[tool]; !ok {
+		return text
 	}
-	return *wrapped.Input
+	if m := outerCodeFence.FindStringSubmatch(strings.TrimSpace(text)); m != nil {
+		return m[1]
+	}
+	return text
+}
+
+func normalizePatchDelimiters(text string) string {
+	m := patchEnvelope.FindStringSubmatch(text)
+	if m == nil || !patchOperationLine.MatchString(m[3]) {
+		return text
+	}
+	if m[1] == "*** Begin Patch" && m[5] == "*** End Patch" {
+		return text
+	}
+	return "*** Begin Patch" + m[2] + m[3] + m[4] + "*** End Patch" + m[6]
+}
+
+func singleStringAlternate(fields map[string]json.RawMessage, tool canon.ToolName) (string, bool) {
+	var found string
+	count := 0
+	for _, key := range freeformFallbackKeys[tool] {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			continue
+		}
+		found = value
+		count++
+	}
+	return found, count == 1
+}
+
+func unwrapFreeformInput(buffered string, tool canon.ToolName) string {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(buffered), &fields) != nil || fields == nil {
+		return stripOuterCodeFence(buffered, tool)
+	}
+	if raw, ok := fields["input"]; ok {
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			return buffered
+		}
+		return stripOuterCodeFence(value, tool)
+	}
+	if value, ok := singleStringAlternate(fields, tool); ok {
+		return stripOuterCodeFence(value, tool)
+	}
+	return stripOuterCodeFence(buffered, tool)
+}
+
+func unwrapCustomInput(buffered string, tool canon.ToolName) string {
+	input := unwrapFreeformInput(buffered, tool)
+	if tool == "apply_patch" {
+		return normalizePatchDelimiters(input)
+	}
+	return input
 }
 
 func (s *streamState) finishCustomCall(open *openBlock) error {
-	input := unwrapCustomInput(open.args.String())
+	input := unwrapCustomInput(open.args.String(), open.name)
 	if input != "" {
 		if err := s.emit(canon.CustomToolInputDelta{ItemID: open.itemID, Text: input}); err != nil {
 			return err
