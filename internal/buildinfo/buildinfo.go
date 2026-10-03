@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-const devVersion = "0.0.0-dev"
+const DevVersion = "0.0.0-dev"
 
-var Version = devVersion
+var Version = DevVersion
 
 func init() {
 	info, ok := debug.ReadBuildInfo()
@@ -15,7 +15,7 @@ func init() {
 }
 
 func resolve(ldflags string, info *debug.BuildInfo, ok bool) string {
-	if v := strings.TrimPrefix(ldflags, "v"); v != devVersion {
+	if v := strings.TrimPrefix(ldflags, "v"); v != DevVersion {
 		return v
 	}
 	if ok {
@@ -23,5 +23,5 @@ func resolve(ldflags string, info *debug.BuildInfo, ok bool) string {
 			return v
 		}
 	}
-	return devVersion
+	return DevVersion
 }

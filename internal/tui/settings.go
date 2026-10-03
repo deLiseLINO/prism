@@ -11,6 +11,7 @@ const (
 	settingsRowAutoRefresh = iota
 	settingsRowActiveInterval
 	settingsRowBackgroundInterval
+	settingsRowUpdateCheck
 	settingsRowCount
 )
 
@@ -56,8 +57,9 @@ func (m Model) handleSettingsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 		if !m.settingsRowIsToggle() {
 			return m, nil
 		}
+		autoRefreshRow := m.settingsCursor == settingsRowAutoRefresh
 		m.flipSettingsToggle()
-		if m.Settings.AutoRefreshEnabled {
+		if autoRefreshRow && m.Settings.AutoRefreshEnabled {
 			m.resetAutoRefreshTimers()
 		}
 		return m, SaveSettingsCmd(m.Settings)
@@ -92,7 +94,7 @@ func (m *Model) moveSettingsCursor(delta int) {
 }
 
 func (m Model) settingsRowIsToggle() bool {
-	return m.settingsCursor == settingsRowAutoRefresh
+	return m.settingsCursor == settingsRowAutoRefresh || m.settingsCursor == settingsRowUpdateCheck
 }
 
 func (m Model) settingsRowIsInterval() bool {
@@ -100,8 +102,11 @@ func (m Model) settingsRowIsInterval() bool {
 }
 
 func (m *Model) flipSettingsToggle() {
-	if m.settingsCursor == settingsRowAutoRefresh {
+	switch m.settingsCursor {
+	case settingsRowAutoRefresh:
 		m.Settings.AutoRefreshEnabled = !m.Settings.AutoRefreshEnabled
+	case settingsRowUpdateCheck:
+		m.Settings.CheckForUpdateOnStartup = !m.Settings.CheckForUpdateOnStartup
 	}
 }
 
@@ -176,6 +181,7 @@ func (m Model) renderSettingsModal() string {
 		m.renderSettingsToggleRow(settingsRowAutoRefresh, "Auto-refresh", m.Settings.AutoRefreshEnabled),
 		m.renderSettingsIntervalRow(settingsRowActiveInterval, "Active refresh interval", m.Settings.ActiveIntervalSec),
 		m.renderSettingsIntervalRow(settingsRowBackgroundInterval, "Background refresh interval", m.Settings.BackgroundIntervalSec),
+		m.renderSettingsToggleRow(settingsRowUpdateCheck, "Check for updates on startup", m.Settings.CheckForUpdateOnStartup),
 		"",
 		ActionMenuHintStyle.Render("[↑/↓] Move   [enter/space] Toggle   [←/→] Step   [0-9] Type   [,/esc] Close"),
 	}

@@ -15,6 +15,9 @@ const (
 )
 
 func (m Model) currentOverlayModal() string {
+	if m.UpdatePromptVisible {
+		return m.renderUpdatePromptModal()
+	}
 	if m.SettingsVisible {
 		return m.renderSettingsModal()
 	}
@@ -200,6 +203,7 @@ func (m Model) renderHelpModal() string {
 		renderHelpLine("P", "Switch provider"),
 		renderHelpLine("I", "Integrations"),
 		renderHelpLine("u", "Usage stats"),
+		renderHelpLine("U", "Install available update"),
 		renderHelpLine(",", "Settings"),
 		renderHelpLine("?", "Open or close this help"),
 		renderHelpLine("q", "Quit"),

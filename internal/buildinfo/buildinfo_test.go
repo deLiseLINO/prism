@@ -15,9 +15,9 @@ func TestResolveStripsLeadingV(t *testing.T) {
 	}{
 		{"ldflags with v", "v1.2.3", nil, "1.2.3"},
 		{"ldflags without v", "1.2.3", nil, "1.2.3"},
-		{"build info with v", devVersion, built, "1.2.3"},
-		{"build info devel", devVersion, &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, devVersion},
-		{"no build info", devVersion, nil, devVersion},
+		{"build info with v", DevVersion, built, "1.2.3"},
+		{"build info devel", DevVersion, &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, DevVersion},
+		{"no build info", DevVersion, nil, DevVersion},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -26,7 +26,7 @@ func TestResolveStripsLeadingV(t *testing.T) {
 			}
 		})
 	}
-	if resolve("v1.2.3", nil, false) != resolve(devVersion, built, true) {
+	if resolve("v1.2.3", nil, false) != resolve(DevVersion, built, true) {
 		t.Fatal("ldflags and build info builds of one tag must compare equal")
 	}
 }

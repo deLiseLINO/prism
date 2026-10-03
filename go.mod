@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.20.0
+	golang.org/x/mod v0.38.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.58.0
 )

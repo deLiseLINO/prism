@@ -29,6 +29,19 @@ func (m Model) actionMenuSections() []actionMenuSection {
 		)
 	}
 
+	globalItems := []actionMenuItem{
+		{ID: actionMenuRefreshAll, Label: "Refresh all", Shortcut: "R"},
+		{ID: actionMenuAdd, Label: "Add account", Shortcut: "n"},
+		{ID: actionMenuIntegrations, Label: "Integrations", Shortcut: "I"},
+		{ID: actionMenuProvider, Label: "Switch provider", Shortcut: "P"},
+		{ID: actionMenuView, Label: "Switch view", Shortcut: "v"},
+		{ID: actionMenuSettings, Label: "Settings", Shortcut: ","},
+		{ID: actionMenuHelp, Label: "Help", Shortcut: "?"},
+	}
+	if m.updateAvailable() {
+		globalItems = append(globalItems, actionMenuItem{ID: actionMenuUpdate, Label: "Install update", Shortcut: "U"})
+	}
+
 	return []actionMenuSection{
 		{
 			Title: "Current account",
@@ -36,15 +49,7 @@ func (m Model) actionMenuSections() []actionMenuSection {
 		},
 		{
 			Title: "Global actions",
-			Items: []actionMenuItem{
-				{ID: actionMenuRefreshAll, Label: "Refresh all", Shortcut: "R"},
-				{ID: actionMenuAdd, Label: "Add account", Shortcut: "n"},
-				{ID: actionMenuIntegrations, Label: "Integrations", Shortcut: "I"},
-				{ID: actionMenuProvider, Label: "Switch provider", Shortcut: "P"},
-				{ID: actionMenuView, Label: "Switch view", Shortcut: "v"},
-				{ID: actionMenuSettings, Label: "Settings", Shortcut: ","},
-				{ID: actionMenuHelp, Label: "Help", Shortcut: "?"},
-			},
+			Items: globalItems,
 		},
 	}
 }

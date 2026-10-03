@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/update"
 )
 
 type DataMsg struct {
@@ -88,4 +89,9 @@ type AnimationFrameMsg struct {
 
 type AutoRefreshTickMsg struct {
 	Now time.Time
+}
+
+type UpdateAvailableMsg struct {
+	Version string
+	Method  update.Method
 }

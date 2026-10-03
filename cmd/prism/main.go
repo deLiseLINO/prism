@@ -3,18 +3,21 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/buildinfo"
 	"github.com/deLiseLINO/prism/internal/cli"
 	"github.com/deLiseLINO/prism/internal/daemon"
 	"github.com/deLiseLINO/prism/internal/service"
 	"github.com/deLiseLINO/prism/internal/tui"
+	"github.com/deLiseLINO/prism/internal/update"
 )
 
 func main() {
@@ -32,6 +35,8 @@ func run(args []string) int {
 		return daemon.Run(args[1:])
 	case "service":
 		return service.Run(args[1:], os.Stdout, os.Stderr)
+	case "upgrade":
+		return runUpgradeCommand(args[1:], os.Stdout, os.Stderr)
 	case "version", "--version", "-v":
 		fmt.Println(buildinfo.Version)
 		return 0
@@ -39,6 +44,47 @@ func run(args []string) int {
 		return runTUI(args)
 	}
 	return cli.Run(args)
+}
+
+var (
+	detectUpdateMethod = update.DetectMethod
+	fetchLatestVersion = func(ctx context.Context, method update.Method) (string, error) {
+		return update.DefaultSource().FetchLatest(ctx, method)
+	}
+	runUpgradeFn = update.RunUpgrade
+)
+
+func runUpgradeCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		fmt.Fprintln(stderr, "prism: upgrade does not accept additional arguments")
+		return 2
+	}
+	method := detectUpdateMethod()
+	currentVersion := buildinfo.Version
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	latestVersion, latestErr := fetchLatestVersion(ctx, method)
+
+	if method == update.MethodUnknown {
+		if latestErr != nil {
+			fmt.Fprintf(stderr, "warning: failed to resolve latest version: %v\n", latestErr)
+		}
+		fmt.Fprintln(stdout, update.ManualUpgradeInstructions(currentVersion, latestVersion))
+		return 1
+	}
+	if latestErr == nil && !update.IsNewer(latestVersion, currentVersion) {
+		fmt.Fprintf(stdout, "prism is already up to date (%s)\n", currentVersion)
+		return 0
+	}
+	if latestErr != nil {
+		fmt.Fprintf(stderr, "warning: failed to resolve latest version: %v\n", latestErr)
+	}
+	if err := runUpgradeFn(method, latestVersion, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "prism: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runTUI(args []string) int {
@@ -57,7 +103,7 @@ func runTUI(args []string) int {
 		}
 		args = append([]string{"--base-url", daemonURL}, args...)
 	}
-	return tui.Run(args, os.Stderr)
+	return tui.Run(args, os.Stdout, os.Stderr)
 }
 
 func managedDaemon() (*service.Daemon, error) {
