@@ -15,6 +15,7 @@ import (
 	"prism/internal/canon"
 	"prism/internal/execution"
 	"prism/internal/provider"
+	"prism/internal/reasonenv"
 	"prism/internal/stream"
 )
 
@@ -137,34 +138,73 @@ func TestAssistantHistoryUsesOutputText(t *testing.T) {
 
 func TestReasoningReplayIncludesSummary(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		summary []canon.TextContent
-		want    string
+		name      string
+		reasoning canon.ReasoningItem
+		want      string
 	}{
-		{name: "empty", want: `[]`},
-		{name: "present", summary: []canon.TextContent{{Text: "thinking"}}, want: `[{"type":"summary_text","text":"thinking"}]`},
+		{name: "empty", reasoning: canon.ReasoningItem{ID: "rs_1"}, want: `{"type":"reasoning","id":"rs_1","summary":[]}`},
+		{
+			name:      "present",
+			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}},
+			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}]}`,
+		},
+		{
+			name:      "foreign signature",
+			reasoning: canon.ReasoningItem{ID: "rs_1", Signature: "EuYBCkQYAiJA-anthropic-signature"},
+			want:      `{"type":"reasoning","id":"rs_1","summary":[]}`,
+		},
+		{
+			name:      "proxy envelope",
+			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}, Signature: reasonenv.Encode("x")},
+			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}]}`,
+		},
+		{name: "nothing to replay", reasoning: canon.ReasoningItem{}},
+		{name: "only signature", reasoning: canon.ReasoningItem{Signature: reasonenv.Encode("x")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := testRequest(false)
 			req.Input = []canon.Item{
 				canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
-				canon.ReasoningItem{ID: "rs_1", Summary: tc.summary},
+				tc.reasoning,
 				canon.FunctionCall{ID: "fc_1", CallID: "call_1", Name: "get_weather", Arguments: []byte(`{}`)},
 				canon.FunctionOutput{CallID: "call_1", Output: []canon.Content{canon.TextContent{Text: "sunny"}}},
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body struct {
-					Input []map[string]json.RawMessage `json:"input"`
+					Input []json.RawMessage `json:"input"`
 				}
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				if got := string(body.Input[1]["summary"]); got != tc.want {
-					t.Errorf("reasoning summary = %s, want %s", got, tc.want)
-					w.WriteHeader(http.StatusBadRequest)
-					return
+				var types []string
+				var reasoning []string
+				for _, raw := range body.Input {
+					var head struct {
+						Type string `json:"type"`
+					}
+					if err := json.Unmarshal(raw, &head); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					types = append(types, head.Type)
+					if head.Type == "reasoning" {
+						reasoning = append(reasoning, string(raw))
+					}
+				}
+				if tc.want == "" {
+					if got := strings.Join(types, ","); got != "message,function_call,function_call_output" {
+						t.Errorf("input types = %s, want message,function_call,function_call_output", got)
+					}
+				} else {
+					if got := strings.Join(types, ","); got != "message,reasoning,function_call,function_call_output" {
+						t.Errorf("input types = %s, want message,reasoning,function_call,function_call_output", got)
+					}
+					if len(reasoning) != 1 || reasoning[0] != tc.want {
+						t.Errorf("reasoning items = %v, want [%s]", reasoning, tc.want)
+					}
 				}
 				fmt.Fprint(w, `{"status":"completed","output":[]}`)
 			}))
