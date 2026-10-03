@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/catalog"
+	"github.com/deLiseLINO/prism/internal/catalog"
 )
 
 func boolPtr(v bool) *bool { return &v }

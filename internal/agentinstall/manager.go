@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 type JobState string

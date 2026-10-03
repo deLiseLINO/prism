@@ -6,7 +6,7 @@ import (
 	"math"
 	"os"
 
-	"prism/internal/conformance"
+	"github.com/deLiseLINO/prism/internal/conformance"
 )
 
 type selfcheckFile struct {

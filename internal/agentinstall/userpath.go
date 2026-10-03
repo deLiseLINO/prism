@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 const userPathTimeout = 3 * time.Second

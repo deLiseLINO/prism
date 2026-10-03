@@ -3,8 +3,8 @@ package messages
 import (
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/reasonenv"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
 func TestRedactedThinkingResentBecomesReasoningItem(t *testing.T) {

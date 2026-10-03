@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/provider"
-	"prism/internal/reasonenv"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
 func f64(v float64) *float64 { return &v }

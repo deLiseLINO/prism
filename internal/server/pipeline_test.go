@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/provider"
-	"prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/routing"
 )
 
 func singlePlan(providerID string) routing.Plan {

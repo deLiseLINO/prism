@@ -8,9 +8,9 @@ import (
 	"io"
 	"strings"
 
-	"prism/internal/canon"
-	"prism/internal/provider"
-	"prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 var errTerminalDone = errors.New("customresponses: terminal emitted")

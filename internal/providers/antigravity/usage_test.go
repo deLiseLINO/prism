@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func TestFetchQuotaPostsProjectAndParsesWindows(t *testing.T) {

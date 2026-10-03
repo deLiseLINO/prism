@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func TestDecodeQuotaFixture(t *testing.T) {

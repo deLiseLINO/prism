@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
 )
 
 func parseBody(t *testing.T, body string, header http.Header) (canon.Request, execution.Facts, error) {
@@ -406,7 +406,7 @@ func TestModelSlugGrammar(t *testing.T) {
 	valid := []string{
 		"antigravity/gemini-3.7-flash",
 		"openrouter/minimax/minimax-m3",
-		"prism/auto",
+		"github.com/deLiseLINO/prism/auto",
 	}
 	for _, model := range valid {
 		t.Run("valid "+model, func(t *testing.T) {

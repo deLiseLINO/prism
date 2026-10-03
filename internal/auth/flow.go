@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 const (

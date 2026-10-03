@@ -3,7 +3,7 @@ package conformance
 import (
 	"fmt"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func toolResultRequest(vector map[string]any) (canon.Request, error) {

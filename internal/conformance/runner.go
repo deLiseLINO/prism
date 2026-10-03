@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 type Options struct {

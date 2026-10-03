@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 type AuthSessionID string

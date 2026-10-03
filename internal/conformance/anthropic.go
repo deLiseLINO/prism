@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func DecodeMessagesRequest(raw []byte) (canon.Request, error) {

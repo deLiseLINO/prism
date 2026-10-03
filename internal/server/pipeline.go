@@ -9,17 +9,17 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/canon"
-	"prism/internal/egress"
-	egresschat "prism/internal/egress/chat"
-	egressmessages "prism/internal/egress/messages"
-	egressresponses "prism/internal/egress/responses"
-	"prism/internal/execution"
-	ingresschat "prism/internal/ingress/chat"
-	ingressmessages "prism/internal/ingress/messages"
-	ingressresponses "prism/internal/ingress/responses"
-	"prism/internal/routing"
-	"prism/internal/stream"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/egress"
+	egresschat "github.com/deLiseLINO/prism/internal/egress/chat"
+	egressmessages "github.com/deLiseLINO/prism/internal/egress/messages"
+	egressresponses "github.com/deLiseLINO/prism/internal/egress/responses"
+	"github.com/deLiseLINO/prism/internal/execution"
+	ingresschat "github.com/deLiseLINO/prism/internal/ingress/chat"
+	ingressmessages "github.com/deLiseLINO/prism/internal/ingress/messages"
+	ingressresponses "github.com/deLiseLINO/prism/internal/ingress/responses"
+	"github.com/deLiseLINO/prism/internal/routing"
+	"github.com/deLiseLINO/prism/internal/stream"
 )
 
 type protocol uint8

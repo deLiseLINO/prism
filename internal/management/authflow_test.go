@@ -13,13 +13,13 @@ import (
 	"sync"
 	"testing"
 
-	"prism/internal/account"
-	"prism/internal/auth"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/provider"
-	"prism/internal/quota"
-	"prism/internal/store"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/auth"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/store"
 )
 
 type regPool struct {

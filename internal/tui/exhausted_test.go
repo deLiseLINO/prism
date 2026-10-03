@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 func TestExhaustedStates(t *testing.T) {

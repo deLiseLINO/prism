@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"prism/internal/canon"
-	"prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 const maxSSEFrameBytes = 100 * 1024 * 1024

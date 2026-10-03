@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func writeMeta(t *testing.T, path, content string) {

@@ -1,11 +1,11 @@
-package main
+package daemon
 
 import (
 	"context"
 	"log"
 
-	"prism/internal/config"
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 // watchIntegrations keeps applied client configs converged on the enabled set:
@@ -26,6 +26,6 @@ func watchIntegrations(ctx context.Context, cfg *config.Manager, ints *integrati
 
 func applyEnabled(ints *integrations.Registry) {
 	for _, result := range ints.ApplyEnabled() {
-		log.Printf("prismd: auto-apply %s: %s", result.ID, result.Reason)
+		log.Printf("prism: auto-apply %s: %s", result.ID, result.Reason)
 	}
 }

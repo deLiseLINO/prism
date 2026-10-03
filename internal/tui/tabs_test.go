@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 func TestTabVisibleRange(t *testing.T) {

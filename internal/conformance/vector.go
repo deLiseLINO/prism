@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func VectorToRequest(vector map[string]any) canon.Request {

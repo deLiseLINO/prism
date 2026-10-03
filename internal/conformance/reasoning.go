@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 var errUnhandledAdapterVector = errors.New("adapter vector not handled by the reasoning router")

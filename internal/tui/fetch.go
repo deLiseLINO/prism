@@ -9,9 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 const maxConcurrentLoads = 3

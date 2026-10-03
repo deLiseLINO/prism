@@ -4,9 +4,9 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
 )
 
 const maxAttemptsPerTurn = 32

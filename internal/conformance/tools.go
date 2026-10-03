@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func runToolsCoreAdapterVector(c Case, r *Runner, opts BuildOptions) (*Observation, error) {

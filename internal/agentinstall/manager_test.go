@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 // newTestManager builds a manager over a fake environment: /bin holds the

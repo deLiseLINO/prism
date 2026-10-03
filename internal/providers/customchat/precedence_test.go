@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"prism/internal/execution"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func TestConfiguredHeadersWinOverForwarded(t *testing.T) {

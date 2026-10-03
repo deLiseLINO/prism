@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 const (

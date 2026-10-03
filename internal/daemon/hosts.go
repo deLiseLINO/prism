@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/integrations"
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 // newIntegrationRegistry builds one full client registry against a transport:
@@ -63,9 +63,9 @@ func superviseReverseTunnel(ctx context.Context, address string, port int) {
 			return
 		}
 		if err != nil {
-			log.Printf("prismd: reverse tunnel to %s exited: %v", address, err)
+			log.Printf("prism: reverse tunnel to %s exited: %v", address, err)
 		}
-		log.Printf("prismd: reverse tunnel to %s dropped, reconnecting in %s", address, backoff)
+		log.Printf("prism: reverse tunnel to %s dropped, reconnecting in %s", address, backoff)
 		select {
 		case <-ctx.Done():
 			return
@@ -116,7 +116,7 @@ func (h *hostSupervisor) Ensure(ctx context.Context, id string, address string) 
 	h.mu.Unlock()
 	h.table.SetRemote(id, remoteRegistry)
 	go superviseReverseTunnel(tunnelCtx, address, h.port)
-	log.Printf("prismd: host %s (%s) connected, home=%s", id, address, remoteHome)
+	log.Printf("prism: host %s (%s) connected, home=%s", id, address, remoteHome)
 	return nil
 }
 

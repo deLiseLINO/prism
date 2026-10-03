@@ -3,11 +3,11 @@ package management
 import (
 	"time"
 
-	"prism/internal/agentinstall"
-	"prism/internal/canon"
-	"prism/internal/config"
-	"prism/internal/execution"
-	"prism/internal/requestlog"
+	"github.com/deLiseLINO/prism/internal/agentinstall"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/requestlog"
 )
 
 type ErrorDetail struct {

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 
-	"prism/internal/canon"
-	"prism/internal/provider"
-	"prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 type aggregateResponse struct {

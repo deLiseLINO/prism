@@ -3,7 +3,7 @@ package openaierr
 import (
 	"testing"
 
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func TestClassForStatus(t *testing.T) {

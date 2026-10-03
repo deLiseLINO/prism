@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/agentinstall"
-	"prism/internal/integrations"
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/agentinstall"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 // integrationsStatusJSON and integrationsApplyJSON mirror the exact JSON

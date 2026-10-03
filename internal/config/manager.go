@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 type Snapshot struct {

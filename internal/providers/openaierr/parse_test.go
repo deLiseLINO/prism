@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func TestParseKeepsBothSlotsAndUnknownKeys(t *testing.T) {

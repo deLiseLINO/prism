@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/agentinstall"
-	"prism/internal/auth"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/management"
-	"prism/internal/provider"
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/agentinstall"
+	"github.com/deLiseLINO/prism/internal/auth"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 // fakePool adapts a static snapshot to the management pool interface.
@@ -257,9 +257,9 @@ func (e *daemonEnv) runCLI(t *testing.T, args ...string) (int, string, string) {
 	cmd, err := parseCommand(args)
 	if err != nil {
 		if ue, ok := err.(*usageError); ok {
-			fmt.Fprintf(&e.stderr, "prismctl: %v\n\n%s", ue.msg, ue.help)
+			fmt.Fprintf(&e.stderr, "prism: %v\n\n%s", ue.msg, ue.help)
 		} else {
-			fmt.Fprintf(&e.stderr, "prismctl: %v", err)
+			fmt.Fprintf(&e.stderr, "prism: %v", err)
 		}
 		return exitUsage, e.stdout.String(), e.stderr.String()
 	}
@@ -269,10 +269,10 @@ func (e *daemonEnv) runCLI(t *testing.T, args ...string) (int, string, string) {
 		return exitOK, e.stdout.String(), e.stderr.String()
 	}
 	if ee, ok := err.(*exitError); ok {
-		fmt.Fprintf(&e.stderr, "prismctl: %s\n", ee.msg)
+		fmt.Fprintf(&e.stderr, "prism: %s\n", ee.msg)
 		return ee.code, e.stdout.String(), e.stderr.String()
 	}
-	fmt.Fprintf(&e.stderr, "prismctl: %v\n", err)
+	fmt.Fprintf(&e.stderr, "prism: %v\n", err)
 	return exitFailure, e.stdout.String(), e.stderr.String()
 }
 
@@ -553,7 +553,7 @@ func TestHelpDeterministic(t *testing.T) {
 	if out1 != out2 {
 		t.Fatal("help output not deterministic")
 	}
-	if !strings.Contains(out1, "Usage: prismctl") {
+	if !strings.Contains(out1, "Usage: prism") {
 		t.Fatalf("help: %q", out1)
 	}
 }

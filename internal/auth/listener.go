@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 func randomToken(r io.Reader, n int) (string, error) {

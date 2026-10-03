@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
 )
 
 type warningSink struct {

@@ -9,8 +9,8 @@ import (
 	"io"
 	"net/http"
 
-	"prism/internal/canon"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 // HTTPError reads an OpenAI-compatible error response and returns a typed

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"prism/internal/execution"
-	"prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 const (

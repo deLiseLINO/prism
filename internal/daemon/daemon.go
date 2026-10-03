@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -20,26 +20,26 @@ import (
 	"syscall"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/agentinstall"
-	"prism/internal/auth"
-	"prism/internal/buildinfo"
-	"prism/internal/canon"
-	modelcat "prism/internal/catalog"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/management"
-	"prism/internal/provider"
-	"prism/internal/providers/anthropic"
-	"prism/internal/providers/antigravity"
-	"prism/internal/providers/cline"
-	"prism/internal/providers/codex"
-	"prism/internal/quota"
-	"prism/internal/requestlog"
-	"prism/internal/server"
-	"prism/internal/store"
-	"prism/internal/usage"
-	"prism/internal/webui"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/agentinstall"
+	"github.com/deLiseLINO/prism/internal/auth"
+	"github.com/deLiseLINO/prism/internal/buildinfo"
+	"github.com/deLiseLINO/prism/internal/canon"
+	modelcat "github.com/deLiseLINO/prism/internal/catalog"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/anthropic"
+	"github.com/deLiseLINO/prism/internal/providers/antigravity"
+	"github.com/deLiseLINO/prism/internal/providers/cline"
+	"github.com/deLiseLINO/prism/internal/providers/codex"
+	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/requestlog"
+	"github.com/deLiseLINO/prism/internal/server"
+	"github.com/deLiseLINO/prism/internal/store"
+	"github.com/deLiseLINO/prism/internal/usage"
+	"github.com/deLiseLINO/prism/internal/webui"
 )
 
 type options struct {
@@ -48,6 +48,7 @@ type options struct {
 	credentialPath string
 	mgmtToken      string
 	webuiDir       string
+	showVersion    bool
 }
 
 type credentialStore struct{ file *store.FileCredentialStore }
@@ -402,7 +403,7 @@ func (t *quotaTable) record(id account.AccountID, s quota.Snapshot, warnings []s
 		_ = t.pool.UpdateQuota(id, s)
 	}
 	for _, w := range warnings {
-		log.Printf("prismd: quota warning %s: %s", id, w)
+		log.Printf("prism: quota warning %s: %s", id, w)
 	}
 }
 
@@ -436,7 +437,7 @@ func (t *quotaTable) quota(ctx context.Context, id account.AccountID, force bool
 	}
 	snap, err := t.probe(ctx, id, provider, credGen)
 	if err != nil {
-		log.Printf("prismd: quota probe %s: %v", id, err)
+		log.Printf("prism: quota probe %s: %v", id, err)
 		if force {
 			return quota.Snapshot{}, err
 		}
@@ -552,48 +553,49 @@ func parseFlags(args []string) (options, error) {
 		credentialPath: filepath.Join(stateDir, "credentials"),
 		mgmtToken:      os.Getenv("PRISM_MGMT_TOKEN"),
 	}
-	fs := flag.NewFlagSet("prismd", flag.ContinueOnError)
+	fs := flag.NewFlagSet("prism daemon", flag.ContinueOnError)
 	fs.StringVar(&opts.configPath, "config", opts.configPath, "configuration file path")
 	fs.StringVar(&opts.credentialPath, "credential-store", opts.credentialPath, "credential store directory")
 	fs.StringVar(&opts.listen, "listen", opts.listen, "HTTP listen address")
 	fs.StringVar(&opts.webuiDir, "webui", "", "serve the web UI bundle from this directory under /ui")
 	fs.StringVar(&opts.mgmtToken, "management-token", opts.mgmtToken, "bearer token required for remote management API access (loopback is exempt)")
-	showVersion := fs.Bool("version", false, "print version and exit")
+	fs.BoolVar(&opts.showVersion, "version", false, "print version and exit")
 	fs.Usage = func() {
 		out := fs.Output()
-		fmt.Fprintln(out, "prismd is the Prism local proxy daemon.")
-		fmt.Fprintln(out, "Usage: prismd [flags]")
+		fmt.Fprintln(out, "prism daemon runs the Prism local proxy in the foreground.")
+		fmt.Fprintln(out, "Usage: prism daemon [flags]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
 	if fs.NArg() > 0 {
-		return options{}, fmt.Errorf("prismd: unexpected argument %q", fs.Arg(0))
+		return options{}, fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 	if _, _, err := net.SplitHostPort(opts.listen); err != nil {
-		return options{}, fmt.Errorf("prismd: invalid --listen %q: %w", opts.listen, err)
-	}
-	if *showVersion {
-		fmt.Println(buildinfo.Version)
-		os.Exit(0)
+		return options{}, fmt.Errorf("invalid --listen %q: %w", opts.listen, err)
 	}
 	return opts, nil
 }
 
-func main() {
-	opts, err := parseFlags(os.Args[1:])
+func Run(args []string) int {
+	opts, err := parseFlags(args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return
+			return 0
 		}
-		log.Printf("prismd: %v", err)
-		os.Exit(1)
+		log.Printf("prism daemon: %v", err)
+		return 1
+	}
+	if opts.showVersion {
+		fmt.Println(buildinfo.Version)
+		return 0
 	}
 	if err := run(opts); err != nil {
-		log.Printf("prismd: %v", err)
-		os.Exit(1)
+		log.Printf("prism daemon: %v", err)
+		return 1
 	}
+	return 0
 }
 
 func run(opts options) error {
@@ -635,16 +637,16 @@ func run(opts options) error {
 		sink.OnStored(env.noteStoredAccount)
 		authService, err = auth.New(sink, env.flows, auth.Options{})
 		if err != nil {
-			return fmt.Errorf("prismd: auth service: %w", err)
+			return fmt.Errorf("prism: auth service: %w", err)
 		}
 	}
 	_, daemonPort, splitErr := net.SplitHostPort(opts.listen)
 	if splitErr != nil {
-		return fmt.Errorf("prismd: listen address: %w", splitErr)
+		return fmt.Errorf("prism: listen address: %w", splitErr)
 	}
 	daemonPortNum, convErr := strconv.Atoi(daemonPort)
 	if convErr != nil {
-		return fmt.Errorf("prismd: listen port: %w", convErr)
+		return fmt.Errorf("prism: listen port: %w", convErr)
 	}
 	home, homeErr := os.UserHomeDir()
 	if homeErr != nil {
@@ -674,22 +676,22 @@ func run(opts options) error {
 			continue
 		}
 		if err := supervisor.Ensure(ctx, id, hostCfg.Address); err != nil {
-			log.Printf("prismd: host %s (%s) unresolved: %v", id, hostCfg.Address, err)
+			log.Printf("prism: host %s (%s) unresolved: %v", id, hostCfg.Address, err)
 		}
 	}
 
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
 	management.AgentActions = management.ParseAgentActionsEnv(os.Getenv("PRISM_AGENT_ACTIONS"))
 	if management.AgentActions {
-		log.Printf("prismd: agent install and update actions enabled via PRISM_AGENT_ACTIONS")
+		log.Printf("prism: agent install and update actions enabled via PRISM_AGENT_ACTIONS")
 	}
 	planner := server.NewConfigPlanner(cfg)
 	if err := os.MkdirAll(opts.credentialPath, 0o700); err != nil {
-		return fmt.Errorf("prismd: credential store directory: %w", err)
+		return fmt.Errorf("prism: credential store directory: %w", err)
 	}
 	usageStore, err := usage.Open(filepath.Join(opts.credentialPath, "usage.db"))
 	if err != nil {
-		return fmt.Errorf("prismd: usage store: %w", err)
+		return fmt.Errorf("prism: usage store: %w", err)
 	}
 	defer usageStore.Close()
 	rlog := requestlog.New(500, time.Now)
@@ -702,7 +704,7 @@ func run(opts options) error {
 	var webUI http.Handler
 	if opts.webuiDir != "" {
 		webUI = webui.New(opts.webuiDir)
-		log.Printf("prismd: webui serving %s at /ui", opts.webuiDir)
+		log.Printf("prism: webui serving %s at /ui", opts.webuiDir)
 	}
 	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, WebUI: webUI, Usage: usageStore, RequestLog: rlog}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
@@ -737,14 +739,14 @@ func run(opts options) error {
 		}
 	}
 	<-stopDone
-	log.Printf("prismd: shutdown complete")
+	log.Printf("prism: shutdown complete")
 	return nil
 }
 
 func refreshModelCatalog(ctx context.Context, index *modelcat.Index, client *http.Client) {
 	refresh := func() {
 		if err := index.Refresh(ctx, client); err != nil && ctx.Err() == nil {
-			log.Printf("prismd: model catalog refresh: %v", err)
+			log.Printf("prism: model catalog refresh: %v", err)
 		}
 	}
 	refresh()

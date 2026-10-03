@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func decodeFixture(t *testing.T, name string) []canon.Event {

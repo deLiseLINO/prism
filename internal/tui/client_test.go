@@ -2,8 +2,8 @@ package tui
 
 import (
 	"context"
-	"prism/internal/config"
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/management"
 	"net/http"
 	"net/http/httptest"
 	"strings"

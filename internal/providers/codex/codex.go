@@ -3,7 +3,7 @@ package codex
 import (
 	"context"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 const ProviderID = "codex"

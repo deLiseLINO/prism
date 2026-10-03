@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func decodeStream(t *testing.T, sse string) ([]canon.Event, *Decoder) {

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/canon"
-	"prism/internal/execution"
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 type ProviderID string

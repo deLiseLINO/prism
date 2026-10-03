@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/canon"
-	"prism/internal/provider"
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

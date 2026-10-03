@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func boolPtr(v bool) *bool { return &v }

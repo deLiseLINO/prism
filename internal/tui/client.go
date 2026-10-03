@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/integrations"
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 type Client interface {

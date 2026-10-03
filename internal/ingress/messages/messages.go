@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 
-	"prism/internal/canon"
-	"prism/internal/execution"
-	"prism/internal/reasonenv"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
 const aliasPrefix = "claude-"

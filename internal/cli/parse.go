@@ -1,11 +1,11 @@
-package main
+package cli
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
 
-	"prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/management"
 )
 
 // command is the discriminated union parsed from argv. Parsing happens once,
@@ -161,9 +161,9 @@ func globalFlags() map[string]bool {
 	}
 }
 
-var helpTop = `prismctl - control the Prism daemon
+var helpTop = `prism - control the Prism daemon
 
-Usage: prismctl <command> [subcommand] [flags]
+Usage: prism <command> [subcommand] [flags]
 
 Commands:
   status                    daemon health and summary
@@ -178,71 +178,75 @@ Commands:
   usage                     quota usage across accounts
   stats                     request/token statistics across providers and models
   agents <sub>              status/install/update/job for agent binaries
+  tui [--compact]           interactive terminal UI (default when no command)
+  daemon [flags]            run the daemon in the foreground
+  stop                      stop the daemon started in the background by prism
+  version                   print the prism version
 
 Every command accepts --json for machine-stable output.
 `
 
-var helpStatus = `Usage: prismctl status [--json]
+var helpStatus = `Usage: prism status [--json]
 `
-var helpDoctor = `Usage: prismctl doctor [--json]
+var helpDoctor = `Usage: prism doctor [--json]
 `
-var helpUsage = `Usage: prismctl usage [--json]
+var helpUsage = `Usage: prism usage [--json]
 `
-var helpStats = `Usage: prismctl stats [--range 1h|24h|7d|30d|all] [--json]
+var helpStats = `Usage: prism stats [--range 1h|24h|7d|30d|all] [--json]
 
 Default range: 24h
 `
 
-var helpAuth = `Usage: prismctl auth login <codex|antigravity> [--no-open] [--json]
-       prismctl auth status [session] [--json]
+var helpAuth = `Usage: prism auth login <codex|antigravity> [--no-open] [--json]
+       prism auth status [session] [--json]
 `
 
-var helpAccounts = `Usage: prismctl accounts list [--json]
-       prismctl accounts pause <account> [--version N] [--json]
-       prismctl accounts resume <account> [--version N] [--json]
-       prismctl accounts priority <account> <N> [--version N] [--json]
-       prismctl accounts quota <account> [--json]
-       prismctl accounts remove <account> [--json]
-       prismctl accounts select <provider> <account> [--json]
+var helpAccounts = `Usage: prism accounts list [--json]
+       prism accounts pause <account> [--version N] [--json]
+       prism accounts resume <account> [--version N] [--json]
+       prism accounts priority <account> <N> [--version N] [--json]
+       prism accounts quota <account> [--json]
+       prism accounts remove <account> [--json]
+       prism accounts select <provider> <account> [--json]
 `
 
-var helpProviders = `Usage: prismctl providers list [--json]
-       prismctl providers add <id> --wire <wire> [--endpoint URL] [--default-model M]
+var helpProviders = `Usage: prism providers list [--json]
+       prism providers add <id> --wire <wire> [--endpoint URL] [--default-model M]
                               [--model M ...] [--credential-file PATH | --stdin] [--json]
-       prismctl providers edit <id> [--wire W] [--endpoint URL] [--default-model M]
+       prism providers edit <id> [--wire W] [--endpoint URL] [--default-model M]
                                [--model M ...] [--credential-file PATH | --stdin] [--json]
-       prismctl providers enable <id> [--json]
-       prismctl providers disable <id> [--json]
-       prismctl providers remove <id> [--json]
+       prism providers enable <id> [--json]
+       prism providers disable <id> [--json]
+       prism providers remove <id> [--json]
 Wires: codex, antigravity, responses, chat, messages
 `
 
-var helpModels = `Usage: prismctl models list [--json]
-       prismctl models enable <provider> <model> [--json]
-       prismctl models disable <provider> <model> [--json]
+var helpModels = `Usage: prism models list [--json]
+       prism models enable <provider> <model> [--json]
+       prism models disable <provider> <model> [--json]
 `
 
-var helpCombos = `Usage: prismctl combos list [--json]
-       prismctl combos set <id> --strategy <failover|round_robin>
+var helpCombos = `Usage: prism combos list [--json]
+       prism combos set <id> --strategy <failover|round_robin>
                            [--target provider/model[:weight]] ...
                            [--sticky-limit N] [--alias A] [--json]
-       prismctl combos remove <id> [--json]
+       prism combos remove <id> [--json]
 `
 
-var helpRoutes = `Usage: prismctl routes list [--json]
-       prismctl routes set <key> <provider/model|combo-id> [--json]
-       prismctl routes remove <key> [--json]
+var helpRoutes = `Usage: prism routes list [--json]
+       prism routes set <key> <provider/model|combo-id> [--json]
+       prism routes remove <key> [--json]
 `
 
-var helpIntegrations = `Usage: prismctl integrations status [codex|grok|omp] [--json]
-       prismctl integrations apply <codex|grok|omp> [--force] [--json]
-       prismctl integrations rollback <codex|grok|omp> [--json]
+var helpIntegrations = `Usage: prism integrations status [codex|grok|omp] [--json]
+       prism integrations apply <codex|grok|omp> [--force] [--json]
+       prism integrations rollback <codex|grok|omp> [--json]
 `
 
-var helpAgents = `Usage: prismctl agents [status] [codex|claude|grok|omp|pi|opencode|hermes] [--json]
-       prismctl agents install <agent> [--force] [--json]
-       prismctl agents update <agent> [--json]
-       prismctl agents job <agent> [--json]
+var helpAgents = `Usage: prism agents [status] [codex|claude|grok|omp|pi|opencode|hermes] [--json]
+       prism agents install <agent> [--force] [--json]
+       prism agents update <agent> [--json]
+       prism agents job <agent> [--json]
 `
 
 // parseCommand turns argv (after the binary name) into one command value or a

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 const StallThreshold = 300 * time.Second

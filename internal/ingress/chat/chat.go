@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"prism/internal/canon"
-	"prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/execution"
 )
 
 type Reason uint8

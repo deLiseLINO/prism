@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"prism/internal/execution"
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 func pacct(id AccountID, providerID ProviderID, prio int, state State, limit, used int64) Account {

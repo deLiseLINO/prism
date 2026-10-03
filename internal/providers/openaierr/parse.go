@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 func Parse(raw []byte) (canon.ProviderError, bool) {

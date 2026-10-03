@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/quota"
 )
 
 const (

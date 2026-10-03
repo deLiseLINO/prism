@@ -14,8 +14,8 @@ import (
 	"sync"
 	"testing"
 
-	"prism/internal/config"
-	"prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 func integrationEnv(t *testing.T) (*httptest.Server, *integrations.Registry) {

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"prism/internal/canon"
-	"prism/internal/conformance"
-	"prism/internal/conformance/codec/chat"
-	"prism/internal/conformance/codec/responses"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/conformance"
+	"github.com/deLiseLINO/prism/internal/conformance/codec/chat"
+	"github.com/deLiseLINO/prism/internal/conformance/codec/responses"
 )
 
 func fixturePath() string {

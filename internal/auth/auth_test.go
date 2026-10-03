@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/account"
 )
 
 type memSink struct {

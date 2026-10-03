@@ -1,4 +1,4 @@
-package main
+package daemon
 
 import (
 	"context"
@@ -13,17 +13,17 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/account"
-	"prism/internal/auth"
-	"prism/internal/config"
-	"prism/internal/integrations"
-	"prism/internal/provider"
-	"prism/internal/providers/anthropic"
-	"prism/internal/providers/antigravity"
-	"prism/internal/providers/cline"
-	"prism/internal/providers/codex"
-	"prism/internal/providers/customchat"
-	"prism/internal/providers/customresponses"
+	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/auth"
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/anthropic"
+	"github.com/deLiseLINO/prism/internal/providers/antigravity"
+	"github.com/deLiseLINO/prism/internal/providers/cline"
+	"github.com/deLiseLINO/prism/internal/providers/codex"
+	"github.com/deLiseLINO/prism/internal/providers/customchat"
+	"github.com/deLiseLINO/prism/internal/providers/customresponses"
 )
 
 const (
@@ -77,7 +77,7 @@ func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Prov
 	repo := e.ensureRepo(providerID, p.Pool)
 	accounts, err := repo.Load(providerID)
 	if err != nil {
-		return fmt.Errorf("prismd: provider %s: %w", id, err)
+		return fmt.Errorf("prism: provider %s: %w", id, err)
 	}
 	if len(accounts) == 0 && p.Wire.Custom() {
 		defaultID := account.AccountID(id + ":default")
@@ -125,7 +125,7 @@ func (e *daemonEnv) noteStoredAccount(providerID account.ProviderID) {
 		return
 	}
 	if err := e.ensureProvider(context.Background(), string(providerID), p); err != nil {
-		log.Printf("prismd: login provider %s: %v", providerID, err)
+		log.Printf("prism: login provider %s: %v", providerID, err)
 	}
 }
 
@@ -157,7 +157,7 @@ func (e *daemonEnv) ensureLoginProvider(id string, w config.Wire) {
 	}
 	doc.Providers[id] = card
 	if _, err := e.cfg.Update(doc, snap.Generation); err != nil && !errors.Is(err, config.ErrStaleGeneration) {
-		log.Printf("prismd: login provider %s: %v", id, err)
+		log.Printf("prism: login provider %s: %v", id, err)
 	}
 }
 
@@ -167,7 +167,7 @@ func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
 		e.ensureRepo(providerID, nil)
 		flow, err := auth.NewCodexFlow(auth.CodexProduction, auth.Options{})
 		if err != nil {
-			log.Printf("prismd: provider %s auth: %v", providerID, err)
+			log.Printf("prism: provider %s auth: %v", providerID, err)
 			return
 		}
 		e.flows[providerID] = flow
@@ -175,7 +175,7 @@ func (e *daemonEnv) ensureFlows(providerID account.ProviderID, w config.Wire) {
 		e.ensureRepo(providerID, nil)
 		flow, err := auth.NewAntigravityFlow(auth.AntigravityProduction, auth.Options{})
 		if err != nil {
-			log.Printf("prismd: provider %s auth: %v", providerID, err)
+			log.Printf("prism: provider %s auth: %v", providerID, err)
 			return
 		}
 		e.flows[providerID] = flow
@@ -196,7 +196,7 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 			Client:      e.streamClient,
 			Now:         time.Now,
 			QuotaSink:   e.quotas.record,
-			WarningSink: func(w string) { log.Printf("prismd: codex %s warning: %s", id, w) },
+			WarningSink: func(w string) { log.Printf("prism: codex %s warning: %s", id, w) },
 		}, nil
 	case config.WireAntigravity:
 		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.streamClient, p.BaseURL)
@@ -209,7 +209,7 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 	case config.WireCline:
 		return clineRunner(e, p), nil
 	default:
-		return nil, fmt.Errorf("prismd: provider %q has unknown wire %q", id, p.Wire)
+		return nil, fmt.Errorf("prism: provider %q has unknown wire %q", id, p.Wire)
 	}
 }
 
@@ -248,7 +248,7 @@ func (e *daemonEnv) reconcileOnce(ctx context.Context) {
 	snap := e.cfg.Get()
 	if e.codex != nil {
 		if err := e.codex.RefreshCatalog(); err != nil {
-			log.Printf("prismd: reconcile codex catalog: %v", err)
+			log.Printf("prism: reconcile codex catalog: %v", err)
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(snap.Config.Providers)) {
@@ -256,24 +256,24 @@ func (e *daemonEnv) reconcileOnce(ctx context.Context) {
 		providerID := account.ProviderID(id)
 		if _, ok := e.registry.Lookup(providerID); !ok {
 			if err := e.ensureProvider(ctx, id, p); err != nil {
-				log.Printf("prismd: reconcile provider %s: %v", id, err)
+				log.Printf("prism: reconcile provider %s: %v", id, err)
 				continue
 			}
-			log.Printf("prismd: provider %s applied without restart", id)
+			log.Printf("prism: provider %s applied without restart", id)
 		}
 		if known, ok := e.wires[providerID]; ok && known != p.Wire {
 			runner, err := e.buildRunner(id, p)
 			if err != nil {
-				log.Printf("prismd: provider %s wire %q: %v", id, p.Wire, err)
+				log.Printf("prism: provider %s wire %q: %v", id, p.Wire, err)
 				continue
 			}
 			if err := e.registry.Replace(providerID, runner); err != nil {
-				log.Printf("prismd: provider %s wire swap: %v", id, err)
+				log.Printf("prism: provider %s wire swap: %v", id, err)
 				continue
 			}
 			e.ensureFlows(providerID, p.Wire)
 			e.wires[providerID] = p.Wire
-			log.Printf("prismd: provider %s wire %q applied without restart", id, p.Wire)
+			log.Printf("prism: provider %s wire %q applied without restart", id, p.Wire)
 		}
 		if p.Wire.Custom() && p.BaseURL != "" {
 			e.syncCustomProvider(ctx, id, p)
@@ -301,14 +301,14 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 		e.lastDiscover[pid] = e.now()
 		models, err := fetchModels(ctx, e.client, current.BaseURL, e.storedKey(ctx, pid))
 		if err != nil {
-			log.Printf("prismd: discover models for %s: %v", id, err)
+			log.Printf("prism: discover models for %s: %v", id, err)
 			e.saveDoc(id, p, doc, snap.Generation)
 			return
 		}
 		current.Models = models
 		current.SyncedModels = models
 		doc.Providers[id] = current
-		log.Printf("prismd: provider %s models discovered (%d)", id, len(models))
+		log.Printf("prism: provider %s models discovered (%d)", id, len(models))
 	}
 	e.saveDoc(id, p, doc, snap.Generation)
 }
@@ -320,7 +320,7 @@ func (e *daemonEnv) saveDoc(id string, prev config.Provider, doc config.Document
 	}
 	if _, err := e.cfg.Update(doc, generation); err != nil {
 		if !errors.Is(err, config.ErrStaleGeneration) {
-			log.Printf("prismd: provider %s sync: %v", id, err)
+			log.Printf("prism: provider %s sync: %v", id, err)
 		}
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"prism/internal/usage"
+	"github.com/deLiseLINO/prism/internal/usage"
 )
 
 type UsageSource interface {

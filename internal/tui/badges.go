@@ -1,6 +1,6 @@
 package tui
 
-import "prism/internal/management"
+import "github.com/deLiseLINO/prism/internal/management"
 
 func (m Model) renderAccountBadge(account management.Account) string {
 	selected := m.PinnedAccounts[account.Provider]
