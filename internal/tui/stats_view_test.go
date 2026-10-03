@@ -39,7 +39,7 @@ func TestStatsHotkeyOpensOverlay(t *testing.T) {
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	updated := next.(Model)
 	if !updated.StatsVisible {
 		t.Fatal("stats overlay did not open")
@@ -64,7 +64,7 @@ func TestStatsMsgStoresDataAndRenders(t *testing.T) {
 	client.stats = statsTestResponse()
 	m := testModel(client, management.Account{ID: "acc-1"})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	next, _ = next.(Model).Update(batchMsgs(cmd)[0])
 	updated := next.(Model)
 
@@ -87,23 +87,23 @@ func TestStatsOverlayCloseKeys(t *testing.T) {
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	next, _ = next.(Model).Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if next.(Model).StatsVisible {
 		t.Fatal("esc did not close stats overlay")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
-	next, _ = next.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
+	next, _ = next.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	updated := next.(Model)
 	if updated.StatsVisible {
-		t.Fatal("u did not close stats overlay")
+		t.Fatal("U did not close stats overlay")
 	}
 	if updated.StatsData != nil {
 		t.Fatal("stats data not reset on close")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	next, _ = next.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if next.(Model).StatsVisible {
 		t.Fatal("q did not close stats overlay")
@@ -115,7 +115,7 @@ func TestStatsRangeSwitchRefetches(t *testing.T) {
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	batchMsgs(cmd)
 	next, cmd = next.(Model).Update(tea.KeyMsg{Type: tea.KeyRight})
 	batchMsgs(cmd)
@@ -181,7 +181,7 @@ func TestStatsRefreshHotkeyRefetches(t *testing.T) {
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	batchMsgs(cmd)
 	next, cmd = next.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	batchMsgs(cmd)
@@ -195,7 +195,7 @@ func TestStatsAutoRefreshPollsWhileVisible(t *testing.T) {
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	var openMsg StatsMsg
 	for _, msg := range batchMsgs(cmd) {
 		if typed, ok := msg.(StatsMsg); ok {
@@ -295,7 +295,7 @@ func TestStatsErrMsgClosesOverlay(t *testing.T) {
 	client.statsErr = errors.New("boom")
 	m := testModel(client, management.Account{ID: "acc-1"})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'U'}})
 	msgs := batchMsgs(cmd)
 	if len(msgs) != 1 {
 		t.Fatalf("cmds = %v, want single fetch", msgs)

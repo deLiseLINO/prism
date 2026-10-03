@@ -115,15 +115,15 @@ func TestUpdatePromptSwallowsOtherKeys(t *testing.T) {
 func TestUpdateHotkeyReopensPrompt(t *testing.T) {
 	m, _ := promptModel(t)
 	m, _ = press(m, runeKey("2"))
-	m, _ = press(m, runeKey("U"))
+	m, _ = press(m, runeKey("u"))
 	if !m.UpdatePromptVisible || m.UpdatePromptCursor != updatePromptChoiceNow {
-		t.Fatal("U must reopen the prompt")
+		t.Fatal("u must reopen the prompt")
 	}
 }
 
 func TestUpdateHotkeyNoopWithoutUpdate(t *testing.T) {
 	m := testModel(nil)
-	m, _ = press(m, runeKey("U"))
+	m, _ = press(m, runeKey("u"))
 	if m.UpdatePromptVisible {
 		t.Fatal("no update known, prompt must stay closed")
 	}

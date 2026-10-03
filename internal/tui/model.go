@@ -222,9 +222,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.beginRefreshActive()
 		case "R":
 			return m.beginRefreshAll()
-		case "u":
-			return m.beginStatsFlow()
 		case "U":
+			return m.beginStatsFlow()
+		case "u":
 			m.openUpdatePrompt()
 			return m, nil
 		case "i":

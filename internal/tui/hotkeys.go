@@ -244,7 +244,7 @@ func (m Model) handleStatsOverlay(keyStr string) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		m.resetStatsState()
 		return m, tea.Quit
-	case "esc", "u":
+	case "esc", "U":
 		m.resetStatsState()
 		return m, nil
 	case "r":
