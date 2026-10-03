@@ -76,6 +76,7 @@ type Egress struct {
 	items   map[canon.ItemID]*openItem
 	nextOut int
 	output  []any
+	pending *canon.ItemFinished
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -268,6 +269,13 @@ func (e *Egress) flushBufferedLocked() error {
 }
 
 func (e *Egress) turnFinishedLocked(t canon.TurnFinished) error {
+	phase := canon.PhaseNone
+	if t.Status.Kind() == canon.StatusCompleted {
+		phase = canon.PhaseFinalAnswer
+	}
+	if err := e.releasePendingLocked(phase); err != nil {
+		return err
+	}
 	if e.terminal != nil {
 		return e.duplicateTerminalLocked(t)
 	}
@@ -289,6 +297,9 @@ func (e *Egress) turnFinishedLocked(t canon.TurnFinished) error {
 }
 
 func (e *Egress) turnFailedLocked(t canon.TurnFailed) error {
+	if err := e.releasePendingLocked(canon.PhaseNone); err != nil {
+		return err
+	}
 	if e.terminal != nil {
 		return e.duplicateTerminalLocked(t)
 	}
@@ -318,6 +329,9 @@ func (e *Egress) duplicateTerminalLocked(ev canon.Event) error {
 }
 
 func (e *Egress) itemStartedLocked(t canon.ItemStarted) error {
+	if err := e.releasePendingLocked(canon.PhaseCommentary); err != nil {
+		return err
+	}
 	id, kind, err := itemIdentity(t.Item)
 	if err != nil {
 		return err
@@ -420,6 +434,27 @@ func (e *Egress) itemFinishedLocked(t canon.ItemFinished) error {
 	if it.kind != kind {
 		return fmt.Errorf("egress/responses: item %q kind mismatch", id)
 	}
+	if m, isMsg := t.Item.(canon.Message); isMsg && m.Phase == canon.PhaseNone {
+		e.pending = &t
+		return nil
+	}
+	return e.emitFinishedLocked(t, id, kind, it)
+}
+
+func (e *Egress) releasePendingLocked(phase canon.MessagePhase) error {
+	p := e.pending
+	if p == nil {
+		return nil
+	}
+	e.pending = nil
+	m := p.Item.(canon.Message)
+	m.Phase = phase
+	p.Item = m
+	id, kind, _ := itemIdentity(p.Item)
+	return e.emitFinishedLocked(*p, id, kind, e.items[id])
+}
+
+func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind string, it *openItem) error {
 	switch kind {
 	case "message":
 		if it.partOpen {
@@ -564,6 +599,9 @@ func (e *Egress) openItemWire(item canon.Item, kind, status string) (map[string]
 	case canon.Message:
 		wire["id"] = t.ID
 		wire["role"] = roleWire(t.Role)
+		if t.Phase != canon.PhaseNone {
+			wire["phase"] = string(t.Phase)
+		}
 		parts := []any{}
 		for _, c := range t.Content {
 			text, ok := c.(canon.TextContent)

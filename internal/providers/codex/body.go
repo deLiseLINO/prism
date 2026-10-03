@@ -48,6 +48,7 @@ type wireItem struct {
 	Type             string        `json:"type"`
 	ID               string        `json:"id,omitempty"`
 	Role             string        `json:"role,omitempty"`
+	Phase            string        `json:"phase,omitempty"`
 	Content          []wireContent `json:"content,omitempty"`
 	Summary          []wireContent `json:"summary,omitempty"`
 	CallID           string        `json:"call_id,omitempty"`
@@ -241,7 +242,7 @@ func inputFrom(items []canon.Item) (inputItems, error) {
 			if len(parts) == 0 && m.Role == canon.RoleAssistant {
 				continue
 			}
-			out.items = append(out.items, wireItem{Type: "message", ID: string(m.ID), Role: roleWire(m.Role), Content: parts})
+			out.items = append(out.items, wireItem{Type: "message", ID: string(m.ID), Role: roleWire(m.Role), Phase: string(m.Phase), Content: parts})
 		case canon.ReasoningItem:
 			out.items = append(out.items, reasoningItemFrom(m))
 		case canon.FunctionCall:

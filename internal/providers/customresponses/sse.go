@@ -345,7 +345,8 @@ func itemFromWire(item map[string]any, open ...*openOut) (canon.Item, canon.Item
 		if len(content) == 0 && state != nil && state.text.Len() > 0 {
 			content = append(content, canon.TextContent{Text: state.text.String()})
 		}
-		return canon.Message{ID: canon.ItemID(id), Role: role, Content: content}, canon.ItemID(id), nil
+		phase, _ := item["phase"].(string)
+		return canon.Message{ID: canon.ItemID(id), Role: role, Phase: canon.ParseMessagePhase(phase), Content: content}, canon.ItemID(id), nil
 	case "reasoning":
 		ri := canon.ReasoningItem{ID: canon.ItemID(id)}
 		if content, ok := item["content"].([]any); ok {

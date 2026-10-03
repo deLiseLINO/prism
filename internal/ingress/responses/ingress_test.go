@@ -562,3 +562,19 @@ func TestParseFunctionCallOutputImage(t *testing.T) {
 		t.Fatalf("output content: %#v", out.Output[0])
 	}
 }
+
+func TestMessagePhaseParsesFromHistory(t *testing.T) {
+	req, _, sink := mustParse(t, `{"model":"m","input":[
+		{"type":"message","role":"user","content":"hi"},
+		{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"x"}]},
+		{"type":"message","role":"assistant","phase":"bogus","content":[{"type":"output_text","text":"y"}]}
+	]}`, nil)
+	if len(req.Input) != 3 || len(sink.warnings) != 0 {
+		t.Fatalf("input = %d items, warnings = %v", len(req.Input), sink.warnings)
+	}
+	for i, want := range []canon.MessagePhase{canon.PhaseNone, canon.PhaseCommentary, canon.PhaseNone} {
+		if got := req.Input[i].(canon.Message).Phase; got != want {
+			t.Fatalf("item %d phase = %q, want %q", i, got, want)
+		}
+	}
+}

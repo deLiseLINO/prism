@@ -270,6 +270,7 @@ func decodeItem(raw json.RawMessage) (canon.Item, error) {
 		var m struct {
 			ID      string `json:"id"`
 			Role    string `json:"role"`
+			Phase   string `json:"phase"`
 			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -284,7 +285,7 @@ func decodeItem(raw json.RawMessage) (canon.Item, error) {
 				content = append(content, canon.TextContent{Text: part.Text})
 			}
 		}
-		return canon.Message{ID: canon.ItemID(m.ID), Role: roleFromWire(m.Role), Content: content}, nil
+		return canon.Message{ID: canon.ItemID(m.ID), Role: roleFromWire(m.Role), Phase: canon.ParseMessagePhase(m.Phase), Content: content}, nil
 	case "reasoning":
 		var r struct {
 			ID      string `json:"id"`
