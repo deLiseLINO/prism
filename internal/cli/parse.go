@@ -181,6 +181,7 @@ Commands:
   tui [--compact]           interactive terminal UI (default when no command)
   daemon [flags]            run the daemon in the foreground
   service <sub>             start/stop/restart/status of the background daemon
+  upgrade                   upgrade prism when the install method is known
   version                   print the prism version
 
 Every command accepts --json for machine-stable output.

@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/deLiseLINO/prism/internal/management"
+	"github.com/deLiseLINO/prism/internal/update"
 )
 
 type Model struct {
@@ -73,6 +74,14 @@ type Model struct {
 
 	DeleteConfirm bool
 	PinConfirm    bool
+
+	UpdatePromptVisible bool
+	UpdatePromptVersion string
+	UpdatePromptMethod  update.Method
+	UpdatePromptCursor  int
+	UpdateAvailableHint string
+	updateStateDir      string
+	pendingUpdate       *pendingUpdate
 
 	compactBarAnimations map[string]compactBarAnimation
 	tabWindowAnimations  map[string]tabWindowAnimation
@@ -141,6 +150,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		rawKey := msg.String()
 		keyStr := normalizeHelpKey(rawKey, normalizeKey(rawKey))
 
+		if m.UpdatePromptVisible {
+			return m.handleUpdatePrompt(keyStr)
+		}
 		if m.SettingsVisible {
 			return m.handleSettingsOverlay(keyStr)
 		}
@@ -212,6 +224,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.beginRefreshAll()
 		case "u":
 			return m.beginStatsFlow()
+		case "U":
+			m.openUpdatePrompt()
+			return m, nil
 		case "i":
 			m.resetHelpState()
 			m.resetActionMenuState()
@@ -250,6 +265,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.fetchNextCmd(), m.ensureAnimationTickCmd(), SaveUIStateSnapshotCmd(m.uiStateSnapshot()))
 			}
 		}
+
+	case UpdateAvailableMsg:
+		return m.applyUpdateAvailable(msg), nil
 
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width

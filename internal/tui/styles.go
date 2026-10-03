@@ -85,6 +85,10 @@ var (
 	InfoValueStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
 
+	UpdateHintStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("39"))
+
 	InfoBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("240")).

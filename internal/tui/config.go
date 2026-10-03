@@ -18,6 +18,8 @@ type Settings struct {
 	AutoRefreshEnabled    bool `json:"auto_refresh_enabled"`
 	ActiveIntervalSec     int  `json:"active_interval_sec"`
 	BackgroundIntervalSec int  `json:"background_interval_sec"`
+
+	CheckForUpdateOnStartup bool `json:"check_for_update_on_startup"`
 }
 
 type providerSelectMode int
@@ -39,6 +41,8 @@ func DefaultSettings() Settings {
 		AutoRefreshEnabled:    true,
 		ActiveIntervalSec:     30,
 		BackgroundIntervalSec: 300,
+
+		CheckForUpdateOnStartup: true,
 	}
 }
 
@@ -65,6 +69,9 @@ func LoadSettings() (Settings, error) {
 	if raw, ok := asInt(root["background_interval_sec"]); ok {
 		settings.BackgroundIntervalSec = ClampInt(int(raw), BackgroundIntervalMinSec, BackgroundIntervalMaxSec)
 	}
+	if check, ok := root["check_for_update_on_startup"].(bool); ok {
+		settings.CheckForUpdateOnStartup = check
+	}
 	return settings, nil
 }
 
@@ -77,6 +84,8 @@ func SaveSettings(settings Settings) error {
 		"auto_refresh_enabled":    settings.AutoRefreshEnabled,
 		"active_interval_sec":     settings.ActiveIntervalSec,
 		"background_interval_sec": settings.BackgroundIntervalSec,
+
+		"check_for_update_on_startup": settings.CheckForUpdateOnStartup,
 	}
 	return writeJSONMap(path, root)
 }

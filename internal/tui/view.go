@@ -51,7 +51,7 @@ func (m Model) View() string {
 	}
 	containerStyle = containerStyle.Align(hAlign, vAlign)
 
-	baseView := containerStyle.Render(content)
+	baseView := m.overlayUpdateHint(containerStyle.Render(content))
 
 	if modal != "" {
 		body, footerArea := splitFooterArea(baseView, lipgloss.Height(footer))
