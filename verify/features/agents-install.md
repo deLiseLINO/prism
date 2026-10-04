@@ -1,10 +1,10 @@
 # Agent install and update
 
-Prism installs and updates the agent binaries behind its integrations: codex, claude, grok, omp, pi, opencode, and hermes (seven). The contract is the five `/api/v1/agents*` management routes plus the `prismctl agents` family. Install state is derived from PATH, never stored: a restart re-derives the truth. One job per binary runs at a time. Mutations are off by default behind a kill switch (see Gating).
+Prism installs and updates the agent binaries behind its integrations: codex, claude, grok, omp, pi, opencode, and hermes (seven). The contract is the five `/api/v1/agents*` management routes plus the `prismctl agents` family. Install state is derived from PATH, never stored: a restart re-derives the truth. One job per binary runs at a time.
 
 ## Sub-features
 
-- `GET /api/v1/agents` lists all seven ids in integrations order with `installed`, `source`, `path`, `canUpdate`, `reason`, and the last `job`, plus a top-level `actionsEnabled` boolean that mirrors the kill switch. Reads are never gated.
+- `GET /api/v1/agents` lists all seven ids in integrations order with `installed`, `source`, `path`, `canUpdate`, `reason`, and the last `job`.
 - `GET /api/v1/agents/{id}` returns one status; unknown id is 404 `not_found`.
 - `POST /api/v1/agents/{id}/install` starts a job: 202 with the job envelope, `?force=true` appends the method's force argument (npm `--force`, brew `--force`), a plan-less environment returns 200 with state `unsupported`, a running job for the same binary returns 409 `install_active`, and a launch error is 400 `install_failed`. Unknown id is 404 `not_found`.
 - Script plans (codex, claude, grok, opencode, omp) download the official installer to a temp file inside the job and exec `[interpreter, tempPath]`; the job's `command` field keeps the readable `bash <url>` form. Only absolute HTTPS URLs are fetched, redirects must stay HTTPS, downloads cap at 4 MiB, and the temp file is removed when the job ends.
@@ -15,9 +15,9 @@ Prism installs and updates the agent binaries behind its integrations: codex, cl
 
 ## Gating
 
-- `install` and `update` return 501 `agent_actions_disabled` unless prismd started with `PRISM_AGENT_ACTIONS=1` or `true` (any other value keeps them off). Status and job reads stay open. The daemon logs "agent install and update actions enabled" at startup when on.
-- The desktop UI shows Install and Update buttons on integration cards only when the experimental flag `agentActions` ("Agent install and update") is on and the daemon reports `actionsEnabled`. The Experimental card for it is listed first when the daemon allows actions.
-- `prismctl agents status [agent] [--json]`, `install <agent> [--force]`, `update <agent>`, and `job <agent>` map onto the routes; install and update need exactly one agent id and hit the same 501 when the switch is off.
+- `install` and `update` are always served by the daemon; there is no server-side switch.
+- The desktop UI shows Install, Reinstall, and Update buttons on integration cards only when the experimental flag `agentActions` ("Agent install and update") is on. The flag is off by default and its card is listed first on the Experimental screen.
+- `prismctl agents status [agent] [--json]`, `install <agent> [--force]`, `update <agent>`, and `job <agent>` map onto the routes; install and update need exactly one agent id and run regardless of the UI flag.
 
 ## How to get to it (user POV)
 
@@ -37,7 +37,7 @@ bash verify/scripts/agents-drive.sh
 bash verify/scripts/matrix.sh build && bash verify/scripts/matrix.sh all
 ```
 
-The sandbox drive boots an isolated prismd with `PRISM_AGENT_ACTIONS=1`, fake `npm`, `bash`, and `sh` tools, and fake agent binaries under `<sandbox>/.local/bin`, so a real prismd runs real command execution through a fake environment. It asserts the list route renders all seven agents with `source: script` for the sandbox binaries; install of codex returns 202 and the job reaches `succeeded` with `npm install -g @openai/codex` in the command field; update of grok runs the `grok update` self-update; update of an unknown id is 404; and the `job` route returns `idle` for a never-driven agent.
+The sandbox drive boots an isolated prismd with fake `npm`, `bash`, and `sh` tools, and fake agent binaries under `<sandbox>/.local/bin`, so a real prismd runs real command execution through a fake environment. It asserts the list route renders all seven agents with `source: script` for the sandbox binaries; install of codex returns 202 and the job reaches `succeeded` with `npm install -g @openai/codex` in the command field; update of grok runs the `grok update` self-update; update of an unknown id is 404; and the `job` route returns `idle` for a never-driven agent.
 
 On macOS `agents-drive.sh` exits 3 (`VERIFIED_UNREACHABLE`) before the install assertions. The codex plan there is brew-cask and prismd merges the login-shell PATH, which exposes the real brew, so the sandbox cannot keep it out of the job. Run this drive on Linux (Dockerfile.ubuntu). `bash verify/scripts/agents-ui-drive.sh` drives the same install through the real Electron UI (enable `Other agents` and `Agent install and update`, open Integrations, click Install on the codex card) and passes on macOS.
 

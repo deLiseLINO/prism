@@ -81,7 +81,6 @@ echo "==> launching isolated Electron with sandbox PATH"
 SANDBOX_PATH="$RUNDIR/sandbox/tools:$RUNDIR/sandbox/home/.local/bin:/usr/bin:/bin"
 PRISMD_PATH="$RUNDIR/prism" \
 PRISM_PORT="$PORT" \
-PRISM_AGENT_ACTIONS=1 \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS=1 \
 PATH="$SANDBOX_PATH" \

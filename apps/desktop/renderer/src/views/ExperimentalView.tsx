@@ -1,24 +1,9 @@
 import type { CSSProperties } from 'react'
-import { AGENT_ACTIONS_FLAG, EXPERIMENTAL_FLAGS, useExperimentalFlags, type ExperimentalFlag } from '../experimental'
+import { EXPERIMENTAL_FLAGS, useExperimentalFlags } from '../experimental'
 import { bridge } from '../bridge'
-import { useAsync } from '../useAsync'
-
-interface FlagCard {
-  readonly flag: ExperimentalFlag
-  readonly label: string
-  readonly description: string
-}
-
-export function experimentalCards(daemonAllowsActions: boolean): readonly FlagCard[] {
-  return daemonAllowsActions ? [AGENT_ACTIONS_FLAG, ...EXPERIMENTAL_FLAGS] : EXPERIMENTAL_FLAGS
-}
 
 export function ExperimentalView(): JSX.Element {
   const { flags, setFlag } = useExperimentalFlags()
-  const agentActions = useAsync(() => bridge.agents.status(), [])
-  const daemonAllowsActions =
-    agentActions.state.kind === 'ready' ? agentActions.state.value.actionsEnabled : false
-  const cards = experimentalCards(daemonAllowsActions)
 
   return (
     <section className="screen" aria-labelledby="h-experimental">
@@ -29,7 +14,7 @@ export function ExperimentalView(): JSX.Element {
         </div>
       </div>
       <div className="cards" style={{ '--i': 1 } as CSSProperties}>
-        {cards.map(({ flag, label, description }) => (
+        {EXPERIMENTAL_FLAGS.map(({ flag, label, description }) => (
           <label key={flag} className="card experimental-flag">
             <input
               type="checkbox"

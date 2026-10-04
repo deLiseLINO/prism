@@ -5,13 +5,8 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EXPERIMENTAL_FLAGS, ExperimentalFlagsProvider, useExperimentalFlags } from '../renderer/src/experimental'
 import { InstallCell } from '../renderer/src/components/InstallCell'
-import { ExperimentalView, experimentalCards } from '../renderer/src/views/ExperimentalView'
-import type { AgentsView, AgentStatus } from '@prism/contracts'
-
-const agentsView = (actionsEnabled: boolean): AgentsView => ({
-  agents: [status],
-  actionsEnabled,
-})
+import { ExperimentalView } from '../renderer/src/views/ExperimentalView'
+import type { AgentStatus } from '@prism/contracts'
 
 const status: AgentStatus = {
   id: 'codex',
@@ -33,7 +28,6 @@ vi.mock('../renderer/src/bridge', () => ({
   },
 }))
 
-import { bridge } from '../renderer/src/bridge'
 
 function Probe(): JSX.Element {
   const { flags, setFlag } = useExperimentalFlags()
@@ -60,8 +54,8 @@ function stubStorage(payload: Record<string, boolean> | null): void {
 }
 
 describe('agent actions feature flag', () => {
-  it('is not in the always-visible experimental list; it is gated on the daemon switch', () => {
-    expect(EXPERIMENTAL_FLAGS.map((f) => f.flag)).toEqual(['otherAgents', 'visionSidecar', 'remoteInstall', 'rcChannel'])
+  it('is listed first in the experimental cards', () => {
+    expect(EXPERIMENTAL_FLAGS.map((f) => f.flag)).toEqual(['agentActions', 'otherAgents', 'visionSidecar', 'remoteInstall', 'rcChannel'])
   })
 
   it('stays off by default and honors a stored true like any real flag', () => {
@@ -106,25 +100,17 @@ describe('agent actions feature flag', () => {
   })
 
   describe('experimental screen card visibility', () => {
-    it('the card set excludes agent actions unless the daemon allows them', () => {
-      expect(experimentalCards(false).map((c) => c.flag)).toEqual(['otherAgents', 'visionSidecar', 'remoteInstall', 'rcChannel'])
-    })
-
-    it('the card set leads with agent actions when the daemon allows them', () => {
-      expect(experimentalCards(true).map((c) => c.flag)).toEqual(['agentActions', 'otherAgents', 'visionSidecar', 'remoteInstall', 'rcChannel'])
-    })
-
-    it('SSR (effects never ran) renders only the always-visible flags', () => {
-      stubStorage({ agentActions: true })
-      vi.mocked(bridge.agents.status).mockResolvedValue(agentsView(true))
+    it('lists every flag card, agent install first, with no daemon gate', () => {
+      stubStorage(null)
       const html = renderToString(
         <ExperimentalFlagsProvider>
           <ExperimentalView />
         </ExperimentalFlagsProvider>,
       )
-      expect(html).toContain('Remote machines and daemon install')
+      expect(EXPERIMENTAL_FLAGS.map((c) => c.flag)).toEqual(['agentActions', 'otherAgents', 'visionSidecar', 'remoteInstall', 'rcChannel'])
+      expect(html).toContain('Agent install and update')
       expect(html).toContain('Other agents')
-      expect(html).not.toContain('Agent install and update')
+      expect(html).toContain('Remote machines and daemon install')
     })
 
     it('switches Other agents when its card text is clicked', () => {

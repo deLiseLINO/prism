@@ -44,7 +44,7 @@ fi
 DP=$(daemon_path)
 mkdir -p /tmp/prism-state
 log "starting prism daemon on $PORT (PATH=$DP)"
-PRISM_AGENT_ACTIONS=1 PATH="$DP" /dist/prism daemon \
+PATH="$DP" /dist/prism daemon \
   -listen "127.0.0.1:$PORT" \
   -config /tmp/prism-state/prism.json \
   -credential-store /tmp/prism-state/creds &

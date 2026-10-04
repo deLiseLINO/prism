@@ -335,7 +335,7 @@ export function IntegrationsView(): JSX.Element {
   const { flags } = useExperimentalFlags()
   const statuses = useAsync<IntegrationsViewData>(() => api.integrationsStatus(), [selected])
   const agents = useAsync<AgentsView>(
-    () => selected === 'local' ? bridge.agents.status() : Promise.resolve({ agents: [], actionsEnabled: false }),
+    () => selected === 'local' ? bridge.agents.status() : Promise.resolve({ agents: [] }),
     [selected],
   )
   const agentList = agents.state.kind === 'ready' ? agents.state.value.agents : []

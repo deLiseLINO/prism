@@ -50,13 +50,12 @@ export class AgentsApi {
     if (!reply.ok || reply.status !== 200) {
       throw new Error(errorDetail(reply) ?? `prism: agents status failed with status ${reply.status}`)
     }
-    const body = reply.body as { agents?: unknown; actionsEnabled?: unknown } | undefined
+    const body = reply.body as { agents?: unknown } | undefined
     if (typeof body !== 'object' || body === null || !Array.isArray(body.agents)) {
       throw new Error('prism: agents status response is malformed')
     }
     return {
       agents: body.agents as AgentStatus[],
-      actionsEnabled: body.actionsEnabled === true,
     }
   }
 
