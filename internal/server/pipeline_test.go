@@ -402,6 +402,7 @@ func TestPostCommitFailureSurfacesTerminal(t *testing.T) {
 
 func TestStallWatchdogWithFakeClock(t *testing.T) {
 	clock := newFakeClock()
+	store := &fakeUsageStore{}
 	runner := &fakeRunner{scripts: []fakeScript{{
 		events: []canon.Event{
 			canon.ItemStarted{Item: messageAssistant("m1", "partial")},
@@ -409,11 +410,11 @@ func TestStallWatchdogWithFakeClock(t *testing.T) {
 		},
 		block: true,
 	}}}
-	h := newTestServer(t, clock, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
+	h := newTestServerWithUsage(t, clock, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", runner); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}, store)
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 	resp, err := http.Post(ts.URL+"/v1/responses", "application/json", strings.NewReader(`{"model":"test-model","stream":true,"input":"hi"}`))
@@ -462,6 +463,17 @@ func TestStallWatchdogWithFakeClock(t *testing.T) {
 	}
 	if strings.Contains(s, "event: response.completed") {
 		t.Fatalf("completed after stall:\n%s", s)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(store.snapshot()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	records := store.snapshot()
+	if len(records) != 1 {
+		t.Fatalf("usage records = %d, want 1", len(records))
+	}
+	if got := records[0]; got.Status != "incomplete" || got.Reason != "upstream_stall" {
+		t.Fatalf("wire reported upstream_stall but usage stored status=%q reason=%q", got.Status, got.Reason)
 	}
 }
 
