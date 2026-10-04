@@ -687,10 +687,6 @@ func run(opts options) error {
 	}
 
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
-	management.AgentActions = management.ParseAgentActionsEnv(os.Getenv("PRISM_AGENT_ACTIONS"))
-	if management.AgentActions {
-		log.Printf("prism: agent install and update actions enabled via PRISM_AGENT_ACTIONS")
-	}
 	planner := server.NewConfigPlanner(cfg)
 	if err := os.MkdirAll(opts.credentialPath, 0o700); err != nil {
 		return fmt.Errorf("prism: credential store directory: %w", err)

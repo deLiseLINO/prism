@@ -37,7 +37,6 @@ export interface AgentStatus {
 
 export interface AgentsView {
   readonly agents: readonly AgentStatus[]
-  readonly actionsEnabled: boolean
 }
 
 export interface AgentJobRequest {

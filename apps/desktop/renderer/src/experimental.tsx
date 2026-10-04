@@ -8,6 +8,11 @@ const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions', 'vi
 
 export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: string; description: string }[] = [
   {
+    flag: 'agentActions',
+    label: 'Agent install and update',
+    description: 'Install, reinstall, and update agent binaries (codex, grok, omp, …) from the Integrations tab.',
+  },
+  {
     flag: 'otherAgents',
     label: 'Other agents',
     description: 'Show agents other than OMP and OpenCode in Integrations.',
@@ -28,12 +33,6 @@ export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: strin
     description: 'Check GitHub Releases for newer RC builds. Off follows stable releases.',
   },
 ]
-
-export const AGENT_ACTIONS_FLAG: { flag: ExperimentalFlag; label: string; description: string } = {
-  flag: 'agentActions',
-  label: 'Agent install and update',
-  description: 'Install, reinstall, and update agent binaries (codex, grok, omp, …) from the Integrations tab. Requires the daemon started with PRISM_AGENT_ACTIONS=1.',
-}
 
 type ExperimentalState = Record<ExperimentalFlag, boolean>
 
