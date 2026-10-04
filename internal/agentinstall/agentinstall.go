@@ -1,8 +1,4 @@
-// Package agentinstall installs and updates the agent binaries Prism
-// integrates. Each Definition names one binary identity and an ordered list
-// of install plans per OS; the first plan whose PATH precondition resolves
-// wins. Install state is derived, never stored: a binary is installed iff it
-// resolves on PATH, so a daemon restart re-derives the truth.
+// Package agentinstall installs and updates client binaries integrated by prism.
 package agentinstall
 
 import "github.com/deLiseLINO/prism/internal/integrations"
@@ -14,7 +10,6 @@ type Definition struct {
 	VerifyArg  string
 	Plans      map[string][]Plan
 	SelfUpdate []string
-	DocsURL    string
 }
 
 var definitions = []Definition{
@@ -25,17 +20,16 @@ var definitions = []Definition{
 		VerifyArg: "--version",
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "brew-cask", Tool: "brew", Command: []string{"brew", "install", "--cask", "codex"}, Package: "codex", ForceArg: []string{"--force"}, DocsURL: "https://developers.openai.com/codex/"},
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@openai/codex"}, Package: "@openai/codex", ForceArg: []string{"--force"}, DocsURL: "https://developers.openai.com/codex/"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://chatgpt.com/codex/install.sh", Interpreter: "bash"}, DocsURL: "https://developers.openai.com/codex/"},
+				{Method: "brew-cask", Tool: "brew", Package: "codex"},
+				{Method: "npm", Tool: "npm", Package: "@openai/codex"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://chatgpt.com/codex/install.sh", Interpreter: "bash", Downloader: true}},
 			},
 			"linux": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@openai/codex"}, Package: "@openai/codex", ForceArg: []string{"--force"}, DocsURL: "https://developers.openai.com/codex/"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://chatgpt.com/codex/install.sh", Interpreter: "bash"}, DocsURL: "https://developers.openai.com/codex/"},
+				{Method: "npm", Tool: "npm", Package: "@openai/codex"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://chatgpt.com/codex/install.sh", Interpreter: "bash", Downloader: true}},
 			},
 		},
 		SelfUpdate: []string{"codex", "update"},
-		DocsURL:    "https://developers.openai.com/codex/",
 	},
 	{
 		Key:       "claude",
@@ -44,17 +38,16 @@ var definitions = []Definition{
 		VerifyArg: "--version",
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "brew-cask", Tool: "brew", Command: []string{"brew", "install", "--cask", "claude-code"}, Package: "claude-code", ForceArg: []string{"--force"}, DocsURL: "https://docs.anthropic.com/s/claude-code"},
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@anthropic-ai/claude-code"}, Package: "@anthropic-ai/claude-code", ForceArg: []string{"--force"}, DocsURL: "https://docs.anthropic.com/s/claude-code"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://claude.ai/install.sh", Interpreter: "bash"}, DocsURL: "https://docs.anthropic.com/s/claude-code"},
+				{Method: "brew-cask", Tool: "brew", Package: "claude-code"},
+				{Method: "npm", Tool: "npm", Package: "@anthropic-ai/claude-code"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://claude.ai/install.sh", Interpreter: "bash", Downloader: true}},
 			},
 			"linux": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@anthropic-ai/claude-code"}, Package: "@anthropic-ai/claude-code", ForceArg: []string{"--force"}, DocsURL: "https://docs.anthropic.com/s/claude-code"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://claude.ai/install.sh", Interpreter: "bash"}, DocsURL: "https://docs.anthropic.com/s/claude-code"},
+				{Method: "npm", Tool: "npm", Package: "@anthropic-ai/claude-code"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://claude.ai/install.sh", Interpreter: "bash", Downloader: true}},
 			},
 		},
 		SelfUpdate: []string{"claude", "update"},
-		DocsURL:    "https://docs.anthropic.com/s/claude-code",
 	},
 	{
 		Key:       "grok",
@@ -63,16 +56,15 @@ var definitions = []Definition{
 		VerifyArg: "--version",
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://x.ai/cli/install.sh", Interpreter: "bash"}, DocsURL: "https://x.ai/cli"},
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@xai-official/grok"}, Package: "@xai-official/grok", ForceArg: []string{"--force"}, DocsURL: "https://x.ai/cli"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://x.ai/cli/install.sh", Interpreter: "bash", Downloader: true}},
+				{Method: "npm", Tool: "npm", Package: "@xai-official/grok"},
 			},
 			"linux": {
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://x.ai/cli/install.sh", Interpreter: "bash"}, DocsURL: "https://x.ai/cli"},
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@xai-official/grok"}, Package: "@xai-official/grok", ForceArg: []string{"--force"}, DocsURL: "https://x.ai/cli"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://x.ai/cli/install.sh", Interpreter: "bash", Downloader: true}},
+				{Method: "npm", Tool: "npm", Package: "@xai-official/grok"},
 			},
 		},
 		SelfUpdate: []string{"grok", "update"},
-		DocsURL:    "https://x.ai/cli",
 	},
 	{
 		Key:       "omp",
@@ -81,39 +73,32 @@ var definitions = []Definition{
 		VerifyArg: "--version",
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "bun", Tool: "bun", Command: []string{"bun", "install", "-g", "pi-coding-agent"}, Package: "pi-coding-agent", ForceArg: []string{"--force"}, DocsURL: "https://omp.sh"},
-				{Method: "brew", Tool: "brew", Command: []string{"brew", "install", "can1357/tap/omp"}, Package: "can1357/tap/omp", ForceArg: []string{"--force"}, DocsURL: "https://omp.sh"},
-				{Method: "script", Tool: "sh", Script: &Script{URL: "https://omp.sh/install", Interpreter: "sh"}, DocsURL: "https://omp.sh"},
+				{Method: "bun", Tool: "bun", Package: "@oh-my-pi/pi-coding-agent"},
+				{Method: "brew", Tool: "brew", Package: "can1357/tap/omp"},
+				{Method: "script", Tool: "sh", Script: &Script{URL: "https://omp.sh/install", Interpreter: "sh", Args: []string{"--binary"}, Requires: []string{"curl"}}},
 			},
 			"linux": {
-				{Method: "bun", Tool: "bun", Command: []string{"bun", "install", "-g", "pi-coding-agent"}, Package: "pi-coding-agent", ForceArg: []string{"--force"}, DocsURL: "https://omp.sh"},
-				{Method: "brew", Tool: "brew", Command: []string{"brew", "install", "can1357/tap/omp"}, Package: "can1357/tap/omp", ForceArg: []string{"--force"}, DocsURL: "https://omp.sh"},
-				{Method: "script", Tool: "sh", Script: &Script{URL: "https://omp.sh/install", Interpreter: "sh"}, DocsURL: "https://omp.sh"},
+				{Method: "bun", Tool: "bun", Package: "@oh-my-pi/pi-coding-agent"},
+				{Method: "brew", Tool: "brew", Package: "can1357/tap/omp"},
+				{Method: "script", Tool: "sh", Script: &Script{URL: "https://omp.sh/install", Interpreter: "sh", Args: []string{"--binary"}, Requires: []string{"curl"}}},
 			},
 		},
 		SelfUpdate: []string{"omp", "update"},
-		DocsURL:    "https://omp.sh",
 	},
 	{
 		Key:       "pi",
 		IDs:       []integrations.ID{integrations.Pi},
 		Binary:    "pi",
 		VerifyArg: "--version",
-		// No script plan: pi's installer refuses to run without Node.js
-		// 22.19+ and npm, but the script plan is only reachable when npm is
-		// absent (the npm plan outranks it), so it can never succeed
-		// (verified live 2026-09-09; Agent Orchestrator gates the same
-		// installer behind a node/npm capability check).
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@earendil-works/pi-coding-agent"}, Package: "@earendil-works/pi-coding-agent", ForceArg: []string{"--force"}, DocsURL: "https://pi.dev"},
+				{Method: "npm", Tool: "npm", Package: "@earendil-works/pi-coding-agent"},
 			},
 			"linux": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@earendil-works/pi-coding-agent"}, Package: "@earendil-works/pi-coding-agent", ForceArg: []string{"--force"}, DocsURL: "https://pi.dev"},
+				{Method: "npm", Tool: "npm", Package: "@earendil-works/pi-coding-agent"},
 			},
 		},
-		SelfUpdate: []string{"pi", "update"},
-		DocsURL:    "https://pi.dev",
+		SelfUpdate: []string{"pi", "update", "--self"},
 	},
 	{
 		Key:       "opencode",
@@ -122,16 +107,15 @@ var definitions = []Definition{
 		VerifyArg: "--version",
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@opencode-ai/cli@latest"}, Package: "@opencode-ai/cli", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash"}, DocsURL: "https://opencode.ai"},
+				{Method: "npm", Tool: "npm", Package: "@opencode/cli", Aliases: []string{"opencode-ai"}},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash", Requires: []string{"curl"}}},
 			},
 			"linux": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "@opencode-ai/cli@latest"}, Package: "@opencode-ai/cli", ForceArg: []string{"--force"}, DocsURL: "https://opencode.ai"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash"}, DocsURL: "https://opencode.ai"},
+				{Method: "npm", Tool: "npm", Package: "@opencode/cli", Aliases: []string{"opencode-ai"}},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://opencode.ai/install", Interpreter: "bash", Requires: []string{"curl"}}},
 			},
 		},
 		SelfUpdate: nil,
-		DocsURL:    "https://opencode.ai",
 	},
 	{
 		Key:       "hermes",
@@ -140,26 +124,14 @@ var definitions = []Definition{
 		VerifyArg: "--version",
 		Plans: map[string][]Plan{
 			"darwin": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "hermes-agent"}, Package: "hermes-agent", ForceArg: []string{"--force"}, DocsURL: "https://github.com/nousresearch/hermes-agent"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://raw.githubusercontent.com/nousresearch/hermes-agent/refs/heads/main/install.sh", Interpreter: "bash"}, DocsURL: "https://github.com/nousresearch/hermes-agent"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://hermes-agent.nousresearch.com/install.sh", Interpreter: "bash", Args: []string{"--non-interactive"}, Requires: []string{"git", "curl"}}},
 			},
 			"linux": {
-				{Method: "npm", Tool: "npm", Command: []string{"npm", "install", "-g", "hermes-agent"}, Package: "hermes-agent", ForceArg: []string{"--force"}, DocsURL: "https://github.com/nousresearch/hermes-agent"},
-				{Method: "script", Tool: "bash", Script: &Script{URL: "https://raw.githubusercontent.com/nousresearch/hermes-agent/refs/heads/main/install.sh", Interpreter: "bash"}, DocsURL: "https://github.com/nousresearch/hermes-agent"},
+				{Method: "script", Tool: "bash", Script: &Script{URL: "https://hermes-agent.nousresearch.com/install.sh", Interpreter: "bash", Args: []string{"--non-interactive"}, Requires: []string{"git", "curl"}}},
 			},
 		},
 		SelfUpdate: []string{"hermes", "update", "--yes"},
-		DocsURL:    "https://github.com/nousresearch/hermes-agent",
 	},
-}
-
-func definition(key string) (Definition, bool) {
-	for _, d := range definitions {
-		if d.Key == key {
-			return d, true
-		}
-	}
-	return Definition{}, false
 }
 
 func definitionByID(id integrations.ID) (Definition, bool) {

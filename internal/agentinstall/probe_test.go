@@ -2,6 +2,7 @@ package agentinstall
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/deLiseLINO/prism/internal/integrations"
@@ -103,11 +104,15 @@ func TestDetectSourceMatrix(t *testing.T) {
 }
 
 func TestDetectSourceFollowsSymlinksThroughManager(t *testing.T) {
-	link := "/tmp/prefix/bin/codex"
-	target := "/tmp/prefix/lib/node_modules/@openai/codex/bin/codex.js"
+	prefix, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := prefix + "/bin/codex"
+	target := prefix + "/lib/node_modules/@openai/codex/bin/codex.js"
 	stat := statWith(link)
-	env := pathEnv("/tmp/prefix/bin")
-	m := NewManager(env, &fakeRunner{}, stat.stat, testNow, fetchOK)
+	env := pathEnv(prefix + "/bin")
+	m := NewManager(env, ExecRunner{}, stat.stat, testNow, fetchOK)
 	m.eval = func(p string) (string, error) {
 		if p != link {
 			return "", os.ErrNotExist

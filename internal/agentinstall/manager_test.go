@@ -3,503 +3,226 @@ package agentinstall
 import (
 	"context"
 	"errors"
-	"io"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
-// newTestManager builds a manager over a fake environment: /bin holds the
-// tools named in tools; the clock is deterministic; script fetches land in
-// a canned temp path.
-func newTestManager(tools ...string) (*Manager, *fakeRunner) {
-	paths := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		paths = append(paths, "/bin/"+tool)
-	}
-	runner := &fakeRunner{behaviors: map[string]func(ctx context.Context, out io.Writer) error{}}
-	env := integrations.Env{"PATH": "/bin"}
-	m := NewManager(env, runner, statWith(paths...).stat, testNow, fetchOK)
-	return m, runner
-}
-
-// fetchOK is the network-free script-fetch seam: it records nothing and
-// hands back a canned path.
-func fetchOK(ctx context.Context, url string) (string, error) {
-	return "/tmp/prism-fetched.sh", nil
-}
-
-func TestInstallLifecycleSucceeds(t *testing.T) {
-	m, runner := newTestManager("npm")
-	job, err := m.Install(integrations.Pi, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job.State != StateInstalling {
-		t.Fatalf("initial state = %q, want installing", job.State)
-	}
-	if job.Method != string(MethodNpm) {
-		t.Fatalf("method = %q, want npm", job.Method)
-	}
-	final := waitTerminal(t, m, "pi", time.Second)
-	if final.State != StateSucceeded {
-		t.Fatalf("final state = %q, want succeeded (err %q)", final.State, final.Error)
-	}
-	if final.Op != "install" {
-		t.Errorf("op = %q, want install", final.Op)
-	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("runner calls = %d, want 2 (install + verify)", len(runner.calls))
-	}
-	verify := runner.calls[1]
-	if strings.Join(verify.argv, " ") != "pi --version" {
-		t.Errorf("verify argv = %v, want [pi --version]", verify.argv)
-	}
-}
-
-func TestInstallLifecycleVerifyFail(t *testing.T) {
-	m, runner := newTestManager("npm")
-	runner.behaviors["pi --version"] = func(ctx context.Context, out io.Writer) error {
-		return errors.New("exit status 127")
-	}
-	if _, err := m.Install(integrations.Pi, false); err != nil {
-		t.Fatal(err)
-	}
-	final := waitTerminal(t, m, "pi", time.Second)
-	if final.State != StateFailed {
-		t.Fatalf("state = %q, want failed", final.State)
-	}
-	if !strings.Contains(final.Error, "verify") {
-		t.Errorf("error = %q, want verify mention", final.Error)
-	}
-}
-
-func TestInstallLifecycleRunFail(t *testing.T) {
-	m, runner := newTestManager("npm")
-	runner.behaviors["npm install -g @earendil-works/pi-coding-agent"] = func(ctx context.Context, out io.Writer) error {
-		io.WriteString(out, "npm ERR! network")
-		return errors.New("exit status 1")
-	}
-	if _, err := m.Install(integrations.Pi, false); err != nil {
-		t.Fatal(err)
-	}
-	final := waitTerminal(t, m, "pi", time.Second)
-	if final.State != StateFailed {
-		t.Fatalf("state = %q, want failed", final.State)
-	}
-	if final.Error != "exit status 1" {
-		t.Errorf("error = %q, want exit status 1", final.Error)
-	}
-	if !strings.Contains(final.Output, "npm ERR! network") {
-		t.Errorf("output = %q, want it to carry the run output", final.Output)
-	}
+func fetchOK(context.Context, string) (string, error) {
+	return "", errors.New("unexpected script download")
 }
 
 func TestInstallUnsupportedWhenNoTool(t *testing.T) {
-	m, _ := newTestManager()
+	f := maintenanceSandbox(t)
+	m := f.manager()
 	job, err := m.Install(integrations.Pi, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateUnsupported {
-		t.Fatalf("state = %q, want unsupported", job.State)
+	if job.State != StateUnsupported || !strings.Contains(job.Error, "npm") {
+		t.Fatalf("missing prerequisite not reported: %+v", job)
 	}
-	if job.Error == "" {
-		t.Error("unsupported job must carry a reason")
+	if m.JobOf(integrations.Grok).State != StateIdle {
+		t.Fatal("untouched job is not idle")
 	}
-}
-
-func TestErrInstallActiveSameBinary(t *testing.T) {
-	m, runner := newTestManager("npm", "opencode")
-	block := make(chan struct{})
-	runner.behaviors["npm install -g @opencode-ai/cli@latest"] = func(ctx context.Context, out io.Writer) error {
-		<-block
-		return nil
-	}
-	if _, err := m.Install(integrations.Opencode, false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.Install(integrations.Opencode, false); !errors.Is(err, ErrInstallActive) {
-		t.Fatalf("second install err = %v, want ErrInstallActive", err)
-	}
-	if _, err := m.Update(integrations.Opencode); !errors.Is(err, ErrInstallActive) {
-		t.Fatalf("update while active err = %v, want ErrInstallActive", err)
-	}
-	close(block)
-	waitTerminal(t, m, "opencode", time.Second)
-	if _, err := m.Install(integrations.Opencode, false); err != nil {
-		t.Fatalf("install after release: %v", err)
-	}
-	waitTerminal(t, m, "opencode", time.Second)
-}
-
-// TestOutputTailCap: a 10KB installer transcript reports only the last 4096
-// bytes.
-func TestOutputTailCap(t *testing.T) {
-	m, runner := newTestManager("npm")
-	big := strings.Repeat("x", 10*1024)
-	runner.behaviors["npm install -g @earendil-works/pi-coding-agent"] = func(ctx context.Context, out io.Writer) error {
-		io.WriteString(out, big)
-		return nil
-	}
-	if _, err := m.Install(integrations.Pi, false); err != nil {
-		t.Fatal(err)
-	}
-	final := waitTerminal(t, m, "pi", time.Second)
-	if len(final.Output) != outputTailCap {
-		t.Fatalf("output len = %d, want %d", len(final.Output), outputTailCap)
-	}
-	if !strings.HasSuffix(final.Output, strings.Repeat("x", 10)) {
-		t.Error("output must be the tail, not the head")
-	}
-}
-
-// TestStopMarksInterrupted: Stop cancels the running job's context; the
-// runner observes it and the job lands in interrupted.
-func TestStopMarksInterrupted(t *testing.T) {
-	m, runner := newTestManager("npm")
-	runner.behaviors["npm install -g @earendil-works/pi-coding-agent"] = func(ctx context.Context, out io.Writer) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-	if _, err := m.Install(integrations.Pi, false); err != nil {
-		t.Fatal(err)
-	}
-	stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	go m.Stop(stopCtx)
-	final := waitTerminal(t, m, "pi", time.Second)
-	if final.State != StateInterrupted {
-		t.Fatalf("state = %q, want interrupted", final.State)
-	}
-	cancel()
-}
-
-// TestJobTimeoutFails: a run that outlives the job budget fails with the
-// timeout error; the budget is shortened so the test races milliseconds.
-func TestJobTimeoutFails(t *testing.T) {
-	m, runner := newTestManager("npm")
-	m.jobTimeout = 50 * time.Millisecond
-	runner.behaviors["npm install -g @earendil-works/pi-coding-agent"] = func(ctx context.Context, out io.Writer) error {
-		<-ctx.Done()
-		return errors.New("signal: killed")
-	}
-	if _, err := m.Install(integrations.Pi, false); err != nil {
-		t.Fatal(err)
-	}
-	final := waitTerminal(t, m, "pi", 2*time.Second)
-	if final.State != StateFailed {
-		t.Fatalf("state = %q, want failed (err %q)", final.State, final.Error)
-	}
-	if !strings.Contains(final.Error, "timed out") {
-		t.Errorf("error = %q, want timeout mention", final.Error)
-	}
-}
-
-// TestJobOfIdleWhenNeverRan: the job route reports idle, not zero.
-func TestJobOfIdleWhenNeverRan(t *testing.T) {
-	m, _ := newTestManager()
-	job := m.JobOf(integrations.Grok)
-	if job.State != StateIdle {
-		t.Fatalf("state = %q, want idle", job.State)
-	}
-	if job.Key != "grok" {
-		t.Errorf("key = %q, want grok", job.Key)
-	}
-}
-
-func TestUpdateRefusesWhenNotInstalled(t *testing.T) {
-	m, _ := newTestManager("npm")
-	_, err := m.Update(integrations.Grok)
-	if !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("err = %v, want ErrNotInstalled", err)
-	}
-}
-
-func TestUpdateScriptSelfUpdate(t *testing.T) {
-	stat := statWith("/Users/x/.grok/downloads/grok")
-	env := integrations.Env{"PATH": "/Users/x/.grok/downloads"}
-	runner := &fakeRunner{behaviors: map[string]func(ctx context.Context, out io.Writer) error{}}
-	m := NewManager(env, runner, stat.stat, testNow, fetchOK)
-	job, err := m.Update(integrations.Grok)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job.State != StateInstalling {
-		t.Fatalf("state = %q, want installing", job.State)
-	}
-	if job.Command != "grok update" {
-		t.Errorf("command = %q, want grok update", job.Command)
-	}
-	final := waitTerminal(t, m, "grok", time.Second)
-	if final.State != StateSucceeded {
-		t.Fatalf("state = %q, want succeeded (err %q)", final.State, final.Error)
-	}
-}
-
-func TestUpdateUnsupportedForUnknownSource(t *testing.T) {
-	// claude at a path no rule matches (versions dir, not via ~/.local/bin).
-	stat := statWith("/bin/claude", "/Users/x/.local/share/claude/versions/1.0.32/claude")
-	env := integrations.Env{"PATH": "/bin"}
-	runner := &fakeRunner{behaviors: map[string]func(ctx context.Context, out io.Writer) error{}}
-	m := NewManager(env, runner, stat.stat, testNow, fetchOK)
-	job, err := m.Update(integrations.Claude)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job.State != StateUnsupported {
-		t.Fatalf("state = %q, want unsupported", job.State)
-	}
-	if !strings.Contains(job.Error, "outside Prism") {
-		t.Errorf("error = %q, want outside-Prism mention", job.Error)
-	}
-}
-
-// TestStatusAllDerivesFromPath: installed/source/canUpdate follow PATH and
-// the source rules; job snapshots ride along.
-func TestStatusAllDerivesFromPath(t *testing.T) {
-	stat := statWith(
-		"/Users/x/.local/bin/codex",
-		"/Users/x/.opencode/bin/opencode",
-		"/usr/local/Cellar/grok/1.0/bin/grok",
-	)
-	env := integrations.Env{"PATH": "/Users/x/.local/bin:/Users/x/.opencode/bin:/usr/local/Cellar/grok/1.0/bin"}
-	m := NewManager(env, &fakeRunner{behaviors: map[string]func(ctx context.Context, out io.Writer) error{}}, stat.stat, testNow, fetchOK)
-	statuses := m.StatusAll()
-	if len(statuses) != len(integrations.IDs) {
-		t.Fatalf("statuses = %d, want %d", len(statuses), len(integrations.IDs))
-	}
-	byID := map[integrations.ID]AgentStatus{}
-	for _, st := range statuses {
-		byID[st.ID] = st
-	}
-	codex := byID[integrations.Codex]
-	if !codex.Installed || codex.Source != SourceScript || !codex.CanUpdate {
-		t.Errorf("codex status = %+v, want installed/script/canUpdate", codex)
-	}
-	if codex.Path != "/Users/x/.local/bin/codex" {
-		t.Errorf("codex path = %q, want the script path (PATH order)", codex.Path)
-	}
-	opencode := byID[integrations.Opencode]
-	if !opencode.Installed || opencode.Source != SourceScript {
-		t.Errorf("opencode status = %+v", opencode)
-	}
-	grok := byID[integrations.Grok]
-	if !grok.Installed || grok.Source != SourceBrew {
-		t.Errorf("grok status = %+v, want installed/brew", grok)
-	}
-	// Job rides along as idle.
-	if codex.Job.State != StateIdle {
-		t.Errorf("codex job state = %q, want idle", codex.Job.State)
-	}
-}
-
-func TestStatusOfUnknownID(t *testing.T) {
-	m, _ := newTestManager()
 	if _, ok := m.StatusOf(integrations.ID("nope")); ok {
-		t.Fatal("unknown id must not resolve")
+		t.Fatal("unknown id resolved")
+	}
+	if _, err := m.Update(integrations.Grok); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("missing client update: %v", err)
 	}
 }
 
-// TestForceForwardsToArgv: --force lands in the runner argv for npm.
-func TestForceForwardsToArgv(t *testing.T) {
-	m, runner := newTestManager("npm")
-	if _, err := m.Install(integrations.Pi, true); err != nil {
+func TestInstallLifecycleRunFailureAndBoundedOutput(t *testing.T) {
+	f := maintenanceSandbox(t)
+	f.global(f.prefix, "@earendil-works/pi-coding-agent", "pi", "echo 1.2.3")
+	f.npm("i=0; while [ $i -lt 2000 ]; do printf 'xxxxxxxxxx'; i=$((i+1)); done; printf 'network failure'; exit 1")
+	m := f.manager()
+	if _, err := m.Install(integrations.Pi, false); err != nil {
 		t.Fatal(err)
 	}
-	waitTerminal(t, m, "pi", time.Second)
-	install := runner.calls[0]
-	want := "npm install -g @earendil-works/pi-coding-agent --force"
-	if got := strings.Join(install.argv, " "); got != want {
-		t.Errorf("argv = %q, want %q", got, want)
+	job := requireJob(t, m, integrations.Pi, StateFailed)
+	if len(job.Output) != outputTailCap || !strings.HasSuffix(job.Output, "network failure") || job.Error != "exit status 1" {
+		t.Fatalf("failed transcript: %+v", job)
 	}
 }
 
-// TestConcurrentInstallsDifferentBinaries: distinct binaries run in parallel
-// without tripping the guard.
-func TestConcurrentInstallsDifferentBinaries(t *testing.T) {
-	m, runner := newTestManager("npm")
-	var wg sync.WaitGroup
-	runner.behaviors["npm install -g hermes-agent"] = func(ctx context.Context, out io.Writer) error {
-		time.Sleep(20 * time.Millisecond)
-		return nil
-	}
-	runner.behaviors["npm install -g @earendil-works/pi-coding-agent"] = func(ctx context.Context, out io.Writer) error {
-		time.Sleep(20 * time.Millisecond)
-		return nil
-	}
-	for _, id := range []integrations.ID{integrations.Hermes, integrations.Pi} {
-		wg.Add(1)
-		go func(id integrations.ID) {
-			defer wg.Done()
-			if _, err := m.Install(id, false); err != nil {
-				t.Errorf("install %s: %v", id, err)
+func TestMaintenanceNativeUpdatesUseSelectedAbsoluteEntry(t *testing.T) {
+	for _, key := range []string{"codex", "claude", "grok", "omp", "pi", "hermes"} {
+		t.Run(key, func(t *testing.T) {
+			f := maintenanceSandbox(t)
+			entry := filepath.Join(f.home, ".local", "bin", key)
+			body := "if [ \"$1\" = '--version' ]; then echo 'client 1.2.3'; else printf '%s\\n' \"$*\" >> \"$MUTATIONS\"; fi"
+			if key == "grok" {
+				target := filepath.Join(f.home, ".grok", "bin", key)
+				f.executable(target, body)
+				f.link(entry, target)
+			} else {
+				f.executable(entry, body)
 			}
-		}(id)
+			f.env["PATH"] = filepath.Dir(entry) + ":" + f.env["PATH"]
+			f.executable(filepath.Join(f.tools, key), "echo 'ambient 0.0.0'; exit 1")
+			m := f.manager()
+			st, _ := m.StatusOf(integrations.ID(key))
+			if !st.CanUpdate {
+				t.Fatalf("documented native refused: %+v", st)
+			}
+			job, err := m.Update(integrations.ID(key))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(job.Command, entry+" ") {
+				t.Fatalf("not selected absolute entry: %q", job.Command)
+			}
+			requireJob(t, m, integrations.ID(key), StateSucceeded)
+			want := "update"
+			if key == "hermes" {
+				want += " --yes"
+			}
+			if key == "pi" {
+				want += " --self"
+			}
+			if got := f.mutations(); got != want {
+				t.Fatalf("update mutation %q, want %q", got, want)
+			}
+		})
 	}
-	wg.Wait()
-	waitTerminal(t, m, "hermes", time.Second)
-	waitTerminal(t, m, "pi", time.Second)
 }
 
-// TestInstallScriptFetchesThenRuns: a script plan resolves (bash on PATH),
-// the daemon fetches the script, and the runner execs the local copy —
-// never a URL argv, which bash cannot open (found live 2026-09-09).
-func TestInstallScriptFetchesThenRuns(t *testing.T) {
-	m, runner := newTestManager("bash")
-	fetched := make(chan string, 1)
-	m.fetchScript = func(ctx context.Context, url string) (string, error) {
-		if url != "https://x.ai/cli/install.sh" {
-			t.Errorf("fetched url = %q, want the grok install script", url)
-		}
-		fetched <- url
-		return "/tmp/prism-fetched.sh", nil
+func TestMaintenanceScriptFetchAndBoundVerification(t *testing.T) {
+	for _, kind := range []string{"success", "fetch-failure", "no-client", "hermes-args"} {
+		t.Run(kind, func(t *testing.T) {
+			f := maintenanceSandbox(t)
+			f.link(filepath.Join(f.tools, "bash"), "/bin/bash")
+			f.executable(filepath.Join(f.tools, "git"), "exit 0")
+			f.executable(filepath.Join(f.tools, "curl"), "exit 0")
+			id := integrations.Grok
+			entry := filepath.Join(f.home, ".grok", "bin", "grok")
+			f.env["PATH"] = filepath.Dir(entry) + ":" + f.env["PATH"]
+			if kind == "hermes-args" {
+				id = integrations.Hermes
+				entry = filepath.Join(f.home, ".local", "bin", "hermes")
+				f.env["PATH"] = filepath.Dir(entry) + ":" + f.env["PATH"]
+			}
+			m := f.manager()
+			fetched := filepath.Join(f.home, "downloaded.sh")
+			m.fetchScript = func(ctx context.Context, url string) (string, error) {
+				if kind == "fetch-failure" {
+					return "", errors.New("unavailable")
+				}
+				if kind == "hermes-args" && url != "https://hermes-agent.nousresearch.com/install.sh" {
+					t.Errorf("wrong official installer: %s", url)
+				}
+				body := "/bin/mkdir -p " + shellQuote(filepath.Dir(entry)) + "\nprintf %s " + shellQuote("#!/bin/sh\necho 1.2.3\n") + " > " + shellQuote(entry) + "\n/bin/chmod 755 " + shellQuote(entry)
+				if kind == "no-client" {
+					body = "exit 0"
+				}
+				if kind == "hermes-args" {
+					body = "[ \"$1\" = '--non-interactive' ] || exit 7\n" + body
+				}
+				f.executable(fetched, body)
+				return fetched, nil
+			}
+			if _, err := m.Install(id, false); err != nil {
+				t.Fatal(err)
+			}
+			want := StateSucceeded
+			if kind == "fetch-failure" || kind == "no-client" {
+				want = StateFailed
+			}
+			job := requireJob(t, m, id, want)
+			if kind == "fetch-failure" && !strings.HasPrefix(job.Error, "fetch script: ") {
+				t.Fatalf("download failure: %+v", job)
+			}
+			if kind != "fetch-failure" {
+				if _, err := os.Stat(fetched); !os.IsNotExist(err) {
+					t.Fatalf("download not removed: %v", err)
+				}
+			}
+		})
 	}
-	job, err := m.Install(integrations.Grok, false)
+}
+
+func TestMaintenanceActiveRootAndShutdownAdmission(t *testing.T) {
+	f := maintenanceSandbox(t)
+	f.global(f.prefix, "@openai/codex", "codex", "echo 1.2.3")
+	f.global(f.prefix, "@earendil-works/pi-coding-agent", "pi", "echo 1.2.3")
+	f.npm("printf 'started\\n' > " + shellQuote(filepath.Join(f.home, "started")) + "; while :; do :; done")
+	m := f.manager()
+	first, err := m.Update(integrations.Codex)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Method != string(MethodScript) {
-		t.Fatalf("method = %q, want script", job.Method)
-	}
-	if job.Command != "bash https://x.ai/cli/install.sh" {
-		t.Fatalf("command = %q, want the readable interpreter URL form", job.Command)
-	}
-	final := waitTerminal(t, m, "grok", time.Second)
-	if final.State != StateSucceeded {
-		t.Fatalf("state = %q, want succeeded (err %q)", final.State, final.Error)
-	}
-	select {
-	case <-fetched:
-	default:
-		t.Fatal("install script was never fetched")
-	}
-	install := runner.calls[0]
-	if got := strings.Join(install.argv, " "); got != "bash /tmp/prism-fetched.sh" {
-		t.Errorf("install argv = %q, want the fetched local copy", got)
-	}
-}
-
-// TestInstallScriptFetchFails: a dead script URL fails the job with a fetch
-// prefix instead of a confusing interpreter exit.
-func TestInstallScriptFetchFails(t *testing.T) {
-	m, _ := newTestManager("bash")
-	m.fetchScript = func(ctx context.Context, url string) (string, error) {
-		return "", errors.New("GET https://x.ai/cli/install.sh: 404 Not Found")
-	}
-	if _, err := m.Install(integrations.Grok, false); err != nil {
-		t.Fatal(err)
-	}
-	final := waitTerminal(t, m, "grok", time.Second)
-	if final.State != StateFailed {
-		t.Fatalf("state = %q, want failed", final.State)
-	}
-	if !strings.HasPrefix(final.Error, "fetch script: ") {
-		t.Errorf("error = %q, want fetch script prefix", final.Error)
-	}
-}
-
-func TestUpdateScriptRerunFetches(t *testing.T) {
-	m, runner := newTestManager("bash")
-	stat := statWith("/Users/x/.opencode/bin/opencode")
-	m.stat = stat.stat
-	m.env = integrations.Env{"PATH": "/Users/x/.opencode/bin"}
-	m.fetchScript = func(ctx context.Context, url string) (string, error) {
-		if url != "https://opencode.ai/install" {
-			t.Errorf("fetched url = %q, want the opencode install script", url)
+	for _, id := range []integrations.ID{integrations.Codex, integrations.Pi} {
+		if _, err := m.Install(id, true); !errors.Is(err, ErrInstallActive) {
+			t.Fatalf("shared-root job admitted for %s: %v", id, err)
 		}
-		return "/tmp/prism-fetched.sh", nil
 	}
-	job, err := m.Update(integrations.Opencode)
-	if err != nil {
-		t.Fatal(err)
+	if job := m.JobOf(integrations.Codex); job.StartedAt != first.StartedAt || job.State == StateUnsupported {
+		t.Fatalf("live job overwritten: %+v", job)
 	}
-	if job.Command != "bash https://opencode.ai/install" {
-		t.Fatalf("command = %q, want script rerun", job.Command)
-	}
-	final := waitTerminal(t, m, "opencode", time.Second)
-	if final.State != StateSucceeded {
-		t.Fatalf("state = %q, want succeeded (err %q)", final.State, final.Error)
-	}
-	if got := strings.Join(runner.calls[0].argv, " "); got != "bash /tmp/prism-fetched.sh" {
-		t.Errorf("update argv = %q, want the fetched local copy", got)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	m.Stop(ctx)
+	requireJob(t, m, integrations.Codex, StateInterrupted)
+	if _, err := m.Install(integrations.Pi, false); err == nil {
+		t.Fatal("stopped manager admitted work")
 	}
 }
 
-// TestVerifySlowFirstRunSucceeds: hermes-class agents bootstrap a runtime on
-// first run (~11s live) and outlive the quick probe, so one longer retry
-// saves an otherwise-successful install (found live 2026-09-09).
-func TestVerifySlowFirstRunSucceeds(t *testing.T) {
-	m, runner := newTestManager("npm")
-	m.verifyTimeout = 5 * time.Millisecond
-	m.verifyRetry = time.Second
-	var probes int32
-	runner.behaviors["pi --version"] = func(ctx context.Context, out io.Writer) error {
-		if atomic.AddInt32(&probes, 1) == 1 {
-			<-ctx.Done()
-			return errors.New("signal: killed")
-		}
-		return nil
-	}
-	if _, err := m.Install(integrations.Pi, false); err != nil {
+func TestMaintenanceJobDeadlineIncludesVerification(t *testing.T) {
+	f := maintenanceSandbox(t)
+	f.global(f.prefix, "opencode-ai", "opencode", "while :; do :; done")
+	f.npm("exit 0")
+	m := f.manager()
+	m.jobTimeout = 650 * time.Millisecond
+	m.verifyTimeout = 2 * time.Second
+	m.verifyRetry = 3 * time.Second
+	if _, err := m.Update(integrations.Opencode); err != nil {
 		t.Fatal(err)
 	}
-	final := waitTerminal(t, m, "pi", 2*time.Second)
-	if final.State != StateSucceeded {
-		t.Fatalf("state = %q, want succeeded (err %q)", final.State, final.Error)
-	}
-	if atomic.LoadInt32(&probes) != 2 {
-		t.Fatalf("probes = %d, want 2 (quick kill + long retry)", probes)
+	job := requireJob(t, m, integrations.Opencode, StateFailed)
+	if !strings.Contains(job.Error, "timed out") {
+		t.Fatalf("whole deadline not applied: %+v", job)
 	}
 }
 
-// TestVerifySlowEveryRunFails: a binary that never answers fails after the
-// retry too, with the verify error carrying the killed probe.
-func TestVerifySlowEveryRunFails(t *testing.T) {
-	m, runner := newTestManager("npm")
-	m.verifyTimeout = 5 * time.Millisecond
-	m.verifyRetry = 20 * time.Millisecond
-	runner.behaviors["pi --version"] = func(ctx context.Context, out io.Writer) error {
-		<-ctx.Done()
-		return errors.New("signal: killed")
-	}
-	if _, err := m.Install(integrations.Pi, false); err != nil {
-		t.Fatal(err)
-	}
-	final := waitTerminal(t, m, "pi", 2*time.Second)
-	if final.State != StateFailed {
-		t.Fatalf("state = %q, want failed", final.State)
-	}
-	if !strings.Contains(final.Error, "verify") || !strings.Contains(final.Error, "killed") {
-		t.Errorf("error = %q, want verify + killed", final.Error)
-	}
-}
-
-// TestClassifyFallsBackToPathEntry: codex's script installer symlinks
-// ~/.local/bin/codex into a private version dir; the resolved target is
-// unrecognized, so classification falls back to the PATH entry itself
-// (found live 2026-09-09).
-func TestClassifyFallsBackToPathEntry(t *testing.T) {
-	link := "/Users/x/.local/bin/codex"
-	target := "/Users/x/.codex/bin/codex-1.2.3"
-	env := pathEnv("/Users/x/.local/bin")
-	m := NewManager(env, &fakeRunner{}, statWith(link).stat, testNow, fetchOK)
-	m.eval = func(p string) (string, error) {
-		if p != link {
-			return "", os.ErrNotExist
-		}
-		return target, nil
-	}
-	st, ok := m.StatusOf(integrations.Codex)
-	if !ok || !st.Installed {
-		t.Fatalf("status = %+v, want installed", st)
-	}
-	if st.Source != SourceScript || !st.CanUpdate {
-		t.Fatalf("source = %q canUpdate = %v, want script/true", st.Source, st.CanUpdate)
+func TestMaintenanceTimeoutOnlyVerificationRetry(t *testing.T) {
+	for _, retry := range []bool{true, false} {
+		t.Run(fmt.Sprint(retry), func(t *testing.T) {
+			f := maintenanceSandbox(t)
+			marker := filepath.Join(f.home, "probed")
+			body := "if [ ! -f " + shellQuote(marker) + " ]; then printf 'first\\n' > " + shellQuote(marker) + "; while :; do :; done; fi\necho 1.2.3"
+			if !retry {
+				body = "printf 'attempt\\n' >> " + shellQuote(marker) + "; echo ready; exit 1"
+			}
+			f.global(f.prefix, "opencode-ai", "opencode", body)
+			f.npm("exit 0")
+			m := f.manager()
+			m.verifyTimeout = 500 * time.Millisecond
+			m.verifyRetry = time.Second
+			if _, err := m.Update(integrations.Opencode); err != nil {
+				t.Fatal(err)
+			}
+			want := StateSucceeded
+			if !retry {
+				want = StateFailed
+			}
+			requireJob(t, m, integrations.Opencode, want)
+			if !retry {
+				data, err := os.ReadFile(marker)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(data) != "attempt\n" {
+					t.Fatal("non-timeout retried")
+				}
+			}
+		})
 	}
 }

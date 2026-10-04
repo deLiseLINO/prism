@@ -8,13 +8,15 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
-// Runner executes one install/update argv with the daemon's environment,
-// merging combined output into dst. The seam keeps manager tests process-free.
+// Runner executes one maintenance command with the daemon's environment
+// and writes its combined output to dst.
 type Runner interface {
 	Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error
 }
@@ -22,7 +24,19 @@ type Runner interface {
 type ExecRunner struct{}
 
 func (ExecRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if len(argv) == 0 || argv[0] == "" {
+		return fmt.Errorf("empty command")
+	}
+	path := LookPath(asEnv(env), argv[0], os.Stat)
+	if path == "" {
+		return fmt.Errorf("executable %q not found in supplied PATH", argv[0])
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, path, argv[1:]...)
+	cmd.WaitDelay = time.Second
 	cmd.Env = envPairs(env)
 	cmd.Stdout = dst
 	cmd.Stderr = dst
@@ -49,8 +63,7 @@ const scriptSizeCap = 4 << 20
 // FetchScript downloads an install script to a temp file and returns its
 // path; the caller owns removal. Interpreters cannot open URLs, so the
 // script install method fetches first and execs the local copy. Only
-// absolute HTTPS URLs are accepted and redirects must stay HTTPS, matching
-// how Agent Orchestrator runs its official installers.
+// absolute HTTPS URLs are accepted and redirects must stay HTTPS.
 func FetchScript(ctx context.Context, raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {

@@ -50,7 +50,7 @@ func isExecutable(path string, stat func(string) (os.FileInfo, error)) bool {
 	if err != nil {
 		return false
 	}
-	if info.IsDir() {
+	if !info.Mode().IsRegular() {
 		return false
 	}
 	return info.Mode()&0111 != 0
@@ -82,7 +82,7 @@ func DetectSource(path string) Source {
 		return SourceBun
 	case strings.Contains(path, "node_modules"):
 		return SourceNpm
-	case strings.Contains(path, "/Cellar/") || strings.Contains(path, "/opt/homebrew/") || strings.Contains(path, "/home/linuxbrew/"):
+	case strings.Contains(path, "/Cellar/") || strings.Contains(path, "/Caskroom/") || strings.Contains(path, "/opt/homebrew/") || strings.Contains(path, "/home/linuxbrew/"):
 		return SourceBrew
 	case strings.Contains(path, "/.opencode/bin/"),
 		strings.Contains(path, "/.local/bin/"),
@@ -104,13 +104,4 @@ func DetectSource(path string) Source {
 func pnpmBinDir(path string) bool {
 	dir := filepath.Clean(filepath.Dir(path))
 	return strings.HasSuffix(dir, "/pnpm") || strings.HasSuffix(dir, "/pnpm/bin")
-}
-
-// resolveSymlinks follows a binary path to its final target with the injected
-// resolver; an unresolvable path is classified as-is rather than guessed.
-func resolveSymlinks(path string, eval func(string) (string, error)) string {
-	if resolved, err := eval(path); err == nil && resolved != "" {
-		return resolved
-	}
-	return path
 }
