@@ -202,6 +202,8 @@ func NewRegistry() *Registry {
 	return &Registry{runners: make(map[account.ProviderID]Runner)}
 }
 
+var ErrUpstreamStall = errors.New("provider: upstream stall")
+
 var ErrDuplicateProvider = errors.New("provider: duplicate registration")
 
 func (r *Registry) Register(id account.ProviderID, runner Runner) error {

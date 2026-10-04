@@ -18,6 +18,7 @@ import (
 	ingresschat "github.com/deLiseLINO/prism/internal/ingress/chat"
 	ingressmessages "github.com/deLiseLINO/prism/internal/ingress/messages"
 	ingressresponses "github.com/deLiseLINO/prism/internal/ingress/responses"
+	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/routing"
 	"github.com/deLiseLINO/prism/internal/stream"
 )
@@ -139,8 +140,8 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 	if err := sink.Begin(); err != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(r.Context())
+	defer cancel(context.Canceled)
 	done := make(chan struct{})
 	defer close(done)
 	go p.watchStall(ctx, cancel, done)
@@ -242,7 +243,7 @@ func (p *pipeline) finish(res routing.TurnResult) {
 	}
 	_ = p.sink.Flush()
 }
-func (p *pipeline) watchStall(ctx context.Context, cancel context.CancelFunc, done <-chan struct{}) {
+func (p *pipeline) watchStall(ctx context.Context, cancel context.CancelCauseFunc, done <-chan struct{}) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -268,7 +269,7 @@ func (p *pipeline) watchStall(ctx context.Context, cancel context.CancelFunc, do
 			_ = p.sink.Flush()
 		}
 		p.mu.Unlock()
-		cancel()
+		cancel(provider.ErrUpstreamStall)
 		return
 	}
 }

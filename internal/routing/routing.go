@@ -179,6 +179,11 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 			trace[attempts-1] = AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "completed", Usage: capture.finished.Usage}
 			return TurnResult{Terminal: Finished{Event: capture.finished}, Attempts: attempts, Trace: trace}
 		}
+		if errors.Is(context.Cause(ctx), provider.ErrUpstreamStall) {
+			logAttempt(requestlog.AttemptUpstreamStall, "routing: upstream stalled")
+			trace[attempts-1] = AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "upstream_stall"}
+			return TurnResult{Terminal: Finished{Event: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteUpstreamStall)}}, Attempts: attempts, Trace: trace}
+		}
 		if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			logAttempt(requestlog.AttemptClientClosed, "routing: client closed the request")
 			return fail(canon.Failure{Reason: canon.FailClientClosed, Message: "routing: client closed the request"})
