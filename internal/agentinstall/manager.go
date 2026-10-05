@@ -1,13 +1,12 @@
 package agentinstall
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,17 +26,11 @@ const (
 	StateUnsupported JobState = "unsupported"
 	StateInterrupted JobState = "interrupted"
 )
-
 const (
-	// outputTailCap bounds the combined output a job keeps in memory and
-	// reports; installers are chatty but only the tail explains outcomes.
 	outputTailCap = 4096
-	// verifyTimeout bounds each post-install `binary --version` probe;
-	// verifyRetry is the one longer chance for slow first-run bootstraps.
 	verifyTimeout = 5 * time.Second
 	verifyRetry   = 60 * time.Second
-	// jobTimeout bounds one whole install/update run.
-	jobTimeout = 15 * time.Minute
+	jobTimeout    = 15 * time.Minute
 )
 
 type Job struct {
@@ -51,7 +44,6 @@ type Job struct {
 	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 	Error     string     `json:"error,omitempty"`
 }
-
 type AgentStatus struct {
 	ID        integrations.ID `json:"id"`
 	Key       string          `json:"key"`
@@ -63,41 +55,39 @@ type AgentStatus struct {
 	Job       Job             `json:"job"`
 }
 
-// ErrInstallActive refuses a new job while one is running for the same binary.
-var ErrInstallActive = errors.New("agentinstall: an install or update job is already active for this binary")
+var ErrInstallActive = errors.New("agentinstall: an install or update job is already active for this binary or global root")
+var ErrNotInstalled = errors.New("agentinstall: agent is not installed")
 
 type clockFunc func() time.Time
 
 type Manager struct {
-	mu     sync.Mutex
-	jobs   map[string]*Job
-	active map[string]string // binary -> key of the running job
-	env    integrations.Env
-	stat   func(string) (os.FileInfo, error)
-	eval   func(string) (string, error)
-	runner Runner
-	now    clockFunc
-	// fetchScript downloads an install script to a temp file; the seam
-	// keeps manager tests network-free.
-	fetchScript func(ctx context.Context, url string) (string, error)
-	// jobTimeout is the per-run budget; overridable only in tests.
-	jobTimeout time.Duration
-	// verifyTimeout and verifyRetry bound the post-install version probe;
-	// overridable only in tests.
+	mu            sync.Mutex
+	jobs          map[string]*Job
+	active        map[string]string
+	roots         map[string]string
+	stopped       bool
+	env           integrations.Env
+	stat          func(string) (os.FileInfo, error)
+	eval          func(string) (string, error)
+	runner        Runner
+	now           clockFunc
+	fetchScript   func(context.Context, string) (string, error)
+	jobTimeout    time.Duration
 	verifyTimeout time.Duration
 	verifyRetry   time.Duration
-	// cancels holds per-guard-binary cancel funcs so Stop can interrupt runs.
-	cancels map[string]func()
-	// wg tracks running job goroutines so Stop can wait for final states.
-	wg sync.WaitGroup
+	cancels       map[string]func()
+	quarantined   map[string]*CleanupError
+	wg            sync.WaitGroup
 }
 
-func NewManager(env integrations.Env, runner Runner, stat func(string) (os.FileInfo, error), now clockFunc, fetchScript func(ctx context.Context, url string) (string, error)) *Manager {
+func NewManager(env integrations.Env, runner Runner, stat func(string) (os.FileInfo, error), now clockFunc, fetchScript func(context.Context, string) (string, error)) *Manager {
 	return &Manager{
 		jobs:          make(map[string]*Job),
 		active:        make(map[string]string),
+		roots:         make(map[string]string),
 		cancels:       make(map[string]func()),
-		env:           env,
+		quarantined:   make(map[string]*CleanupError),
+		env:           copyEnv(env),
 		stat:          stat,
 		eval:          filepath.EvalSymlinks,
 		runner:        runner,
@@ -108,12 +98,6 @@ func NewManager(env integrations.Env, runner Runner, stat func(string) (os.FileI
 		verifyRetry:   verifyRetry,
 	}
 }
-
-func (d Definition) guardBinary() string {
-	return d.Binary
-}
-
-// StatusAll derives every agent's status from PATH in integrations.IDs order.
 func (m *Manager) StatusAll() []AgentStatus {
 	out := make([]AgentStatus, 0, len(integrations.IDs))
 	for _, id := range integrations.IDs {
@@ -123,7 +107,6 @@ func (m *Manager) StatusAll() []AgentStatus {
 	}
 	return out
 }
-
 func (m *Manager) StatusOf(id integrations.ID) (AgentStatus, bool) {
 	def, ok := definitionByID(id)
 	if !ok {
@@ -131,42 +114,18 @@ func (m *Manager) StatusOf(id integrations.ID) (AgentStatus, bool) {
 	}
 	return m.status(def), true
 }
-
 func (m *Manager) status(def Definition) AgentStatus {
-	path := LookPath(asEnv(m.env), def.Binary, m.stat)
-	st := AgentStatus{
-		ID:  def.IDs[0],
-		Key: def.Key,
-		Job: m.jobOf(def.Key),
-	}
-	if path == "" {
-		st.Reason = "binary " + def.Binary + " not found on PATH"
-		return st
-	}
-	st.Installed = true
-	st.Path = path
-	st.Source = m.classify(path)
-	switch st.Source {
-	case SourceUnknown:
-		st.Reason = "installed from an unrecognized location; update is managed outside Prism"
-	default:
-		st.CanUpdate = true
+	obs := m.observe(def)
+	st := AgentStatus{ID: def.IDs[0], Key: def.Key, Job: m.jobOf(def.Key), Installed: obs.entry != "", Path: obs.entry, Source: obs.source, Reason: obs.reason}
+	if obs.entry != "" && obs.reason == "" {
+		err := targetCapability(def, obs.target, m.env, m.stat, "update")
+		st.CanUpdate = err == nil
+		if err != nil {
+			st.Reason = err.Error()
+		}
 	}
 	return st
 }
-
-// classify resolves how a binary was installed. npm/pnpm link prefix/bin
-// into node_modules trees, so the symlink-followed path decides those; but
-// script installers (codex, claude) symlink ~/.local/bin/<name> into private
-// version dirs, so an unrecognized target falls back to the PATH entry
-// itself, which still names the script layout (found live 2026-09-09).
-func (m *Manager) classify(path string) Source {
-	if source := DetectSource(resolveSymlinks(path, m.eval)); source != SourceUnknown {
-		return source
-	}
-	return DetectSource(path)
-}
-
 func (m *Manager) JobOf(id integrations.ID) Job {
 	def, ok := definitionByID(id)
 	if !ok {
@@ -174,7 +133,6 @@ func (m *Manager) JobOf(id integrations.ID) Job {
 	}
 	return m.jobOf(def.Key)
 }
-
 func (m *Manager) jobOf(key string) Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -183,45 +141,81 @@ func (m *Manager) jobOf(key string) Job {
 	}
 	return Job{Key: key, State: StateIdle}
 }
-
-func (m *Manager) begin(def Definition, op string) (*Job, context.Context, func(), error) {
-	guard := def.guardBinary()
+func (m *Manager) admission(def Definition) error {
+	if m.stopped {
+		return errors.New("agentinstall: manager stopped")
+	}
+	for binary, cleanup := range m.quarantined {
+		if gone, err := processGroupGone(cleanup.ProcessGroup); gone && err == nil {
+			delete(m.quarantined, binary)
+			delete(m.active, binary)
+			for root, owner := range m.roots {
+				if owner == binary {
+					delete(m.roots, root)
+				}
+			}
+		}
+	}
+	if _, busy := m.active[def.Binary]; busy {
+		return fmt.Errorf("%w (binary %s)", ErrInstallActive, def.Binary)
+	}
+	return nil
+}
+func (m *Manager) checkActive(def Definition) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, busy := m.active[guard]; busy {
-		return nil, nil, nil, fmt.Errorf("%w (binary %s)", ErrInstallActive, guard)
+	return m.admission(def)
+}
+func (t installTarget) lockRoot() string {
+	if t.source == SourceNpm || t.source == SourceBun || t.source == SourceBrew {
+		return t.root
+	}
+	return ""
+}
+func (m *Manager) begin(def Definition, op string, target installTarget) (*Job, context.Context, func(), error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.admission(def); err != nil {
+		return nil, nil, nil, err
+	}
+	root := target.lockRoot()
+	if owner, busy := m.roots[root]; root != "" && busy {
+		return nil, nil, nil, fmt.Errorf("%w (global root %s is used by %s)", ErrInstallActive, root, owner)
 	}
 	now := m.now()
-	job := &Job{
-		Key:       def.Key,
-		Op:        op,
-		State:     StateRunning,
-		StartedAt: &now,
-		UpdatedAt: &now,
-	}
+	job := &Job{Key: def.Key, Op: op, State: StateRunning, StartedAt: &now, UpdatedAt: &now}
 	ctx, cancel := context.WithCancel(context.Background())
-	m.active[guard] = def.Key
-	m.cancels[guard] = cancel
+	m.active[def.Binary] = def.Key
+	m.cancels[def.Binary] = cancel
 	m.jobs[def.Key] = job
+	if root != "" {
+		m.roots[root] = def.Binary
+	}
+	m.wg.Add(1)
 	return job, ctx, cancel, nil
 }
-
-func (m *Manager) finish(def Definition, cancel func()) {
-	cancel()
-	guard := def.guardBinary()
-	m.mu.Lock()
-	delete(m.active, guard)
-	delete(m.cancels, guard)
-	m.mu.Unlock()
-	m.wg.Done()
-}
-
-// transition mutates a job under the manager lock and returns the post-write
-// copy, so the launching goroutine can hand back a consistent snapshot while
-// the runner goroutine is already live.
 func (m *Manager) transition(job *Job, state JobState, method, command, output, errMsg string) Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.apply(job, state, method, command, output, errMsg)
+}
+func (m *Manager) complete(def Definition, job *Job, target installTarget, state JobState, output string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var reason string
+	if err != nil {
+		reason = err.Error()
+	}
+	m.apply(job, state, "", "", output, reason)
+	delete(m.cancels, def.Binary)
+	if cleanup := unconfirmedCleanup(err); cleanup != nil {
+		m.quarantined[def.Binary] = cleanup
+		return
+	}
+	delete(m.active, def.Binary)
+	delete(m.roots, target.lockRoot())
+}
+func (m *Manager) apply(job *Job, state JobState, method, command, output, errMsg string) Job {
 	now := m.now()
 	job.State = state
 	job.UpdatedAt = &now
@@ -239,38 +233,22 @@ func (m *Manager) transition(job *Job, state JobState, method, command, output, 
 	}
 	return *job
 }
-
-// Install launches an install job for the agent behind id. It returns the
-// initial job snapshot; the run continues on its own goroutine.
-func (m *Manager) Install(id integrations.ID, force bool) (Job, error) {
-	def, ok := definitionByID(id)
-	if !ok {
-		return Job{}, fmt.Errorf("agentinstall: unknown agent id %q", id)
+func (m *Manager) unsupported(def Definition, op, reason string) (Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.admission(def); err != nil {
+		return Job{}, err
 	}
-	plan, _, found := resolveInstallPlan(def.Key, runtime.GOOS, asEnv(m.env), m.stat)
-	if !found {
-		now := m.now()
-		job := &Job{
-			Key:       def.Key,
-			Op:        "install",
-			State:     StateUnsupported,
-			StartedAt: &now,
-			UpdatedAt: &now,
-			Error:     "no install plan is executable in this environment (no known package manager or script tool on PATH)",
-		}
-		m.mu.Lock()
-		m.jobs[def.Key] = job
-		m.mu.Unlock()
-		return *job, nil
-	}
-	if plan.Script != nil {
-		return m.launchScript(def, "install", string(plan.Method), plan.Script)
-	}
-	return m.launch(def, "install", plan, force)
+	now := m.now()
+	job := &Job{Key: def.Key, Op: op, State: StateUnsupported, StartedAt: &now, UpdatedAt: &now, Error: reason}
+	m.jobs[def.Key] = job
+	return *job, nil
 }
-
-// Update launches an update job for the agent behind id.
-func (m *Manager) Update(id integrations.ID) (Job, error) {
+func (m *Manager) Install(id integrations.ID, force bool) (Job, error) {
+	return m.start(id, "install", force)
+}
+func (m *Manager) Update(id integrations.ID) (Job, error) { return m.start(id, "update", false) }
+func (m *Manager) start(id integrations.ID, op string, force bool) (Job, error) {
 	def, ok := definitionByID(id)
 	if !ok {
 		return Job{}, fmt.Errorf("agentinstall: unknown agent id %q", id)
@@ -278,160 +256,117 @@ func (m *Manager) Update(id integrations.ID) (Job, error) {
 	if err := m.checkActive(def); err != nil {
 		return Job{}, err
 	}
-	path := LookPath(asEnv(m.env), def.Binary, m.stat)
-	if path == "" {
+	obs := m.observe(def)
+	if op == "update" && obs.entry == "" {
 		return Job{}, ErrNotInstalled
 	}
-	source := m.classify(path)
-	plan := resolveUpdatePlan(def.Key, source, runtime.GOOS, asEnv(m.env), m.stat)
-	if plan.Unsupported != "" {
-		now := m.now()
-		job := &Job{
-			Key:       def.Key,
-			Op:        "update",
-			State:     StateUnsupported,
-			StartedAt: &now,
-			UpdatedAt: &now,
-			Error:     plan.Unsupported,
+	action, err := m.prepare(context.Background(), def, obs, op, force)
+	if err != nil {
+		return m.unsupported(def, op, err.Error())
+	}
+	job, ctx, cancel, err := m.begin(def, op, action.target)
+	if err != nil {
+		return Job{}, err
+	}
+	command := strings.Join(action.argv, " ")
+	if action.script != nil {
+		command = strings.Join(append([]string{action.script.Interpreter, action.script.URL}, action.script.Args...), " ")
+	}
+	snapshot := m.transition(job, StateInstalling, string(action.method), command, "", "")
+	go m.runJob(def, job, ctx, cancel, action)
+	return snapshot, nil
+}
+func (m *Manager) jobError(ctx, deadline context.Context, err error) (JobState, error) {
+	if unconfirmedCleanup(err) != nil {
+		return StateFailed, err
+	}
+	if ctx.Err() != nil {
+		return StateInterrupted, errors.New("canceled by daemon shutdown")
+	}
+	if errors.Is(deadline.Err(), context.DeadlineExceeded) {
+		return StateFailed, errors.New("job timed out")
+	}
+	if err != nil {
+		return StateFailed, err
+	}
+	return "", nil
+}
+func (m *Manager) runJob(def Definition, job *Job, ctx context.Context, cancel func(), action preparedAction) {
+	defer m.wg.Done()
+	defer cancel()
+	state, output, reason := m.execute(def, job, ctx, action)
+	m.complete(def, job, action.target, state, output, reason)
+}
+func (m *Manager) execute(def Definition, job *Job, ctx context.Context, action preparedAction) (JobState, string, error) {
+	deadline, timeoutCancel := context.WithTimeout(ctx, m.jobTimeout)
+	defer timeoutCancel()
+	argv := action.argv
+	if action.script != nil {
+		path, err := m.fetchScript(deadline, action.script.URL)
+		if state, reason := m.jobError(ctx, deadline, err); state != "" {
+			if err != nil && ctx.Err() == nil && deadline.Err() == nil {
+				reason = fmt.Errorf("fetch script: %w", reason)
+			}
+			return state, "", reason
 		}
-		m.mu.Lock()
-		m.jobs[def.Key] = job
-		m.mu.Unlock()
-		return *job, nil
+		defer os.Remove(path)
+		argv = append([]string{action.script.Interpreter, path}, action.script.Args...)
 	}
-	if plan.Script != nil {
-		return m.launchScript(def, "update", string(MethodScript), plan.Script)
+	out := &boundedOutput{limit: outputTailCap}
+	err := m.runner.Run(deadline, action.env, argv, out, out)
+	if state, reason := m.jobError(ctx, deadline, err); state != "" {
+		return state, out.String(), reason
 	}
-	return m.launchArgv(def, "update", "", plan.Command)
+	m.transition(job, StateVerifying, "", "", out.String(), "")
+	err = m.verify(deadline, def, action.target)
+	if state, reason := m.jobError(ctx, deadline, err); state != "" {
+		if err != nil && ctx.Err() == nil && deadline.Err() == nil {
+			reason = fmt.Errorf("verify: %w", reason)
+		}
+		return state, out.String(), reason
+	}
+	return StateSucceeded, out.String(), nil
 }
 
-func (m *Manager) checkActive(def Definition) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, busy := m.active[def.guardBinary()]; busy {
-		return fmt.Errorf("%w (binary %s)", ErrInstallActive, def.guardBinary())
+var versionToken = regexp.MustCompile(`[0-9]+\.[0-9]+`)
+
+func (m *Manager) verify(ctx context.Context, def Definition, target installTarget) error {
+	obs := m.observe(def)
+	if obs.entry != target.entry {
+		return fmt.Errorf("planned entry %s is not selected on PATH", target.entry)
+	}
+	if obs.reason != "" || obs.target != target {
+		return fmt.Errorf("installation owner changed or cannot be proven at %s", target.entry)
+	}
+	timedOut, err := m.probe(ctx, def, target.entry, m.verifyTimeout)
+	if err != nil && unconfirmedCleanup(err) == nil && ctx.Err() == nil && timedOut {
+		_, err = m.probe(ctx, def, target.entry, m.verifyRetry)
+	}
+	if err != nil {
+		return err
+	}
+	obs = m.observe(def)
+	if obs.entry != target.entry || obs.reason != "" || obs.target != target {
+		return fmt.Errorf("installation owner changed during version probe at %s", target.entry)
 	}
 	return nil
 }
-
-// ErrNotInstalled refuses an update when the binary is absent from PATH.
-var ErrNotInstalled = errors.New("agentinstall: agent is not installed")
-
-func (m *Manager) launch(def Definition, op string, plan Plan, force bool) (Job, error) {
-	return m.launchArgv(def, op, string(plan.Method), plan.argv(force))
-}
-
-func (m *Manager) launchArgv(def Definition, op, method string, argv []string) (Job, error) {
-	job, ctx, cancel, err := m.begin(def, op)
-	if err != nil {
-		return Job{}, err
-	}
-	command := strings.Join(argv, " ")
-	snapshot := m.transition(job, StateInstalling, method, command, "", "")
-	m.wg.Add(1)
-	go m.runJob(def, job, ctx, cancel, argv)
-	return snapshot, nil
-}
-
-// launchScript starts a job that fetches the script to a temp file and runs
-// it with the plan's interpreter. Interpreters cannot open URLs, so the
-// runner sees [interpreter, tempPath] while the job's command keeps the
-// readable "interpreter URL" form.
-func (m *Manager) launchScript(def Definition, op, method string, script *Script) (Job, error) {
-	job, ctx, cancel, err := m.begin(def, op)
-	if err != nil {
-		return Job{}, err
-	}
-	snapshot := m.transition(job, StateInstalling, method, script.Interpreter+" "+script.URL, "", "")
-	m.wg.Add(1)
-	go m.runScriptJob(def, job, ctx, cancel, script)
-	return snapshot, nil
-}
-
-func (m *Manager) runJob(def Definition, job *Job, ctx context.Context, cancel func(), argv []string) {
-	defer m.finish(def, cancel)
-	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, m.jobTimeout)
-	defer timeoutCancel()
-	m.execJob(def, job, ctx, timeoutCtx, argv)
-}
-
-func (m *Manager) runScriptJob(def Definition, job *Job, ctx context.Context, cancel func(), script *Script) {
-	defer m.finish(def, cancel)
-	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, m.jobTimeout)
-	defer timeoutCancel()
-	path, err := m.fetchScript(timeoutCtx, script.URL)
-	switch {
-	case ctx.Err() != nil:
-		m.transition(job, StateInterrupted, "", "", "", "canceled by daemon shutdown")
-		return
-	case errors.Is(timeoutCtx.Err(), context.DeadlineExceeded):
-		m.transition(job, StateFailed, "", "", "", "job timed out after 15 minutes")
-		return
-	case err != nil:
-		m.transition(job, StateFailed, "", "", "", "fetch script: "+err.Error())
-		return
-	}
-	defer os.Remove(path)
-	m.execJob(def, job, ctx, timeoutCtx, []string{script.Interpreter, path})
-}
-
-func (m *Manager) execJob(def Definition, job *Job, ctx, timeoutCtx context.Context, argv []string) {
-	var buf bytes.Buffer
-	err := m.runner.Run(timeoutCtx, m.env, argv, &buf)
-	output := buf.String()
-	switch {
-	case ctx.Err() != nil:
-		m.transition(job, StateInterrupted, "", "", output, "canceled by daemon shutdown")
-		return
-	case errors.Is(timeoutCtx.Err(), context.DeadlineExceeded):
-		m.transition(job, StateFailed, "", "", output, "job timed out after 15 minutes")
-		return
-	case err != nil:
-		m.transition(job, StateFailed, "", "", output, err.Error())
-		return
-	}
-	m.transition(job, StateVerifying, "", "", output, "")
-	if verr := m.verify(ctx, def); verr != nil {
-		if ctx.Err() != nil {
-			m.transition(job, StateInterrupted, "", "", output, "canceled by daemon shutdown")
-			return
-		}
-		m.transition(job, StateFailed, "", "", output, "verify: "+verr.Error())
-		return
-	}
-	m.transition(job, StateSucceeded, "", "", output, "")
-}
-
-// verify probes the installed binary's version. Some agents bootstrap a
-// runtime on first run and outlive the quick probe (hermes: ~11s cold,
-// ~0.1s warm), so a probe that died on its own deadline gets exactly one
-// longer chance before the job fails.
-func (m *Manager) verify(ctx context.Context, def Definition) error {
-	timedOut, err := m.probe(ctx, def, m.verifyTimeout)
-	if err == nil || ctx.Err() != nil || !timedOut {
-		return err
-	}
-	_, err = m.probe(ctx, def, m.verifyRetry)
-	return err
-}
-
-func (m *Manager) probe(ctx context.Context, def Definition, timeout time.Duration) (bool, error) {
+func (m *Manager) probe(ctx context.Context, def Definition, entry string, timeout time.Duration) (bool, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var buf bytes.Buffer
-	argv := []string{def.Binary, def.VerifyArg}
-	if err := m.runner.Run(probeCtx, m.env, argv, &buf); err != nil {
-		timedOut := probeCtx.Err() != nil && ctx.Err() == nil
-		return timedOut, fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
+	out := &boundedOutput{limit: outputTailCap}
+	argv := []string{entry, def.VerifyArg}
+	if err := m.runner.Run(probeCtx, m.env, argv, out, out); err != nil {
+		return errors.Is(probeCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil, fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
+	}
+	if !versionToken.MatchString(strings.TrimSpace(out.String())) {
+		return false, fmt.Errorf("%s returned no version", entry)
 	}
 	return false, nil
 }
-
-// Stop cancels every active job's context and waits for the job goroutines
-// to record their final state, bounded by the passed ctx (the daemon's
-// shutdown window).
 func (m *Manager) Stop(ctx context.Context) {
 	m.mu.Lock()
+	m.stopped = true
 	cancels := make([]func(), 0, len(m.cancels))
 	for _, cancel := range m.cancels {
 		cancels = append(cancels, cancel)
@@ -441,21 +376,16 @@ func (m *Manager) Stop(ctx context.Context) {
 		cancel()
 	}
 	done := make(chan struct{})
-	go func() {
-		m.wg.Wait()
-		close(done)
-	}()
+	go func() { m.wg.Wait(); close(done) }()
 	select {
 	case <-done:
 	case <-ctx.Done():
 	}
 }
-
 func tailCap(s string) string {
 	if len(s) <= outputTailCap {
 		return s
 	}
 	return s[len(s)-outputTailCap:]
 }
-
 func asEnv(env integrations.Env) integrationsEnv { return envAdapter{env: env} }

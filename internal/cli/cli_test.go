@@ -936,9 +936,6 @@ func TestIntegrationsStatusListAndSingle(t *testing.T) {
 func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
 	t.Helper()
 	dir := t.TempDir()
-	// The sandbox mirrors the real layouts: tools in a neutral bin, agent
-	// binaries under <home>/.local/bin so source detection sees a script
-	// install like the real machine's.
 	toolDir := filepath.Join(dir, "tools")
 	localBin := filepath.Join(dir, ".local", "bin")
 	for _, d := range []string{toolDir, localBin} {
@@ -946,21 +943,35 @@ func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
 			t.Fatal(err)
 		}
 	}
-	for _, tool := range []string{"npm", "bash", "sh"} {
+	for _, tool := range []string{"npm", "node", "bash", "sh", "curl"} {
 		if err := os.WriteFile(filepath.Join(toolDir, tool), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, bin := range []string{"codex", "claude", "grok", "omp", "pi", "opencode", "hermes"} {
-		if err := os.WriteFile(filepath.Join(localBin, bin), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		if bin == "grok" {
+			target := filepath.Join(dir, ".grok", "bin", bin)
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("#!/bin/sh\necho 1.2.3\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(localBin, bin)); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(localBin, bin), []byte("#!/bin/sh\necho 1.2.3\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	env := integrations.Environ([]string{
 		"PATH=" + toolDir + string(os.PathListSeparator) + localBin,
+		"HOME=" + dir,
 	})
-	runner := funcRunner(func(ctx context.Context, e integrations.Env, argv []string, dst io.Writer) error {
-		fmt.Fprintf(dst, "ran %s\n", strings.Join(argv, " "))
+	runner := funcRunner(func(ctx context.Context, e integrations.Env, argv []string, stdout, stderr io.Writer) error {
+		fmt.Fprintf(stdout, "client 1.2.3 ran %s\n", strings.Join(argv, " "))
 		return nil
 	})
 	fetch := func(ctx context.Context, url string) (string, error) {
@@ -969,10 +980,10 @@ func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
 	return agentinstall.NewManager(env, runner, os.Stat, time.Now, fetch)
 }
 
-type funcRunner func(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error
+type funcRunner func(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error
 
-func (f funcRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error {
-	return f(ctx, env, argv, dst)
+func (f funcRunner) Run(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error {
+	return f(ctx, env, argv, stdout, stderr)
 }
 
 func TestAgentsStatusListAndSingle(t *testing.T) {

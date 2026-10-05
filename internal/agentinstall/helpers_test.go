@@ -1,11 +1,8 @@
 package agentinstall
 
 import (
-	"context"
-	"io"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -52,38 +49,6 @@ func pathEnv(dirs ...string) integrations.Env {
 }
 
 func testNow() time.Time { return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC) }
-
-// fakeRunner is the process-free Runner seam: every call is recorded and
-// answered by a behavior keyed on the full argv string; unscripted argvs
-// succeed silently.
-type fakeRunner struct {
-	mu        sync.Mutex
-	calls     []fakeRunnerCall
-	behaviors map[string]func(ctx context.Context, out io.Writer) error
-}
-
-type fakeRunnerCall struct {
-	ctx  context.Context
-	argv []string
-}
-
-func (f *fakeRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error {
-	key := strings.Join(argv, " ")
-	f.mu.Lock()
-	f.calls = append(f.calls, fakeRunnerCall{ctx: ctx, argv: append([]string{}, argv...)})
-	fn := f.behaviors[key]
-	f.mu.Unlock()
-	if fn != nil {
-		return fn(ctx, dst)
-	}
-	return nil
-}
-
-func (f *fakeRunner) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
 
 // waitTerminal polls the manager until the job for key reaches a terminal
 // state or the timeout expires.

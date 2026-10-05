@@ -50,6 +50,24 @@ describe('agents api over the management seam', () => {
     expect(reply.ok).toBe(true)
   })
 
+  it.each(['install', 'update'] as const)('surfaces an unsupported %s job as a refusal with the daemon reason', async (op) => {
+    const reason = 'required tool is not available on PATH'
+    const proxy = fakeProxy({ ok: true, status: 200, body: { job: { agent: 'codex', op, state: 'unsupported', error: reason } } })
+    const result = await new AgentsApi(proxy)[op]({ id: 'codex' })
+    expect(result).toEqual({ ok: false, id: 'codex', reason })
+  })
+
+  it.each([
+    { op: 'install', error: undefined },
+    { op: 'install', error: '' },
+    { op: 'update', error: undefined },
+    { op: 'update', error: '' },
+  ] as const)('provides a reason for an unsupported $op job with error $error', async ({ op, error }) => {
+    const proxy = fakeProxy({ ok: true, status: 200, body: { job: { agent: 'codex', op, state: 'unsupported', error } } })
+    const result = await new AgentsApi(proxy)[op]({ id: 'codex' })
+    expect(result).toEqual({ ok: false, id: 'codex', reason: 'operation unsupported; check installation requirements' })
+  })
+
   it('surfaces the install_active conflict as a failed reply with the daemon reason', async () => {
     const proxy = fakeProxy({ ok: true, status: 409, body: { error: { code: 'install_active', message: 'already active' } } })
     const result = await new AgentsApi(proxy).install({ id: 'omp' })

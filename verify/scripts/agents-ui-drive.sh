@@ -15,20 +15,23 @@ source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
 verify_init agents-ui-drive "$PORT" "$CDP_PORT"
 mkdir -p "$RUNDIR/sandbox/tools" "$RUNDIR/.local/bin"
 
+NPM_PREFIX="$RUNDIR/.local"
+SANDBOX_PATH="$RUNDIR/sandbox/tools:$NPM_PREFIX/bin:/usr/bin:/bin"
 for tool in bash sh; do
-  printf '#!/bin/sh\nexit 0\n' > "$RUNDIR/sandbox/tools/$tool"
+  printf '#!/bin/sh\ncase "$1" in -ilc) printf "%%s" "%s";; *) exit 1;; esac\n' "$SANDBOX_PATH" > "$RUNDIR/sandbox/tools/$tool"
   chmod 755 "$RUNDIR/sandbox/tools/$tool"
 done
-NPM_PREFIX="$RUNDIR/.local"
 mkdir -p "$NPM_PREFIX/bin"
 cat > "$RUNDIR/sandbox/tools/npm" <<NPM
 #!/bin/sh
-if [ "\$1 \$2" = 'install -g' ]; then
-  printf '#!/bin/sh\nif [ "\$1" = "--version" ]; then echo 0.0.0-prism-verify; exit 0; fi\nexit 0\n' > "$NPM_PREFIX/bin/codex"
-  chmod 755 "$NPM_PREFIX/bin/codex"
-  exit 0
-fi
-exit 1
+if [ "\$1 \$2" = 'prefix -g' ]; then printf 'npm warn mock config warning\\n' >&2; printf '%s\\n' '$NPM_PREFIX'; exit 0; fi
+if [ "\$1 \$2 \$3 \$4 \$5" != 'install -g --prefix $NPM_PREFIX @openai/codex@latest' ]; then exit 1; fi
+PKG='$NPM_PREFIX/lib/node_modules/@openai/codex'
+/bin/mkdir -p "\$PKG/bin"
+printf '#!/bin/sh\\necho 0.0.0-prism-verify\\n' > "\$PKG/bin/codex.js"
+printf '%s\\n' '{"name":"@openai/codex","version":"0.0.0","bin":{"codex":"bin/codex.js"}}' > "\$PKG/package.json"
+/bin/chmod 755 "\$PKG/bin/codex.js"
+/bin/ln -sf "\$PKG/bin/codex.js" '$NPM_PREFIX/bin/codex'
 NPM
 chmod 755 "$RUNDIR/sandbox/tools/npm"
 
@@ -55,7 +58,7 @@ echo "==> building prism and desktop"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 
 echo "==> launching isolated Electron with sandbox PATH"
-SANDBOX_PATH="$RUNDIR/sandbox/tools:$RUNDIR/.local/bin:/usr/bin:/bin"
+SANDBOX_PATH="$RUNDIR/sandbox/tools:$NPM_PREFIX/bin:/usr/bin:/bin"
 VERIFY_PATH="$SANDBOX_PATH"
 VERIFY_SHELL="$RUNDIR/sandbox/login-shell"
 printf '#!/bin/sh\nprintf "%%s" '\''%s'\''\n' "$SANDBOX_PATH" > "$VERIFY_SHELL"
@@ -124,7 +127,7 @@ cdp_eval "await (async () => {
     if (alert) throw new Error('install alert: ' + alert.textContent)
     const state = current?.querySelector('.int-install__state')?.textContent.trim()
     const actions = current?.querySelector('.int-install__actions')?.textContent.trim()
-    if (state === 'installed' || (state === 'script' && actions?.includes('Reinstall'))) {
+    if (state === 'installed' || (state === 'npm' && actions?.includes('Reinstall'))) {
       return {id: 'codex', state, text: current?.innerText}
     }
     if (state === 'failed' || state === 'unsupported' || state === 'interrupted') {
@@ -137,11 +140,43 @@ cdp_eval "await (async () => {
 echo "==> assert install flowed through the real chain"
 curl -sf "http://127.0.0.1:$PORT/api/v1/agents/codex/job" > "$EVID_WORK/daemon-job.json" || fail "daemon job endpoint failed"
 grep -q '"state":"succeeded"' "$EVID_WORK/daemon-job.json" || fail "daemon job is not succeeded after UI install"
-grep -q 'npm install -g @openai/codex' "$EVID_WORK/daemon-job.json" || fail "daemon job did not run the npm plan"
+grep -q 'npm install -g --prefix .* @openai/codex@latest' "$EVID_WORK/daemon-job.json" || fail "daemon job did not run the npm plan"
 curl -sf "http://127.0.0.1:$PORT/api/v1/agents/codex" > "$EVID_WORK/daemon-status-codex.json" || fail "daemon agent status failed"
 grep -q '"installed":true' "$EVID_WORK/daemon-status-codex.json" || fail "daemon does not report codex as installed after UI install"
 [ -x "$RUNDIR/.local/bin/codex" ] || fail "install did not create codex under the isolated HOME"
 [ "$("$RUNDIR/.local/bin/codex" --version)" = "0.0.0-prism-verify" ] || fail "installed fixture version differs"
+
+echo "==> clicking Update and Reinstall on the installed codex card"
+for ACTION in Update Reinstall; do
+  cdp_eval "await (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'codex')
+    const button = [...(card?.querySelectorAll('.int-install button') ?? [])].find((node) => node.textContent.trim() === '$ACTION')
+    if (!button || button.disabled) throw new Error('$ACTION button is missing or disabled')
+    button.click()
+    for (let i = 0; i < 160; i++) {
+      await sleep(150)
+      const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'codex')
+      const alert = current?.querySelector('[role=alert]')
+      if (alert) throw new Error('$ACTION alert: ' + alert.textContent)
+      const state = current?.querySelector('.int-install__state')?.textContent.trim()
+      const action = [...(current?.querySelectorAll('.int-install button') ?? [])].find((node) => node.textContent.trim() === '$ACTION')
+      if (state === 'npm' && action && !action.disabled) return {action: '$ACTION', state, text: current.innerText}
+    }
+    throw new Error('$ACTION did not settle')
+  })()" > "$EVID_WORK/ui-$ACTION-codex.json" || fail "UI $ACTION failed for codex"
+  curl -sf "http://127.0.0.1:$PORT/api/v1/agents/codex/job" > "$EVID_WORK/daemon-$ACTION-job.json" || fail "$ACTION job request failed"
+  EXPECTED_OP=install
+  [ "$ACTION" = Update ] && EXPECTED_OP=update
+  python3 - "$EVID_WORK/daemon-$ACTION-job.json" "$EXPECTED_OP" "$NPM_PREFIX" <<'PY'
+import json, sys
+job = json.load(open(sys.argv[1]))['job']
+assert job['state'] == 'succeeded', job
+assert job['op'] == sys.argv[2], job
+assert job['command'].endswith(' install -g --prefix ' + sys.argv[3] + ' @openai/codex@latest'), job
+PY
+  curl -sf "http://127.0.0.1:$PORT/api/v1/agents/codex" > "$EVID_WORK/daemon-$ACTION-status.json" || fail "$ACTION status request failed"
+done
 
 node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/integrations-after.png"
 
@@ -150,4 +185,4 @@ verify_quit_app
 verify_attest_daemon
 verify_stop_daemon
 
-echo "PASS: agents install/update UI drive"
+echo "PASS: agents install/update/reinstall UI drive"
