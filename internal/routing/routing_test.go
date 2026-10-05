@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/execution"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/quota"
 	"github.com/deLiseLINO/prism/internal/requestlog"
 )
 
@@ -1035,9 +1037,24 @@ func TestTurnWaitExpiryStopsOnlyThatAttempt(t *testing.T) {
 
 func TestTurnParentCancelStaysClientClosed(t *testing.T) {
 	target := provider.Target{Provider: "codex", Model: "gpt-5.2", Wire: provider.WireCodex, Wait: provider.WaitPolicy{FirstProgress: time.Hour}}
-	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}}}
+	pool := account.New()
+	limit := int64(200)
+	original := account.Account{
+		ID: "cancelled-account", Provider: "codex", State: account.CoolingDown, Version: 1, CredGen: 1, Priority: 3,
+		CooldownUntil:  time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC),
+		SoftAvoidUntil: time.Date(2030, 1, 3, 0, 0, 0, 0, time.UTC),
+		Quota: quota.Snapshot{
+			Used: 17, Limit: &limit, Source: quota.SourceHeader,
+			WindowEnd: time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC),
+		},
+	}
+	pool.Register(original)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	runners := fakeRunners{"codex": ctxRunner(func(ctx context.Context, _ provider.RunRequest) error {
+		if got := pool.Snapshot().Accounts[0].InFlight; got != 1 {
+			t.Fatalf("active in-flight = %d, want 1", got)
+		}
 		cancel()
 		<-ctx.Done()
 		return ctx.Err()
@@ -1046,6 +1063,13 @@ func TestTurnParentCancelStaysClientClosed(t *testing.T) {
 	f, ok := res.Terminal.(Failed)
 	if !ok || f.Event.Failure.Reason != canon.FailClientClosed {
 		t.Fatalf("terminal = %+v, want client closed failure", res.Terminal)
+	}
+	got := pool.Snapshot().Accounts[0]
+	if got.InFlight != 0 {
+		t.Fatalf("cancelled request in-flight = %d, want 0", got.InFlight)
+	}
+	if !reflect.DeepEqual(got, original) {
+		t.Fatalf("cancelled request changed account: got %+v, want %+v", got, original)
 	}
 }
 

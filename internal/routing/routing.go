@@ -187,6 +187,7 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 			return TurnResult{Terminal: Finished{Event: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteUpstreamStall)}}, Attempts: attempts, Trace: trace}
 		}
 		if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 			logAttempt(requestlog.AttemptClientClosed, "routing: client closed the request")
 			return fail(canon.Failure{Reason: canon.FailClientClosed, Message: "routing: client closed the request"})
 		}
