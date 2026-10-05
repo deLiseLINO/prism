@@ -38,14 +38,14 @@ trap cleanup EXIT INT TERM
 NPM_PREFIX="$RUNDIR/sandbox/home/.local"
 SANDBOX_PATH="$RUNDIR/sandbox/tools:$NPM_PREFIX/bin"
 for tool in bash sh; do
-  printf '#!/bin/sh\ncase "$1" in -ilc) printf "%%s" "$PATH";; *) exit 1;; esac\n' > "$RUNDIR/sandbox/tools/$tool"
+  printf '#!/bin/sh\ncase "$1" in -ilc) printf "%%s" "%s";; *) exit 1;; esac\n' "$SANDBOX_PATH" > "$RUNDIR/sandbox/tools/$tool"
   chmod 755 "$RUNDIR/sandbox/tools/$tool"
 done
 printf '#!/bin/sh\nexit 0\n' > "$RUNDIR/sandbox/tools/node"
 chmod 755 "$RUNDIR/sandbox/tools/node"
 cat > "$RUNDIR/sandbox/tools/npm" <<NPM
 #!/bin/sh
-if [ "\$1 \$2" = 'prefix -g' ]; then printf '%s\\n' '$NPM_PREFIX'; exit 0; fi
+if [ "\$1 \$2" = 'prefix -g' ]; then printf 'npm warn mock config warning\\n' >&2; printf '%s\\n' '$NPM_PREFIX'; exit 0; fi
 if [ "\$1 \$2 \$3 \$4 \$5" != 'install -g --prefix $NPM_PREFIX @openai/codex@latest' ]; then exit 1; fi
 PKG='$NPM_PREFIX/lib/node_modules/@openai/codex'
 /bin/mkdir -p "\$PKG/bin"

@@ -116,7 +116,7 @@ func (m *Manager) status(def Definition) AgentStatus {
 	obs := m.observe(def)
 	st := AgentStatus{ID: def.IDs[0], Key: def.Key, Job: m.jobOf(def.Key), Installed: obs.entry != "", Path: obs.entry, Source: obs.source, Reason: obs.reason}
 	if obs.entry != "" && obs.reason == "" {
-		_, err := m.prepare(context.Background(), def, obs, "update", false)
+		err := targetCapability(def, obs.target, m.env, m.stat, "update")
 		st.CanUpdate = err == nil
 		if err != nil {
 			st.Reason = err.Error()
@@ -289,7 +289,7 @@ func (m *Manager) execute(def Definition, job *Job, ctx context.Context, action 
 		argv = append([]string{action.script.Interpreter, path}, action.script.Args...)
 	}
 	out := &boundedOutput{limit: outputTailCap}
-	err := m.runner.Run(deadline, action.env, argv, out)
+	err := m.runner.Run(deadline, action.env, argv, out, out)
 	if state, reason := m.jobError(ctx, deadline, err); state != "" {
 		return state, out.String(), reason
 	}
@@ -332,7 +332,7 @@ func (m *Manager) probe(ctx context.Context, def Definition, entry string, timeo
 	defer cancel()
 	out := &boundedOutput{limit: outputTailCap}
 	argv := []string{entry, def.VerifyArg}
-	if err := m.runner.Run(probeCtx, m.env, argv, out); err != nil {
+	if err := m.runner.Run(probeCtx, m.env, argv, out, out); err != nil {
 		return errors.Is(probeCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil, fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
 	}
 	if !versionToken.MatchString(strings.TrimSpace(out.String())) {

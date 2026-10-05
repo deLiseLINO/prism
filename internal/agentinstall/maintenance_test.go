@@ -311,7 +311,7 @@ func TestMaintenanceRunnerUsesPassedPath(t *testing.T) {
 	f.executable(filepath.Join(f.tools, "npm"), "echo selected")
 	t.Setenv("PATH", wrong)
 	var out bytes.Buffer
-	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{"npm"}, &out); err != nil {
+	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{"npm"}, &out, &out); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "selected" {
@@ -325,7 +325,7 @@ func TestMaintenanceRunnerRejectsEmptyCommand(t *testing.T) {
 			t.Fatalf("empty argv panicked: %v", r)
 		}
 	}()
-	if err := (ExecRunner{}).Run(context.Background(), integrations.Env{}, nil, &bytes.Buffer{}); err == nil {
+	if err := (ExecRunner{}).Run(context.Background(), integrations.Env{}, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("empty argv succeeded")
 	}
 }

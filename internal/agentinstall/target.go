@@ -216,7 +216,8 @@ func valueOr(env integrations.Env, key, fallback string) string {
 	return fallback
 }
 func bunDirectories(env integrations.Env) (string, string) {
-	base := valueOr(env, "BUN_INSTALL", filepath.Join(env["HOME"], ".bun"))
+	base := filepath.Join(valueOr(env, "XDG_CACHE_HOME", env["HOME"]), ".bun")
+	base = valueOr(env, "BUN_INSTALL", base)
 	root := valueOr(env, "BUN_INSTALL_GLOBAL_DIR", filepath.Join(base, "install", "global"))
 	bin := valueOr(env, "BUN_INSTALL_BIN", filepath.Join(base, "bin"))
 	if !filepath.IsAbs(root) || !filepath.IsAbs(bin) {
@@ -300,8 +301,12 @@ func missingTools(plan Plan, env integrationsEnv, stat func(string) (os.FileInfo
 func (m *Manager) readCommand(ctx context.Context, env integrations.Env, argv ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out := &boundedOutput{limit: 4096}
-	if err := m.runner.Run(ctx, env, argv, out); err != nil {
+	out := &boundedOutput{limit: outputTailCap}
+	diagnostics := &boundedOutput{limit: outputTailCap}
+	if err := m.runner.Run(ctx, env, argv, out, diagnostics); err != nil {
+		if detail := strings.TrimSpace(diagnostics.String()); detail != "" {
+			return "", fmt.Errorf("%w: %s", err, detail)
+		}
 		return "", err
 	}
 	if out.overflow {
@@ -309,18 +314,49 @@ func (m *Manager) readCommand(ctx context.Context, env integrations.Env, argv ..
 	}
 	return strings.TrimSpace(out.String()), nil
 }
-func (m *Manager) brewTool(ctx context.Context, prefix string) (string, error) {
-	candidates := []string{filepath.Join(prefix, "bin", "brew"), LookPath(asEnv(m.env), "brew", m.stat)}
-	for _, tool := range candidates {
-		if tool == "" || !isExecutable(tool, m.stat) {
+func brewCandidates(prefix string, env integrations.Env, stat func(string) (os.FileInfo, error)) []string {
+	var candidates []string
+	for _, tool := range []string{filepath.Join(prefix, "bin", "brew"), LookPath(asEnv(env), "brew", stat)} {
+		if tool == "" || !isExecutable(tool, stat) {
 			continue
 		}
-		got, err := m.readCommand(ctx, m.env, absolute(tool), "--prefix")
+		tool = absolute(tool)
+		duplicate := false
+		for _, candidate := range candidates {
+			if candidate == tool {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			candidates = append(candidates, tool)
+		}
+	}
+	return candidates
+}
+func (m *Manager) brewTool(ctx context.Context, prefix string) (string, error) {
+	for _, tool := range brewCandidates(prefix, m.env, m.stat) {
+		got, err := m.readCommand(ctx, m.env, tool, "--prefix")
 		if err == nil && filepath.IsAbs(got) && absolute(got) == prefix {
-			return absolute(tool), nil
+			return tool, nil
 		}
 	}
 	return "", fmt.Errorf("Homebrew executable must prove selected prefix %s", prefix)
+}
+func destinationVisible(entry string, env integrations.Env) bool {
+	if env["PATH"] == "" {
+		return false
+	}
+	parent := filepath.Dir(absolute(entry))
+	for _, dir := range filepath.SplitList(env["PATH"]) {
+		if dir == "" {
+			dir = "."
+		}
+		if filepath.Dir(absolute(filepath.Join(dir, filepath.Base(entry)))) == parent {
+			return true
+		}
+	}
+	return false
 }
 func (m *Manager) prepare(ctx context.Context, def Definition, obs installation, op string, force bool) (preparedAction, error) {
 	if obs.entry != "" {
@@ -380,6 +416,10 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 		if _, err := m.stat(target.entry); err == nil {
 			return preparedAction{}, fmt.Errorf("planned destination %s already exists outside selected PATH", target.entry)
 		}
+		if !destinationVisible(target.entry, m.env) {
+			reasons = append(reasons, fmt.Sprintf("planned destination %s is not visible on PATH", target.entry))
+			continue
+		}
 		action, err := m.prepareTarget(ctx, def, target, "install", force)
 		if err == nil {
 			return action, nil
@@ -388,8 +428,52 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 	}
 	return preparedAction{}, fmt.Errorf("no install plan is executable: %s", strings.Join(reasons, "; "))
 }
+func targetCapability(def Definition, target installTarget, env integrations.Env, stat func(string) (os.FileInfo, error), op string) error {
+	switch target.source {
+	case SourceNpm, SourceBun:
+		plan := Plan{Method: MethodNpm, Tool: "npm"}
+		if target.source == SourceBun {
+			plan = Plan{Method: MethodBun, Tool: "bun"}
+		}
+		if reason := missingTools(plan, asEnv(env), stat); reason != "" {
+			return fmt.Errorf("%s", reason)
+		}
+	case SourceBrew:
+		if !isExecutable(filepath.Join(target.root, "bin", "brew"), stat) {
+			return fmt.Errorf("Homebrew executable is required at selected prefix %s", target.root)
+		}
+	case SourceScript:
+		if op == "update" {
+			if len(def.SelfUpdate) == 0 {
+				return fmt.Errorf("%s native maintenance is manual; installer generation cannot be proven", def.Key)
+			}
+			return nil
+		}
+		if def.Key == "opencode" && isExecutable(target.entry, stat) {
+			return fmt.Errorf("opencode native maintenance is manual; installer generation cannot be proven")
+		}
+		if def.Key == "hermes" && isExecutable(target.entry, stat) {
+			return fmt.Errorf("hermes reinstall requires manual maintenance; launcher source directory cannot be proven")
+		}
+		for _, p := range def.Plans[runtime.GOOS] {
+			if p.Script != nil {
+				if reason := missingTools(p, asEnv(env), stat); reason != "" {
+					return fmt.Errorf("%s", reason)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("no validated reinstall script for %s", def.Key)
+	default:
+		return fmt.Errorf("selected installation requires manual maintenance")
+	}
+	return nil
+}
 func (m *Manager) prepareTarget(ctx context.Context, def Definition, target installTarget, op string, force bool) (preparedAction, error) {
 	action := preparedAction{target: target, env: m.env}
+	if err := targetCapability(def, target, m.env, m.stat, op); err != nil {
+		return action, err
+	}
 	switch target.source {
 	case SourceNpm, SourceBun:
 		method := MethodNpm
@@ -397,10 +481,6 @@ func (m *Manager) prepareTarget(ctx context.Context, def Definition, target inst
 		if target.source == SourceBun {
 			method = MethodBun
 			tool = "bun"
-		}
-		plan := Plan{Method: method, Tool: tool}
-		if reason := missingTools(plan, asEnv(m.env), m.stat); reason != "" {
-			return action, fmt.Errorf("%s", reason)
 		}
 		action.method = method
 		action.argv = []string{absolute(LookPath(asEnv(m.env), tool, m.stat)), "install", "-g"}
@@ -448,30 +528,15 @@ func (m *Manager) prepareTarget(ctx context.Context, def Definition, target inst
 	case SourceScript:
 		action.method = MethodScript
 		if op == "update" {
-			if len(def.SelfUpdate) == 0 {
-				return action, fmt.Errorf("%s native maintenance is manual; installer generation cannot be proven", def.Key)
-			}
 			action.argv = append([]string{target.entry}, def.SelfUpdate[1:]...)
 		} else {
-			if def.Key == "opencode" && isExecutable(target.entry, m.stat) {
-				return action, fmt.Errorf("opencode native maintenance is manual; installer generation cannot be proven")
-			}
-			if def.Key == "hermes" && isExecutable(target.entry, m.stat) {
-				return action, fmt.Errorf("hermes reinstall requires manual maintenance; launcher source directory cannot be proven")
-			}
 			for _, p := range def.Plans[runtime.GOOS] {
 				if p.Script != nil {
-					if reason := missingTools(p, asEnv(m.env), m.stat); reason != "" {
-						return action, fmt.Errorf("%s", reason)
-					}
 					script := *p.Script
 					script.Interpreter = absolute(LookPath(asEnv(m.env), script.Interpreter, m.stat))
 					action.script = &script
 					break
 				}
-			}
-			if action.script == nil {
-				return action, fmt.Errorf("no validated reinstall script for %s", def.Key)
 			}
 		}
 	default:

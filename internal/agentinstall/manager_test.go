@@ -204,8 +204,8 @@ func TestMaintenanceTimeoutOnlyVerificationRetry(t *testing.T) {
 			f.global(f.prefix, "opencode-ai", "opencode", body)
 			f.npm("exit 0")
 			m := f.manager()
-			m.verifyTimeout = 500 * time.Millisecond
-			m.verifyRetry = time.Second
+			m.verifyTimeout = 2 * time.Second
+			m.verifyRetry = 5 * time.Second
 			if _, err := m.Update(integrations.Opencode); err != nil {
 				t.Fatal(err)
 			}

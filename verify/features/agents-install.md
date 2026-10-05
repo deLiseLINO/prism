@@ -1,6 +1,6 @@
 # Client install and update
 
-prism installs and updates seven integration clients. The clients are codex, claude, grok, omp, pi, opencode, and hermes. The management routes and `prismctl agents` commands start asynchronous jobs. Installation status comes from the daemon's PATH, not persisted install state.
+prism installs and updates seven integration clients. The clients are codex, claude, grok, omp, pi, opencode, and hermes. The management routes and `prismctl agents` commands start asynchronous jobs. Installation status comes from the daemon's PATH, not persisted install state. Status reads files and local prerequisites without running subprocesses.
 
 ## Management contract
 
@@ -19,9 +19,9 @@ prism installs and updates seven integration clients. The clients are codex, cla
 
 npm ownership requires a global `<prefix>/lib/node_modules/<package>` layout, a matching package manifest and bin entry, and a selected `<prefix>/bin/<client>` link. A project-local package, nested package tree, unrelated package, or opaque wrapper refuses maintenance. Update and reinstall pass `--prefix` with the observed prefix and preserve the observed package alias. The client opencode retains an existing `opencode-ai` installation. Fresh npm installs use `@opencode/cli`.
 
-Homebrew ownership requires a recognized versioned `Cellar` or `Caskroom` path and a selected entry under the same prefix. The executable used for mutation must return that prefix from `brew --prefix`. Maintenance uses the observed formula or cask token.
+Homebrew ownership requires a recognized versioned `Cellar` or `Caskroom` path and a selected entry under the same prefix. Local capability requires an executable under the selected prefix. `canUpdate` permits attempting maintenance, not proof of a live executable response. Before mutation, the selected executable must return that prefix on stdout from `brew --prefix`. Maintenance uses the observed formula or cask token.
 
-Bun ownership requires a selected bin linked to a matching global package manifest. Each mutation pins `BUN_INSTALL_GLOBAL_DIR` and `BUN_INSTALL_BIN` in its own environment. Defaults come from `BUN_INSTALL` or `HOME/.bun`. An unproven root refuses maintenance. Fresh installation of the client omp uses its official scoped package.
+Bun ownership requires a selected bin linked to a matching global package manifest. Each mutation pins `BUN_INSTALL_GLOBAL_DIR` and `BUN_INSTALL_BIN` in its own environment. The base directory is `BUN_INSTALL` when set, then `XDG_CACHE_HOME/.bun`, then `HOME/.bun`. `BUN_INSTALL_GLOBAL_DIR` and `BUN_INSTALL_BIN` independently override the global root and bin defaults. An unproven root refuses maintenance. Fresh installation of the client omp uses its official scoped package.
 
 pnpm installations remain visible but require manual maintenance because this implementation does not prove their global destination.
 
@@ -29,13 +29,13 @@ Recognized native entries use the selected absolute client's updater. Arbitrary 
 
 ## Execution and verification
 
-Executable lookup uses the Manager's environment. Mutation commands run through absolute executables, and shebang runtimes inherit that same environment. A fresh npm install reads the selected npm's `prefix -g` and binds verification to that destination.
+Executable lookup uses the Manager's environment. Mutation commands run through absolute executables, and shebang runtimes inherit that same environment. A fresh npm install reads the selected npm's `prefix -g` stdout and binds verification to that destination. Prefix probes collect bounded stdout separately from stderr warnings. Before fetching a script or running a mutation, each fresh destination must have a canonical parent directory on the unchanged Manager PATH. A PATH-listed parent can be absent until installation. Invisible destinations refuse without writing a client, or fall through to another declared plan. Existing off-PATH entries remain protected.
 
 After mutation, verification resolves the client under the unchanged Manager environment. The selected entry and its stable owner, root, and package must match the job's target. Versioned native and Homebrew files can change without changing the stable owner. An unrelated copy cannot satisfy verification.
 
 The absolute selected client must exit successfully and print a version token containing digits separated by a period. Empty output and output without a version fail. An unchanged version can succeed. No manifest-to-CLI version equality is required.
 
-Each version probe has a 5-second timeout. Only a probe that reaches its own deadline receives one 60-second retry. The full 15-minute job deadline also covers verification. Combined job output is bounded during collection and retains its last 4096 bytes. Script downloads require absolute HTTPS, permit only HTTPS redirects, cap at 4 MiB, and are removed after execution.
+Each version probe has a 5-second timeout. Only a probe that reaches its own deadline receives one 60-second retry. The full 15-minute job deadline also covers verification. Combined mutation and version output is bounded during collection and retains its last 4096 bytes. On Unix, each command owns a private process group. Cancellation kills the group, and cleanup kills remaining descendants before the command returns, even after the leader exits. Pipe-drain timeout errors remain failures. Children that deliberately leave the group are outside this cleanup policy. Script downloads require absolute HTTPS, permit only HTTPS redirects, cap at 4 MiB, and are removed after execution.
 
 ## UI and CLI
 

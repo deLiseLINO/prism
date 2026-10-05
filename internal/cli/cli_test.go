@@ -970,8 +970,8 @@ func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
 		"PATH=" + toolDir + string(os.PathListSeparator) + localBin,
 		"HOME=" + dir,
 	})
-	runner := funcRunner(func(ctx context.Context, e integrations.Env, argv []string, dst io.Writer) error {
-		fmt.Fprintf(dst, "client 1.2.3 ran %s\n", strings.Join(argv, " "))
+	runner := funcRunner(func(ctx context.Context, e integrations.Env, argv []string, stdout, stderr io.Writer) error {
+		fmt.Fprintf(stdout, "client 1.2.3 ran %s\n", strings.Join(argv, " "))
 		return nil
 	})
 	fetch := func(ctx context.Context, url string) (string, error) {
@@ -980,10 +980,10 @@ func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
 	return agentinstall.NewManager(env, runner, os.Stat, time.Now, fetch)
 }
 
-type funcRunner func(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error
+type funcRunner func(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error
 
-func (f funcRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error {
-	return f(ctx, env, argv, dst)
+func (f funcRunner) Run(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error {
+	return f(ctx, env, argv, stdout, stderr)
 }
 
 func TestAgentsStatusListAndSingle(t *testing.T) {

@@ -213,7 +213,7 @@ func TestMaintenanceRunnerPreservesShebangEnvironment(t *testing.T) {
 	}
 	f.env["EXPECTED"] = "supplied-environment"
 	var out strings.Builder
-	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{client}, &out); err != nil {
+	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{client}, &out, &out); err != nil {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(out.String()) != "supplied-environment" {
