@@ -1,6 +1,7 @@
 package antigravity
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -23,13 +24,14 @@ func textMessage(role canon.Role, text string) canon.Message {
 
 func TestEnvelopeKeyOrderAndValues(t *testing.T) {
 	req := baseRequest()
+	req.Model = "standalone-model"
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
 	body, err := BuildEnvelope(req, "proj-1", "agent-abc", "-123")
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
 	got := string(body)
-	const want = `{"model":"gemini-3.7-flash","userAgent":"antigravity","requestType":"agent","project":"proj-1","requestId":"agent-abc",` +
+	const want = `{"model":"standalone-model","userAgent":"antigravity","requestType":"agent","project":"proj-1","requestId":"agent-abc",` +
 		`"request":{"contents":[{"role":"user","parts":[{"text":"Hi"}]}],` +
 		`"systemInstruction":{"parts":[{"text":"You are helpful."}]},"generationConfig":{"maxOutputTokens":512,"temperature":0.7},"sessionId":"-123"}}`
 	if got != want {
@@ -269,12 +271,62 @@ func envelopeJSON(t *testing.T, req canon.Request) string {
 	return string(body)
 }
 
+func TestEnvelopeColdTemplateRouting(t *testing.T) {
+	cases := []struct {
+		name    string
+		model   canon.ModelID
+		effort  canon.ReasoningEffort
+		wire    string
+		think   string
+		present []string
+	}{
+		{"unset", "gemini-3.8-flash", 0, "gemini-3.8-flash-low", `{"includeThoughts":true,"thinkingLevel":"LOW"}`, nil},
+		{"high", "gemini-3.8-flash", canon.EffortHigh, "gemini-3.8-flash-high", `{"includeThoughts":true,"thinkingLevel":"HIGH"}`, nil},
+		{"raw template member", "gemini-3.8-flash-high", 0, "gemini-3.8-flash-high", "", nil},
+		{"raw concrete bare", "gemini-2.5-flash", canon.EffortHigh, "gemini-2.5-flash", `{"includeThoughts":true,"thinkingBudget":16384}`, nil},
+		{"known empty", "gemini-3.8-flash", 0, "gemini-3.8-flash", "", []string{}},
+		{"known unrelated", "gemini-3.8-flash", 0, "gemini-3.8-flash", "", []string{"standalone-model"}},
+		{"known low only", "gemini-3.8-flash", canon.EffortHigh, "gemini-3.8-flash-low", `{"includeThoughts":true,"thinkingLevel":"HIGH"}`, []string{"gemini-3.8-flash-low"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seedPresence(t, tc.present...)
+			if tc.present == nil {
+				discoverySnapshot.Lock()
+				discoverySnapshot.present = nil
+				discoverySnapshot.Unlock()
+			}
+			req := baseRequest()
+			req.Model = tc.model
+			req.Reasoning = canon.ReasoningConfig{Effort: tc.effort}
+			req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
+			var got struct {
+				Model   string `json:"model"`
+				Request struct {
+					GenerationConfig struct {
+						ThinkingConfig json.RawMessage `json:"thinkingConfig"`
+					} `json:"generationConfig"`
+				} `json:"request"`
+			}
+			if err := json.Unmarshal([]byte(envelopeJSON(t, req)), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Model != tc.wire {
+				t.Errorf("wire model = %q, want %q", got.Model, tc.wire)
+			}
+			if think := string(got.Request.GenerationConfig.ThinkingConfig); think != tc.think {
+				t.Errorf("thinkingConfig = %s, want %s", think, tc.think)
+			}
+		})
+	}
+}
+
 func TestEnvelopeGoogleLevelFamilyPerEffort(t *testing.T) {
 	seedPresence(t, "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered")
 	cases := []struct {
-		effort  canon.ReasoningEffort
-		model   string
-		think   string
+		effort canon.ReasoningEffort
+		model  string
+		think  string
 	}{
 		{canon.EffortMinimal, "gemini-3.7-flash-low", `{"includeThoughts":true,"thinkingLevel":"LOW"}`},
 		{canon.EffortLow, "gemini-3.7-flash-low", `{"includeThoughts":true,"thinkingLevel":"LOW"}`},
