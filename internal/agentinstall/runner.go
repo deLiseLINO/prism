@@ -2,6 +2,7 @@ package agentinstall
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,8 +17,25 @@ import (
 )
 
 // Runner executes one maintenance command with the daemon's environment.
+// Unconfirmed process cleanup must return a CleanupError to retain ownership.
 type Runner interface {
 	Run(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error
+}
+
+type CleanupError struct {
+	ProcessGroup int
+	Err          error
+}
+
+func (e *CleanupError) Error() string {
+	return fmt.Sprintf("maintenance cleanup unconfirmed for process group %d: %v; mutations remain blocked until the group stops", e.ProcessGroup, e.Err)
+}
+func (e *CleanupError) Unwrap() error { return e.Err }
+
+func unconfirmedCleanup(err error) *CleanupError {
+	var cleanup *CleanupError
+	errors.As(err, &cleanup)
+	return cleanup
 }
 
 type ExecRunner struct{}
@@ -39,7 +57,7 @@ func (ExecRunner) Run(ctx context.Context, env integrations.Env, argv []string, 
 	cmd.Env = envPairs(env)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	return runCommand(cmd)
+	return runCommand(ctx, cmd)
 }
 
 func envPairs(env integrations.Env) []string {

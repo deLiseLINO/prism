@@ -2,6 +2,9 @@
 
 package agentinstall
 
-import "os/exec"
+import (
+	"context"
+	"os/exec"
+)
 
-func runCommand(cmd *exec.Cmd) error { return cmd.Run() }
+func runCommand(ctx context.Context, cmd *exec.Cmd) error { return cmd.Run() }

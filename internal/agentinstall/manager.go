@@ -76,6 +76,7 @@ type Manager struct {
 	verifyTimeout time.Duration
 	verifyRetry   time.Duration
 	cancels       map[string]func()
+	quarantined   map[string]*CleanupError
 	wg            sync.WaitGroup
 }
 
@@ -85,6 +86,7 @@ func NewManager(env integrations.Env, runner Runner, stat func(string) (os.FileI
 		active:        make(map[string]string),
 		roots:         make(map[string]string),
 		cancels:       make(map[string]func()),
+		quarantined:   make(map[string]*CleanupError),
 		env:           copyEnv(env),
 		stat:          stat,
 		eval:          filepath.EvalSymlinks,
@@ -143,6 +145,17 @@ func (m *Manager) admission(def Definition) error {
 	if m.stopped {
 		return errors.New("agentinstall: manager stopped")
 	}
+	for binary, cleanup := range m.quarantined {
+		if gone, err := processGroupGone(cleanup.ProcessGroup); gone && err == nil {
+			delete(m.quarantined, binary)
+			delete(m.active, binary)
+			for root, owner := range m.roots {
+				if owner == binary {
+					delete(m.roots, root)
+				}
+			}
+		}
+	}
 	if _, busy := m.active[def.Binary]; busy {
 		return fmt.Errorf("%w (binary %s)", ErrInstallActive, def.Binary)
 	}
@@ -186,12 +199,20 @@ func (m *Manager) transition(job *Job, state JobState, method, command, output, 
 	defer m.mu.Unlock()
 	return m.apply(job, state, method, command, output, errMsg)
 }
-func (m *Manager) complete(def Definition, job *Job, target installTarget, state JobState, output, errMsg string) {
+func (m *Manager) complete(def Definition, job *Job, target installTarget, state JobState, output string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.apply(job, state, "", "", output, errMsg)
-	delete(m.active, def.Binary)
+	var reason string
+	if err != nil {
+		reason = err.Error()
+	}
+	m.apply(job, state, "", "", output, reason)
 	delete(m.cancels, def.Binary)
+	if cleanup := unconfirmedCleanup(err); cleanup != nil {
+		m.quarantined[def.Binary] = cleanup
+		return
+	}
+	delete(m.active, def.Binary)
 	delete(m.roots, target.lockRoot())
 }
 func (m *Manager) apply(job *Job, state JobState, method, command, output, errMsg string) Job {
@@ -255,17 +276,20 @@ func (m *Manager) start(id integrations.ID, op string, force bool) (Job, error) 
 	go m.runJob(def, job, ctx, cancel, action)
 	return snapshot, nil
 }
-func (m *Manager) jobError(ctx, deadline context.Context, err error) (JobState, string) {
+func (m *Manager) jobError(ctx, deadline context.Context, err error) (JobState, error) {
+	if unconfirmedCleanup(err) != nil {
+		return StateFailed, err
+	}
 	if ctx.Err() != nil {
-		return StateInterrupted, "canceled by daemon shutdown"
+		return StateInterrupted, errors.New("canceled by daemon shutdown")
 	}
 	if errors.Is(deadline.Err(), context.DeadlineExceeded) {
-		return StateFailed, "job timed out"
+		return StateFailed, errors.New("job timed out")
 	}
 	if err != nil {
-		return StateFailed, err.Error()
+		return StateFailed, err
 	}
-	return "", ""
+	return "", nil
 }
 func (m *Manager) runJob(def Definition, job *Job, ctx context.Context, cancel func(), action preparedAction) {
 	defer m.wg.Done()
@@ -273,7 +297,7 @@ func (m *Manager) runJob(def Definition, job *Job, ctx context.Context, cancel f
 	state, output, reason := m.execute(def, job, ctx, action)
 	m.complete(def, job, action.target, state, output, reason)
 }
-func (m *Manager) execute(def Definition, job *Job, ctx context.Context, action preparedAction) (JobState, string, string) {
+func (m *Manager) execute(def Definition, job *Job, ctx context.Context, action preparedAction) (JobState, string, error) {
 	deadline, timeoutCancel := context.WithTimeout(ctx, m.jobTimeout)
 	defer timeoutCancel()
 	argv := action.argv
@@ -281,7 +305,7 @@ func (m *Manager) execute(def Definition, job *Job, ctx context.Context, action 
 		path, err := m.fetchScript(deadline, action.script.URL)
 		if state, reason := m.jobError(ctx, deadline, err); state != "" {
 			if err != nil && ctx.Err() == nil && deadline.Err() == nil {
-				reason = "fetch script: " + reason
+				reason = fmt.Errorf("fetch script: %w", reason)
 			}
 			return state, "", reason
 		}
@@ -297,11 +321,11 @@ func (m *Manager) execute(def Definition, job *Job, ctx context.Context, action 
 	err = m.verify(deadline, def, action.target)
 	if state, reason := m.jobError(ctx, deadline, err); state != "" {
 		if err != nil && ctx.Err() == nil && deadline.Err() == nil {
-			reason = "verify: " + reason
+			reason = fmt.Errorf("verify: %w", reason)
 		}
 		return state, out.String(), reason
 	}
-	return StateSucceeded, out.String(), ""
+	return StateSucceeded, out.String(), nil
 }
 
 var versionToken = regexp.MustCompile(`[0-9]+\.[0-9]+`)
@@ -315,7 +339,7 @@ func (m *Manager) verify(ctx context.Context, def Definition, target installTarg
 		return fmt.Errorf("installation owner changed or cannot be proven at %s", target.entry)
 	}
 	timedOut, err := m.probe(ctx, def, target.entry, m.verifyTimeout)
-	if err != nil && ctx.Err() == nil && timedOut {
+	if err != nil && unconfirmedCleanup(err) == nil && ctx.Err() == nil && timedOut {
 		_, err = m.probe(ctx, def, target.entry, m.verifyRetry)
 	}
 	if err != nil {

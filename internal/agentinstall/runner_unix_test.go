@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -22,6 +23,9 @@ func TestMaintenanceProcessFixture(t *testing.T) {
 		return
 	}
 	if mode == "child" {
+		if path := os.Getenv("PROCESS_CHILD_FILE"); path != "" {
+			_ = os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0600)
+		}
 		conn, err := net.Dial("unix", os.Getenv("PROCESS_SOCKET"))
 		if err != nil {
 			os.Exit(10)
@@ -37,6 +41,9 @@ func TestMaintenanceProcessFixture(t *testing.T) {
 			_, _ = conn.Write([]byte("w"))
 		}
 		os.Exit(0)
+	}
+	if path := os.Getenv("PROCESS_GROUP_FILE"); path != "" {
+		_ = os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0600)
 	}
 	r, w, err := os.Pipe()
 	if err != nil {
