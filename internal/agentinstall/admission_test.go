@@ -2,6 +2,7 @@ package agentinstall
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,42 @@ func TestMaintenancePrefixUsesOnlyBoundedStdout(t *testing.T) {
 				t.Fatalf("mutation transcript lost diagnostics: %+v, mutations %q", job, f.mutations())
 			}
 		})
+	}
+}
+
+func TestMaintenanceDirectoryAliasSharesActiveRoot(t *testing.T) {
+	f := maintenanceSandbox(t)
+	f.global(f.prefix, "@opencode/cli", "opencode", "echo 2.3.4")
+	physicalPrefix := f.prefix
+	alias := filepath.Join(f.home, "alias")
+	f.link(alias, physicalPrefix)
+	f.prefix = alias
+	f.env["PATH"] = f.tools + ":" + filepath.Join(alias, "bin")
+	release := filepath.Join(f.home, "release")
+	f.npm("while [ ! -f " + shellQuote(release) + " ]; do /bin/sleep 0.01; done")
+	m := f.manager()
+	t.Cleanup(func() { _ = os.WriteFile(release, nil, 0644) })
+	first, err := m.Install(integrations.Codex, false)
+	if err != nil || first.State != StateInstalling {
+		t.Fatalf("fresh alias install not admitted: %+v, error %v", first, err)
+	}
+	st, _ := m.StatusOf(integrations.Opencode)
+	if !st.CanUpdate || st.Path != filepath.Join(physicalPrefix, "bin", "opencode") {
+		t.Fatalf("selected physical owner not proven: %+v", st)
+	}
+	if job, err := m.Update(integrations.Opencode); !errors.Is(err, ErrInstallActive) {
+		t.Fatalf("same physical root admitted a second mutation: %+v, error %v", job, err)
+	}
+	if err := os.WriteFile(release, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	requireJob(t, m, integrations.Codex, StateFailed)
+	if _, err := m.Update(integrations.Opencode); err != nil {
+		t.Fatal(err)
+	}
+	requireJob(t, m, integrations.Opencode, StateSucceeded)
+	if got := f.mutations(); got != "install -g --prefix "+physicalPrefix+" @openai/codex@latest\ninstall -g --prefix "+physicalPrefix+" @opencode/cli@latest" {
+		t.Fatalf("unexpected root mutation transcript %q", got)
 	}
 }
 

@@ -248,12 +248,31 @@ func TestMaintenanceVerificationRejectsChangedOwnerOrInvalidVersion(t *testing.T
 }
 
 func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
-	for _, kind := range []string{"visible", "visible-alias", "not-visible", "other-copy"} {
+	for _, kind := range []string{"visible", "visible-alias", "prefix-alias", "prefix-alias-missing-suffix", "nested-prefix-alias", "not-visible", "other-copy"} {
 		t.Run(kind, func(t *testing.T) {
 			f := maintenanceSandbox(t)
-			target := f.packageEntry(filepath.Join(f.prefix, "lib", "node_modules"), "@opencode/cli", "opencode", "echo 2.3.4")
+			if kind == "nested-prefix-alias" {
+				f.prefix = filepath.Join(f.home, "node_modules", "global")
+			}
+			base := f.prefix
+			if kind == "prefix-alias-missing-suffix" {
+				if err := os.MkdirAll(base, 0755); err != nil {
+					t.Fatal(err)
+				}
+				f.prefix = filepath.Join(base, "missing", "global")
+			}
+			physicalPrefix := f.prefix
+			packageRoot := filepath.Join(f.prefix, "lib", "node_modules")
+			if kind == "prefix-alias-missing-suffix" {
+				packageRoot = filepath.Join(f.home, "staging")
+			}
+			target := f.packageEntry(packageRoot, "@opencode/cli", "opencode", "echo 2.3.4")
 			entry := filepath.Join(f.prefix, "bin", "opencode")
 			body := "/bin/mkdir -p " + shellQuote(filepath.Dir(entry)) + "; /bin/ln -s " + shellQuote(target) + " " + shellQuote(entry)
+			if kind == "prefix-alias-missing-suffix" {
+				root := filepath.Join(physicalPrefix, "lib", "node_modules")
+				body = "/bin/mkdir -p " + shellQuote(root) + " " + shellQuote(filepath.Dir(entry)) + "; /bin/cp -R " + shellQuote(packageRoot+"/.") + " " + shellQuote(root) + "; /bin/ln -s " + shellQuote(filepath.Join(root, "@opencode", "cli", "bin", "opencode")) + " " + shellQuote(entry)
+			}
 			if kind == "not-visible" {
 				f.env["PATH"] = f.tools
 			}
@@ -261,6 +280,15 @@ func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
 				alias := filepath.Join(f.home, "alias")
 				f.link(alias, f.prefix)
 				f.env["PATH"] = f.tools + ":" + filepath.Join(alias, "bin")
+			}
+			if kind == "prefix-alias" || kind == "prefix-alias-missing-suffix" || kind == "nested-prefix-alias" {
+				alias := filepath.Join(f.home, "prefix-alias")
+				f.link(alias, base)
+				f.prefix = alias
+				if kind == "prefix-alias-missing-suffix" {
+					f.prefix = filepath.Join(alias, "missing", "global")
+				}
+				f.env["PATH"] = f.tools + ":" + filepath.Join(f.prefix, "bin")
 			}
 			if kind == "other-copy" {
 				other := filepath.Join(f.home, "other")
@@ -273,6 +301,13 @@ func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
 			m := f.manager()
 			if _, err := m.Install(integrations.Opencode, false); err != nil {
 				t.Fatal(err)
+			}
+			if kind == "nested-prefix-alias" {
+				job := requireJob(t, m, integrations.Opencode, StateUnsupported)
+				if !strings.Contains(job.Error, "npm global prefix could not be proven") || f.mutations() != "" {
+					t.Fatalf("nested prefix alias admitted: %+v, mutations %q", job, f.mutations())
+				}
+				return
 			}
 			if kind == "not-visible" {
 				for attempt := 0; attempt < 2; attempt++ {
@@ -292,11 +327,11 @@ func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
 				return
 			}
 			want := StateFailed
-			if kind == "visible" || kind == "visible-alias" {
+			if kind == "visible" || kind == "visible-alias" || kind == "prefix-alias" || kind == "prefix-alias-missing-suffix" {
 				want = StateSucceeded
 			}
 			requireJob(t, m, integrations.Opencode, want)
-			expected := "install -g --prefix " + f.prefix + " @opencode/cli@latest"
+			expected := "install -g --prefix " + physicalPrefix + " @opencode/cli@latest"
 			if got := f.mutations(); got != expected {
 				t.Fatalf("fresh mutation %q, want %q", got, expected)
 			}

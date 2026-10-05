@@ -12,7 +12,7 @@ import (
 )
 
 func TestMaintenanceBunPinsDocumentedGlobalDirectories(t *testing.T) {
-	for _, kind := range []string{"default", "xdg", "install-over-xdg", "explicit", "global-only", "bin-only", "unproven"} {
+	for _, kind := range []string{"default", "xdg", "install-over-xdg", "explicit", "global-only", "bin-only", "directory-alias", "unproven"} {
 		t.Run(kind, func(t *testing.T) {
 			f := maintenanceSandbox(t)
 			root := filepath.Join(f.home, ".bun", "install", "global")
@@ -34,6 +34,20 @@ func TestMaintenanceBunPinsDocumentedGlobalDirectories(t *testing.T) {
 				bin = filepath.Join(f.home, "custom-bin")
 				f.env["BUN_INSTALL_BIN"] = bin
 			}
+			if kind == "directory-alias" {
+				root = filepath.Join(f.home, "physical-global")
+				bin = filepath.Join(f.home, "physical-bin")
+				if err := os.MkdirAll(root, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(bin, 0755); err != nil {
+					t.Fatal(err)
+				}
+				f.env["BUN_INSTALL_GLOBAL_DIR"] = filepath.Join(f.home, "global-alias")
+				f.env["BUN_INSTALL_BIN"] = filepath.Join(f.home, "bin-alias")
+				f.link(f.env["BUN_INSTALL_GLOBAL_DIR"], root)
+				f.link(f.env["BUN_INSTALL_BIN"], bin)
+			}
 			original := copyEnv(f.env)
 			packageRoot := filepath.Join(root, "node_modules")
 			if kind == "unproven" {
@@ -41,7 +55,11 @@ func TestMaintenanceBunPinsDocumentedGlobalDirectories(t *testing.T) {
 			}
 			target := f.packageEntry(packageRoot, "@oh-my-pi/pi-coding-agent", "omp", "echo 18.6.1")
 			f.link(filepath.Join(bin, "omp"), target)
-			f.env["PATH"] = bin + ":" + f.env["PATH"]
+			visibleBin := bin
+			if kind == "directory-alias" {
+				visibleBin = f.env["BUN_INSTALL_BIN"]
+			}
+			f.env["PATH"] = visibleBin + ":" + f.env["PATH"]
 			f.executable(filepath.Join(f.tools, "bun"), "printf '%s\\n' \"$*\" \"$BUN_INSTALL_GLOBAL_DIR\" \"$BUN_INSTALL_BIN\" >> \"$MUTATIONS\"")
 			m := f.manager()
 			st, _ := m.StatusOf(integrations.Omp)
@@ -87,7 +105,7 @@ func TestMaintenanceBunPinsDocumentedGlobalDirectories(t *testing.T) {
 }
 
 func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
-	for _, kind := range []string{"formula", "foreign-prefix", "unknown-token", "unversioned", "cask", "version-replacement", "reinstall"} {
+	for _, kind := range []string{"formula", "prefix-alias", "fresh-prefix-alias", "foreign-prefix", "unknown-token", "unversioned", "cask", "version-replacement", "reinstall"} {
 		t.Run(kind, func(t *testing.T) {
 			if kind == "cask" && runtime.GOOS != "darwin" {
 				t.Skip("cask registry is macOS-only")
@@ -112,13 +130,23 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 			}
 			f.executable(target, "echo 1.2.3")
 			entry := filepath.Join(bin, key)
-			f.link(entry, target)
+			if kind != "fresh-prefix-alias" {
+				f.link(entry, target)
+			}
 			f.env["PATH"] = bin + ":" + f.env["PATH"]
 			response := prefix
+			if kind == "prefix-alias" || kind == "fresh-prefix-alias" {
+				response = filepath.Join(f.home, "brew-alias")
+				f.link(response, prefix)
+				f.env["PATH"] = filepath.Join(response, "bin") + ":" + f.env["PATH"]
+			}
 			if kind == "foreign-prefix" {
 				response = filepath.Join(f.home, "foreign")
 			}
 			body := "if [ \"$1\" = '--prefix' ]; then printf '%s\\n' " + shellQuote(response) + "; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"$MUTATIONS\""
+			if kind == "fresh-prefix-alias" {
+				body += "\n/bin/ln -s " + shellQuote(target) + " " + shellQuote(entry)
+			}
 			if kind == "version-replacement" {
 				next := filepath.Join(prefix, layout, token, "1.2.4", "bin", key)
 				f.executable(next, "echo 1.2.4")
@@ -162,11 +190,11 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 				}
 				return
 			}
-			if !st.CanUpdate {
+			if kind != "fresh-prefix-alias" && !st.CanUpdate {
 				t.Fatalf("brew owner refused: %+v", st)
 			}
 			var err error
-			if kind == "reinstall" {
+			if kind == "reinstall" || kind == "fresh-prefix-alias" {
 				_, err = m.Install(integrations.ID(key), true)
 			} else {
 				_, err = m.Update(integrations.ID(key))
@@ -181,6 +209,12 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 			}
 			if kind == "reinstall" {
 				want = "reinstall omp"
+			} else if kind == "fresh-prefix-alias" {
+				got := f.mutations()
+				if !strings.HasPrefix(got, "install ") || filepath.Base(strings.TrimPrefix(got, "install ")) != token {
+					t.Fatalf("wrong fresh Homebrew owner: %q", got)
+				}
+				return
 			}
 			if got := f.mutations(); got != want {
 				t.Fatalf("wrong Homebrew owner: %q, want %q", got, want)

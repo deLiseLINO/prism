@@ -46,14 +46,25 @@ func absolute(path string) string {
 		return ""
 	}
 	value = filepath.Clean(value)
-	parent := filepath.Dir(value)
+	return filepath.Join(absoluteDirectory(filepath.Dir(value)), filepath.Base(value))
+}
+func absoluteDirectory(path string) string {
+	if path == "" {
+		return ""
+	}
+	value, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	value = filepath.Clean(value)
+	parent := value
 	var suffix []string
 	for {
 		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
 			for i := len(suffix) - 1; i >= 0; i-- {
 				resolved = filepath.Join(resolved, suffix[i])
 			}
-			return filepath.Join(resolved, filepath.Base(value))
+			return resolved
 		}
 		next := filepath.Dir(parent)
 		if next == parent {
@@ -223,7 +234,7 @@ func bunDirectories(env integrations.Env) (string, string) {
 	if !filepath.IsAbs(root) || !filepath.IsAbs(bin) {
 		return "", ""
 	}
-	return absolute(root), absolute(bin)
+	return absoluteDirectory(root), absoluteDirectory(bin)
 }
 func nativeEntry(def Definition, env integrations.Env) string {
 	home := env["HOME"]
@@ -337,7 +348,7 @@ func brewCandidates(prefix string, env integrations.Env, stat func(string) (os.F
 func (m *Manager) brewTool(ctx context.Context, prefix string) (string, error) {
 	for _, tool := range brewCandidates(prefix, m.env, m.stat) {
 		got, err := m.readCommand(ctx, m.env, tool, "--prefix")
-		if err == nil && filepath.IsAbs(got) && absolute(got) == prefix {
+		if err == nil && filepath.IsAbs(got) && absoluteDirectory(got) == prefix {
 			return tool, nil
 		}
 	}
@@ -383,7 +394,11 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 				continue
 			}
 			target.source = SourceNpm
-			target.root = absolute(prefix)
+			target.root = absoluteDirectory(prefix)
+			if hasNodeModules(target.root) {
+				reasons = append(reasons, "npm global prefix could not be proven")
+				continue
+			}
 			target.entry = filepath.Join(target.root, "bin", def.Binary)
 		case MethodBun:
 			root, bin := bunDirectories(m.env)
@@ -398,7 +413,8 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 				reasons = append(reasons, "Homebrew prefix could not be proven")
 				continue
 			}
-			target = installTarget{source: SourceBrew, entry: filepath.Join(absolute(prefix), "bin", def.Binary), root: absolute(prefix), name: filepath.Base(plan.Package), cask: plan.Method == MethodBrewCask}
+			prefix = absoluteDirectory(prefix)
+			target = installTarget{source: SourceBrew, entry: filepath.Join(prefix, "bin", def.Binary), root: prefix, name: filepath.Base(plan.Package), cask: plan.Method == MethodBrewCask}
 		case MethodScript:
 			if !filepath.IsAbs(m.env["HOME"]) {
 				reasons = append(reasons, "absolute HOME is required for script installation")
