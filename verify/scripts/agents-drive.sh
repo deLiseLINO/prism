@@ -7,6 +7,7 @@ fail() {
 }
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
+source "$REPO_ROOT/verify/scripts/agents-sandbox.sh"
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_AGENTS_PORT:-18796}"
 if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
@@ -38,7 +39,7 @@ trap cleanup EXIT INT TERM
 NPM_PREFIX="$RUNDIR/sandbox/home/.local"
 SANDBOX_PATH="$RUNDIR/sandbox/tools:$NPM_PREFIX/bin"
 for tool in bash sh; do
-  printf '#!/bin/sh\ncase "$1" in -ilc) printf "%%s" "$PATH";; *) exit 1;; esac\n' > "$RUNDIR/sandbox/tools/$tool"
+  printf '#!/bin/sh\ncase "$1" in -ilc) printf "%%s" %q;; *) exit 1;; esac\n' "$SANDBOX_PATH" > "$RUNDIR/sandbox/tools/$tool"
   chmod 755 "$RUNDIR/sandbox/tools/$tool"
 done
 printf '#!/bin/sh\nexit 0\n' > "$RUNDIR/sandbox/tools/node"
@@ -60,7 +61,15 @@ for bin in claude omp pi opencode hermes; do
   chmod 755 "$NPM_PREFIX/bin/$bin"
 done
 mkdir -p "$RUNDIR/sandbox/home/.grok/bin"
-printf '#!/bin/sh\necho 0.0.0-prism-verify\n' > "$RUNDIR/sandbox/home/.grok/bin/grok"
+cat > "$RUNDIR/sandbox/home/.grok/bin/grok" <<'CLIENT'
+#!/bin/sh
+if [ "$1" = version ]; then
+  if [ -f "$HOME/.grok/updated" ]; then echo 1.0.1; else echo 1.0.0; fi
+elif [ "$1 $2" = 'update --check' ]; then echo 'available 1.0.0 -> 1.0.1'
+elif [ "$1" = update ]; then printf updated > "$HOME/.grok/updated"
+else exit 2
+fi
+CLIENT
 chmod 755 "$RUNDIR/sandbox/home/.grok/bin/grok"
 ln -s "$RUNDIR/sandbox/home/.grok/bin/grok" "$NPM_PREFIX/bin/grok"
 
@@ -85,7 +94,9 @@ CONFIG
 echo "==> building prism"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 
-HOME="$RUNDIR/sandbox/home" USER=prism-sandbox LOGNAME=prism-sandbox \
+agents_sandbox
+/usr/bin/sandbox-exec -f "$SANDBOX_PROFILE" /usr/bin/env -i "${CLIENT_ENV[@]}" \
+HOME="$RUNDIR/sandbox/home" USER=prism-sandbox LOGNAME=prism-sandbox TMPDIR="$RUNDIR" \
 SHELL="$RUNDIR/sandbox/tools/bash" PATH="$SANDBOX_PATH" "$RUNDIR/prism" daemon --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 40); do
@@ -133,9 +144,17 @@ wait_job_state codex succeeded
 record agents-status-codex 200 "$BASE/api/v1/agents/codex"
 grep -q '"installed":true' "$EVID_WORK/agents-status-codex.body" || fail "codex should report installed"
 
+echo "==> manual npm update and owner-preserving reinstall"
+record agents-update-codex 200 -X POST "$BASE/api/v1/agents/codex/update"
+grep -q '"state":"unsupported"' "$EVID_WORK/agents-update-codex.body" || fail "npm update should be manual"
+record agents-reinstall-codex 202 -X POST "$BASE/api/v1/agents/codex/install"
+wait_job_state codex succeeded
+
 echo "==> update job"
 record agents-update-grok 202 -X POST "$BASE/api/v1/agents/grok/update"
 wait_job_state grok succeeded
+grep -q '"expectedVersion":"1.0.1"' "$EVID_WORK/job-grok.json" || fail "expected release missing"
+grep -q '"version":"1.0.1"' "$EVID_WORK/job-grok.json" || fail "measured updated release missing"
 
 echo "==> CLI status and job"
 PRISM_URL="$BASE" "$RUNDIR/prism" agents status codex --json > "$EVID_WORK/cli-status-codex.json" || fail "CLI status failed"

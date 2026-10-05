@@ -7,23 +7,20 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
-// Runner executes one maintenance command with the daemon's environment
-// and writes its combined output to dst.
+// Runner returns after the command stops. On macOS and Linux, it also waits for owned descendants.
 type Runner interface {
-	Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error
+	Run(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error
 }
 
 type ExecRunner struct{}
 
-func (ExecRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error {
+func (ExecRunner) Run(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error {
 	if len(argv) == 0 || argv[0] == "" {
 		return fmt.Errorf("empty command")
 	}
@@ -35,12 +32,7 @@ func (ExecRunner) Run(ctx context.Context, env integrations.Env, argv []string, 
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, path, argv[1:]...)
-	cmd.WaitDelay = time.Second
-	cmd.Env = envPairs(env)
-	cmd.Stdout = dst
-	cmd.Stderr = dst
-	return cmd.Run()
+	return runOwned(ctx, path, envPairs(env), argv[1:], stdout, stderr)
 }
 
 func envPairs(env integrations.Env) []string {

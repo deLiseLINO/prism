@@ -77,8 +77,12 @@ func TestMaintenanceExistingDestinationOutsidePathIsNotFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != StateUnsupported || !strings.Contains(job.Error, "already exists") || f.mutations() != "" {
-		t.Fatalf("unselected existing copy overwritten: %+v", job)
+	if job.State == StateUnsupported {
+		t.Fatalf("known selected destination refused: %+v", job)
+	}
+	requireJob(t, m, integrations.Opencode, StateSucceeded)
+	if !strings.Contains(f.mutations(), "install -g --prefix "+f.prefix+" opencode-ai@latest") {
+		t.Fatalf("selected destination not preserved: %q", f.mutations())
 	}
 }
 

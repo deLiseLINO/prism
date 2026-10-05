@@ -112,7 +112,7 @@ func TestDetectSourceFollowsSymlinksThroughManager(t *testing.T) {
 	target := prefix + "/lib/node_modules/@openai/codex/bin/codex.js"
 	stat := statWith(link)
 	env := pathEnv(prefix + "/bin")
-	m := NewManager(env, ExecRunner{}, stat.stat, testNow, fetchOK)
+	m := NewManager(env, ExecRunner{}, stat.stat, testNow, fetchOK, nil)
 	m.eval = func(p string) (string, error) {
 		if p != link {
 			return "", os.ErrNotExist

@@ -96,7 +96,7 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 			if kind == "unversioned" {
 				target = filepath.Join(prefix, layout, token, key)
 			}
-			f.executable(target, "echo 1.2.3")
+			f.executable(target, "if [ -f \"$MUTATIONS\" ]; then echo 1.2.4; else echo 1.2.3; fi")
 			entry := filepath.Join(bin, key)
 			f.link(entry, target)
 			f.env["PATH"] = bin + ":" + f.env["PATH"]
@@ -104,7 +104,7 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 			if kind == "foreign-prefix" {
 				response = filepath.Join(f.home, "foreign")
 			}
-			body := "if [ \"$1\" = '--prefix' ]; then printf '%s\\n' " + shellQuote(response) + "; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"$MUTATIONS\""
+			body := "if [ \"$1\" = '--prefix' ]; then printf '%s\\n' " + shellQuote(response) + "; exit 0; fi\nif [ \"$1\" = info ]; then echo invalid; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"$MUTATIONS\""
 			if kind == "version-replacement" {
 				next := filepath.Join(prefix, layout, token, "1.2.4", "bin", key)
 				f.executable(next, "echo 1.2.4")
@@ -114,7 +114,7 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 			f.executable(filepath.Join(f.tools, "brew"), "if [ \"$1\" = '--prefix' ]; then printf '%s\\n' "+shellQuote(filepath.Join(f.home, "foreign"))+"; exit 0; fi; printf 'wrong brew mutation\\n' >> \"$MUTATIONS\"; exit 1")
 			m := f.manager()
 			st, _ := m.StatusOf(integrations.ID(key))
-			if kind == "foreign-prefix" || kind == "unknown-token" || kind == "unversioned" {
+			if kind == "foreign-prefix" || kind == "unversioned" {
 				if st.CanUpdate || st.Reason == "" {
 					t.Fatalf("unproven brew authorized: %+v", st)
 				}
@@ -143,12 +143,12 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 				t.Fatal(err)
 			}
 			requireJob(t, m, integrations.ID(key), StateSucceeded)
-			want := "upgrade " + token
+			want := "upgrade --formula " + token
 			if kind == "cask" {
 				want = "upgrade --cask " + token
 			}
 			if kind == "reinstall" {
-				want = "reinstall omp"
+				want = "reinstall --formula omp"
 			}
 			if got := f.mutations(); got != want {
 				t.Fatalf("wrong Homebrew owner: %q, want %q", got, want)
@@ -181,7 +181,7 @@ func TestMaintenanceRunnerPreservesShebangEnvironment(t *testing.T) {
 	}
 	f.env["EXPECTED"] = "supplied-environment"
 	var out strings.Builder
-	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{client}, &out); err != nil {
+	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{client}, &out, &out); err != nil {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(out.String()) != "supplied-environment" {

@@ -8,6 +8,7 @@ const (
 	MethodNpm      Method = "npm"
 	MethodBun      Method = "bun"
 	MethodScript   Method = "script"
+	MethodArchive  Method = "archive"
 )
 
 type Script struct {
@@ -19,9 +20,10 @@ type Script struct {
 }
 
 type Plan struct {
-	Method  Method
-	Tool    string
-	Script  *Script
-	Package string
-	Aliases []string
+	Method        Method
+	Tool          string
+	Script        *Script
+	Package       string
+	Aliases       []string
+	IgnoreScripts bool
 }

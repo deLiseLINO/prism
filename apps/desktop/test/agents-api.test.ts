@@ -50,6 +50,11 @@ describe('agents api over the management seam', () => {
     expect(reply.ok).toBe(true)
   })
 
+  it('surfaces an unsupported job even when transport returned 200', async () => {
+    const proxy = fakeProxy({ ok: true, status: 200, body: { job: { ...job, state: 'unsupported', error: 'selected installation is manual' } } })
+    expect(await new AgentsApi(proxy).install({ id: 'codex' })).toEqual({ ok: false, id: 'codex', reason: 'selected installation is manual' })
+  })
+
   it('surfaces the install_active conflict as a failed reply with the daemon reason', async () => {
     const proxy = fakeProxy({ ok: true, status: 409, body: { error: { code: 'install_active', message: 'already active' } } })
     const result = await new AgentsApi(proxy).install({ id: 'omp' })

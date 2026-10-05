@@ -7,6 +7,7 @@ fail() {
 }
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
+source "$REPO_ROOT/verify/scripts/agents-sandbox.sh"
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_AGENTS_UI_PORT:-18798}"
 CDP_PORT="${PRISM_CDP_PORT:-19223}"
@@ -41,9 +42,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 NPM_PREFIX="$RUNDIR/sandbox/home/.local"
-SANDBOX_PATH="$RUNDIR/sandbox/tools:$NPM_PREFIX/bin:/usr/bin:/bin"
+SANDBOX_PATH="$RUNDIR/sandbox/tools:$NPM_PREFIX/bin"
 for tool in bash sh; do
-  printf '#!/bin/sh\ncase "$1" in -ilc) printf "%%s" "$PATH";; *) exit 1;; esac\n' > "$RUNDIR/sandbox/tools/$tool"
+  printf '#!/bin/sh\ncase "$1" in -ilc) printf "%%s" %q;; *) exit 1;; esac\n' "$SANDBOX_PATH" > "$RUNDIR/sandbox/tools/$tool"
   chmod 755 "$RUNDIR/sandbox/tools/$tool"
 done
 mkdir -p "$NPM_PREFIX/bin"
@@ -75,23 +76,38 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
   }
 }
 CONFIG
-NODE_BIN=$(command -v node) || fail "node is required to launch electron"
-ln -s "$NODE_BIN" "$RUNDIR/sandbox/tools/node"
+printf '#!/bin/sh\nexit 0\n' > "$RUNDIR/sandbox/tools/node"
+chmod 755 "$RUNDIR/sandbox/tools/node"
+mkdir -p "$RUNDIR/sandbox/home/.grok/bin"
+cat > "$RUNDIR/sandbox/home/.grok/bin/grok" <<'CLIENT'
+#!/bin/sh
+if [ "$1" = version ]; then
+  if [ -f "$HOME/.grok/updated" ]; then echo 1.0.1; else echo 1.0.0; fi
+elif [ "$1 $2" = 'update --check' ]; then echo 'available 1.0.0 -> 1.0.1'
+elif [ "$1" = update ]; then printf updated > "$HOME/.grok/updated"
+else exit 2
+fi
+CLIENT
+chmod 755 "$RUNDIR/sandbox/home/.grok/bin/grok"
 
 echo "==> building prism and desktop"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 
 echo "==> launching isolated Electron with sandbox PATH"
-env -u ELECTRON_RUN_AS_NODE \
-PRISMD_PATH="$RUNDIR/prism" \
+agents_sandbox
+printf '#!/bin/sh\nexec /usr/bin/sandbox-exec -f "%s" "%s" "$@"\n' "$SANDBOX_PROFILE" "$RUNDIR/prism" > "$RUNDIR/prism-sandbox"
+chmod 755 "$RUNDIR/prism-sandbox"
+/usr/bin/env -i "${CLIENT_ENV[@]}" \
+TMPDIR="$RUNDIR" \
+PRISMD_PATH="$RUNDIR/prism-sandbox" \
 PRISM_PORT="$PORT" \
 PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
 PRISM_HEADLESS=1 \
 PATH="$SANDBOX_PATH" \
 HOME="$RUNDIR/sandbox/home" \
 USER=prism-sandbox LOGNAME=prism-sandbox SHELL="$RUNDIR/sandbox/tools/bash" \
-"$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
+"$REPO_ROOT/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" "$REPO_ROOT/apps/desktop" \
   --user-data-dir="$RUNDIR/electron" \
   --remote-debugging-port="$CDP_PORT" > "$RUNDIR/app.log" 2>&1 &
 APP_PID=$!
@@ -186,8 +202,16 @@ grep -q 'npm install -g --prefix .* @openai/codex@latest' "$EVID_WORK/daemon-job
 curl -sf "http://127.0.0.1:$PORT/api/v1/agents/codex" > "$EVID_WORK/daemon-status-codex.json" || fail "daemon agent status failed"
 grep -q '"installed":true' "$EVID_WORK/daemon-status-codex.json" || fail "daemon does not report codex as installed after UI install"
 
-echo "==> clicking Update and Reinstall on the installed codex card"
-for ACTION in Update Reinstall; do
+echo "==> manual npm Update is disabled"
+cdp_eval "(() => {
+  const card = [...document.querySelectorAll('.int-row-wrap')].find(node => node.querySelector('.int-name')?.textContent.trim() === 'codex')
+  const update = [...card.querySelectorAll('button')].find(node => node.textContent.trim() === 'Update')
+  if (!update?.disabled || !update.title.includes('manually')) throw new Error('npm Update was not explained as manual')
+  return {disabled: update.disabled, reason: update.title}
+})()" > "$EVID_WORK/ui-manual-codex.json"
+
+echo "==> clicking Reinstall on the installed codex card"
+for ACTION in Reinstall; do
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'codex')
@@ -220,4 +244,38 @@ done
 
 node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/integrations-after.png"
 
-echo "PASS: agents install/update/reinstall UI drive"
+echo "==> updating the supported client through rendered controls"
+cdp_eval "await (async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+  const card = [...document.querySelectorAll('.int-row-wrap')].find(node => node.querySelector('.int-name')?.textContent.trim() === 'grok')
+  const update = [...card.querySelectorAll('button')].find(node => node.textContent.trim() === 'Update')
+  if (!update || update.disabled) throw new Error('supported Update unavailable')
+  update.click()
+  for (let i = 0; i < 80; i++) {
+    await sleep(150)
+    const job = await window.prism.agents.job({id: 'grok'})
+    if (job.state === 'succeeded') {
+      if (job.expectedVersion !== '1.0.1' || job.version !== '1.0.1') throw new Error('release proof missing')
+      return job
+    }
+    if (job.state === 'failed' || job.state === 'unsupported') throw new Error(job.error)
+  }
+  throw new Error('supported Update did not settle')
+})()" > "$EVID_WORK/ui-update-grok.json"
+
+echo "==> unsupported install renders an alert"
+cdp_eval "await (async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+  const card = [...document.querySelectorAll('.int-row-wrap')].find(node => node.querySelector('.int-name')?.textContent.trim() === 'hermes')
+  const install = [...card.querySelectorAll('button')].find(node => node.textContent.trim() === 'Install')
+  install.click()
+  for (let i = 0; i < 80; i++) {
+    await sleep(100)
+    const alert = card.querySelector('[role=alert]')
+    if (alert?.textContent.includes('required')) return {alert: alert.textContent}
+  }
+  throw new Error('unsupported install was not rendered')
+})()" > "$EVID_WORK/ui-unsupported.json"
+node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/unsupported.png"
+
+echo "PASS: agents install/reinstall/manual-update UI drive"

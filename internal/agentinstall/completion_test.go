@@ -30,7 +30,7 @@ func TestMaintenanceTerminalStateAdmitsSuccessor(t *testing.T) {
 				deadline := time.Now().Add(20 * time.Second)
 				for i := 0; i < 50; i++ {
 					id := shape.ids[i%len(shape.ids)]
-					if _, err := m.Update(id); err != nil {
+					if _, err := m.Install(id, true); err != nil {
 						t.Fatalf("successor %d refused after terminal state: %v", i, err)
 					}
 					for {

@@ -22,6 +22,11 @@ export interface AgentJob {
   readonly startedAt?: string
   readonly updatedAt?: string
   readonly error?: string
+  readonly beforeVersion?: string
+  readonly expectedVersion?: string
+  readonly version?: string
+  readonly verification?: 'release' | 'client' | 'installed'
+  readonly note?: string
 }
 
 export interface AgentStatus {

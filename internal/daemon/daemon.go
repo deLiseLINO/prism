@@ -686,7 +686,7 @@ func run(opts options) error {
 		}
 	}
 
-	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
+	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript, &http.Client{Timeout: 20 * time.Second})
 	planner := server.NewConfigPlanner(cfg)
 	if err := os.MkdirAll(opts.credentialPath, 0o700); err != nil {
 		return fmt.Errorf("prism: credential store directory: %w", err)
@@ -741,11 +741,8 @@ func run(opts options) error {
 	defer cancel()
 	// Cancel in-flight installs first so their runners stop within the same
 	// shutdown window; jobs record their own interrupted state.
-	stopDone := make(chan struct{})
-	go func() {
-		installer.Stop(shutdownCtx)
-		close(stopDone)
-	}()
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- installer.Stop(shutdownCtx) }()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
@@ -754,7 +751,9 @@ func run(opts options) error {
 			return err
 		}
 	}
-	<-stopDone
+	if err := <-stopDone; err != nil {
+		return err
+	}
 	log.Printf("prism: shutdown complete")
 	return nil
 }

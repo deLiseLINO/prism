@@ -61,7 +61,9 @@ export class AgentsApi {
 
   private reply(id: AgentId, raw: ManagementReply, accepted: readonly number[]): AgentJobReply {
     if (raw.ok && accepted.includes(raw.status)) {
-      return { ok: true, job: jobFromBody(raw.body) }
+      const job = jobFromBody(raw.body)
+      if (job.state === 'unsupported') return { ok: false, id, reason: job.error || 'selected installation requires manual maintenance' }
+      return { ok: true, job }
     }
     const message = errorDetail(raw)
     return { ok: false, id, reason: message === null ? `prism: ${id} request failed` : message }

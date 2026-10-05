@@ -977,12 +977,12 @@ func agentsManagerForTest(t *testing.T) *agentinstall.Manager {
 	fetch := func(ctx context.Context, url string) (string, error) {
 		return filepath.Join(dir, "fetched.sh"), nil
 	}
-	return agentinstall.NewManager(env, runner, os.Stat, time.Now, fetch)
+	return agentinstall.NewManager(env, runner, os.Stat, time.Now, fetch, &http.Client{})
 }
 
 type funcRunner func(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error
 
-func (f funcRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst io.Writer) error {
+func (f funcRunner) Run(ctx context.Context, env integrations.Env, argv []string, dst, stderr io.Writer) error {
 	return f(ctx, env, argv, dst)
 }
 
@@ -1045,12 +1045,12 @@ func TestAgentsInstallJobLifecycleThroughCLI(t *testing.T) {
 
 func TestAgentsUpdateRunsSelfUpdate(t *testing.T) {
 	env := newDaemonEnv(t, nil)
-	code, _, errOut := env.runCLI(t, "agents", "update", "codex")
+	code, _, errOut := env.runCLI(t, "agents", "update", "claude")
 	if code != exitOK {
 		t.Fatalf("update code=%d stderr=%s", code, errOut)
 	}
 	for {
-		_, out, _ := env.runCLI(t, "agents", "job", "codex", "--json")
+		_, out, _ := env.runCLI(t, "agents", "job", "claude", "--json")
 		m := decodeJSON(t, out)
 		job := m["job"].(map[string]any)
 		state := job["state"].(string)

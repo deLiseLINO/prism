@@ -1,0 +1,1 @@
+{"agent":"grok","op":"update","state":"succeeded","method":"script","command":"/private/tmp/prism-agentsui.v4eEOv/sandbox/home/.grok/bin/grok update","startedAt":"2026-10-05T06:11:35.400202+03:00","updatedAt":"2026-10-05T06:11:35.618634+03:00","beforeVersion":"1.0.0","expectedVersion":"1.0.1","version":"1.0.1","verification":"release"}

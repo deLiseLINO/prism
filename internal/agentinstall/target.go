@@ -15,19 +15,22 @@ import (
 )
 
 type installTarget struct {
-	source Source
-	entry  string
-	root   string
-	name   string
-	cask   bool
+	source        Source
+	entry         string
+	root          string
+	name          string
+	cask          bool
+	archiveTarget string
 }
 
 type preparedAction struct {
-	target installTarget
-	method Method
-	argv   []string
-	script *Script
-	env    integrations.Env
+	target      installTarget
+	method      Method
+	argv        []string
+	script      *Script
+	env         integrations.Env
+	fresh       bool
+	publication scriptPublication
 }
 
 type installation struct {
@@ -83,6 +86,9 @@ func packagePlans(def Definition) []Plan {
 			out = append(out, p)
 		}
 	}
+	if def.Key == "claude" {
+		out = append(out, Plan{Method: MethodNpm, Package: "@anthropic-ai/claude-code"})
+	}
 	return out
 }
 
@@ -130,10 +136,19 @@ func manifestMatches(root, name, binary, real string) bool {
 }
 
 func (m *Manager) observe(def Definition) installation {
-	entry := absolute(LookPath(asEnv(m.env), def.Binary, m.stat))
+	entry := m.discover(def)
+	if entry != "" && m.env[executableOverrideKey(def)] != "" {
+		if _, err := m.stat(entry); os.IsNotExist(err) {
+			return installation{}
+		}
+	}
+	return m.observeEntry(def, entry)
+}
+
+func (m *Manager) observeEntry(def Definition, entry string) installation {
 	obs := installation{entry: entry}
-	if entry == "" {
-		obs.reason = "binary " + def.Binary + " not found on PATH"
+	if entry == "" || !isExecutable(entry, m.stat) {
+		obs.reason = "binary " + def.Binary + " is not executable at the selected destination"
 		return obs
 	}
 	real, err := m.eval(entry)
@@ -146,13 +161,42 @@ func (m *Manager) observe(def Definition) installation {
 	if source := DetectSource(real); source != SourceUnknown && !(obs.source == SourceBun && source == SourceNpm) {
 		obs.source = source
 	}
+	if def.Key == "pi" {
+		if target, ok := recognizePiManaged(m.env, entry, real); ok {
+			obs.source, obs.target = SourceScript, target
+			return obs
+		}
+	}
+	if def.Key == "codex" {
+		if target, ok := recognizeCodexStandalone(entry, real); ok {
+			obs.source, obs.target = SourceScript, target
+			return obs
+		}
+	}
+	if obs.source == SourceUnknown && (strings.Contains(real, string(filepath.Separator)+"Cellar"+string(filepath.Separator)) || strings.Contains(real, string(filepath.Separator)+"Caskroom"+string(filepath.Separator))) {
+		obs.source = SourceBrew
+	}
 	root, bin := bunDirectories(m.env)
 	if filepath.Dir(entry) == bin && inside(real, root) {
 		obs.source = SourceBun
 	}
 	if obs.source == SourcePnpm {
+		for _, dir := range []string{m.env["PNPM_HOME"], filepath.Join(m.env["HOME"], "Library", "pnpm"), filepath.Join(m.env["HOME"], ".local", "share", "pnpm"), filepath.Join(m.env["HOME"], ".local", "share", "pnpm", "bin")} {
+			if dir != "" && filepath.Dir(entry) == absolute(dir) && !hasNodeModules(entry) {
+				obs.target = installTarget{source: SourcePnpm, entry: entry, root: absolute(dir), name: def.Key}
+				return obs
+			}
+		}
 		obs.reason = "pnpm installation requires manual maintenance; global destination is unproven"
 		return obs
+	}
+	if def.Key == "claude" {
+		local := filepath.Join(absolute(m.env["HOME"]), ".claude", "local")
+		if entry == filepath.Join(local, "claude") && (real == entry || inside(real, local)) {
+			obs.source = SourceScript
+			obs.target = installTarget{source: SourceScript, entry: entry, root: local, name: "claude-local"}
+			return obs
+		}
 	}
 	for _, p := range packagePlans(def) {
 		for _, name := range packageNames(p) {
@@ -190,12 +234,10 @@ func (m *Manager) observe(def Definition) installation {
 		if len(parts) < 3 || parts[0] == "" || parts[1] == "" {
 			break
 		}
-		for _, p := range def.Plans[runtime.GOOS] {
-			if (p.Method == MethodBrew || p.Method == MethodBrewCask) && filepath.Base(p.Package) == parts[0] && (p.Method == MethodBrewCask) == (kind == "Caskroom") && entry == filepath.Join(prefix, "bin", def.Binary) {
-				obs.source = SourceBrew
-				obs.target = installTarget{source: SourceBrew, entry: entry, root: prefix, name: parts[0], cask: kind == "Caskroom"}
-				return obs
-			}
+		if safeBrewToken(parts[0]) && parsedVersion(parts[1], false) != "" && entry == filepath.Join(prefix, "bin", def.Binary) && !hasNodeModules(real) && (kind == "Caskroom" || parts[2] == "bin" || parts[2] == "libexec") {
+			obs.source = SourceBrew
+			obs.target = installTarget{source: SourceBrew, entry: entry, root: prefix, name: parts[0], cask: kind == "Caskroom"}
+			return obs
 		}
 		obs.reason = "selected Homebrew installation has an unrecognized package or receipt layout"
 		return obs
@@ -270,12 +312,38 @@ func nativeTarget(def Definition, env integrations.Env, entry, real string) (ins
 		store := absolute(valueOr(env, "CODEX_HOME", filepath.Join(home, ".codex")))
 		valid = entry == expected && (real == entry || inside(real, store))
 		root = filepath.Dir(expected)
+	case "hermes":
+		base := absolute(valueOr(env, "HERMES_HOME", filepath.Join(home, ".hermes")))
+		source := absolute(valueOr(env, "HERMES_INSTALL_DIR", filepath.Join(base, "hermes-agent")))
+		valid = (entry == expected || entry == filepath.Join(base, "bin", def.Binary)) && (real == entry || real == filepath.Join(source, "hermes") || real == filepath.Join(source, ".hermes", "bin", "hermes") || real == filepath.Join(source, "bin", "hermes"))
+		root = source
+	case "pi":
+		managed := filepath.Join(filepath.Dir(piManagedRoot(env)), "bin", "pi")
+		valid = entry == expected && real == entry
+		if entry == managed || real == managed {
+			valid = false
+		}
+		if _, err := os.Lstat(filepath.Join(piManagedRoot(env), "managed-install.json")); err == nil {
+			valid = false
+		}
 	case "grok":
 		bin := absolute(valueOr(env, "GROK_BIN_DIR", filepath.Join(home, ".grok", "bin")))
 		valid = (entry == filepath.Join(bin, def.Binary) || entry == filepath.Join(home, ".local", "bin", def.Binary)) && (real == filepath.Join(bin, def.Binary) || inside(real, filepath.Join(home, ".grok", "downloads")))
 		root = bin
 	}
 	return installTarget{source: SourceScript, entry: entry, root: root, name: def.Key}, valid
+}
+
+func safeBrewToken(token string) bool {
+	if token == "" || strings.HasPrefix(token, "-") || strings.HasSuffix(token, ".rb") || strings.HasSuffix(token, ".json") {
+		return false
+	}
+	for _, r := range token {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("@+._-", r)) {
+			return false
+		}
+	}
+	return true
 }
 
 func missingTools(plan Plan, env integrationsEnv, stat func(string) (os.FileInfo, error)) string {
@@ -300,14 +368,18 @@ func missingTools(plan Plan, env integrationsEnv, stat func(string) (os.FileInfo
 func (m *Manager) readCommand(ctx context.Context, env integrations.Env, argv ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out := &boundedOutput{limit: 4096}
-	if err := m.runner.Run(ctx, env, argv, out); err != nil {
+	out, stderr := &boundedOutput{limit: 4096}, &boundedOutput{limit: 4096}
+	if err := m.runner.Run(ctx, maintenanceEnv(env, "probe", argv[0]), argv, out, stderr); err != nil {
 		return "", err
 	}
-	if out.overflow {
+	if out.overflow || stderr.overflow {
 		return "", fmt.Errorf("probe output exceeds limit")
 	}
-	return strings.TrimSpace(out.String()), nil
+	text := out.String()
+	if strings.TrimSpace(text) == "" {
+		text = stderr.String()
+	}
+	return strings.TrimSpace(text), nil
 }
 func (m *Manager) brewTool(ctx context.Context, prefix string) (string, error) {
 	candidates := []string{filepath.Join(prefix, "bin", "brew"), LookPath(asEnv(m.env), "brew", m.stat)}
@@ -332,16 +404,17 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 	if op == "update" {
 		return preparedAction{}, ErrNotInstalled
 	}
+	toolEnv := m.installerEnv(m.env)
 	var reasons []string
 	for _, plan := range def.Plans[runtime.GOOS] {
-		if reason := missingTools(plan, asEnv(m.env), m.stat); reason != "" {
+		if reason := missingTools(plan, asEnv(toolEnv), m.stat); reason != "" {
 			reasons = append(reasons, reason)
 			continue
 		}
 		target := installTarget{entry: "", name: plan.Package}
 		switch plan.Method {
 		case MethodNpm:
-			prefix, err := m.readCommand(ctx, m.env, absolute(LookPath(asEnv(m.env), plan.Tool, m.stat)), "prefix", "-g")
+			prefix, err := m.readCommand(ctx, toolEnv, absolute(LookPath(asEnv(toolEnv), plan.Tool, m.stat)), "prefix", "-g")
 			if err != nil || !filepath.IsAbs(prefix) || hasNodeModules(prefix) {
 				reasons = append(reasons, "npm global prefix could not be proven")
 				continue
@@ -357,7 +430,7 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 			}
 			target = installTarget{source: SourceBun, entry: filepath.Join(bin, def.Binary), root: root, name: plan.Package}
 		case MethodBrew, MethodBrewCask:
-			prefix, err := m.readCommand(ctx, m.env, absolute(LookPath(asEnv(m.env), plan.Tool, m.stat)), "--prefix")
+			prefix, err := m.readCommand(ctx, toolEnv, absolute(LookPath(asEnv(toolEnv), plan.Tool, m.stat)), "--prefix")
 			if err != nil || !filepath.IsAbs(prefix) {
 				reasons = append(reasons, "Homebrew prefix could not be proven")
 				continue
@@ -369,6 +442,9 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 				continue
 			}
 			entry := nativeEntry(def, m.env)
+			if def.Key == "pi" && m.env["PI_LEGACY_INSTALL"] != "1" {
+				entry = piPublicationEntry(m.env, piManagedRoot(m.env), m.stat)
+			}
 			real := entry
 			if def.Key == "grok" {
 				real = filepath.Join(absolute(valueOr(m.env, "GROK_BIN_DIR", filepath.Join(m.env["HOME"], ".grok", "bin"))), def.Binary)
@@ -377,11 +453,25 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 		default:
 			continue
 		}
-		if _, err := m.stat(target.entry); err == nil {
-			return preparedAction{}, fmt.Errorf("planned destination %s already exists outside selected PATH", target.entry)
+		if override := m.env[executableOverrideKey(def)]; override != "" && absolute(override) != target.entry {
+			return preparedAction{}, fmt.Errorf("explicit executable destination does not match installer destination %s", target.entry)
+		}
+		if isExecutable(target.entry, m.stat) {
+			existing := m.observeEntry(def, target.entry)
+			if existing.reason != "" {
+				return preparedAction{}, fmt.Errorf("%s", existing.reason)
+			}
+			return m.prepareTarget(ctx, def, existing.target, "install", force)
+		}
+		if _, err := os.Lstat(target.entry); err == nil {
+			return preparedAction{}, fmt.Errorf("planned destination %s is occupied by a nonexecutable file", target.entry)
 		}
 		action, err := m.prepareTarget(ctx, def, target, "install", force)
 		if err == nil {
+			action.fresh = true
+			if action.script != nil {
+				action.publication = m.scriptPublication(def, target.entry)
+			}
 			return action, nil
 		}
 		reasons = append(reasons, err.Error())
@@ -389,7 +479,40 @@ func (m *Manager) prepare(ctx context.Context, def Definition, obs installation,
 	return preparedAction{}, fmt.Errorf("no install plan is executable: %s", strings.Join(reasons, "; "))
 }
 func (m *Manager) prepareTarget(ctx context.Context, def Definition, target installTarget, op string, force bool) (preparedAction, error) {
-	action := preparedAction{target: target, env: m.env}
+	toolEnv := m.installerEnv(m.env)
+	action := preparedAction{target: target, env: maintenanceEnv(toolEnv, op, target.entry)}
+	if op == "update" && target.source != SourceBrew && def.Key != "omp" {
+		if def.Key == "codex" {
+			if target.archiveTarget != "" {
+				action.method = MethodArchive
+				return action, nil
+			}
+			return action, fmt.Errorf("codex update requires a validated standalone package; otherwise update manually with the installation owner")
+		}
+		if len(def.SelfUpdate) == 0 {
+			return action, fmt.Errorf("selected installation has no updater")
+		}
+		if target.source == SourceNpm || target.source == SourceBun || target.source == SourcePnpm || target.source == SourceScript {
+			action.method = MethodScript
+			action.argv = append([]string{target.entry}, def.SelfUpdate[1:]...)
+			switch target.source {
+			case SourceNpm:
+				if LookPath(asEnv(action.env), "node", m.stat) == "" {
+					return action, fmt.Errorf("node is required on PATH")
+				}
+				action.env["NPM_CONFIG_PREFIX"] = target.root
+			case SourceBun:
+				action.env["BUN_INSTALL_GLOBAL_DIR"], action.env["BUN_INSTALL_BIN"] = target.root, filepath.Dir(target.entry)
+			case SourcePnpm:
+				action.env["PNPM_HOME"] = target.root
+			case SourceScript:
+				if target.name == "pi-managed" {
+					action.env["PI_MANAGED_INSTALL_ROOT"] = target.root
+				}
+			}
+			return action, nil
+		}
+	}
 	switch target.source {
 	case SourceNpm, SourceBun:
 		method := MethodNpm
@@ -399,17 +522,26 @@ func (m *Manager) prepareTarget(ctx context.Context, def Definition, target inst
 			tool = "bun"
 		}
 		plan := Plan{Method: method, Tool: tool}
-		if reason := missingTools(plan, asEnv(m.env), m.stat); reason != "" {
+		if reason := missingTools(plan, asEnv(toolEnv), m.stat); reason != "" {
 			return action, fmt.Errorf("%s", reason)
 		}
 		action.method = method
-		action.argv = []string{absolute(LookPath(asEnv(m.env), tool, m.stat)), "install", "-g"}
+		action.argv = []string{absolute(LookPath(asEnv(toolEnv), tool, m.stat)), "install", "-g"}
 		if method == MethodNpm {
 			action.argv = append(action.argv, "--prefix", target.root)
 		} else {
-			action.env = copyEnv(m.env)
 			action.env["BUN_INSTALL_GLOBAL_DIR"] = target.root
 			action.env["BUN_INSTALL_BIN"] = filepath.Dir(target.entry)
+		}
+		for _, candidate := range packagePlans(def) {
+			if !candidate.IgnoreScripts {
+				continue
+			}
+			for _, name := range packageNames(candidate) {
+				if name == target.name {
+					action.argv = append(action.argv, "--ignore-scripts")
+				}
+			}
 		}
 		action.argv = append(action.argv, target.name+"@latest")
 		if force && op == "install" {
@@ -434,6 +566,8 @@ func (m *Manager) prepareTarget(ctx context.Context, def Definition, target inst
 		action.argv = []string{tool, verb}
 		if target.cask {
 			action.argv = append(action.argv, "--cask")
+		} else {
+			action.argv = append(action.argv, "--formula")
 		}
 		name := target.name
 		if verb == "install" {
@@ -456,16 +590,16 @@ func (m *Manager) prepareTarget(ctx context.Context, def Definition, target inst
 			if def.Key == "opencode" && isExecutable(target.entry, m.stat) {
 				return action, fmt.Errorf("opencode native maintenance is manual; installer generation cannot be proven")
 			}
-			if def.Key == "hermes" && isExecutable(target.entry, m.stat) {
-				return action, fmt.Errorf("hermes reinstall requires manual maintenance; launcher source directory cannot be proven")
+			if (def.Key == "hermes" || def.Key == "pi" || target.name == "claude-local") && isExecutable(target.entry, m.stat) {
+				return action, fmt.Errorf("%s reinstall requires manual maintenance; launcher source directory cannot be proven", def.Key)
 			}
 			for _, p := range def.Plans[runtime.GOOS] {
 				if p.Script != nil {
-					if reason := missingTools(p, asEnv(m.env), m.stat); reason != "" {
+					if reason := missingTools(p, asEnv(toolEnv), m.stat); reason != "" {
 						return action, fmt.Errorf("%s", reason)
 					}
 					script := *p.Script
-					script.Interpreter = absolute(LookPath(asEnv(m.env), script.Interpreter, m.stat))
+					script.Interpreter = absolute(LookPath(asEnv(toolEnv), script.Interpreter, m.stat))
 					action.script = &script
 					break
 				}

@@ -1,52 +1,64 @@
 # Client install and update
 
-prism installs and updates seven integration clients. The clients are codex, claude, grok, omp, pi, opencode, and hermes. The management routes and `prismctl agents` commands start asynchronous jobs. Installation status comes from the daemon's PATH, not persisted install state.
+prism provides explicit installation, update, and owner-preserving reinstall for its existing integration clients. Management routes and `prismctl agents` start asynchronous jobs.
 
 ## Management contract
 
-- `GET /api/v1/agents` lists the integrations in their existing order. Status contains `installed`, `source`, `path`, `canUpdate`, `reason`, and the last `job`.
+- `GET /api/v1/agents` lists integrations with `installed`, `source`, `path`, `canUpdate`, `reason`, and the last `job`.
 - `GET /api/v1/agents/{id}` returns one status. An unknown id returns 404 `not_found`.
-- `POST /api/v1/agents/{id}/install` starts a fresh install when the client is absent. When the client is present, it repairs the selected installation through its proven owner. Reinstall never chooses another package manager because that manager ranks higher for fresh installs.
-- `?force=true` adds `--force` to npm and Bun install commands. Homebrew repairs use `reinstall` with the observed formula or cask. Script repairs use a validated destination and installer.
+- `POST /api/v1/agents/{id}/install` installs an absent client or repairs a present client through its proven owner.
+- `?force=true` adds `--force` to npm and Bun install commands. Homebrew repairs use the observed formula or cask.
 - `POST /api/v1/agents/{id}/update` updates the selected installation. A missing client returns 400 `not_installed`.
-- A started job returns 202 with the existing job envelope. An unproven owner or missing prerequisite returns 200 with `state: unsupported` and a reason.
-- Concurrent jobs for the same binary or global package root return 409 `install_active`. Independent roots can run concurrently. Shutdown closes admission and interrupts active jobs.
-- `GET /api/v1/agents/{id}/job` returns the job envelope. A client with no previous job has state `idle`.
+- An admitted job returns 202. Unsupported maintenance returns 200 with a terminal `unsupported` job and a reason.
+- Concurrent jobs for the same binary or maintenance root return 409 `install_active`.
+- `GET /api/v1/agents/{id}/job` returns the last job. A client without a previous job has state `idle`.
 
-## Installation ownership
+Jobs can include `beforeVersion`, `expectedVersion`, `version`, `verification`, and `note`. `verification` distinguishes a known release, client verification without a numeric release, and an installed executable.
 
-`source` describes the selected path. It does not authorize maintenance. An installed client can have `source: npm` and `canUpdate: false`.
+## Discovery and maintenance authority
 
-npm ownership requires a global `<prefix>/lib/node_modules/<package>` layout, a matching package manifest and bin entry, and a selected `<prefix>/bin/<client>` link. A project-local package, nested package tree, unrelated package, or opaque wrapper refuses maintenance. Update and reinstall pass `--prefix` with the observed prefix and preserve the observed package alias. The client opencode retains an existing `opencode-ai` installation. Fresh npm installs use `@opencode/cli`.
+Discovery honors an explicit executable override before it searches PATH, known installation directories, and supported toolchain directories. With several executable copies, the newest parsed semantic version wins. Equal versions retain deterministic directory order. Each admitted job freezes its selected entry and owner.
 
-Homebrew ownership requires a recognized versioned `Cellar` or `Caskroom` path and a selected entry under the same prefix. The executable used for mutation must return that prefix from `brew --prefix`. Maintenance uses the observed formula or cask token.
+Discovery does not grant permission to mutate a client. npm and Bun repairs require matching global package manifests and executable links. Package repairs preserve their observed root and package alias. Unknown project packages and opaque wrappers require manual maintenance.
 
-Bun ownership requires a selected bin linked to a matching global package manifest. Each mutation pins `BUN_INSTALL_GLOBAL_DIR` and `BUN_INSTALL_BIN` in its own environment. Defaults come from `BUN_INSTALL` or `HOME/.bun`. An unproven root refuses maintenance. Fresh installation of the client omp uses its official scoped package.
+Homebrew maintenance requires a versioned Cellar or Caskroom layout and the serving prefix's brew executable. The observed safe formula or cask token determines the operation. Release metadata must identify that same token.
 
-pnpm installations remain visible but require manual maintenance because this implementation does not prove their global destination.
+Supported native and global pnpm installations can use the selected client's declared updater without gaining reinstall authority. Known launcher layouts for client Hermes and client Claude are recognized. Client OpenCode uses `upgrade`. Client Grok uses `version` for its version probe. Client Pi uses `update --self`; supported managed installations require a valid marker and matching launcher.
 
-Recognized native entries use the selected absolute client's updater. Arbitrary files cannot gain update authority merely because the integration defines a self-update command. Native maintenance for the client opencode refuses because the installer generation is unproven. The client hermes uses its official downloaded installer with `--non-interactive`, and its recognized native updater receives `update --yes`. Reinstall requires manual maintenance because a launcher does not prove the original source directory. No npm installer is offered for that client.
+npm installations of codex require manual Update. A recognized standalone codex installation updates through a verified release archive. Unsupported standalone layouts remain manual. Native reinstall for client OpenCode, client Hermes, and client Pi remains limited to proven repair contracts.
 
-## Execution and verification
+## Installation and release verification
 
-Executable lookup uses the Manager's environment. Mutation commands run through absolute executables, and shebang runtimes inherit that same environment. A fresh npm install reads the selected npm's `prefix -g` and binds verification to that destination.
+Shared client installers prefer their supported shell method before npm. Client Pi's npm method uses `--ignore-scripts`. Installer prerequisites and commands use the same resolved tool environment.
 
-After mutation, verification resolves the client under the unchanged Manager environment. The selected entry and its stable owner, root, and package must match the job's target. Versioned native and Homebrew files can change without changing the stable owner. An unrelated copy cannot satisfy verification.
+Fresh script installation verifies a new or changed executable at its intended destination. A different existing copy cannot satisfy the operation. This does not identify which external actor wrote the exact intended path during installation.
 
-The absolute selected client must exit successfully and print a version token containing digits separated by a period. Empty output and output without a version fail. An unchanged version can succeed. No manifest-to-CLI version equality is required.
+Update checks the expected release before mutation and freezes that expectation. An already-current client can finish without mutation. Verification probes the selected entry and checks its stable owner before and after the probe. A measured version below the expected release fails.
 
-Each version probe has a 5-second timeout. Only a probe that reaches its own deadline receives one 60-second retry. The full 15-minute job deadline also covers verification. Combined job output is bounded during collection and retains its last 4096 bytes. Script downloads require absolute HTTPS, permit only HTTPS redirects, cap at 4 MiB, and are removed after execution.
+Client Hermes can update commits without changing its CLI version. Client Claude with a successful doctor result but no identifiable channel records weaker client verification. A failed doctor or failed release request does not silently become weaker proof.
+
+Standalone codex updates validate the release tag, asset name, HTTPS URL, size, SHA-256 digest, archive paths, package manifest, and staged executable. The installation lock remains held through atomic activation and verification. Old releases are retained. Postactivation failure is reported without automatic rollback.
+
+## Process lifetime and diagnostics
+
+On macOS and Linux, the Runner owns a private process group and waits for ordinary descendants to stop before it returns. Operation locks remain held until cleanup finishes. Shutdown closes admission, cancels work, and reports incomplete cleanup if its caller's budget expires. Deliberate session escapes are not contained by process-group ownership.
+
+Installation removes internal `PRISM_*` environment keys, sets `CI=1`, `NONINTERACTIVE=1`, and `TERM=dumb`, and supplies null stdin. Maintenance diagnostics mask supported credential formats before retaining a bounded 4096-byte tail. stdout and stderr have independent partial-line buffers.
+
+Version probes have a 5-second timeout and one 60-second retry only after their own deadline expires. Jobs have a 15-minute deadline. Postactivation standalone verification can outlast the shutdown caller's budget while retaining its lock.
 
 ## UI and CLI
 
-The existing experimental `agentActions` flag controls the desktop Install, Reinstall, and Update buttons. The daemon routes and CLI remain available regardless of that UI flag.
+The experimental `agentActions` flag controls desktop Install, Reinstall, and Update buttons. Daemon routes and CLI commands do not require that flag.
 
-`prismctl agents status [client] [--json]`, `install <client> [--force]`, `update <client>`, and `job <client>` use the same routes. Refusal reasons appear in status and the unsupported job.
+`prismctl agents status`, `install`, `update`, and `job` use the management routes. Immediate and polled unsupported outcomes display their refusal reasons in the desktop UI.
 
 ## Verification scripts
 
-`verify/scripts/agents-drive.sh` builds an isolated daemon and exercises the API install, update, status, job, and refusal routes. Its fake npm writes a real global package layout with a manifest and symlink. Its native fixture answers a version probe. HOME, account names, shell, and PATH are isolated, including login-shell PATH discovery.
+`verify/scripts/agents-drive.sh` builds a daemon and exercises API and CLI installation, reinstall, manual npm Update, and a supported release transition.
 
-`verify/scripts/agents-ui-drive.sh` exercises Install, Update, and Reinstall through the desktop UI and saves the jobs, statuses, and screenshot. Its npm, shell, HOME, and PATH fixtures remain in the temporary directory. Both scripts refuse to start if their target daemon port already serves a health endpoint.
+`verify/scripts/agents-ui-drive.sh` exercises the same operations through rendered desktop controls and captures job evidence and screenshots.
 
-These scripts do not install or update genuine clients. Older container-matrix results do not verify the current ownership contract.
+Both drivers use temporary client fixtures, explicit executable overrides, a clean environment, and the macOS daemon sandbox from `agents-sandbox.sh`. They deny genuine fixed-directory clients and writes outside the fixture directory. They refuse occupied ports and fail closed on unsupported platforms.
+
+These drivers do not mutate genuine clients. Fixture checks do not establish every vendor updater's destination behavior. Linux runtime and future managed-marker layouts require separate verification.

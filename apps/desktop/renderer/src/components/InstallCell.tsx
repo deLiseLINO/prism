@@ -42,10 +42,12 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
     if (reply === undefined) return
     if (!reply.ok) {
       setActionError(reply.reason === '' ? 'install refused without a reason' : reply.reason)
+      onChanged()
       return
     }
     setActionError(null)
     setJob(reply.job)
+    if (!LIVE_STATES.has(reply.job.state)) onChanged()
   }
 
   async function update(): Promise<void> {
@@ -53,14 +55,16 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
     if (reply === undefined) return
     if (!reply.ok) {
       setActionError(reply.reason === '' ? 'update refused without a reason' : reply.reason)
+      onChanged()
       return
     }
     setActionError(null)
     setJob(reply.job)
+    if (!LIVE_STATES.has(reply.job.state)) onChanged()
   }
 
   const live = LIVE_STATES.has(job.state)
-  const failed = job.state === 'failed' || job.state === 'interrupted'
+  const failed = job.state === 'failed' || job.state === 'interrupted' || job.state === 'unsupported'
   const justSucceeded = job.state === 'succeeded' && !status.installed
   const source = status.installed ? (status.source === '' ? 'unknown' : status.source) : null
 

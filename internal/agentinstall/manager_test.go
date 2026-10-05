@@ -41,23 +41,26 @@ func TestInstallUnsupportedWhenNoTool(t *testing.T) {
 func TestInstallLifecycleRunFailureAndBoundedOutput(t *testing.T) {
 	f := maintenanceSandbox(t)
 	f.global(f.prefix, "@earendil-works/pi-coding-agent", "pi", "echo 1.2.3")
-	f.npm("i=0; while [ $i -lt 2000 ]; do printf 'xxxxxxxxxx'; i=$((i+1)); done; printf 'network failure'; exit 1")
+	f.npm("i=0; while [ $i -lt 2000 ]; do printf 'xxxxxxxxxx'; i=$((i+1)); done; printf '\\nnetwork failure'; exit 1")
 	m := f.manager()
 	if _, err := m.Install(integrations.Pi, false); err != nil {
 		t.Fatal(err)
 	}
 	job := requireJob(t, m, integrations.Pi, StateFailed)
-	if len(job.Output) != outputTailCap || !strings.HasSuffix(job.Output, "network failure") || job.Error != "exit status 1" {
+	if len(job.Output) > outputTailCap || !strings.HasSuffix(job.Output, "network failure") || job.Error != "exit status 1" {
 		t.Fatalf("failed transcript: %+v", job)
 	}
 }
 
 func TestMaintenanceNativeUpdatesUseSelectedAbsoluteEntry(t *testing.T) {
-	for _, key := range []string{"codex", "claude", "grok", "omp", "pi", "hermes"} {
+	for _, key := range []string{"claude", "grok", "omp", "pi", "hermes", "opencode"} {
 		t.Run(key, func(t *testing.T) {
 			f := maintenanceSandbox(t)
 			entry := filepath.Join(f.home, ".local", "bin", key)
-			body := "if [ \"$1\" = '--version' ]; then echo 'client 1.2.3'; else printf '%s\\n' \"$*\" >> \"$MUTATIONS\"; fi"
+			if key == "opencode" {
+				entry = filepath.Join(f.home, ".opencode", "bin", key)
+			}
+			body := "if [ \"$1\" = '--version' ] || [ \"$1\" = version ]; then if [ -f \"$MUTATIONS\" ]; then echo 1.2.4; else echo 1.2.3; fi; elif [ \"$1\" = doctor ]; then echo 'channel unknown'; elif [ \"$2\" = --check ]; then echo 'Update available: 1 commits behind origin/main; release 1.2.4'; else printf '%s\\n' \"$*\" >> \"$MUTATIONS\"; fi"
 			if key == "grok" {
 				target := filepath.Join(f.home, ".grok", "bin", key)
 				f.executable(target, body)
@@ -81,6 +84,9 @@ func TestMaintenanceNativeUpdatesUseSelectedAbsoluteEntry(t *testing.T) {
 			}
 			requireJob(t, m, integrations.ID(key), StateSucceeded)
 			want := "update"
+			if key == "opencode" {
+				want = "upgrade"
+			}
 			if key == "hermes" {
 				want += " --yes"
 			}
@@ -95,7 +101,7 @@ func TestMaintenanceNativeUpdatesUseSelectedAbsoluteEntry(t *testing.T) {
 }
 
 func TestMaintenanceScriptFetchAndBoundVerification(t *testing.T) {
-	for _, kind := range []string{"success", "fetch-failure", "no-client", "hermes-args"} {
+	for _, kind := range []string{"success", "fetch-failure", "no-client", "hermes-args", "concurrent-unrelated", "preexisting", "reused-copy", "preexisting-override-concurrent", "off-path-success"} {
 		t.Run(kind, func(t *testing.T) {
 			f := maintenanceSandbox(t)
 			f.link(filepath.Join(f.tools, "bash"), "/bin/bash")
@@ -109,6 +115,21 @@ func TestMaintenanceScriptFetchAndBoundVerification(t *testing.T) {
 				entry = filepath.Join(f.home, ".local", "bin", "hermes")
 				f.env["PATH"] = filepath.Dir(entry) + ":" + f.env["PATH"]
 			}
+			if kind == "concurrent-unrelated" || kind == "preexisting" || kind == "reused-copy" || kind == "preexisting-override-concurrent" || kind == "off-path-success" {
+				id = integrations.Opencode
+				entry = filepath.Join(f.home, ".opencode", "bin", "opencode")
+			}
+			if kind == "preexisting" {
+				f.executable(entry, "echo 1.2.3")
+			}
+			if kind == "preexisting-override-concurrent" {
+				f.global(f.prefix, "@opencode/cli", "opencode", "echo 2.0.0")
+				f.env["OPENCODE_EXECUTABLE"] = entry
+			}
+			if kind == "reused-copy" {
+				f.global(f.prefix, "@opencode/cli", "opencode", "echo 2.0.0")
+				f.env["OPENCODE_EXECUTABLE"] = entry
+			}
 			m := f.manager()
 			fetched := filepath.Join(f.home, "downloaded.sh")
 			m.fetchScript = func(ctx context.Context, url string) (string, error) {
@@ -119,11 +140,24 @@ func TestMaintenanceScriptFetchAndBoundVerification(t *testing.T) {
 					t.Errorf("wrong official installer: %s", url)
 				}
 				body := "/bin/mkdir -p " + shellQuote(filepath.Dir(entry)) + "\nprintf %s " + shellQuote("#!/bin/sh\necho 1.2.3\n") + " > " + shellQuote(entry) + "\n/bin/chmod 755 " + shellQuote(entry)
-				if kind == "no-client" {
+				if kind == "no-client" || kind == "concurrent-unrelated" || kind == "preexisting-override-concurrent" {
 					body = "exit 0"
 				}
+				if kind == "reused-copy" {
+					old, err := filepath.EvalSymlinks(filepath.Join(f.prefix, "bin", "opencode"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					body = "/bin/mkdir -p " + shellQuote(filepath.Dir(entry)) + "; /bin/ln " + shellQuote(old) + " " + shellQuote(entry)
+				}
+				if kind == "concurrent-unrelated" {
+					f.global(f.prefix, "@opencode/cli", "opencode", "echo 2.0.0")
+				}
+				if kind == "preexisting-override-concurrent" {
+					body = "set -e\nPKG=\"$HOME/.npm-global/lib/node_modules/@opencode/cli\"\n/bin/mkdir -p \"$PKG/bin\" \"$HOME/.npm-global/bin\"\nprintf '%s' '#!/bin/sh\necho 3.0.0\n' > \"$PKG/bin/opencode\"\nprintf '%s' '{\"name\":\"@opencode/cli\",\"bin\":{\"opencode\":\"bin/opencode\"}}' > \"$PKG/package.json\"\n/bin/chmod 755 \"$PKG/bin/opencode\"\n/bin/ln -s \"$PKG/bin/opencode\" \"$HOME/.npm-global/bin/opencode\""
+				}
 				if kind == "hermes-args" {
-					body = "[ \"$1\" = '--non-interactive' ] || exit 7\n" + body
+					body = "[ $# -eq 0 ] || exit 7\n" + body
 				}
 				f.executable(fetched, body)
 				return fetched, nil
@@ -132,10 +166,25 @@ func TestMaintenanceScriptFetchAndBoundVerification(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := StateSucceeded
-			if kind == "fetch-failure" || kind == "no-client" {
+			if kind == "fetch-failure" || kind == "no-client" || kind == "concurrent-unrelated" || kind == "reused-copy" || kind == "preexisting-override-concurrent" {
 				want = StateFailed
 			}
+			if kind == "preexisting" {
+				want = StateUnsupported
+			}
 			job := requireJob(t, m, id, want)
+			if kind == "off-path-success" {
+				st, _ := m.StatusOf(id)
+				if !st.Installed || st.Path != entry {
+					t.Fatalf("off-PATH installed destination lost: %+v", st)
+				}
+			}
+			if kind == "preexisting" && !strings.Contains(job.Error, "native maintenance is manual") {
+				t.Fatalf("existing copy was not routed to reinstall: %+v", job)
+			}
+			if kind == "concurrent-unrelated" && !strings.Contains(job.Error, "destination") {
+				t.Fatalf("unrelated publication did not reach destination guard: %+v", job)
+			}
 			if kind == "fetch-failure" && !strings.HasPrefix(job.Error, "fetch script: ") {
 				t.Fatalf("download failure: %+v", job)
 			}
@@ -154,7 +203,7 @@ func TestMaintenanceActiveRootAndShutdownAdmission(t *testing.T) {
 	f.global(f.prefix, "@earendil-works/pi-coding-agent", "pi", "echo 1.2.3")
 	f.npm("printf 'started\\n' > " + shellQuote(filepath.Join(f.home, "started")) + "; while :; do :; done")
 	m := f.manager()
-	first, err := m.Update(integrations.Codex)
+	first, err := m.Install(integrations.Codex, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +232,7 @@ func TestMaintenanceJobDeadlineIncludesVerification(t *testing.T) {
 	m.jobTimeout = 650 * time.Millisecond
 	m.verifyTimeout = 2 * time.Second
 	m.verifyRetry = 3 * time.Second
-	if _, err := m.Update(integrations.Opencode); err != nil {
+	if _, err := m.Install(integrations.Opencode, true); err != nil {
 		t.Fatal(err)
 	}
 	job := requireJob(t, m, integrations.Opencode, StateFailed)
@@ -206,7 +255,7 @@ func TestMaintenanceTimeoutOnlyVerificationRetry(t *testing.T) {
 			m := f.manager()
 			m.verifyTimeout = 500 * time.Millisecond
 			m.verifyRetry = time.Second
-			if _, err := m.Update(integrations.Opencode); err != nil {
+			if _, err := m.Install(integrations.Opencode, true); err != nil {
 				t.Fatal(err)
 			}
 			want := StateSucceeded

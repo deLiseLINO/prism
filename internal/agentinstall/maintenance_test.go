@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +76,26 @@ func (f *maintenanceFixture) global(prefix, pkg, binary, body string) string {
 }
 func (f *maintenanceFixture) manager() *Manager {
 	f.t.Helper()
-	m := NewManager(f.env, ExecRunner{}, os.Stat, time.Now, func(context.Context, string) (string, error) { return "", errors.New("unexpected script download") })
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "formula") || strings.Contains(r.URL.Path, "cask") {
+			token := strings.TrimSuffix(filepath.Base(r.URL.Path), ".json")
+			fmt.Fprintf(w, `{"name":%q,"token":%q,"version":"1.2.4","versions":{"stable":"1.2.4"}}`, token, token)
+		} else {
+			fmt.Fprint(w, `{"version":"1.2.4"}`)
+		}
+	}))
+	f.t.Cleanup(server.Close)
+	client := server.Client()
+	transport := client.Transport
+	client.Transport = fixtureTransport{transport: transport, server: server.URL}
+	stat := func(path string) (os.FileInfo, error) {
+		if path != f.home && !inside(path, f.home) {
+			return nil, os.ErrNotExist
+		}
+		return os.Stat(path)
+	}
+	m := NewManager(f.env, ExecRunner{}, stat, time.Now, func(context.Context, string) (string, error) { return "", errors.New("unexpected script download") }, client)
 	f.t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -82,6 +103,21 @@ func (f *maintenanceFixture) manager() *Manager {
 	})
 	return m
 }
+
+type fixtureTransport struct {
+	transport http.RoundTripper
+	server    string
+}
+
+func (t fixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	copy := r.Clone(r.Context())
+	u := *r.URL
+	local, _ := http.NewRequest(http.MethodGet, t.server, nil)
+	u.Scheme, u.Host = local.URL.Scheme, local.URL.Host
+	copy.URL = &u
+	return t.transport.RoundTrip(copy)
+}
+
 func (f *maintenanceFixture) mutations() string {
 	f.t.Helper()
 	data, err := os.ReadFile(f.log)
@@ -107,7 +143,8 @@ func TestMaintenanceNpmPreservesObservedDestination(t *testing.T) {
 		t.Run(pkg, func(t *testing.T) {
 			f := maintenanceSandbox(t)
 			observed := filepath.Join(f.home, "selected")
-			f.global(observed, pkg, "opencode", "echo 'client 1.2.3'")
+			entry := f.global(observed, pkg, "opencode", "if [ \"$1\" = upgrade ]; then printf '%s\\n' \"$NPM_CONFIG_PREFIX $*\" >> \"$MUTATIONS\"; else if [ -f \"$MUTATIONS\" ]; then echo 1.2.4; else echo 1.2.3; fi; fi")
+			f.env["OPENCODE_EXECUTABLE"] = entry
 			f.global(f.prefix, "@opencode/cli", "opencode", "echo 'other 2.3.4'")
 			f.env["PATH"] = filepath.Join(observed, "bin") + ":" + f.env["PATH"]
 			f.npm("exit 0")
@@ -120,7 +157,7 @@ func TestMaintenanceNpmPreservesObservedDestination(t *testing.T) {
 				t.Fatal(err)
 			}
 			requireJob(t, m, integrations.Opencode, StateSucceeded)
-			want := "install -g --prefix " + observed + " " + pkg + "@latest"
+			want := observed + " upgrade"
 			if got := f.mutations(); got != want {
 				t.Fatalf("mutated %q, want selected global destination %q", got, want)
 			}
@@ -129,7 +166,7 @@ func TestMaintenanceNpmPreservesObservedDestination(t *testing.T) {
 }
 
 func TestMaintenanceRefusalsAgreeWithStatus(t *testing.T) {
-	for _, kind := range []string{"project", "unknown-package", "wrong-bin", "nested", "opaque", "pnpm", "native-opencode", "unresolved"} {
+	for _, kind := range []string{"project", "unknown-package", "wrong-bin", "nested", "opaque", "pnpm", "unresolved"} {
 		t.Run(kind, func(t *testing.T) {
 			f := maintenanceSandbox(t)
 			entry := filepath.Join(f.prefix, "bin", "opencode")
@@ -235,7 +272,7 @@ func TestMaintenanceVerificationRejectsChangedOwnerOrInvalidVersion(t *testing.T
 			}
 			f.npm(body)
 			m := f.manager()
-			if _, err := m.Update(integrations.Opencode); err != nil {
+			if _, err := m.Install(integrations.Opencode, true); err != nil {
 				t.Fatal(err)
 			}
 			want := StateFailed
@@ -270,7 +307,7 @@ func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := StateFailed
-			if kind == "visible" {
+			if kind == "visible" || kind == "not-visible" {
 				want = StateSucceeded
 			}
 			requireJob(t, m, integrations.Opencode, want)
@@ -289,7 +326,7 @@ func TestMaintenanceRunnerUsesPassedPath(t *testing.T) {
 	f.executable(filepath.Join(f.tools, "npm"), "echo selected")
 	t.Setenv("PATH", wrong)
 	var out bytes.Buffer
-	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{"npm"}, &out); err != nil {
+	if err := (ExecRunner{}).Run(context.Background(), f.env, []string{"npm"}, &out, &out); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "selected" {
@@ -303,7 +340,7 @@ func TestMaintenanceRunnerRejectsEmptyCommand(t *testing.T) {
 			t.Fatalf("empty argv panicked: %v", r)
 		}
 	}()
-	if err := (ExecRunner{}).Run(context.Background(), integrations.Env{}, nil, &bytes.Buffer{}); err == nil {
+	if err := (ExecRunner{}).Run(context.Background(), integrations.Env{}, nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("empty argv succeeded")
 	}
 }
