@@ -192,6 +192,7 @@ func cloneDocument(d Document) Document {
 			pool := *p.Pool
 			p.Pool = &pool
 		}
+		p.Wait = p.Wait.clone()
 		out.Providers[id] = p
 	}
 	for id, c := range d.Combos {

@@ -967,3 +967,90 @@ func TestForbiddenKeepsAccountUsableAndSurfacesCause(t *testing.T) {
 		t.Fatalf("recorded outcome is %T, want RequestRejected", pool.records[0].outcome)
 	}
 }
+
+func TestTurnStallIsIncompleteJournaledAndNotReplayed(t *testing.T) {
+	j := requestlog.New(8, time.Now)
+	stall := provider.RunError{Kind: provider.UnsafeReplay, Class: provider.ClassTransport, Accepted: true, Cause: fmt.Errorf("%w: no progress", provider.ErrUpstreamStall)}
+	calls := 0
+	second := 0
+	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("antigravity", 0)}}}
+	runners := fakeRunners{
+		"codex":       runnerFunc(func(provider.RunRequest, provider.Sink) error { calls++; return stall }),
+		"antigravity": runnerFunc(func(provider.RunRequest, provider.Sink) error { second++; return nil }),
+	}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{testTarget("codex"), testTarget("antigravity")}}}
+	res := NewRouter(pool, runners, planner, "default", j).Turn(context.Background(), canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	fin, ok := res.Terminal.(Finished)
+	if !ok {
+		t.Fatalf("terminal is %T, want Finished", res.Terminal)
+	}
+	if reason, incomplete := fin.Event.Status.Reason(); !incomplete || reason != canon.IncompleteUpstreamStall {
+		t.Fatalf("status = %v/%v, want incomplete upstream_stall", reason, incomplete)
+	}
+	if calls != 1 || second != 0 {
+		t.Fatalf("calls = %d/%d, want 1/0", calls, second)
+	}
+	if len(res.Trace) != 1 || res.Trace[0].Outcome != "upstream_stall" {
+		t.Fatalf("trace = %+v", res.Trace)
+	}
+	if len(pool.records) != 1 {
+		t.Fatalf("pool records = %d, want 1 after stall", len(pool.records))
+	}
+	if _, ok := pool.records[0].outcome.(account.RequestRejected); !ok {
+		t.Fatalf("stall outcome = %T, want RequestRejected", pool.records[0].outcome)
+	}
+	e := j.Snapshot()[0]
+	if len(e.Attempts) != 1 || e.Attempts[0].Outcome != requestlog.AttemptUpstreamStall || e.Terminal.Incomplete != canon.IncompleteUpstreamStall {
+		t.Fatalf("journal = %+v", e)
+	}
+}
+
+func TestTurnWaitExpiryStopsOnlyThatAttempt(t *testing.T) {
+	short := provider.Target{Provider: "codex", Model: "gpt-5.2", Wire: provider.WireCodex, Wait: provider.WaitPolicy{FirstProgress: 20 * time.Millisecond}}
+	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}}}
+	var sawProgress bool
+	runners := fakeRunners{"codex": ctxRunner(func(ctx context.Context, req provider.RunRequest) error {
+		sawProgress = req.Progress != nil
+		<-ctx.Done()
+		return ctx.Err()
+	})}
+	planner := fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{short}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(ctx, canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	if !sawProgress {
+		t.Fatal("runner did not receive a progress reporter")
+	}
+	fin, ok := res.Terminal.(Finished)
+	if !ok {
+		t.Fatalf("terminal is %T, want Finished", res.Terminal)
+	}
+	if reason, _ := fin.Event.Status.Reason(); reason != canon.IncompleteUpstreamStall {
+		t.Fatalf("reason = %v, want upstream_stall", reason)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("stall cancelled the parent context")
+	}
+}
+
+func TestTurnParentCancelStaysClientClosed(t *testing.T) {
+	target := provider.Target{Provider: "codex", Model: "gpt-5.2", Wire: provider.WireCodex, Wait: provider.WaitPolicy{FirstProgress: time.Hour}}
+	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	runners := fakeRunners{"codex": ctxRunner(func(ctx context.Context, _ provider.RunRequest) error {
+		cancel()
+		<-ctx.Done()
+		return ctx.Err()
+	})}
+	res := NewRouter(pool, runners, fakePlanner{"gpt-5.2": Plan{Targets: []provider.Target{target}}}, "default", testJournal(t)).Turn(ctx, canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+	f, ok := res.Terminal.(Failed)
+	if !ok || f.Event.Failure.Reason != canon.FailClientClosed {
+		t.Fatalf("terminal = %+v, want client closed failure", res.Terminal)
+	}
+}
+
+type ctxRunner func(ctx context.Context, req provider.RunRequest) error
+
+func (f ctxRunner) Run(ctx context.Context, req provider.RunRequest, _ provider.Sink) error {
+	return f(ctx, req)
+}

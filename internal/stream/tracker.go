@@ -4,20 +4,9 @@ import (
 	"errors"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 )
-
-const StallThreshold = 300 * time.Second
-
-type Clock interface {
-	Now() time.Time
-}
-
-type realClock struct{}
-
-func (realClock) Now() time.Time { return time.Now() }
 
 var (
 	ErrTerminalRecorded  = errors.New("stream: terminal event already recorded")
@@ -27,25 +16,17 @@ var (
 )
 
 type Tracker struct {
-	mu           sync.Mutex
-	clock        Clock
-	open         map[canon.ItemID]struct{}
-	closed       map[canon.ItemID]struct{}
-	terminal     canon.Event
-	hasTerminal  bool
-	lastActivity time.Time
+	mu          sync.Mutex
+	open        map[canon.ItemID]struct{}
+	closed      map[canon.ItemID]struct{}
+	terminal    canon.Event
+	hasTerminal bool
 }
 
 func NewTracker() *Tracker {
-	return NewTrackerWithClock(realClock{})
-}
-
-func NewTrackerWithClock(c Clock) *Tracker {
 	return &Tracker{
-		clock:        c,
-		open:         make(map[canon.ItemID]struct{}),
-		closed:       make(map[canon.ItemID]struct{}),
-		lastActivity: c.Now(),
+		open:   make(map[canon.ItemID]struct{}),
+		closed: make(map[canon.ItemID]struct{}),
 	}
 }
 
@@ -96,7 +77,6 @@ func (t *Tracker) Apply(ev canon.Event) error {
 		t.hasTerminal = true
 	default:
 	}
-	t.lastActivity = t.clock.Now()
 	return nil
 }
 
@@ -107,7 +87,6 @@ func (t *Tracker) delta(id canon.ItemID) error {
 	if _, live := t.open[id]; !live {
 		return ErrItemNotStarted
 	}
-	t.lastActivity = t.clock.Now()
 	return nil
 }
 
@@ -137,20 +116,6 @@ func (t *Tracker) OnClientDisconnect() (canon.Event, bool) {
 func (t *Tracker) OnUpstreamEOF() (canon.Event, bool) {
 	return t.synthesize(canon.TurnFinished{
 		Status: canon.Incomplete(canon.IncompleteAdapterEOF),
-	})
-}
-
-func (t *Tracker) OnStall() (canon.Event, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.hasTerminal {
-		return canon.Event(nil), false
-	}
-	if t.clock.Now().Sub(t.lastActivity) < StallThreshold {
-		return canon.Event(nil), false
-	}
-	return t.synthesizeLocked(canon.TurnFinished{
-		Status: canon.Incomplete(canon.IncompleteUpstreamStall),
 	})
 }
 

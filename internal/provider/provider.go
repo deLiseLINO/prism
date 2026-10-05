@@ -32,6 +32,7 @@ type Target struct {
 	ImageInput bool
 	Timeout    time.Duration
 	Policy     account.SelectionPolicy
+	Wait       WaitPolicy
 }
 
 type CommitState uint8
@@ -124,10 +125,11 @@ type Sink interface {
 }
 
 type RunRequest struct {
-	Request canon.Request
-	Target  Target
-	Lease   account.Lease
-	Facts   execution.Facts
+	Request  canon.Request
+	Target   Target
+	Lease    account.Lease
+	Facts    execution.Facts
+	Progress Progress
 }
 
 type Runner interface {

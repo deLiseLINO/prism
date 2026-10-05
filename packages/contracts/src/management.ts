@@ -22,6 +22,13 @@ export interface PoolSettingsView {
   readonly accountsPath?: string
 }
 
+// Mirrors internal/config.WaitSettings. An absent field takes the daemon default, 0 disables that
+// budget, and positive values are milliseconds. Sending `wait: {}` on a write resets both to defaults.
+export interface WaitSettingsView {
+  readonly firstProgressMs?: number
+  readonly idleMs?: number
+}
+
 // Provider response shape (internal/management/schema.go Provider). The daemon never echoes
 // apiKeyRef or credential bytes; the credential carries only its masked state.
 export type ProviderModelMode = 'logical' | 'raw'
@@ -47,6 +54,7 @@ export interface ProviderView {
   readonly modelSettings?: Readonly<Record<string, ModelSettingsView>>
   readonly enabled?: boolean
   readonly pool?: PoolSettingsView
+  readonly wait?: WaitSettingsView
   readonly credential: { readonly state: 'set' | 'unset' | 'unknown' }
 }
 

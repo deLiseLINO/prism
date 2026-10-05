@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/deLiseLINO/prism/internal/catalog"
@@ -44,7 +46,6 @@ const (
 	ComboFailover   ComboStrategy = "failover"
 	ComboRoundRobin ComboStrategy = "round_robin"
 )
-
 
 var (
 	ErrStaleGeneration      = errors.New("config: stale generation")
@@ -109,6 +110,7 @@ type Provider struct {
 	ModelSettings  map[string]ModelSettings   `json:"modelSettings,omitempty"`
 	Enabled        *bool                      `json:"enabled,omitempty"`
 	Pool           *PoolSettings              `json:"pool,omitempty"`
+	Wait           *WaitSettings              `json:"wait,omitempty"`
 }
 
 func (p Provider) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
@@ -259,6 +261,44 @@ type PoolSettings struct {
 	AccountsPath  string `json:"accountsPath,omitempty"`
 }
 
+// WaitSettings bounds how long a provider may stay silent during a streamed
+// response. A nil field takes the runtime default, an explicit zero disables
+// that budget, and a positive value is milliseconds.
+type WaitSettings struct {
+	FirstProgressMs *int64 `json:"firstProgressMs,omitempty"`
+	IdleMs          *int64 `json:"idleMs,omitempty"`
+}
+
+const maxWaitMs = int64(math.MaxInt64 / int64(time.Millisecond))
+
+func (w WaitSettings) IsZero() bool { return w.FirstProgressMs == nil && w.IdleMs == nil }
+
+func (w WaitSettings) validate() error {
+	if w.FirstProgressMs != nil && (*w.FirstProgressMs < 0 || *w.FirstProgressMs > maxWaitMs) {
+		return fmt.Errorf("%w: firstProgressMs %d", ErrInvalidValue, *w.FirstProgressMs)
+	}
+	if w.IdleMs != nil && (*w.IdleMs < 0 || *w.IdleMs > maxWaitMs) {
+		return fmt.Errorf("%w: idleMs %d", ErrInvalidValue, *w.IdleMs)
+	}
+	return nil
+}
+
+func (w *WaitSettings) clone() *WaitSettings {
+	if w == nil {
+		return nil
+	}
+	out := WaitSettings{}
+	if w.FirstProgressMs != nil {
+		v := *w.FirstProgressMs
+		out.FirstProgressMs = &v
+	}
+	if w.IdleMs != nil {
+		v := *w.IdleMs
+		out.IdleMs = &v
+	}
+	return &out
+}
+
 type Target struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
@@ -311,6 +351,11 @@ func (d Document) validate() error {
 		if p.Pool != nil {
 			if err := p.Pool.validate(); err != nil {
 				return fmt.Errorf("providers.%s.pool: %w", id, err)
+			}
+		}
+		if p.Wait != nil {
+			if err := p.Wait.validate(); err != nil {
+				return fmt.Errorf("providers.%s.wait: %w", id, err)
 			}
 		}
 	}

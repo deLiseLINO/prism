@@ -1,13 +1,11 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/egress"
@@ -18,7 +16,6 @@ import (
 	ingresschat "github.com/deLiseLINO/prism/internal/ingress/chat"
 	ingressmessages "github.com/deLiseLINO/prism/internal/ingress/messages"
 	ingressresponses "github.com/deLiseLINO/prism/internal/ingress/responses"
-	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/routing"
 	"github.com/deLiseLINO/prism/internal/stream"
 )
@@ -41,8 +38,6 @@ func (p protocol) String() string {
 		return "messages"
 	}
 }
-
-const stallPollInterval = 5 * time.Second
 
 var errTerminalWritten = errors.New("server: terminal already emitted")
 
@@ -90,7 +85,6 @@ func (s *messagesSink) Close()                               { s.e.Close() }
 type pipeline struct {
 	sink            streamSink
 	tracker         *stream.Tracker
-	clock           Clock
 	mu              sync.Mutex
 	terminalWritten bool
 }
@@ -136,16 +130,11 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 	}
 	start := s.clock.Now()
 	sink := s.newSink(w, proto, req, facts)
-	p := &pipeline{sink: sink, tracker: stream.NewTrackerWithClock(s.clock), clock: s.clock}
+	p := &pipeline{sink: sink, tracker: stream.NewTracker()}
 	if err := sink.Begin(); err != nil {
 		return
 	}
-	ctx, cancel := context.WithCancelCause(r.Context())
-	defer cancel(context.Canceled)
-	done := make(chan struct{})
-	defer close(done)
-	go p.watchStall(ctx, cancel, done)
-	res := s.router.Turn(ctx, req, facts, sink.Lifecycle(), p)
+	res := s.router.Turn(r.Context(), req, facts, sink.Lifecycle(), p)
 	if f, failed := res.Terminal.(routing.Failed); failed && !req.Stream && proto != protocolResponses {
 		w.WriteHeader(failureStatus(f.Event.Failure.Reason))
 	}
@@ -243,37 +232,6 @@ func (p *pipeline) finish(res routing.TurnResult) {
 	}
 	_ = p.sink.Flush()
 }
-func (p *pipeline) watchStall(ctx context.Context, cancel context.CancelCauseFunc, done <-chan struct{}) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-done:
-			return
-		case <-p.clock.After(stallPollInterval):
-		}
-		p.mu.Lock()
-		written := p.terminalWritten
-		p.mu.Unlock()
-		if written {
-			return
-		}
-		ev, ok := p.tracker.OnStall()
-		if !ok {
-			continue
-		}
-		p.mu.Lock()
-		if !p.terminalWritten {
-			p.terminalWritten = true
-			_ = p.sink.Frame(ev)
-			_ = p.sink.Flush()
-		}
-		p.mu.Unlock()
-		cancel(provider.ErrUpstreamStall)
-		return
-	}
-}
-
 func (s *Server) writeParseError(w http.ResponseWriter, proto protocol, err error) {
 	var mbe *http.MaxBytesError
 	if errors.As(err, &mbe) {

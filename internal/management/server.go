@@ -405,6 +405,12 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	if body.Pool != nil {
 		next.Pool = body.Pool
 	}
+	if body.Wait != nil {
+		next.Wait = nil
+		if !body.Wait.IsZero() {
+			next.Wait = body.Wait
+		}
+	}
 	doc.Providers[id] = next
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
@@ -791,6 +797,7 @@ func (s *Server) providerView(ctx context.Context, doc config.Document, id strin
 		ModelSettings:  p.ModelSettings,
 		Enabled:        p.Enabled,
 		Pool:           p.Pool,
+		Wait:           p.Wait,
 		Credential:     ProviderCredential{State: state},
 	}, nil
 }

@@ -66,6 +66,7 @@ type Provider struct {
 	ModelSettings  map[string]config.ModelSettings   `json:"modelSettings,omitempty"`
 	Enabled        *bool                             `json:"enabled,omitempty"`
 	Pool           *config.PoolSettings              `json:"pool,omitempty"`
+	Wait           *config.WaitSettings              `json:"wait,omitempty"`
 	Credential     ProviderCredential                `json:"credential"`
 }
 
@@ -130,6 +131,7 @@ type ProviderWrite struct {
 	ModelSettings      *map[string]config.ModelSettings `json:"modelSettings,omitempty"`
 	Enabled            *bool                            `json:"enabled,omitempty"`
 	Pool               *config.PoolSettings             `json:"pool,omitempty"`
+	Wait               *config.WaitSettings             `json:"wait,omitempty"`
 	Credential         string                           `json:"credential,omitempty"`
 	ExpectedGeneration uint64                           `json:"expectedGeneration"`
 }

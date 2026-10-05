@@ -233,3 +233,22 @@ func containsString(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+func TestSSERawReasoningTextReportsProgressWithoutCanonEvent(t *testing.T) {
+	marks := 0
+	var events []canon.Event
+	dec := NewDecoder(func(ev canon.Event) error { events = append(events, ev); return nil })
+	dec.OnProgress(func() { marks++ })
+	sse := joinFrames(
+		`{"type":"response.reasoning_text.delta","delta":""}`,
+		`{"type":"response.reasoning_text.delta","delta":"hm"}`,
+		`{"type":"response.reasoning_text.delta","delta":7}`,
+		`{"type":"response.in_progress","response":{}}`,
+	)
+	if err := dec.Decode(strings.NewReader(sse)); err != nil {
+		t.Fatal(err)
+	}
+	if marks != 1 || len(events) != 0 {
+		t.Fatalf("marks = %d events = %d, want 1 mark from the nonempty delta only", marks, len(events))
+	}
+}
