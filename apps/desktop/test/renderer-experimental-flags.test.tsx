@@ -99,6 +99,23 @@ describe('agent actions feature flag', () => {
     expect(html).toContain('Update<')
   })
 
+  it.each([
+    { installed: false, error: 'required tool is not available on PATH', expected: 'required tool is not available on PATH' },
+    { installed: true, error: 'native installation requires manual maintenance', expected: 'native installation requires manual maintenance' },
+    { installed: false, error: undefined, expected: 'operation unsupported; check installation requirements' },
+    { installed: false, error: '', expected: 'operation unsupported; check installation requirements' },
+  ])('renders a stored unsupported reason with installed=$installed and error=$error even with actions hidden', ({ installed, error, expected }) => {
+    stubStorage(null)
+    const container = document.createElement('div')
+    container.innerHTML = renderToString(
+      <ExperimentalFlagsProvider>
+        <InstallCell status={{ ...status, installed, canUpdate: false, job: { agent: 'codex', op: 'install', state: 'unsupported', error } }} onChanged={() => {}} />
+      </ExperimentalFlagsProvider>,
+    )
+    expect(container.querySelector('[role=alert]')?.textContent?.trim()).toBe(expected)
+    expect(container.querySelector('button')).toBeNull()
+  })
+
   describe('experimental screen card visibility', () => {
     it('lists every flag card, agent install first, with no daemon gate', () => {
       stubStorage(null)

@@ -60,7 +60,7 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
   }
 
   const live = LIVE_STATES.has(job.state)
-  const failed = job.state === 'failed' || job.state === 'interrupted'
+  const failed = job.state === 'failed' || job.state === 'interrupted' || job.state === 'unsupported'
   const justSucceeded = job.state === 'succeeded' && !status.installed
   const source = status.installed ? (status.source === '' ? 'unknown' : status.source) : null
 
@@ -121,7 +121,7 @@ export function InstallCell({ status, onChanged }: InstallCellProps): JSX.Elemen
       ) : null}
       {taskError === null && actionError === null && failed ? (
         <span className="int-install__err" role="alert">
-          {job.error === '' || job.error === undefined ? 'job failed without detail' : job.error}
+          {job.error || (job.state === 'unsupported' ? 'operation unsupported; check installation requirements' : 'job failed without detail')}
         </span>
       ) : null}
     </div>
