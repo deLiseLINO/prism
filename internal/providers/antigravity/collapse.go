@@ -579,11 +579,18 @@ func collapseIds(raw []string) []string {
 }
 
 // familyForLogical returns the collapse family a logical id resolves against
-// the present map (template families need the discovery list to instantiate).
+// the present map.
 // Derived pair families are found only when their members are present, which
 // mirrors how they were derived at collapse time. The returned family is
 // shared table data; callers must not mutate it.
 func familyForLogical(logical string, present map[string]bool) *family {
+	if present == nil {
+		if rev, ok := templateRevision(logical); ok {
+			if f := geminiFlashTemplate.instantiate(rev); f != nil && f.id == logical {
+				return f
+			}
+		}
+	}
 	ids := make([]string, 0, len(present))
 	for id := range present {
 		ids = append(ids, id)
@@ -603,22 +610,33 @@ func familyForLogical(logical string, present map[string]bool) *family {
 }
 
 // resolveWireModel returns the raw wire id a logical model routes to at the
-// given effort. present is the last-discovery presence map; an empty present
-// map makes every family inert and the logical id passes through unchanged.
+// given effort.
 // A routing entry applies iff its target is declared, present (or the effort
 // is not "off" and the family preserves absent effort routes), and not
 // retired — the same survival rule the collapse loop applies. Anything else
 // falls back to the family's default wire id; the envelope clamps requiresEffort
 // efforts before an unset effort ever reaches the default.
 func resolveWireModel(logical string, ef effort, present map[string]bool) string {
-	if len(present) == 0 {
-		return logical
-	}
 	f := familyForLogical(logical, present)
 	if f == nil {
 		return logical
 	}
 	retired := retiredSet(f)
+	if present == nil {
+		rev, ok := templateRevision(logical)
+		if !ok || geminiFlashTemplate.instantiate(rev) == nil || fill(geminiFlashTemplate.id, rev) != logical {
+			return logical
+		}
+		present = make(map[string]bool, len(f.members))
+		for _, member := range f.members {
+			if !retired[member] {
+				present[member] = true
+			}
+		}
+	}
+	if len(present) == 0 {
+		return logical
+	}
 	if target, ok := f.routing[ef]; ok {
 		targetPresent := present[target]
 		preserveAbsent := ef != effortOff && f.preserveAbsentEffortRoutes
