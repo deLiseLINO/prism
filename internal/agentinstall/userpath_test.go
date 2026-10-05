@@ -20,15 +20,14 @@ func TestWithUserPathFindsBinaryMissingFromGUIPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	shell := filepath.Join(dir, "fake-shell")
-	script := "#!/bin/sh\nprintf %s \"" + dir + "\"\n"
-	if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
+	profile := "export PATH='" + strings.ReplaceAll(dir, "'", "'\\''") + "'\n"
+	if err := os.WriteFile(filepath.Join(home, ".profile"), []byte(profile), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("USER", "probe")
 	t.Setenv("LOGNAME", "probe")
-	stubPasswdShell(t, shell)
+	stubPasswdShell(t, "/bin/sh")
 
 	gui := integrations.Env{"PATH": "/usr/bin:/bin", "HOME": home, "USER": "probe", "LOGNAME": "probe"}
 	merged := WithUserPath(gui)
@@ -44,15 +43,15 @@ func TestWithUserPathKeepsGUIPathWhenProbeFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("login shell probe is covered on unix")
 	}
-	dir := t.TempDir()
-	shell := filepath.Join(dir, "fake-shell")
-	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".profile"), []byte("exit 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", home)
 	t.Setenv("USER", "probe")
-	stubPasswdShell(t, shell)
-	gui := integrations.Env{"PATH": "/usr/bin:/bin", "HOME": t.TempDir(), "USER": "probe"}
+	t.Setenv("LOGNAME", "probe")
+	stubPasswdShell(t, "/bin/sh")
+	gui := integrations.Env{"PATH": "/usr/bin:/bin", "HOME": home, "USER": "probe", "LOGNAME": "probe"}
 	merged := WithUserPath(gui)
 	if merged["PATH"] != "/usr/bin:/bin" {
 		t.Fatalf("PATH = %q, want the original GUI PATH", merged["PATH"])
