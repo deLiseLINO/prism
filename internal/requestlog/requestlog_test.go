@@ -339,6 +339,7 @@ func TestOutcomeStringRoundTrip(t *testing.T) {
 		AttemptInvalidRequest: "invalid_request",
 		AttemptContextLength:  "context_length",
 		AttemptClientClosed:   "client_closed",
+		AttemptUpstreamStall:  "upstream_stall",
 		AttemptNoTerminal:     "no_terminal",
 		AttemptRejected:       "rejected",
 	}

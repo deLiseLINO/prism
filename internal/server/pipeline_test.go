@@ -400,8 +400,17 @@ func TestPostCommitFailureSurfacesTerminal(t *testing.T) {
 	}
 }
 
-func TestStallWatchdogWithFakeClock(t *testing.T) {
-	clock := newFakeClock()
+func stallPlan(providerIDs ...string) routing.Plan {
+	wait := provider.WaitPolicy{FirstProgress: 50 * time.Millisecond, Idle: 50 * time.Millisecond}
+	plan := routing.Plan{}
+	for _, id := range providerIDs {
+		plan.Targets = append(plan.Targets, provider.Target{Provider: account.ProviderID(id), Model: "m1", Wire: provider.WireResponses, Wait: wait})
+	}
+	return plan
+}
+
+func TestStallEndsTurnWithMatchingWireAndUsage(t *testing.T) {
+	store := &fakeUsageStore{}
 	runner := &fakeRunner{scripts: []fakeScript{{
 		events: []canon.Event{
 			canon.ItemStarted{Item: messageAssistant("m1", "partial")},
@@ -409,11 +418,11 @@ func TestStallWatchdogWithFakeClock(t *testing.T) {
 		},
 		block: true,
 	}}}
-	h := newTestServer(t, clock, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
+	h := newTestServerWithUsage(t, nil, map[canon.ModelID]routing.Plan{"test-model": stallPlan("p1")}, func(reg *provider.Registry) {
 		if err := reg.Register("p1", runner); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}, store)
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 	resp, err := http.Post(ts.URL+"/v1/responses", "application/json", strings.NewReader(`{"model":"test-model","stream":true,"input":"hi"}`))
@@ -421,47 +430,47 @@ func TestStallWatchdogWithFakeClock(t *testing.T) {
 		t.Fatalf("post: %v", err)
 	}
 	defer resp.Body.Close()
-	type readResult struct {
-		body string
-		err  error
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
 	}
-	done := make(chan readResult, 1)
-	go func() {
-		b, err := io.ReadAll(resp.Body)
-		done <- readResult{body: string(b), err: err}
-	}()
-	var s string
-	for range 120 {
-		select {
-		case r := <-done:
-			if r.err != nil {
-				t.Fatalf("read body: %v", r.err)
-			}
-			s = r.body
-		default:
-		}
-		if s != "" {
-			break
-		}
-		clock.Advance(60 * time.Second)
+	s := string(b)
+	if !strings.Contains(s, "event: response.incomplete") || !strings.Contains(s, "upstream_stall") {
+		t.Fatalf("incomplete upstream_stall terminal missing:\n%s", s)
+	}
+	if strings.Contains(s, "event: response.completed") || strings.Count(s, "event: response.incomplete") != 1 {
+		t.Fatalf("want exactly one incomplete terminal:\n%s", s)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(store.snapshot()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if s == "" {
-		select {
-		case r := <-done:
-			s = r.body
-		case <-time.After(5 * time.Second):
-			t.Fatal("stall watchdog did not complete the turn")
+	records := store.snapshot()
+	if len(records) != 1 {
+		t.Fatalf("usage records = %d, want 1", len(records))
+	}
+	if got := records[0]; got.Status != "incomplete" || got.Reason != "upstream_stall" {
+		t.Fatalf("wire reported upstream_stall but usage stored status=%q reason=%q", got.Status, got.Reason)
+	}
+}
+
+func TestStallBeforeOutputDoesNotFailOver(t *testing.T) {
+	first := &fakeRunner{scripts: []fakeScript{{block: true}}}
+	second := &fakeRunner{scripts: []fakeScript{{events: []canon.Event{canon.TurnFinished{Status: canon.Completed()}}}}}
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": stallPlan("p1", "p2")}, func(reg *provider.Registry) {
+		if err := reg.Register("p1", first); err != nil {
+			t.Fatal(err)
 		}
+		if err := reg.Register("p2", second); err != nil {
+			t.Fatal(err)
+		}
+	})
+	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":true,"input":"hi"}`)
+	if !strings.Contains(rec.Body.String(), "upstream_stall") {
+		t.Fatalf("stall terminal missing:\n%s", rec.Body.String())
 	}
-	if !strings.Contains(s, "event: response.incomplete") {
-		t.Fatalf("incomplete terminal missing:\n%s", s)
-	}
-	if !strings.Contains(s, "upstream_stall") {
-		t.Fatalf("stall reason missing:\n%s", s)
-	}
-	if strings.Contains(s, "event: response.completed") {
-		t.Fatalf("completed after stall:\n%s", s)
+	if first.callsMade() != 1 || second.callsMade() != 0 {
+		t.Fatalf("calls = %d/%d, want 1/0: stall must not replay", first.callsMade(), second.callsMade())
 	}
 }
 

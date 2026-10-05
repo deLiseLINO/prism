@@ -3,7 +3,10 @@ package management
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/deLiseLINO/prism/internal/config"
 )
 
 const fullPolicyBody = `{"id":"codex","wire":"codex","models":["m1","m2"],"disabledModels":["m2"],"enabled":false,` +
@@ -96,4 +99,96 @@ func TestProviderReplaceRejectsInvalidPoolSettings(t *testing.T) {
 	bad := fmt.Sprintf(`{"wire":"codex","pool":{"pinnedAccount":"acct 1"},"expectedGeneration":%d}`, 1)
 	rec := env.do(t, http.MethodPut, "/api/v1/providers/codex", bad)
 	assertErrorBody(t, rec, http.StatusBadRequest, "invalid_document")
+}
+
+func createWaitProvider(t *testing.T, env *testEnv, wait string) {
+	t.Helper()
+	body := `{"id":"router","wire":"codex","models":["m1"],"wait":` + wait + `,"expectedGeneration":0}`
+	if rec := env.do(t, http.MethodPost, "/api/v1/providers", body); rec.Code != http.StatusOK {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func listedWait(t *testing.T, env *testEnv) *config.WaitSettings {
+	t.Helper()
+	rec := env.do(t, http.MethodGet, "/api/v1/providers", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d", rec.Code)
+	}
+	listed := decodeBody[ProvidersResponse](t, rec)
+	if len(listed.Providers) != 1 {
+		t.Fatalf("providers = %d, want 1", len(listed.Providers))
+	}
+	return listed.Providers[0].Wait
+}
+
+func TestProviderWaitRoundTripsExplicitZeroAndOmission(t *testing.T) {
+	env := newEnv(t)
+	createWaitProvider(t, env, `{"idleMs":0}`)
+	rec := env.do(t, http.MethodGet, "/api/v1/providers", "")
+	if !strings.Contains(rec.Body.String(), `"wait":{"idleMs":0}`) {
+		t.Fatalf("wire body lost explicit zero or invented firstProgressMs: %s", rec.Body.String())
+	}
+	w := listedWait(t, env)
+	if w == nil || w.FirstProgressMs != nil || w.IdleMs == nil || *w.IdleMs != 0 {
+		t.Fatalf("wait = %+v, want only idleMs=0", w)
+	}
+}
+
+func TestProviderReplaceWithoutWaitPreservesIt(t *testing.T) {
+	env := newEnv(t)
+	createWaitProvider(t, env, `{"firstProgressMs":900000,"idleMs":0}`)
+	rec := env.do(t, http.MethodPut, "/api/v1/providers/router", `{"wire":"codex","enabled":true,"expectedGeneration":1}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("toggle status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	for name, w := range map[string]*config.WaitSettings{
+		"mutation response": decodeBody[ProviderMutationResponse](t, rec).Provider.Wait,
+		"list":              listedWait(t, env),
+	} {
+		if w == nil || w.FirstProgressMs == nil || *w.FirstProgressMs != 900000 || w.IdleMs == nil || *w.IdleMs != 0 {
+			t.Fatalf("%s: wait erased by partial write: %+v", name, w)
+		}
+	}
+}
+
+func TestProviderReplaceWaitReplacesWholeObject(t *testing.T) {
+	env := newEnv(t)
+	createWaitProvider(t, env, `{"firstProgressMs":900000,"idleMs":60000}`)
+	rec := env.do(t, http.MethodPut, "/api/v1/providers/router", `{"wire":"codex","wait":{"idleMs":5000},"expectedGeneration":1}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("replace status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	w := listedWait(t, env)
+	if w == nil || w.FirstProgressMs != nil || w.IdleMs == nil || *w.IdleMs != 5000 {
+		t.Fatalf("wait = %+v, want only idleMs=5000 (omitted field must reset to default)", w)
+	}
+}
+
+func TestProviderReplaceEmptyWaitResetsToDefaults(t *testing.T) {
+	env := newEnv(t)
+	createWaitProvider(t, env, `{"firstProgressMs":0,"idleMs":0}`)
+	rec := env.do(t, http.MethodPut, "/api/v1/providers/router", `{"wire":"codex","wait":{},"expectedGeneration":1}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if w := listedWait(t, env); w != nil {
+		t.Fatalf("wait = %+v after reset, want absent", w)
+	}
+}
+
+func TestProviderWaitRejectsInvalidBudgetsWithoutChangingStoredValue(t *testing.T) {
+	for _, bad := range []string{
+		`{"firstProgressMs":-1}`,
+		`{"idleMs":-5}`,
+		`{"idleMs":9223372036854775807}`,
+	} {
+		env := newEnv(t)
+		createWaitProvider(t, env, `{"idleMs":1000}`)
+		rec := env.do(t, http.MethodPut, "/api/v1/providers/router", `{"wire":"codex","wait":`+bad+`,"expectedGeneration":1}`)
+		assertErrorBody(t, rec, http.StatusBadRequest, "invalid_document")
+		if w := listedWait(t, env); w == nil || w.IdleMs == nil || *w.IdleMs != 1000 {
+			t.Fatalf("%s: rejected write changed stored wait: %+v", bad, w)
+		}
+	}
 }

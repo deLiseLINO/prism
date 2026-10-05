@@ -3,21 +3,16 @@ package stream
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 )
-
-type fakeClock struct{ now time.Time }
-
-func (c *fakeClock) Now() time.Time { return c.now }
 
 func messageItem(id canon.ItemID) canon.Message {
 	return canon.Message{ID: id, Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "hi"}}}
 }
 
 func TestItemStartsBeforeDeltas(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	err := tr.Apply(canon.TextDelta{ItemID: "m1", Text: "a"})
 	if !errors.Is(err, ErrItemNotStarted) {
 		t.Fatalf("delta before start: got %v, want ErrItemNotStarted", err)
@@ -31,7 +26,7 @@ func TestItemStartsBeforeDeltas(t *testing.T) {
 }
 
 func TestItemFinishesAtMostOnce(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	if err := tr.Apply(canon.ItemStarted{Item: messageItem("m1")}); err != nil {
 		t.Fatalf("ItemStarted: %v", err)
 	}
@@ -48,7 +43,7 @@ func TestItemFinishesAtMostOnce(t *testing.T) {
 }
 
 func TestOneTerminalPerTurn(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	fin := canon.TurnFinished{Status: canon.Completed()}
 	if err := tr.Apply(fin); err != nil {
 		t.Fatalf("TurnFinished: %v", err)
@@ -67,7 +62,7 @@ func TestOneTerminalPerTurn(t *testing.T) {
 }
 
 func TestNoEventsAfterTerminal(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	if err := tr.Apply(canon.TurnFinished{Status: canon.Completed()}); err != nil {
 		t.Fatalf("TurnFinished: %v", err)
 	}
@@ -82,7 +77,7 @@ func TestNoEventsAfterTerminal(t *testing.T) {
 }
 
 func TestClientDisconnectCancelsTurn(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	if err := tr.Apply(canon.ItemStarted{Item: messageItem("m1")}); err != nil {
 		t.Fatalf("ItemStarted: %v", err)
 	}
@@ -108,7 +103,7 @@ func TestClientDisconnectCancelsTurn(t *testing.T) {
 }
 
 func TestUpstreamEOFYieldsAdapterEOF(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	ev, synthesized := tr.OnUpstreamEOF()
 	if !synthesized {
 		t.Fatal("OnUpstreamEOF: want synthesized terminal")
@@ -126,63 +121,14 @@ func TestUpstreamEOFYieldsAdapterEOF(t *testing.T) {
 	}
 }
 
-func TestStallAfterThreshold(t *testing.T) {
-	clock := &fakeClock{now: time.Unix(0, 0)}
-	tr := NewTrackerWithClock(clock)
-	if err := tr.Apply(canon.ItemStarted{Item: messageItem("m1")}); err != nil {
-		t.Fatalf("ItemStarted: %v", err)
-	}
-	if _, synthesized := tr.OnStall(); synthesized {
-		t.Fatal("OnStall before threshold: want synthesized=false")
-	}
-	clock.now = clock.now.Add(StallThreshold - time.Second)
-	if _, synthesized := tr.OnStall(); synthesized {
-		t.Fatal("OnStall just before threshold: want synthesized=false")
-	}
-	clock.now = clock.now.Add(time.Second)
-	ev, synthesized := tr.OnStall()
-	if !synthesized {
-		t.Fatal("OnStall at threshold: want synthesized terminal")
-	}
-	fin, ok := ev.(canon.TurnFinished)
-	if !ok {
-		t.Fatalf("OnStall: got %T, want canon.TurnFinished", ev)
-	}
-	reason, hasReason := fin.Status.Reason()
-	if !hasReason || reason != canon.IncompleteUpstreamStall {
-		t.Fatalf("stall status: got reason=%v ok=%v, want IncompleteUpstreamStall", reason, hasReason)
-	}
-}
-
-func TestDeltasRefreshStallClock(t *testing.T) {
-	clock := &fakeClock{now: time.Unix(0, 0)}
-	tr := NewTrackerWithClock(clock)
-	if err := tr.Apply(canon.ItemStarted{Item: messageItem("m1")}); err != nil {
-		t.Fatalf("ItemStarted: %v", err)
-	}
-	clock.now = clock.now.Add(StallThreshold - time.Second)
-	if err := tr.Apply(canon.TextDelta{ItemID: "m1"}); err != nil {
-		t.Fatalf("TextDelta: %v", err)
-	}
-	clock.now = clock.now.Add(StallThreshold - time.Second)
-	if _, synthesized := tr.OnStall(); synthesized {
-		t.Fatal("OnStall after recent delta: want synthesized=false")
-	}
-	clock.now = clock.now.Add(time.Second)
-	if _, synthesized := tr.OnStall(); !synthesized {
-		t.Fatal("OnStall at threshold after delta: want synthesized terminal")
-	}
-}
-
 func TestSynthesisIdempotent(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	if _, synthesized := tr.OnClientDisconnect(); !synthesized {
 		t.Fatal("first OnClientDisconnect: want synthesized")
 	}
 	for name, fn := range map[string]func() (canon.Event, bool){
 		"OnClientDisconnect": tr.OnClientDisconnect,
 		"OnUpstreamEOF":      tr.OnUpstreamEOF,
-		"OnStall":            tr.OnStall,
 	} {
 		if ev, synthesized := fn(); synthesized || ev != nil {
 			t.Fatalf("%s after terminal: got (%v, %v), want (nil, false)", name, ev, synthesized)
@@ -194,7 +140,7 @@ func TestSynthesisIdempotent(t *testing.T) {
 }
 
 func TestActiveItemsExposesUnclosedIDs(t *testing.T) {
-	tr := NewTrackerWithClock(&fakeClock{now: time.Unix(0, 0)})
+	tr := NewTracker()
 	if err := tr.Apply(canon.ItemStarted{Item: messageItem("b")}); err != nil {
 		t.Fatalf("ItemStarted b: %v", err)
 	}
@@ -207,26 +153,5 @@ func TestActiveItemsExposesUnclosedIDs(t *testing.T) {
 	got := tr.ActiveItems()
 	if len(got) != 1 || got[0] != "a" {
 		t.Fatalf("ActiveItems: got %v, want [a]", got)
-	}
-}
-
-func TestStallUsesLastActivityNotCreation(t *testing.T) {
-	clock := &fakeClock{now: time.Unix(0, 0)}
-	tr := NewTrackerWithClock(clock)
-	clock.now = clock.now.Add(StallThreshold + time.Second)
-	if err := tr.Apply(canon.ItemStarted{Item: messageItem("m1")}); err != nil {
-		t.Fatalf("ItemStarted: %v", err)
-	}
-	clock.now = clock.now.Add(StallThreshold - time.Second)
-	if _, synthesized := tr.OnStall(); synthesized {
-		t.Fatal("OnStall just after fresh activity: want synthesized=false")
-	}
-	clock.now = clock.now.Add(time.Second)
-	if _, synthesized := tr.OnStall(); !synthesized {
-		t.Fatal("OnStall 300s after last event: want synthesized terminal")
-	}
-	err := tr.Apply(canon.TurnFinished{Status: canon.Completed()})
-	if !errors.Is(err, ErrTerminalRecorded) {
-		t.Fatalf("TurnFinished after stall: got %v, want ErrTerminalRecorded", err)
 	}
 }

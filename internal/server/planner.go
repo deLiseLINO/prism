@@ -3,6 +3,7 @@ package server
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/canon"
@@ -95,7 +96,26 @@ func targetFor(d config.Document, providerID, model string) (provider.Target, er
 		Model:      canon.ModelID(model),
 		ImageInput: d.ResolveImageInput(providerID, model),
 		Policy:     selectionPolicy(p.Pool),
+		Wait:       waitPolicy(p.Wait),
 	}, nil
+}
+
+func waitPolicy(w *config.WaitSettings) provider.WaitPolicy {
+	if w == nil {
+		return provider.WaitPolicy{}
+	}
+	return provider.WaitPolicy{FirstProgress: waitBudget(w.FirstProgressMs), Idle: waitBudget(w.IdleMs)}
+}
+
+func waitBudget(ms *int64) time.Duration {
+	switch {
+	case ms == nil:
+		return 0
+	case *ms == 0:
+		return provider.WaitOff
+	default:
+		return time.Duration(*ms) * time.Millisecond
+	}
 }
 
 func selectionPolicy(ps *config.PoolSettings) account.SelectionPolicy {

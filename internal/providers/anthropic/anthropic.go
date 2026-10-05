@@ -147,8 +147,6 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		ctx, cancel = context.WithTimeout(ctx, req.Target.Timeout)
 		defer cancel()
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, out.url, bytes.NewReader(out.body))
 	if err != nil {
 		return &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: err}
@@ -164,7 +162,7 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return upstreamError(resp)
 	}
-	return r.stream(provider.IdleBody(resp.Body, provider.StreamIdleTimeout, cancel), sink, customToolNames(req.Request.Tools))
+	return r.stream(resp.Body, sink, customToolNames(req.Request.Tools))
 }
 
 func (r *Runner) buildRequest(req provider.RunRequest) (*outbound, error) {

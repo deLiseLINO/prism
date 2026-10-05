@@ -3,7 +3,9 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
+	"time"
 )
 
 func TestLegacyProviderDefaultsRemainEnabled(t *testing.T) {
@@ -88,5 +90,68 @@ func TestPoolDecodeIgnoresRemovedFields(t *testing.T) {
 	}
 	if pool.PinnedAccount != "acct-1" || pool.AccountsPath != "accounts.json" {
 		t.Fatalf("decoded pool = %+v", pool)
+	}
+}
+
+func msPtr(v int64) *int64 { return &v }
+
+func TestValidateWaitSettings(t *testing.T) {
+	tests := []struct {
+		name string
+		wait *WaitSettings
+		ok   bool
+	}{
+		{"absent", nil, true},
+		{"empty object", &WaitSettings{}, true},
+		{"explicit zero disables", &WaitSettings{FirstProgressMs: msPtr(0), IdleMs: msPtr(0)}, true},
+		{"beyond a day is allowed", &WaitSettings{FirstProgressMs: msPtr(48 * 3600 * 1000)}, true},
+		{"largest duration-safe value", &WaitSettings{IdleMs: msPtr(maxWaitMs)}, true},
+		{"negative first progress", &WaitSettings{FirstProgressMs: msPtr(-1)}, false},
+		{"negative idle", &WaitSettings{IdleMs: msPtr(-1)}, false},
+		{"first progress overflows duration", &WaitSettings{FirstProgressMs: msPtr(maxWaitMs + 1)}, false},
+		{"idle overflows duration", &WaitSettings{IdleMs: msPtr(math.MaxInt64)}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Document{Version: SchemaVersion, Providers: map[string]Provider{"router": {Wire: WireCodex, Wait: tc.wait}}}
+			err := d.validate()
+			if tc.ok && err != nil {
+				t.Fatalf("rejected: %v", err)
+			}
+			if !tc.ok && !errors.Is(err, ErrInvalidValue) {
+				t.Fatalf("got %v, want ErrInvalidValue", err)
+			}
+		})
+	}
+}
+
+func TestMaxWaitMsConvertsToDurationWithoutOverflow(t *testing.T) {
+	ms := maxWaitMs
+	if got := time.Duration(ms) * time.Millisecond; got <= 0 {
+		t.Fatalf("MaxWaitMs overflows time.Duration: %v", got)
+	}
+	ms++
+	if got := time.Duration(ms) * time.Millisecond; got > 0 {
+		t.Fatalf("MaxWaitMs is not the largest safe value: %v", got)
+	}
+}
+
+func TestWaitSettingsDecodeKeepsOmissionDistinctFromZero(t *testing.T) {
+	var w WaitSettings
+	if err := json.Unmarshal([]byte(`{"idleMs":0}`), &w); err != nil {
+		t.Fatal(err)
+	}
+	if w.FirstProgressMs != nil {
+		t.Fatalf("omitted firstProgressMs decoded as %d", *w.FirstProgressMs)
+	}
+	if w.IdleMs == nil || *w.IdleMs != 0 {
+		t.Fatalf("explicit zero idleMs lost: %v", w.IdleMs)
+	}
+	out, err := json.Marshal(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != `{"idleMs":0}` {
+		t.Fatalf("re-encoded = %s", out)
 	}
 }
