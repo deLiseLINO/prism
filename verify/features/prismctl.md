@@ -1,6 +1,6 @@
 # prismctl
 
-`prismctl` is the CLI face of the daemon management API: every user action the desktop offers has a command here, plus doctor, usage, stats, and agent reports. It discovers the daemon via `PRISM_URL` (default `http://127.0.0.1:10200`). The only local input is a provider credential read from a file or stdin.
+The `prism` executable exposes the daemon management CLI, plus doctor, usage, stats, and agent reports. The verification script retains the name `prismctl-proof.sh`. It discovers the daemon via `PRISM_URL` (default `http://127.0.0.1:10200`). The only local input is a provider credential read from a file or stdin.
 
 ## Sub-features
 
@@ -21,7 +21,7 @@
 
 ## How to get to it (user POV)
 
-`prismctl <command> [subcommand] [flags]` from any directory, with the daemon running. Use `--json` on data-producing commands in scripts. `prismctl help` prints the whole tree.
+Run `prism <command> [subcommand] [flags]` with the daemon running. Use `--json` on data-producing commands. `prism help` prints the command tree. Empty arguments enter the TUI and can start the background service; they are not a usage-error probe.
 
 ## Driving it with the harness
 
@@ -29,15 +29,15 @@
 bash verify/scripts/prismctl-proof.sh
 ```
 
-`prismctl-proof.sh` is the executable proof for the whole CLI surface. It builds prismd and prismctl, boots an isolated daemon (port 18791, empty credential store, throwaway config), and asserts all of this in one run:
+`prismctl-proof.sh` builds the unified `./cmd/prism` executable and starts its registered service with an empty credential store. The default port is 18791. It checks these commands:
 
-- every read command exits 0 (`status`, `doctor`, `usage`, `stats`, `help`, `accounts/providers/models/combos/routes list`, `agents [status]`, `integrations status [client]`, `auth status`), with `--json` variants decoding as JSON and naming catalog models;
+- `status`, `doctor`, `usage`, `help`, account, provider, model, combo, and route lists, agent status, integration status, and auth status exit 0. Provider and model JSON lists are decoded and checked. The script does not exercise `stats`.
 - `auth login codex --no-open` prints the authorization URL, stays pending, is stopped by the harness, and no codex account ever appears — the cancelled-login contract, same as the UI auth proof;
-- the full mutation ladder against the sandbox daemon: `providers add/edit/enable/disable/remove` (read back between each), `models enable/disable`, `combos set/remove`, `routes set/remove`, `accounts select` of a stored account when one exists;
+- the full mutation ladder against the sandbox daemon: `providers add/edit/enable/disable/remove` (read back between each), `models enable/disable`, `combos set/remove`, `routes set/remove`, account actions only when a stored account exists. With the default empty store, the script records those actions as skipped;
 - `integrations apply grok` + `integrations rollback grok` through the CLI, against an isolated HOME;
-- usage errors exit 2 (bad provider, bad wire, bad strategy, bad client, `accounts select` with `auto`, `agents install nonsense`, unknown command, no command) and a dead daemon exits 5.
+- usage errors exit 2 for bad provider, wire, strategy, or client, `accounts select` with `auto`, `agents install nonsense`, an unknown command, and `prism service` without a subcommand. A dead daemon exits 5.
 
-Manual probe when iterating: `go build -o /tmp/prismctl ./cmd/prismctl && PRISM_URL=http://127.0.0.1:18791 /tmp/prismctl status --json`.
+Build the current entrypoint with `go build -o /tmp/prism-cli ./cmd/prism`. Run `PRISM_URL=http://127.0.0.1:18791 /tmp/prism-cli status --json` against your owned verification daemon.
 
 ## Gotchas
 

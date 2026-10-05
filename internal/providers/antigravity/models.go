@@ -128,8 +128,7 @@ func recordDiscovery(raw []string) {
 }
 
 // presenceSnapshot returns a copy of the current presence map; nil when no
-// discovery has run. An empty (nil) presence map leaves every family inert,
-// so a pre-sync request passes logical ids through unchanged.
+// discovery has run.
 func presenceSnapshot() map[string]bool {
 	discoverySnapshot.Lock()
 	defer discoverySnapshot.Unlock()

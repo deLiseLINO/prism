@@ -23,6 +23,7 @@ type sseEnvelope struct {
 
 type Decoder struct {
 	sink     func(canon.Event) error
+	progress func()
 	warnings []string
 	sawUsage canon.Usage
 	done     bool
@@ -31,6 +32,10 @@ type Decoder struct {
 func NewDecoder(sink func(canon.Event) error) *Decoder {
 	return &Decoder{sink: sink}
 }
+
+// OnProgress sets a callback for nonempty raw reasoning text, which has no
+// canon event.
+func (d *Decoder) OnProgress(fn func()) { d.progress = fn }
 
 func (d *Decoder) Warnings() []string {
 	return d.warnings
@@ -91,8 +96,16 @@ func (d *Decoder) frame(data []byte) error {
 		"response.content_part.added", "response.content_part.done",
 		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
 		"response.output_text.done", "response.function_call_arguments.done",
-		"response.custom_tool_call_input.done", "response.reasoning_text.delta",
+		"response.custom_tool_call_input.done",
 		"response.reasoning_text.done", "response.heartbeat":
+		return nil
+	case "response.reasoning_text.delta":
+		var e struct {
+			Delta string `json:"delta"`
+		}
+		if json.Unmarshal([]byte(payload), &e) == nil && e.Delta != "" && d.progress != nil {
+			d.progress()
+		}
 		return nil
 	case "response.output_item.added":
 		return d.outputItem(raw, true)

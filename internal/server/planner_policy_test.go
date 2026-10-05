@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/canon"
@@ -136,4 +137,46 @@ func TestModelsListOmitsDisabledKeys(t *testing.T) {
 			t.Fatalf("disabled key %q still listed: %v", gone, seen)
 		}
 	}
+}
+
+func int64Ptr(v int64) *int64 { return &v }
+
+func TestPlannerResolvesWaitSettingsPerProvider(t *testing.T) {
+	doc := policyDoc()
+	doc.Providers["p1"] = withWait(doc.Providers["p1"], nil)
+	doc.Providers["p3"] = withWait(config.Provider{Wire: config.WireOpenAIResponses, BaseURL: "http://example.invalid", Models: []string{"m1"}},
+		&config.WaitSettings{FirstProgressMs: int64Ptr(0), IdleMs: int64Ptr(1500)})
+	doc.Providers["p4"] = withWait(config.Provider{Wire: config.WireOpenAIResponses, BaseURL: "http://example.invalid", Models: []string{"m1"}},
+		&config.WaitSettings{FirstProgressMs: int64Ptr(600000)})
+	doc.Combos["waits"] = config.Combo{Strategy: config.ComboFailover, Targets: []config.Target{
+		{Provider: "p3", Model: "m1"}, {Provider: "p4", Model: "m1"}, {Provider: "p1", Model: "m1"},
+	}}
+	h := newTestServer(t, nil, nil, nil)
+	if _, err := h.cfg.Update(doc, 0); err != nil {
+		t.Fatalf("update config: %v", err)
+	}
+	planner := NewConfigPlanner(h.cfg)
+	plan, ok := planner.Plan("waits")
+	if !ok || len(plan.Targets) != 3 {
+		t.Fatalf("combo plan = %+v ok=%t", plan, ok)
+	}
+	want := []provider.WaitPolicy{
+		{FirstProgress: provider.WaitOff, Idle: 1500 * time.Millisecond},
+		{FirstProgress: 600 * time.Second},
+		{},
+	}
+	for i, w := range want {
+		if plan.Targets[i].Wait != w {
+			t.Fatalf("target %d wait = %+v, want %+v", i, plan.Targets[i].Wait, w)
+		}
+	}
+	direct, ok := planner.Plan("p3/m1")
+	if !ok || direct.Targets[0].Wait != want[0] {
+		t.Fatalf("direct plan wait = %+v ok=%t, want %+v", direct, ok, want[0])
+	}
+}
+
+func withWait(p config.Provider, w *config.WaitSettings) config.Provider {
+	p.Wait = w
+	return p
 }

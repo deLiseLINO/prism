@@ -38,6 +38,7 @@ const (
 	AttemptClientClosed
 	AttemptNoTerminal
 	AttemptRejected
+	AttemptUpstreamStall
 )
 
 func (o Outcome) String() string {
@@ -66,6 +67,8 @@ func (o Outcome) String() string {
 		return "context_length"
 	case AttemptClientClosed:
 		return "client_closed"
+	case AttemptUpstreamStall:
+		return "upstream_stall"
 	case AttemptNoTerminal:
 		return "no_terminal"
 	case AttemptRejected:

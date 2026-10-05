@@ -350,6 +350,24 @@ func TestCloneDocumentCopiesDiscoveredPointers(t *testing.T) {
 	}
 }
 
+func TestSnapshotWaitSettingsAreIsolatedFromStoredDocument(t *testing.T) {
+	first, idle := int64(1000), int64(0)
+	m := &Manager{snap: Snapshot{Config: Document{
+		Version:   SchemaVersion,
+		Providers: map[string]Provider{"router": {Wire: WireCodex, Wait: &WaitSettings{FirstProgressMs: &first, IdleMs: &idle}}},
+	}}}
+	got := m.Get().Config.Providers["router"].Wait
+	*got.FirstProgressMs = 1
+	*got.IdleMs = 2
+	again := m.Get().Config.Providers["router"].Wait
+	if *again.FirstProgressMs != 1000 || *again.IdleMs != 0 {
+		t.Fatalf("mutating a snapshot changed stored wait: %d/%d", *again.FirstProgressMs, *again.IdleMs)
+	}
+	if first != 1000 || idle != 0 {
+		t.Fatal("stored wait aliases the caller's values")
+	}
+}
+
 func TestSetCatalogSurvivesUpdateWithoutWritingConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	m, err := Open(path)

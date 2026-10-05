@@ -52,8 +52,6 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if err != nil {
 		return provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, Cause: err}
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fp.URL, strings.NewReader(string(fp.Body)))
 	if err != nil {
 		return provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: err}
@@ -85,7 +83,8 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		}
 		return nil
 	})
-	if err := decoder.Decode(provider.IdleBody(resp.Body, provider.StreamIdleTimeout, cancel)); err != nil {
+	decoder.OnProgress(func() { provider.Mark(req.Progress) })
+	if err := decoder.Decode(resp.Body); err != nil {
 		var wrapped sinkWrap
 		if errors.As(err, &wrapped) {
 			return wrapped.cause

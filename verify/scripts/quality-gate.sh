@@ -13,7 +13,7 @@ PORT="${PRISM_PORT:-18787}"
 assert_prerequisites() {
   [ -f "$repo/go.mod" ] || fail "missing root go.mod"
   module=$(sed -n '/^module[[:space:]]/ { s/^module[[:space:]]*//; p; q; }' "$repo/go.mod")
-  [ "$module" = "prism" ] || fail "unexpected go.mod module: $module"
+  [ "$module" = "github.com/deLiseLINO/prism" ] || fail "unexpected go.mod module: $module"
   [ -f "$repo/package.json" ] || fail "missing root package.json"
   command -v node >/dev/null 2>&1 || fail "node is required to inspect package.json"
   node -e 'const fs = require("fs"); const packageJson = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const workspaces = packageJson.workspaces; if (!Array.isArray(workspaces) || !workspaces.includes("packages/contracts") || !workspaces.includes("apps/desktop")) process.exit(1)' "$repo/package.json" || fail "root package.json must workspace packages/contracts and apps/desktop"
@@ -23,10 +23,18 @@ run_step() {
   name=$1
   shift
   printf '==> %s\n' "$name"
-  "$@"
+  if [ -n "${PRISM_VERIFY_EVIDENCE_DIR:-}" ]; then
+    local step
+    step=$(printf '%s' "$name" | tr -cs 'A-Za-z0-9' '-')
+    env PRISM_VERIFY_EVIDENCE_DIR="$PRISM_VERIFY_EVIDENCE_DIR/$step" "$@"
+  else
+    "$@"
+  fi
 }
 
 run_local_steps() {
+  run_step "owned-runtime-proof.sh" bash "$repo/verify/scripts/owned-runtime-proof.sh"
+  run_step "cdp-ws-proof.mjs" node "$repo/verify/scripts/cdp-ws-proof.mjs"
   run_step "go test ./..." go test ./...
   run_step "go test -race ./..." go test -race ./...
   run_step "go vet ./..." go vet ./...

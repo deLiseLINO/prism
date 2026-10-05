@@ -11,41 +11,9 @@ GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_PORT:-${PRISMCTL_PROOF_PORT:-18793}}"
 CDP_PORT="${PRISM_CDP_PORT:-19224}"
 HEADLESS="${PRISM_HEADLESS:-1}"
-if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
-  fail "a daemon is already bound to port $PORT; stop it before the desktop controls proof"
-fi
-
-RUNDIR=$(mktemp -d /tmp/prism-desktopctrl.XXXXXX)
-RUN_ID="$(date +%Y%m%d-%H%M%S).$$"
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-$REPO_ROOT/verify/evidence/desktop-controls/$RUN_ID}"
-EVID_WORK="$RUNDIR/evidence"
-mkdir -p "$EVID_WORK" "$RUNDIR/.prism" "$RUNDIR/home" "$RUNDIR/home/.grok" "$RUNDIR/home/.omp/agent" "$RUNDIR/home/.codex"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    DAEMON_PID=$(pgrep -P "$APP_PID" -f "prism daemon" 2>/dev/null | head -1)
-    kill -TERM "$APP_PID" 2>/dev/null
-    wait "$APP_PID" 2>/dev/null
-  fi
-  if [ -n "${DAEMON_PID:-}" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
-    kill -TERM "$DAEMON_PID" 2>/dev/null
-  fi
-  if [ "$PORT" != "18787" ] && curl -sf --max-time 2 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
-    OPID=$(pgrep -f "prism daemon --listen 127.0.0.1:$PORT" 2>/dev/null | head -1)
-    [ -n "$OPID" ] && kill -TERM "$OPID" 2>/dev/null
-  fi
-  [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
-  [ -f "$RUNDIR/build.log" ] && cp "$RUNDIR/build.log" "$EVID_WORK/build.log"
-  mkdir -p "$EVID_FINAL"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init desktop-controls "$PORT" "$CDP_PORT"
+mkdir -p "$RUNDIR/.grok" "$RUNDIR/.omp/agent" "$RUNDIR/.codex"
 
 cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 {
@@ -68,25 +36,10 @@ echo "==> building prism and desktop"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 echo "==> launching isolated Electron app"
-PRISMD_PATH="$RUNDIR/prism" \
-PRISM_PORT="$PORT" \
-PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
-PRISM_HEADLESS="$HEADLESS" \
-HOME="$RUNDIR/home" \
-"$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
-  --user-data-dir="$RUNDIR/electron" \
-  --remote-debugging-port="$CDP_PORT" > "$RUNDIR/app.log" 2>&1 &
-APP_PID=$!
-
-for _ in $(seq 1 120); do
-  kill -0 "$APP_PID" 2>/dev/null || { cat "$RUNDIR/app.log" 2>/dev/null; fail "electron exited during startup"; }
-  curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
+verify_start_electron
 
 cdp_eval() {
-  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1" 90000
+  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1" "${2:-90000}"
 }
 
 goto_view() {
@@ -112,8 +65,9 @@ wait_for_daemon_ready() {
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     for (let i = 0; i < 120; i++) {
-      const text = document.querySelector('main')?.innerText ?? ''
-      if (/ready|running/i.test(text)) return {state: 'ready', text: text.slice(0, 120)}
+      const card = [...document.querySelectorAll('.ov-card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Daemon')
+      const state = [...(card?.querySelectorAll('.kv-row') ?? [])].find((node) => node.querySelector('.kv-k')?.textContent.trim() === 'state')?.querySelector('.kv-v')?.textContent.trim()
+      if (state === 'ready') return {state}
       await sleep(500)
     }
     throw new Error('daemon did not reach ready state: ' + (document.querySelector('main')?.innerText ?? '').slice(0, 200))
@@ -127,12 +81,13 @@ cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   for (let i = 0; i < 120; i++) {
     const main = document.querySelector('main')
-    const card = main?.querySelector('.ov-card')
-    const state = card?.querySelector('.kv-v')
-    const endpoint = card?.querySelectorAll('.kv-v')[1]
+    const card = [...(main?.querySelectorAll('.ov-card') ?? [])].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Daemon')
+    const value = (key) => [...(card?.querySelectorAll('.kv-row') ?? [])].find((node) => node.querySelector('.kv-k')?.textContent.trim() === key)?.querySelector('.kv-v')
+    const state = value('state')
+    const endpoint = value('endpoint')
     if (
       card && state && endpoint &&
-      /^ready$|^operational$/i.test(state.textContent.trim()) &&
+      state.textContent.trim() === 'ready' &&
       endpoint.textContent.trim() === 'http://127.0.0.1:$PORT'
     ) {
       return {state: state.textContent.trim(), endpoint: endpoint.textContent.trim()}
@@ -156,10 +111,17 @@ cdp_eval "await (async () => {
   if (!idInput) throw new Error('provider id input not found')
   idInput.focus()
   document.execCommand('insertText', false, 'ui-probe')
-  const wireSelect = document.querySelector('#prov-wire')
-  if (!wireSelect) throw new Error('provider wire select not found')
-  wireSelect.value = 'responses'
-  wireSelect.dispatchEvent(new Event('change', {bubbles: true}))
+  const dialog = document.querySelector('[role=dialog][aria-label=\"New provider\"]')
+  const wires = [...(dialog?.querySelectorAll('[role=group][aria-label=\"Provider wire\"] button') ?? [])]
+  const chatWire = wires.find((button) => button.textContent.trim() === 'openai-completions')
+  const responsesWire = wires.find((button) => button.textContent.trim() === 'openai-responses')
+  if (!chatWire || !responsesWire) throw new Error('visible provider wire buttons not found')
+  chatWire.click()
+  await sleep(100)
+  if (chatWire.getAttribute('aria-pressed') !== 'true') throw new Error('chat wire click did not select chat')
+  responsesWire.click()
+  await sleep(100)
+  if (responsesWire.getAttribute('aria-pressed') !== 'true') throw new Error('responses wire click did not select responses')
   const urlInput = document.querySelector('#prov-base')
   if (!urlInput) throw new Error('provider base URL input not found')
   urlInput.focus()
@@ -281,13 +243,9 @@ cdp_eval "await (async () => {
 })()" > "$EVID_WORK/unknown-hash.json"
 grep -q "Overview" "$EVID_WORK/unknown-hash.json" || fail "unknown hash did not fall back to Overview: $(cat "$EVID_WORK/unknown-hash.json")"
 
-echo "==> quitting Electron and checking daemon teardown"
-kill -TERM "$APP_PID"
-wait "$APP_PID" 2>/dev/null || true
-APP_PID=
-sleep 1
-if curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then
-  fail "daemon still reachable after Electron quit"
-fi
+echo "==> quitting Electron, attesting the shared daemon, then stopping it explicitly"
+verify_quit_app
+verify_attest_daemon
+verify_stop_daemon
 
-echo "desktop controls proof OK (daemon state/endpoint on Overview and teardown on quit, provider create/toggle/delete, rollback, unknown hash)"
+echo "desktop controls proof OK (daemon state/endpoint on Overview, persistence after Electron termination and explicit stop, provider create/toggle/delete, rollback, unknown hash)"

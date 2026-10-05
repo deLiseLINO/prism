@@ -1,187 +1,125 @@
 ---
 name: verify-prism-desktop
-description: Drive the real Prism Electron app, its prismd daemon, prismctl, every management route, and the Grok, OMP, Codex, Claude, Pi, OpenCode, and Hermes clients. Use after desktop, integration-writer, protocol, streaming, reasoning, daemon lifecycle, provider, CLI, or account changes. Proof requires actual UI clicks, generated-config checks, read-only quota reads, safe (cancelled) auth flows, live inference matrices for Luna, Gemini 3.7 Flash, and a derived chat model with >=300-second sessions, saved evidence, and isolated client homes.
+description: Verify prism through its Electron renderer, registered daemon, management CLI, and generated client configs. Use after desktop, daemon, provider, account, integration, protocol, or streaming changes. Run isolated owned processes, save evidence, report unavailable coverage, and require real inference when the change affects it.
 ---
 
-# Verify Prism desktop
+# Verify prism
 
-Prism is an Electron control plane for `prismd`. Verification must cover the same boundaries a user crosses: click the renderer control, observe the renderer state, read the resulting file, load that file with the real client, read real account quota without mutating it, drive an auth flow to its pending state and back without ever completing a login, and run real inference when the change touches it.
+Click the rendered control, observe its state, and inspect the resulting API response or file. A preload call is diagnostic evidence. It does not prove that a visible control works.
 
-A preload call is diagnostic evidence only. It cannot prove that a button is enabled, wired to the expected action, refreshes its state, or displays failures.
+Read the [feature map](features/README.md) before selecting checks. A local pass, a live client response, a native tray action, and a continuous session are different claims.
 
 ## Launch
 
-Run from the repository root. The helpers build the current `prismd` and desktop bundles, create an isolated `HOME`, start Electron on port 18787 with CDP on 19222, and seed the default `~/.codex`, `~/.grok`, `~/.omp`, `~/.claude`, `~/.pi`, `~/.config/opencode`, and `~/.hermes` paths. They do not set client-specific home overrides, because those can hide a default-path bug. Every helper runs Electron headless by default (`PRISM_HEADLESS=1`): no window shows, no tray icon initializes, and CDP drives the hidden renderer. Set `PRISM_HEADLESS=0` only when a human needs to watch the run. The daemon port comes from `PRISM_PORT` everywhere (the isolated proofs fall back to `PRISMCTL_PROOF_PORT`, defaults 18791/18792/18793, and `PRISM_SMOKE_PORT`, default 18789); CDP comes from `PRISM_CDP_PORT`.
+Run scripts from the repository root. The owned runtime builds no fixtures itself. The migrated Electron drivers build `./cmd/prism` and the desktop, then launch them with an isolated physical `HOME`, profile, and temporary directory. The CLI and API drivers build only the unified executable.
 
 ```sh
-verify/scripts/integration-drive.sh
+bash verify/scripts/desktop-controls.sh
+PRISM_VERIFY_LIVE=0 bash verify/scripts/integration-drive.sh
 ```
 
-This structural mode enables Other agents, clicks Apply for Codex, Grok, OMP, Claude, Pi, OpenCode, and Hermes, checks the managed state in the rendered UI, reads the generated files, and makes the installed Grok, OMP, Pi, Claude, and Hermes binaries parse them. OpenCode has no reliable headless parse probe; the structural run checks its file contract and live mode covers real use. It does not prove inference.
+Drivers using `owned-runtime.sh` reject pre-existing daemon and CDP listeners. Legacy smoke, vision, remote, and container scripts are not covered by this ownership guarantee. They never stop another instance to free a port. Set `PRISM_PORT` and `PRISM_CDP_PORT` to unused ports when another run is active. `agents-ui-drive.sh` uses `PRISM_AGENTS_UI_PORT` for its daemon port.
 
-Run the legacy migration mode when Apply behavior changes. It seeds the unfenced Prism Grok tables written by the previous setup and requires the UI action to migrate them:
+The runtime clears inherited client home overrides, management tokens, renderer URLs, and external configuration paths. Client configs use their normal paths inside the isolated home. A literal fixture shell supplies login-path discovery, so the user's startup files cannot expand the install fixture PATH.
+
+Headless mode is the default. `PRISM_HEADLESS=0` shows the window but does not automate the native tray.
+
+## Check prerequisites
+
+Local drives need Go, Node.js, npm, Python 3.11 or later, `lsof`, and the installed Electron dependency. Structural integration checks also need the clients they actually invoke. Read the driver and preserve a missing-client result instead of replacing the binary with a stub.
+
+Live state comes from `PRISM_VERIFY_STATE_DIR`, defaulting to `$HOME/.prism`. Live drivers stage `prism.json` and credentials privately. They reject symlinks and nonempty `accountsPath` settings before launching. They never change the source state.
+
+Missing credentials or clients mean the relevant feature is unavailable. Record the attempted route and missing prerequisite. Do not turn that result into a pass. A provider failure after a request starts is a failed request, not unavailable coverage.
+
+## Verify ownership and readiness
+
+The runtime checks the chosen endpoint against `$HOME/.prism/daemon.json`, the health response, the exact sandbox binary, and the listener PID. Registration and health must agree on `id`, `pid`, and `version`.
+
+For Electron, the CDP listener must belong to the captured app process. Exactly one page must match the built renderer URL. A page title or the first `type=page` entry is not ownership evidence.
+
+After a crash or surprising result, recheck health and ownership before driving again. If a healthy renderer is stuck, relaunch the isolated app or restore a known view. Do not keep clicking blindly.
+
+## Drive the desktop and integrations
 
 ```sh
-PRISM_VERIFY_LEGACY=1 \
-  verify/scripts/integration-drive.sh
+bash verify/scripts/desktop-controls.sh
+bash verify/scripts/agents-ui-drive.sh
+bash verify/scripts/integration-drive.sh
+PRISM_VERIFY_LEGACY=1 bash verify/scripts/integration-drive.sh
 ```
 
-For any change involving providers, streaming, Responses/Chat/Messages conversion, reasoning, client compatibility, or generated model entries, live mode is required:
+The desktop controls proof checks Overview state and endpoint, visible provider creation, model toggles, deletion, integration Apply and Rollback, and unknown-hash fallback.
+
+The install UI proof enables the experimental actions and clicks Install on the codex row. Its package-manager and binary fixtures prove UI-to-job wiring, not an actual package installation.
+
+The integration proof enables Other agents, applies each supported client config, reads the files, and invokes available real config loaders. It checks row and bulk actions, damaged-fence refusal, Auto-apply, and restoration after an owned daemon crash. Visiting Stats and Logs only proves that the views open with content.
+
+The legacy mode seeds the earlier unfenced prism integration config and checks migration. Structural mode does not prove inference.
+
+## Verify safe authentication
 
 ```sh
-PRISM_VERIFY_LIVE=1 \
-  verify/scripts/integration-drive.sh
+bash verify/scripts/auth-proof.sh
 ```
 
-Live mode copies `~/.prism/prism.json` and `~/.prism/credentials` into the temporary sandbox. The sandbox daemon may refresh only its private copy. Cleanup deletes it. Credentials never enter evidence. Override the source with `PRISM_VERIFY_STATE_DIR` and models with `PRISM_VERIFY_GROK_MODEL` or `PRISM_VERIFY_OMP_MODEL`.
+The proof opens Accounts, then Add account. It selects codex, starts login, waits for the pending badge and browser hint, and clicks Cancel login. It repeats for antigravity and requires zero accounts afterward.
 
-Readiness requires both checks:
+Never open an authorization link or complete a login during this proof. Cancellation clears renderer state and stops polling. The daemon's abandoned pending session expires separately.
+
+## Verify copied accounts and quota
 
 ```sh
-curl -sf http://127.0.0.1:18787/api/v1/health
-curl -sf http://127.0.0.1:19222/json/version
+PRISM_VERIFY_STATE_DIR=/path/to/private/state bash verify/scripts/quota-proof.sh
 ```
 
-## Doctor
+The proof reads copied accounts, per-account quota, and the Accounts UI. It compares the rendered values and confirms that non-quota account policy does not change. Raw account snapshots and screenshots remain private; the published result contains nonsecret comparison outcomes.
 
-Run these before driving or after any surprising result:
+A missing account or credential is a coverage gap to report. It is not proof of the corresponding provider's quota behavior.
+
+## Verify real client requests
 
 ```sh
-test -x "$(command -v grok)"
-test -x "$(command -v omp)"
-test -x "$(command -v codex)"
-test -x node_modules/.bin/electron
-test -x "$(command -v perl)"
-test -x "$(command -v claude)"
-test -x "$(command -v pi)"
-test -x "$(command -v opencode)"
-test -x "$(command -v hermes)"
-test -f ~/.prism/prism.json
-test -d ~/.prism/credentials
-curl -sf http://127.0.0.1:18787/api/v1/health
-curl -sf http://127.0.0.1:19222/json/version
-curl -sf http://127.0.0.1:18787/api/v1/agents | grep -q '"id":"codex"'
+PRISM_VERIFY_LIVE=1 bash verify/scripts/integration-drive.sh
+bash verify/scripts/live-matrix.sh
 ```
-Every check except the last three is a prerequisite. The last three should fail before launch and answer after launch. The agents check also proves the new management family is served by the running binary. A live verification without Prism credentials is `VERIFIED_UNREACHABLE`, not a pass. A daemon already listening on the verification port (default 18787) means the user's own instance is running: the gate refuses to double-drive it rather than killing a shared process.
 
-## Drive
+Live integration runs one real request for клиент grok and one tool round trip for клиент omp using configs written by the UI. A final answer, a tool result, and displayed thinking are separate assertions.
 
-Drive user-facing behavior through rendered controls:
+The matrix is repeated-request stress across requested client and model pairs. Each invocation starts a fresh command. Aggregate elapsed time of 300 seconds does not prove one uninterrupted 300-second session. Preserve failed attempts and do not describe a retry-normalized result as zero transport failures.
 
-1. For clients other than OMP and OpenCode, click Experimental and enable Other agents.
-2. Click the `Integrations` navigation button.
-3. Find the card by its visible heading, such as `grok`.
-4. Assert its Apply button exists and is enabled.
-5. Click Apply.
-6. Fail on any rendered alert.
-7. Wait until the same card renders the exact `managed` badge.
-8. Read the generated file from the isolated client home.
-9. Run the real client against that file when a parse probe is available.
+A full compatibility claim needs real inference for every required client and model. Neither the structural driver nor the two-client stress run supplies that coverage. Never change user accounts or install global packages to fill a gap without authorization.
 
-Use `window.prism.*` only to diagnose a failed UI path. A bridge call that succeeds while the button path fails proves a renderer regression.
+## Save evidence
 
-### Auth flows (safe proof)
+Set `PRISM_VERIFY_EVIDENCE_DIR` to a new directory outside the sandbox when you need a stable destination. The quality gate treats that path as a run root and gives each driver a distinct child directory. The default is a unique `/tmp` directory. Record the printed path and verify its files after cleanup.
 
-The Accounts view's `Add account` dialog (`#/usage`, labeled Accounts in the nav) has one card each for Codex and Antigravity. `scripts/auth-proof.sh` drives both add-account flows from the real UI and stops before any credential is entered:
+Keep the actual UI results, generated fixture configs, API comparisons, failed-request output, and screenshots that support the claim. The runtime writes binary identity, daemon identity, and a teardown receipt. Raw live state, credentials, provider infrastructure names, and unrestricted live logs are not public evidence.
 
-1. Seed an isolated sandbox daemon config with `codex` and `antigravity` providers.
-2. Click `Accounts`, click `Add account`, then `Start Codex login` on the Codex card, and assert the banner reaches exactly `Awaiting Codex approval` with the hint `Complete the flow in your browser. Polling stops automatically on completion.`, plus the `Open Codex authorization page`, `Check Codex status`, and `Cancel Codex login` buttons and the `Poll Codex` toggle. The Antigravity card follows the same pattern with its own name in every label.
-3. Click `Cancel` and assert the card returns to `Not signed in`.
-4. Repeat start, pending assertion, and cancel for the Antigravity card.
-5. Assert the daemon still reports zero accounts and no `authorized` session: the proof never completed a login.
+Private live diagnostics remain in a mode-0700 directory after the run, including successful runs. The receipt names that private directory. Review and sanitize them before publication. A filename containing `sanitized` is not proof that its contents are safe.
 
-The proof never opens the authorization URL in a browser, never enters credentials, and never touches the user's existing accounts. It runs against an isolated `HOME` and an isolated profile. The cancelled pending session simply expires server-side (15-minute TTL); there is no server-side cancel route, and the Cancel button is renderer-local state.
+## Clean up owned processes
 
-### Accounts and quota (read-only proof)
+The shared runtime owns cleanup. It stops Electron first, rechecks daemon identity, and runs isolated `prism service stop`. The app's normal quit only releases supervision; it does not stop the shared service.
 
-`scripts/quota-proof.sh` copies the real `~/.prism` state into the sandbox daemon, then reads quota through both surfaces without any write:
+Cleanup must confirm that the owned processes and registrations are gone and their ports are free. Evidence is copied and checked before sandbox removal. Raw live proof is retained separately with private permissions and its path recorded in the receipt. Finalization failures return nonzero, keep remaining private state, and never seal a successful completion receipt. Do not suppress that failure with `|| true`.
 
-1. Snapshot `GET /api/v1/accounts` before anything else and hash it.
-2. Open `#/usage` (labeled Accounts in the nav) through the nav click, capture every rendered account card (name, state, per-window `% left` bars, cooldown), and screenshot. The grid shows only codex and antigravity accounts.
-3. For every card: match the UI against the API. A card without a snapshot renders `Loading…` or `Quota unavailable`; a ready answer renders one `% left` bar per window. Match each account's remaining percentage against `GET /api/v1/usage` and the per-account quota endpoint.
-4. Fetch `GET /api/v1/accounts/{id}/quota` for each account (the prismctl backing endpoint). The endpoint actively probes the provider when its stored snapshot is stale, so codex and antigravity rows show real numbers on first read.
-5. Re-snapshot accounts and fail if any account field except `quota` changed: quota reads refresh the stored quota snapshot by design; pause, resume, priority, and remove are never invoked.
+Never use global process-name matching, a port number, or a guessed child PID as permission to signal a process.
 
-The proof requires accounts for both `codex` and `antigravity` providers to exist; it fails (not unreachable) if only one is present, because missing accounts are a coverage gap, not a credentials gap. A missing credential blob for an account is a real finding, not a proof failure: the quota cell renders `quota unavailable` and the daemon log names the account and reason.
+## Run the checks
 
-### Live matrix (Grok and OMP x Luna, Gemini 3.7 Flash, derived chat model)
+```sh
+bash verify/scripts/owned-runtime-proof.sh
+node verify/scripts/cdp-ws-proof.mjs
+bash verify/scripts/prismctl-proof.sh
+bash verify/scripts/quality-gate.sh local
+bash verify/scripts/quality-gate.sh live
+```
 
-`scripts/live-matrix.sh` runs sequential real prompts per supported client/model pair until the pair has been alive for at least 300 seconds, then one final short marker request; a pair is a >=300-second session. The checked application models are Luna (`codex/gpt-5.6-luna`), Gemini 3.7 Flash (`antigravity/gemini-3.7-flash`), and one chat-wire model taken from the daemon's model list at runtime. These are not subagent pool lanes.
+The runtime proof exercises foreign-listener refusal, real registered service identity, repeated stop, durable evidence, and publication failure. The CDP proof rejects foreign and ambiguous renderers and foreign WebSocket endpoints.
 
-The matrix derives selectors from what Apply wrote: grok uses the `prism-` aliases from `~/.grok/config.toml` (`prism-codex-gpt-5-6-luna`, `prism-antigravity-gemini-3-7-flash`, plus the derived chat model alias); OMP uses the prism provider leaf paths (`prism/codex/gpt-5.6-luna`, `prism/antigravity/gemini-3.7-flash`, plus the derived chat model path). Each pair issues sequential long-generation prompts (essays for codex/antigravity, counting runs for the derived chat provider, reasoning effort off for its pairs) under `--output-format streaming-json` for grok and `--mode json --print` for OMP, each bounded by a ceiling timeout so a hung generation fails instead of blocking. Once the 300-second floor is reached, the pair sends one final short request whose response must end with the unique marker for that pair.
+The CLI proof exercises the unified `prism` binary. Empty argv enters the TUI. `prism service` without a subcommand is the missing-command usage error.
 
-Each pair must satisfy every assertion or the matrix fails:
+The local quality gate runs Go tests, race tests, vet, TypeScript checks, desktop tests, and the existing deterministic drivers. The live gate adds safe auth, copied quota, live integration, and repeated-request stress. Existing product-test failures remain failures; do not skip or weaken them to make verification green.
 
-- elapsed >= 300 seconds (`PRISM_MATRIX_MIN_SECONDS`, ceiling `PRISM_MATRIX_CEILING_SECONDS` default 540);
-- client exit code 0;
-- a substantive final response: the marker appears exactly once in the final assistant message and total assistant characters across the pair are at least 1000;
-- zero transport errors: no `error`/`agent_error` event, no `stopReason: "error"`, no `errorMessage`, no failed tool execution, no `upstream_transport` envelope in the stream; corroborated by `GET /api/v1/usage` snapshots before and after the run showing no account slipped into `cooling_down` or `soft_avoid`;
-- daemon health 200 before and after each pair.
-
-The runner records model ID, client, provider, the account the pool leased, start and end timestamps, elapsed seconds, exit code, transport error count, marker count, final response length, stdout, stderr, and the daemon log slice for that pair, then writes `run.json` and a `manifest.sha256` over every evidence file. `scripts/assert-matrix-run.mjs` re-verifies the whole run: matrix completeness (all six pairs), every per-pair assertion, and every checksum.
-
-Use the user's existing Codex and Antigravity accounts only for these inference tests. Do not sign in, refresh credentials, edit accounts, or expose secrets during a matrix run.
-
-## Evidence
-
-Each helper prints a permanent evidence directory. Structural and live integration runs default to `/tmp/prism-verify-evidence.<timestamp>.<pid>`; auth-proof, quota-proof, and live-matrix runs default to `./verify/evidence/<kind>/<runId>/` inside the repository so they survive reboot. Override with `PRISM_VERIFY_EVIDENCE_DIR`. Keep:
-- `apply-codex.json`, `apply-grok.json`, `apply-omp.json`, `apply-claude.json`, `apply-pi.json`, `apply-opencode.json`, and `apply-hermes.json`;
-- on UI failure, `integrations-failure.json`, `integrations-failure.png`, and `apply-<client>-diagnostic.json`;
-- `integrations.png`;
-- `codex-config.toml`, `grok-config.toml`, `omp-models.yml`, `claude-settings.json`, `pi-models.json`, `opencode-config.json`, and `hermes-config.yaml`;
-- `codex-login-status.txt`, `grok-models.txt`, `omp-models.txt`, `claude-doctor.txt`, `pi-models.txt`, `opencode-models.txt` (a recorded skip), `hermes-providers.txt`, and `hermes-config-check.txt`;
-- in live mode, `grok-live.txt`, `omp-live.ndjson`, `omp-live.stderr`, `omp-assertion.json`, and `omp-assertion.stderr`;
-- `prismd.log` (daemon stderr) and `build.log`;
-- in auth-proof runs, `auth-codex-pending.json`, `auth-codex-cancelled.json`, `auth-antigravity-pending.json`, `auth-antigravity-cancelled.json`, the matching screenshots, and the pre/post account snapshots;
-- in quota-proof runs, `accounts.json`, `accounts-after.json`, `providers.json`, `accounts-ui-rows.json`, `usage.json`, `usage-ui-rows.json`, `quota-match.json`, URL-encoded `quota-<account>.json` files for live wires, and the Accounts/Usage screenshots;
-- in live-matrix runs, the per-pair directories under `pairs/` (command line, stdout or NDJSON, stderr, daemon log slice, `result.json`), `daemon/health.json`, `daemon/prism.json.sanitized`, `daemon/usage-before.json`, `daemon/usage-after.json`, `run.json`, `manifest.sha256`, and `assertion.json`.
-
-Proof must name the exact files inspected. Do not summarize a failed live run as a structural pass. If the UI click fails, preserve its evidence and stop. Do not replace it with a direct bridge call.
-
-## Cleanup
-
-Each helper owns its Electron PID, its unique daemon port, and its temporary home. Before launching, it refuses with exit 1 if a daemon already answers on its verification port, so a shared user instance is never double-driven. Its exit trap:
-
-1. sends SIGTERM to the Electron PID it started;
-2. terminates only the daemon it started itself — the PID recorded from its own Electron supervisor or its own spawn — and never a prismd it did not launch;
-3. copies non-secret evidence out of the sandbox;
-4. deletes the sandbox, including copied credentials.
-
-After cleanup, health on port 18787 must fail and the printed evidence directory must still exist. Evidence directories under the skill's `evidence/` tree are never deleted by cleanup; prune them manually when they are no longer needed.
-
-## Helpers
-
-`scripts/quality-gate.sh local` runs the deterministic local coverage: `go test ./...`, `go test -race ./...`, `go vet ./...`, `npm run typecheck`, the desktop vitest suite, `prismd-smoke.sh`, `prismctl-proof.sh`, `desktop-controls.sh`, `api-sweep.sh`, and structural `integration-drive.sh`. It prints `VERIFIED local`.
-
-`scripts/quality-gate.sh live` runs everything in local mode first, then the live sequence: `auth-proof.sh`, `quota-proof.sh`, live `integration-drive.sh`, and `live-matrix.sh`. It prints `VERIFIED live`. Missing credentials, missing clients, or a missing Electron build return `VERIFIED_UNREACHABLE` with exit 3 — never a false pass. An unknown mode returns exit 2. A daemon already answering on the verification port (`PRISM_PORT`, default 18787) fails with exit 1 in both modes, with a message telling the operator to stop it, because the skill refuses to double-drive a shared instance.
-
-`npm run verify` and `npm run verify:live` (repository root, and the same names under `apps/desktop`) are the literal npm invocations of the two modes.
-
-`scripts/integration-drive.sh` is the structural and live integration proof. Structural mode verifies the UI and config loaders, per-card Apply and Rollback updating cards in place, and the strip-level Apply all and Rollback all buttons converging every card without remounts or entry animations. `PRISM_VERIFY_LEGACY=1` verifies upgrade behavior from the previous unfenced Grok configuration. `PRISM_VERIFY_LIVE=1` additionally verifies real Grok inference and real OMP inference with a read-tool round trip and visible thinking.
-
-`scripts/auth-proof.sh` proves the Codex and Antigravity add-account flows from the real UI: start, pending device-authorization state, cancellation, and zero side effects, never completing a login.
-
-`scripts/quota-proof.sh` proves read-only quota visibility for existing Codex and Antigravity accounts through both the Accounts and Usage views, matched against the management API, with a before/after hash proving no mutation.
-
-`scripts/live-matrix.sh` runs the Grok and OMP live matrix across Luna, Gemini 3.7 Flash, and GLM 5.3 with one >=300-second session per supported pair. Override the pair lists with `PRISM_MATRIX_GROK_MODELS` and `PRISM_MATRIX_OMP_MODELS`, the floor with `PRISM_MATRIX_MIN_SECONDS`, and the ceiling with `PRISM_MATRIX_CEILING_SECONDS`.
-
-`scripts/prismctl-proof.sh` proves the whole prismctl CLI surface against an isolated daemon: every read command with `--json` decoding, the provider/models/combos/routes/accounts mutation ladder, `auth login --no-open` staying pending and cancelled without creating an account, integrations apply/rollback, usage errors exiting 2, and a dead daemon exiting 5.
-
-`scripts/desktop-controls.sh` proves the desktop control surface through the real UI: the Overview daemon card rendering ready state and its endpoint (matched against the health endpoint), provider create/model-toggle/delete, integrations Apply then Rollback rendering the `unmanaged` badge again, the unknown-hash fallback to the Overview view, and daemon teardown when Electron quits.
-
-`scripts/remote-switch-proof.sh` proves host switching through the real Machines UI: Manage on a `self` host (loopback SSH with its own daemon port) flips every view to that daemon, Providers shows its models and not the local ones, and Back to this machine restores the local daemon. It needs key-auth loopback `ssh localhost` and a seeded external host; it enables the experimental machines flag first.
-`scripts/remote-install-proof.sh` proves installing prismd on a remote machine from the real Machines UI behind the experimental flag: the Install prismd button stays hidden while the flag is off, the Experimental tab toggles it on, the button then streams the bundled binary over ssh into `~/.prism/remote`, starts it on `PRISM_REMOTE_DAEMON_PORT` (default 18802), flips the host to external with that port, and Manage routes views through the freshly installed daemon. It needs key-auth loopback `ssh localhost` and leaves no `~/.prism/remote` behind.
-
-Every script takes `PRISM_PORT` and `PRISM_CDP_PORT`. When another worktree runs its own verification at the same time, both defaults can collide: a daemon-port collision fails the launch gate honestly, but a CDP-port collision is worse (the driver can attach to the *other* worktree's window and click its UI). Always pick free ports for both when anything prism-shaped is running: scan upward from 18810/19240, or export `PRISM_PORT` and `PRISM_CDP_PORT` explicitly.
-
-`scripts/api-sweep.sh` proves the whole management and inference HTTP surface against an isolated daemon: every management GET, the negative surface (404/405/400/malformed JSON/stale-CAS 409), provider/combo/route mutation ladders with read-back, auth start `{session,url}` and pending status, and the inference shapes (`/v1/models`, `count_tokens` through a `claude-` alias, no-route 404s, wrong method 405).
-
-`scripts/assert-omp-output.mjs` parses OMP NDJSON and rejects missing final output, missing thinking, missing tool calls/results, malformed JSON, and error events.
-
-`scripts/cdp-eval.mjs` evaluates a renderer expression or statement sequence through Electron CDP; an optional third argument raises the timeout in milliseconds. Use it for UI automation and diagnostics.
-
-`scripts/cdp-ws.mjs` picks the page target's WebSocket URL from a CDP port, so evaluation never lands on a non-page target.
-
-`scripts/cdp-screenshot.mjs` captures the current Electron page into the evidence directory.
-
-`scripts/prismd-smoke.sh` checks daemon startup, health, graceful shutdown, and credential-store creation without Electron. It is necessary for daemon work but cannot prove a desktop or client integration.
+The remote drivers need separately authorized SSH prerequisites. They are not covered by a local pass. Native tray behavior and actual package-manager mutation likewise require their own real runs.

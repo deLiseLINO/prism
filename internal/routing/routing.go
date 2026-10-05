@@ -157,7 +157,7 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 		wireReq := req
 		wireReq.Model = target.Model
 		started := j.Now()
-		err = runner.Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f}, capture)
+		err = provider.Waiting(runner).Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f}, capture)
 		logAttempt := func(outcome requestlog.Outcome, msg string) {
 			j.Attempt(requestlog.AttemptInfo{
 				Provider:  target.Provider,
@@ -178,6 +178,13 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 			_ = r.pool.Record(ctx, lease, account.TurnSucceeded{Usage: capture.finished.Usage})
 			trace[attempts-1] = AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "completed", Usage: capture.finished.Usage}
 			return TurnResult{Terminal: Finished{Event: capture.finished}, Attempts: attempts, Trace: trace}
+		}
+		if errors.Is(err, provider.ErrUpstreamStall) {
+			_ = r.pool.Record(ctx, lease, account.RequestRejected{})
+			re, _ := runErrorOf(err)
+			logAttempt(requestlog.AttemptUpstreamStall, runErrorMessage(re))
+			trace[attempts-1] = AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "upstream_stall"}
+			return TurnResult{Terminal: Finished{Event: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteUpstreamStall)}}, Attempts: attempts, Trace: trace}
 		}
 		if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			logAttempt(requestlog.AttemptClientClosed, "routing: client closed the request")
