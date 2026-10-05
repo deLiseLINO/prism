@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,41 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/integrations"
 )
+
+type fixtureInterpreterRunner struct {
+	root string
+}
+
+func (r fixtureInterpreterRunner) Run(ctx context.Context, env integrations.Env, argv []string, stdout, stderr io.Writer) error {
+	fallback := func() error { return (ExecRunner{}).Run(ctx, env, argv, stdout, stderr) }
+	if len(argv) == 0 || argv[0] == "" {
+		return fallback()
+	}
+	selected := LookPath(asEnv(env), argv[0], os.Stat)
+	if selected == "" {
+		return fallback()
+	}
+	selected, err := filepath.Abs(selected)
+	if err != nil {
+		return fallback()
+	}
+	real, err := filepath.EvalSymlinks(selected)
+	if err != nil || !inside(real, r.root) {
+		return fallback()
+	}
+	script, err := os.Open(selected)
+	if err != nil {
+		return fallback()
+	}
+	var header [len("#!/bin/sh\n")]byte
+	_, readErr := io.ReadFull(script, header[:])
+	closeErr := script.Close()
+	if readErr != nil || closeErr != nil || string(header[:]) != "#!/bin/sh\n" {
+		return fallback()
+	}
+	translated := append([]string{"/bin/sh", selected}, argv[1:]...)
+	return (ExecRunner{}).Run(ctx, env, translated, stdout, stderr)
+}
 
 type maintenanceFixture struct {
 	t                        *testing.T
@@ -74,7 +110,7 @@ func (f *maintenanceFixture) global(prefix, pkg, binary, body string) string {
 }
 func (f *maintenanceFixture) manager() *Manager {
 	f.t.Helper()
-	m := NewManager(f.env, ExecRunner{}, os.Stat, time.Now, func(context.Context, string) (string, error) { return "", errors.New("unexpected script download") })
+	m := NewManager(f.env, fixtureInterpreterRunner{root: f.home}, os.Stat, time.Now, func(context.Context, string) (string, error) { return "", errors.New("unexpected script download") })
 	f.t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()

@@ -15,6 +15,8 @@ func TestMaintenancePrefixUsesOnlyBoundedStdout(t *testing.T) {
 	for _, kind := range []string{"warning", "large-warning", "stderr-only", "stdout-overflow"} {
 		t.Run(kind, func(t *testing.T) {
 			f := maintenanceSandbox(t)
+			receipt := filepath.Join(f.home, "prefix-receipts")
+			f.env["PREFIX_RECEIPTS"] = receipt
 			entry := filepath.Join(f.prefix, "bin", "opencode")
 			target := f.packageEntry(filepath.Join(f.prefix, "lib", "node_modules"), "@opencode/cli", "opencode", "echo 2.3.4 >&2")
 			response := "printf '%s\\n' " + shellQuote(f.prefix)
@@ -28,21 +30,37 @@ func TestMaintenancePrefixUsesOnlyBoundedStdout(t *testing.T) {
 			case "stdout-overflow":
 				response = "i=0; while [ $i -lt 5000 ]; do printf ' '; i=$((i+1)); done; " + response
 			}
-			f.executable(filepath.Join(f.tools, "npm"), "if [ \"$1 $2\" = 'prefix -g' ]; then "+response+"; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"$MUTATIONS\"\nprintf 'mutation diagnostic' >&2\n/bin/mkdir -p "+shellQuote(filepath.Dir(entry))+"; /bin/ln -s "+shellQuote(target)+" "+shellQuote(entry))
+			f.executable(filepath.Join(f.tools, "npm"), "if [ \"$1 $2\" = 'prefix -g' ]; then printf 'prefix\\n' >> \"$PREFIX_RECEIPTS\"; "+response+"; printf 'prefix-complete\\n' >> \"$PREFIX_RECEIPTS\"; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"$MUTATIONS\"\nprintf 'mutation diagnostic' >&2\n/bin/mkdir -p "+shellQuote(filepath.Dir(entry))+"; /bin/ln -s "+shellQuote(target)+" "+shellQuote(entry))
 			m := f.manager()
 			if _, err := m.Install(integrations.Opencode, false); err != nil {
 				t.Fatal(err)
 			}
+			want := StateSucceeded
 			if kind == "stderr-only" || kind == "stdout-overflow" {
-				requireJob(t, m, integrations.Opencode, StateUnsupported)
+				want = StateUnsupported
+			}
+			job := requireJob(t, m, integrations.Opencode, want)
+			if data, err := os.ReadFile(receipt); err != nil || string(data) != "prefix\nprefix-complete\n" {
+				t.Fatalf("prefix response did not complete: receipt %q, error %v; job %+v", data, err, job)
+			}
+			if want == StateUnsupported {
 				if f.mutations() != "" {
 					t.Fatal("invalid prefix mutated")
 				}
+				if _, err := os.Lstat(entry); !os.IsNotExist(err) {
+					t.Fatalf("invalid prefix created an entry: %v", err)
+				}
 				return
 			}
-			job := requireJob(t, m, integrations.Opencode, StateSucceeded)
-			if f.mutations() == "" || job.Output != "mutation diagnostic" {
-				t.Fatalf("mutation transcript lost diagnostics: %+v, mutations %q", job, f.mutations())
+			mutation := "install -g --prefix " + f.prefix + " @opencode/cli@latest"
+			if f.mutations() != mutation || job.Output != "mutation diagnostic" {
+				t.Fatalf("unexpected mutation transcript: %+v, mutations %q", job, f.mutations())
+			}
+			if job.Command != filepath.Join(f.tools, "npm")+" "+mutation || job.Method != string(MethodNpm) {
+				t.Fatalf("mutation metadata changed: %+v", job)
+			}
+			if got, err := os.Readlink(entry); err != nil || got != target {
+				t.Fatalf("installed entry target %q, want %q; error %v", got, target, err)
 			}
 		})
 	}
