@@ -36,6 +36,9 @@ func statsTestResponse() management.StatsResponse {
 }
 
 func TestStatsHotkeyOpensOverlay(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
@@ -112,6 +115,8 @@ func TestStatsOverlayCloseKeys(t *testing.T) {
 
 func TestStatsRangeSwitchRefetches(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
@@ -152,6 +157,8 @@ func TestStatsRangeSwitchRefetches(t *testing.T) {
 
 func TestUIStateStatsRangeNormalizes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
 
 	if err := SaveUIState(UIState{StatsRange: "bogus"}); err != nil {
 		t.Fatal(err)
@@ -178,6 +185,8 @@ func TestUIStateStatsRangeNormalizes(t *testing.T) {
 
 func TestStatsRefreshHotkeyRefetches(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
@@ -192,6 +201,8 @@ func TestStatsRefreshHotkeyRefetches(t *testing.T) {
 
 func TestStatsAutoRefreshPollsWhileVisible(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
 	client := newFakeClient(management.Account{ID: "acc-1"})
 	m := testModel(client, management.Account{ID: "acc-1"})
 
