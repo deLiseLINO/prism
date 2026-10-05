@@ -248,7 +248,7 @@ func TestMaintenanceVerificationRejectsChangedOwnerOrInvalidVersion(t *testing.T
 }
 
 func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
-	for _, kind := range []string{"visible", "not-visible", "other-copy"} {
+	for _, kind := range []string{"visible", "visible-alias", "not-visible", "other-copy"} {
 		t.Run(kind, func(t *testing.T) {
 			f := maintenanceSandbox(t)
 			target := f.packageEntry(filepath.Join(f.prefix, "lib", "node_modules"), "@opencode/cli", "opencode", "echo 2.3.4")
@@ -256,6 +256,11 @@ func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
 			body := "/bin/mkdir -p " + shellQuote(filepath.Dir(entry)) + "; /bin/ln -s " + shellQuote(target) + " " + shellQuote(entry)
 			if kind == "not-visible" {
 				f.env["PATH"] = f.tools
+			}
+			if kind == "visible-alias" {
+				alias := filepath.Join(f.home, "alias")
+				f.link(alias, f.prefix)
+				f.env["PATH"] = f.tools + ":" + filepath.Join(alias, "bin")
 			}
 			if kind == "other-copy" {
 				other := filepath.Join(f.home, "other")
@@ -269,8 +274,25 @@ func TestMaintenanceFreshInstallBoundToPlannedEntry(t *testing.T) {
 			if _, err := m.Install(integrations.Opencode, false); err != nil {
 				t.Fatal(err)
 			}
+			if kind == "not-visible" {
+				for attempt := 0; attempt < 2; attempt++ {
+					job := requireJob(t, m, integrations.Opencode, StateUnsupported)
+					if !strings.Contains(job.Error, "not visible on PATH") || f.mutations() != "" {
+						t.Fatalf("invisible destination mutated or wrong refusal: %+v, mutations %q", job, f.mutations())
+					}
+					if _, err := os.Lstat(entry); !os.IsNotExist(err) {
+						t.Fatalf("invisible destination created: %v", err)
+					}
+					if attempt == 0 {
+						if _, err := m.Install(integrations.Opencode, false); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				return
+			}
 			want := StateFailed
-			if kind == "visible" {
+			if kind == "visible" || kind == "visible-alias" {
 				want = StateSucceeded
 			}
 			requireJob(t, m, integrations.Opencode, want)

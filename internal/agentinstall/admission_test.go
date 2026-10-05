@@ -1,0 +1,136 @@
+package agentinstall
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/deLiseLINO/prism/internal/integrations"
+)
+
+func TestMaintenancePrefixUsesOnlyBoundedStdout(t *testing.T) {
+	for _, kind := range []string{"warning", "large-warning", "stderr-only", "stdout-overflow"} {
+		t.Run(kind, func(t *testing.T) {
+			f := maintenanceSandbox(t)
+			entry := filepath.Join(f.prefix, "bin", "opencode")
+			target := f.packageEntry(filepath.Join(f.prefix, "lib", "node_modules"), "@opencode/cli", "opencode", "echo 2.3.4 >&2")
+			response := "printf '%s\\n' " + shellQuote(f.prefix)
+			switch kind {
+			case "warning":
+				response += "; printf 'configuration warning\\n' >&2"
+			case "large-warning":
+				response += "; i=0; while [ $i -lt 1000 ]; do printf 'warning text' >&2; i=$((i+1)); done"
+			case "stderr-only":
+				response += " >&2"
+			case "stdout-overflow":
+				response = "i=0; while [ $i -lt 5000 ]; do printf ' '; i=$((i+1)); done; " + response
+			}
+			f.executable(filepath.Join(f.tools, "npm"), "if [ \"$1 $2\" = 'prefix -g' ]; then "+response+"; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"$MUTATIONS\"\nprintf 'mutation diagnostic' >&2\n/bin/mkdir -p "+shellQuote(filepath.Dir(entry))+"; /bin/ln -s "+shellQuote(target)+" "+shellQuote(entry))
+			m := f.manager()
+			if _, err := m.Install(integrations.Opencode, false); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "stderr-only" || kind == "stdout-overflow" {
+				requireJob(t, m, integrations.Opencode, StateUnsupported)
+				if f.mutations() != "" {
+					t.Fatal("invalid prefix mutated")
+				}
+				return
+			}
+			job := requireJob(t, m, integrations.Opencode, StateSucceeded)
+			if f.mutations() == "" || job.Output != "mutation diagnostic" {
+				t.Fatalf("mutation transcript lost diagnostics: %+v, mutations %q", job, f.mutations())
+			}
+		})
+	}
+}
+
+func TestMaintenanceStatusNeverRunsHomebrew(t *testing.T) {
+	f := maintenanceSandbox(t)
+	prefix := filepath.Join(f.home, "brew-root")
+	bin := filepath.Join(prefix, "bin")
+	for _, key := range []string{"omp", "codex", "claude"} {
+		layout, token := "Caskroom", key
+		if key == "omp" {
+			layout = "Cellar"
+		} else if key == "claude" {
+			token = "claude-code"
+		}
+		target := filepath.Join(prefix, layout, token, "1.2.3", "bin", key)
+		f.executable(target, "echo 1.2.3")
+		f.link(filepath.Join(bin, key), target)
+	}
+	f.env["PATH"] = bin + ":" + f.env["PATH"]
+	probeLog := filepath.Join(f.home, "prefix-probes")
+	f.executable(filepath.Join(bin, "brew"), "printf 'probe\\n' >> "+shellQuote(probeLog)+"; exec /bin/sleep 1")
+	m := f.manager()
+	m.StatusAll()
+	st, _ := m.StatusOf(integrations.Omp)
+	if !st.CanUpdate {
+		t.Errorf("local brew capability refused: %+v", st)
+	}
+	if data, err := os.ReadFile(probeLog); !os.IsNotExist(err) {
+		t.Errorf("status executed brew: %q, error %v", data, err)
+	}
+}
+
+func TestMaintenanceHomebrewDeduplicatesPrefixCandidates(t *testing.T) {
+	f := maintenanceSandbox(t)
+	prefix := filepath.Join(f.home, "brew-root")
+	bin := filepath.Join(prefix, "bin")
+	target := filepath.Join(prefix, "Cellar", "omp", "1.2.3", "bin", "omp")
+	f.executable(target, "echo 1.2.3")
+	f.link(filepath.Join(bin, "omp"), target)
+	f.env["PATH"] = bin + ":" + f.env["PATH"]
+	f.executable(filepath.Join(bin, "brew"), "if [ \"$1\" = '--prefix' ]; then printf 'probe\\n' >> \"$MUTATIONS\"; exit 1; fi; printf 'mutation\\n' >> \"$MUTATIONS\"")
+	m := f.manager()
+	job, err := m.Update(integrations.Omp)
+	if err != nil || job.State != StateUnsupported || f.mutations() != "probe" {
+		t.Fatalf("duplicate prefix probes or mutation: %+v, error %v, calls %q", job, err, f.mutations())
+	}
+}
+
+func TestMaintenanceBunFreshInstallUsesXDG(t *testing.T) {
+	f := maintenanceSandbox(t)
+	f.env["XDG_CACHE_HOME"] = filepath.Join(f.home, "cache")
+	root := filepath.Join(f.env["XDG_CACHE_HOME"], ".bun", "install", "global")
+	bin := filepath.Join(f.env["XDG_CACHE_HOME"], ".bun", "bin")
+	f.env["PATH"] = bin + ":" + f.env["PATH"]
+	target := f.packageEntry(filepath.Join(root, "node_modules"), "@oh-my-pi/pi-coding-agent", "omp", "echo 18.6.1")
+	f.executable(filepath.Join(f.tools, "bun"), "printf '%s\\n' \"$BUN_INSTALL_GLOBAL_DIR\" \"$BUN_INSTALL_BIN\" >> \"$MUTATIONS\"\n/bin/mkdir -p \"$BUN_INSTALL_BIN\"\n/bin/ln -s "+shellQuote(target)+" \"$BUN_INSTALL_BIN/omp\"")
+	m := f.manager()
+	if _, err := m.Install(integrations.Omp, false); err != nil {
+		t.Fatal(err)
+	}
+	requireJob(t, m, integrations.Omp, StateSucceeded)
+	st, _ := m.StatusOf(integrations.Omp)
+	if !st.CanUpdate || st.Source != SourceBun || st.Path != filepath.Join(bin, "omp") || f.mutations() != root+"\n"+bin {
+		t.Fatalf("XDG destination/owner mismatch: %+v, mutation %q", st, f.mutations())
+	}
+	if m.env["BUN_INSTALL_GLOBAL_DIR"] != "" || m.env["BUN_INSTALL_BIN"] != "" || f.env["BUN_INSTALL_BIN"] != "" {
+		t.Fatal("action mutated shared environment")
+	}
+}
+
+func TestMaintenanceFreshInvisibleScriptDoesNotFetch(t *testing.T) {
+	f := maintenanceSandbox(t)
+	f.link(filepath.Join(f.tools, "bash"), "/bin/bash")
+	f.executable(filepath.Join(f.tools, "curl"), "exit 0")
+	m := f.manager()
+	fetched := false
+	m.fetchScript = func(context.Context, string) (string, error) {
+		fetched = true
+		path := filepath.Join(f.home, "installer")
+		f.executable(path, "printf 'mutation\\n' >> \"$MUTATIONS\"")
+		return path, nil
+	}
+	if _, err := m.Install(integrations.Grok, false); err != nil {
+		t.Fatal(err)
+	}
+	job := requireJob(t, m, integrations.Grok, StateUnsupported)
+	if fetched || f.mutations() != "" || !strings.Contains(job.Error, "not visible on PATH") {
+		t.Fatalf("invisible script fetched/mutated: %+v, fetched %v", job, fetched)
+	}
+}

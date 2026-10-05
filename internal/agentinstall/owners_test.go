@@ -12,17 +12,29 @@ import (
 )
 
 func TestMaintenanceBunPinsDocumentedGlobalDirectories(t *testing.T) {
-	for _, kind := range []string{"default", "explicit", "unproven"} {
+	for _, kind := range []string{"default", "xdg", "install-over-xdg", "explicit", "global-only", "bin-only", "unproven"} {
 		t.Run(kind, func(t *testing.T) {
 			f := maintenanceSandbox(t)
 			root := filepath.Join(f.home, ".bun", "install", "global")
 			bin := filepath.Join(f.home, ".bun", "bin")
-			if kind == "explicit" {
+			if kind == "xdg" || kind == "install-over-xdg" || kind == "global-only" || kind == "bin-only" {
+				f.env["XDG_CACHE_HOME"] = filepath.Join(f.home, "cache")
+				base := filepath.Join(f.env["XDG_CACHE_HOME"], ".bun")
+				if kind == "install-over-xdg" {
+					base = filepath.Join(f.home, "custom-install")
+					f.env["BUN_INSTALL"] = base
+				}
+				root, bin = filepath.Join(base, "install", "global"), filepath.Join(base, "bin")
+			}
+			if kind == "explicit" || kind == "global-only" {
 				root = filepath.Join(f.home, "custom-root")
-				bin = filepath.Join(f.home, "custom-bin")
 				f.env["BUN_INSTALL_GLOBAL_DIR"] = root
+			}
+			if kind == "explicit" || kind == "bin-only" {
+				bin = filepath.Join(f.home, "custom-bin")
 				f.env["BUN_INSTALL_BIN"] = bin
 			}
+			original := copyEnv(f.env)
 			packageRoot := filepath.Join(root, "node_modules")
 			if kind == "unproven" {
 				packageRoot = filepath.Join(f.home, "node_modules")
@@ -65,8 +77,10 @@ func TestMaintenanceBunPinsDocumentedGlobalDirectories(t *testing.T) {
 			if got := f.mutations(); got != want {
 				t.Fatalf("Bun global root not pinned: %q, want %q", got, want)
 			}
-			if f.env["BUN_INSTALL_GLOBAL_DIR"] != "" && f.env["BUN_INSTALL_GLOBAL_DIR"] != root {
-				t.Fatal("caller env changed")
+			for _, key := range []string{"BUN_INSTALL", "XDG_CACHE_HOME", "BUN_INSTALL_GLOBAL_DIR", "BUN_INSTALL_BIN"} {
+				if f.env[key] != original[key] || m.env[key] != original[key] {
+					t.Fatalf("shared env changed at %s", key)
+				}
 			}
 		})
 	}
@@ -114,7 +128,25 @@ func TestMaintenanceHomebrewProvesPrefixAndObservedToken(t *testing.T) {
 			f.executable(filepath.Join(f.tools, "brew"), "if [ \"$1\" = '--prefix' ]; then printf '%s\\n' "+shellQuote(filepath.Join(f.home, "foreign"))+"; exit 0; fi; printf 'wrong brew mutation\\n' >> \"$MUTATIONS\"; exit 1")
 			m := f.manager()
 			st, _ := m.StatusOf(integrations.ID(key))
-			if kind == "foreign-prefix" || kind == "unknown-token" || kind == "unversioned" {
+			if kind == "foreign-prefix" {
+				if !st.CanUpdate || st.Reason != "" {
+					t.Fatalf("local brew capability refused before attestation: %+v", st)
+				}
+				for _, op := range []string{"update", "reinstall"} {
+					var job Job
+					var err error
+					if op == "update" {
+						job, err = m.Update(integrations.ID(key))
+					} else {
+						job, err = m.Install(integrations.ID(key), true)
+					}
+					if err != nil || job.State != StateUnsupported || !strings.Contains(job.Error, "must prove selected prefix") || f.mutations() != "" {
+						t.Fatalf("foreign brew %s authorized: %+v, error %v", op, job, err)
+					}
+				}
+				return
+			}
+			if kind == "unknown-token" || kind == "unversioned" {
 				if st.CanUpdate || st.Reason == "" {
 					t.Fatalf("unproven brew authorized: %+v", st)
 				}
