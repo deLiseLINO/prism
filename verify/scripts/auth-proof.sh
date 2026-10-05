@@ -20,35 +20,9 @@ if [ -z "$PY3" ]; then
     done; } 2>/dev/null
 fi
 [ -n "$PY3" ] || fail "no working python3 found"
-if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
-  fail "a daemon is already bound to port $PORT; stop it before the auth proof (the skill refuses to double-drive a shared instance)"
-fi
-RUNDIR=$(mktemp -d /tmp/prism-authproof.XXXXXX)
-RUN_ID="$(date +%Y%m%d-%H%M%S).$$"
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-$REPO_ROOT/verify/evidence/auth-proof/$RUN_ID}"
-EVID_WORK="$RUNDIR/evidence"
-mkdir -p "$EVID_WORK" "$RUNDIR/.prism" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    DAEMON_PID=$(pgrep -P "$APP_PID" -f "prism daemon" 2>/dev/null | head -1)
-    kill -TERM "$APP_PID" 2>/dev/null
-    wait "$APP_PID" 2>/dev/null
-  fi
-  if [ -n "${DAEMON_PID:-}" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
-    kill -TERM "$DAEMON_PID" 2>/dev/null
-  fi
-  [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
-  mkdir -p "$EVID_FINAL"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init auth-proof "$PORT" "$CDP_PORT"
+mkdir -p "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent"
 
 cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 {
@@ -72,31 +46,11 @@ echo "==> building prism and desktop"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 echo "==> launching isolated Electron app (isolated HOME, isolated profile)"
-PRISMD_PATH="$RUNDIR/prism" \
-PRISM_PORT="$PORT" \
-PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
-PRISM_HEADLESS="$HEADLESS" \
-HOME="$RUNDIR" \
-"$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
-  --user-data-dir="$RUNDIR/electron" \
-  --remote-debugging-port="$CDP_PORT" > "$RUNDIR/app.log" 2>&1 &
-APP_PID=$!
-
-for _ in $(seq 1 80); do
-  kill -0 "$APP_PID" 2>/dev/null || { cat "$RUNDIR/app.log" 2>/dev/null; fail "electron exited during startup"; }
-  curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-curl -sf "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/health.json" || fail "daemon health failed"
-
-for _ in $(seq 1 80); do
-  curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
+verify_start_electron
+curl -sf --max-time 5 "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/health.json" || fail "daemon health failed"
 
 cdp_eval() {
-  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1"
+  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1" "${2:-30000}"
 }
 
 $PY3 - "$PORT" <<'SAFETY'
@@ -232,13 +186,9 @@ POSTCHECK
 
 node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/auth-after-cancel.png"
 
-echo "==> quitting Electron"
-kill -TERM "$APP_PID"
-wait "$APP_PID" 2>/dev/null || true
-APP_PID=
-sleep 1
-if curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then
-  fail "daemon still reachable after Electron quit"
-fi
+echo "==> quitting Electron, attesting the shared daemon, then stopping it explicitly"
+verify_quit_app
+verify_attest_daemon
+verify_stop_daemon
 
 echo "auth proof passed (no login completed, no account touched)"

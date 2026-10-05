@@ -18,27 +18,8 @@ if [ -z "$PY3" ]; then
 fi
 [ -n "$PY3" ] || fail "no working python3 found"
 PORT="${PRISM_PORT:-${PRISMCTL_PROOF_PORT:-18791}}"
-RUNDIR=$(mktemp -d /tmp/prism-cliproof.XXXXXX)
-RUN_ID="$(date +%Y%m%d-%H%M%S).$$"
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-$REPO_ROOT/verify/evidence/prismctl-proof/$RUN_ID}"
-EVID_WORK="$RUNDIR/evidence"
-mkdir -p "$EVID_WORK" "$RUNDIR/.prism" "$RUNDIR/home"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${PID:-}" ] && kill -0 "$PID" 2>/dev/null; then
-    kill -TERM "$PID" 2>/dev/null
-    wait "$PID" 2>/dev/null
-  fi
-  mkdir -p "$EVID_FINAL"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init prismctl-proof "$PORT"
 
 cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 {
@@ -61,17 +42,7 @@ CONFIG
 echo "==> building prism"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 
-# The daemon resolves client config paths from its own HOME, so the isolated
-# home must be set on the daemon process itself; a HOME on the CLI alone
-# never reaches the apply, which would then read the operator's real
-# ~/.grok/config.toml and refuse on user-owned table collisions.
-HOME="$RUNDIR/home" "$RUNDIR/prism" daemon --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
-PID=$!
-for _ in $(seq 1 40); do
-  curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null || fail "daemon health failed"
+verify_start_daemon
 
 export PRISM_URL="http://127.0.0.1:$PORT"
 CTL="$RUNDIR/prism"
@@ -80,7 +51,7 @@ run_ctl() {
   local name=$1 expect=$2
   shift 2
   set +e
-  "$CTL" "$@" > "$EVID_WORK/$name.out" 2> "$EVID_WORK/$name.err"
+  HOME="$VERIFY_HOME" "$CTL" "$@" > "$EVID_WORK/$name.out" 2> "$EVID_WORK/$name.err"
   local rc=$?
   set -e
   echo "$rc" > "$EVID_WORK/$name.rc"
@@ -119,7 +90,7 @@ grep -q "codex" "$EVID_WORK/providers-list.out" || fail "providers list does not
 
 echo "==> auth login starts, stays pending, and cancels without any browser or real account"
 set +e
-"$CTL" auth login codex --no-open > "$EVID_WORK/auth-login.out" 2> "$EVID_WORK/auth-login.err" &
+HOME="$VERIFY_HOME" "$CTL" auth login codex --no-open > "$EVID_WORK/auth-login.out" 2> "$EVID_WORK/auth-login.err" &
 AUTH_PID=$!
 ( sleep 3; kill -TERM "$AUTH_PID" 2>/dev/null ) &
 KILLER=$!
@@ -177,14 +148,14 @@ fi
 run_ctl_quiet usage-select-auto 2 accounts select codex auto
 
 echo "==> integrations apply and rollback through the CLI"
-HOME="$RUNDIR/home" run_ctl integrations-apply-grok 0 integrations apply grok
-HOME="$RUNDIR/home" run_ctl integrations-rollback-grok 0 integrations rollback grok
-HOME="$RUNDIR/home" run_ctl integrations-status-after 0 integrations status grok
+HOME="$VERIFY_HOME" run_ctl integrations-apply-grok 0 integrations apply grok
+HOME="$VERIFY_HOME" run_ctl integrations-rollback-grok 0 integrations rollback grok
+HOME="$VERIFY_HOME" run_ctl integrations-status-after 0 integrations status grok
 
 echo "==> usage errors exit 2 and unknown commands exit 2"
 run_ctl_quiet usage-bad-provider 2 auth login nonsense
 run_ctl_quiet usage-bad-agent 2 agents install nonsense
-run_ctl_quiet usage-no-command 2
+run_ctl_quiet usage-service-no-command 2 service
 run_ctl_quiet usage-unknown 2 frobnicate
 run_ctl_quiet usage-bad-strategy 2 combos set x --strategy nonsense --target codex/gpt-5.6-luna
 run_ctl_quiet usage-bad-wire 2 providers add p --wire nonsense
@@ -197,7 +168,6 @@ RC=$?
 set -e
 [ "$RC" = "5" ] || fail "prismctl status with dead daemon: expected exit 5, got $RC"
 
-kill -TERM "$PID"
-wait "$PID" || fail "daemon exited nonzero on SIGTERM"
+verify_stop_daemon
 
 echo "prismctl proof OK (25 command shapes, usage errors exit 2, unreachable exit 5)"

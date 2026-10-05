@@ -1,23 +1,25 @@
-# Prism desktop feature map
+# prism desktop feature map
 
-User-facing features of the Prism system (the Electron desktop app in `apps/desktop`, the `prismd` daemon, the `prismctl` CLI, and the Codex/Grok/OMP integration clients), from the operator's point of view. Each file answers, in this exact order: what the feature's sub-features are, how to reach it as a user, how to drive it with the harness from `SKILL.md`, and what gotchas bite the verification driver.
+Each file lists the user-visible behavior, where to reach it, a verification recipe, and the limits of that recipe. Source descriptions are not evidence of a successful live run.
 
-- `daemon-lifecycle.md` — the app supervises prismd: boot, crash restart, quit; window close hides to the tray instead of stopping anything. The Overview card reports state and endpoint; there are no manual controls.
-- `overview.md` — the default dashboard: daemon card (state, endpoint), vision sidecar behind the experimental flag, default context window.
-- `renderer-status.md` — the window shows live daemon status, subscribes to supervisor pushes, and the tray tooltip mirrors it.
-- `tray.md` — tray icon, Show Prism, Quit Prism, click-to-show, live tooltip.
-- `auth-flows.md` — add-account login from Accounts: start, pending state, cancel, and the bottom-right error toast when start fails.
-- `accounts-quota.md` — account cards, per-window `% left` bars, Quota unavailable and Loading states, remove confirm, selection policy, and the quota proof. Pause/resume/priority are API and prismctl only.
-- `providers.md` — provider CRUD with generation CAS, credential paste-once, model enable/disable; the per-provider model list and sync live on the provider card (the old read-only Models tab was removed with the split-detail providers view).
-- `combos-routes.md` — combo and route alias API surface (no desktop view), CAS writes, planner resolution order.
-- `usage.md` — the Accounts card grid at `#/usage`, backed by the pool snapshot.
-- `integrations-apply.md` covers applying and rolling back client configs for codex, grok, omp, claude, pi, opencode, and hermes.
-- `hosts-switching.md` — the Machines screen: Manage switches the app to a remote host behind a "Managing <host>" banner, Back to this machine returns. Needs the remoteInstall experimental flag.
-- `agents-install.md` — install and update the agent binaries behind the integrations through the `/api/v1/agents*` routes and `prismctl agents`.
+- [Daemon lifecycle](daemon-lifecycle.md) covers registered service startup, health recovery, app supervision, and explicit service stop.
+- [Overview](overview.md) covers the daemon card and default context window.
+- [Renderer status](renderer-status.md) covers the status subscription, sidebar, boot gate, and unknown-route fallback.
+- [Tray](tray.md) covers native Show and Quit actions and window residency. Headless CDP does not prove those actions.
+- [Auth flows](auth-flows.md) covers start, pending, cancellation, and start failures in the Add account dialog.
+- [Accounts and quota](accounts-quota.md) covers account cards, remaining quota, unavailable state, and read-only comparison.
+- [Providers](providers.md) covers provider edits, credentials, model selection, and generation checks.
+- [Combos and routes](combos-routes.md) covers API aliases and resolution. There is no desktop view.
+- [Usage](usage.md) covers the Accounts grid at `#/usage`.
+- [Integrations](integrations-apply.md) covers Apply, Rollback, and Auto-apply for each supported client.
+- [Host switching](hosts-switching.md) covers Machines, remote management, and returning to the local daemon.
+- [Client installation](agents-install.md) covers binary status, install, update, and job state.
+- [Client compatibility](client-compatibility.md) covers real requests using generated client configs. Repeated-request stress does not prove an uninterrupted session.
+- [Management CLI](prismctl.md) covers the `prism` command families.
+- [Daemon API](daemon-api.md) covers management and inference routes and access rules.
+- [Management views](management-views.md) covers the renderer-to-daemon bridge.
+- [Vision](vision.md) covers image input and the sidecar.
 
-- `client-compatibility.md` — UI-applied Grok and OMP configurations complete real requests, OMP exposes thinking, and the live matrix holds Luna, Gemini 3.7 Flash, and GLM 5.3 sessions alive for >=300 seconds each.
-- `prismctl.md` — the full prismctl command family against the daemon management API.
-- `daemon-api.md` — every management and inference route prismd serves, including the loopback-or-bearer admit rule.
-- `management-views.md` — how the renderer's management bridge funnels every view to the daemon API, and what the bridge refuses.
+The renderer routes are `#/overview`, `#/providers`, `#/usage`, `#/stats`, `#/logs`, `#/integrations`, `#/machines`, and `#/experimental`. The integration driver visits Stats and Logs but only checks that each view opens with content. That is not a filter, paging, or live-update proof. Experimental flags are exercised by the install and integration drivers; not every flag has a full behavioral recipe.
 
-Coverage rule: every renderer route (`#/overview`, `#/providers`, `#/usage`, `#/stats`, `#/logs`, `#/integrations`, `#/machines`, `#/experimental`), every tray action, every prismctl command family, every inference endpoint, and every integration client must have a recipe in exactly one file above. Keep this map honest as the app changes: after any user-facing change, update the matching file in the same change. Re-run the full map periodically with `/maintain-verification-skill`. Known gaps as of the daemon-tab removal: `#/stats`, `#/logs`, and `#/experimental` have no dedicated recipe file yet (`#/experimental` is exercised incidentally by the remote-install proof's flag toggle); `#/machines` is covered by `hosts-switching.md`.
+Keep missing coverage explicit. Native tray actions, actual package-manager mutation, all-client inference, and uninterrupted long sessions need their own real runs. A source audit or one passing client does not cover those gaps.

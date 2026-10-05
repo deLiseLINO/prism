@@ -4,7 +4,7 @@ Overview is the default renderer route and the user's operational summary. The d
 
 ## Sub-features
 
-- Default routing: an unknown hash resolves to `#/overview`. The removed `#/daemon` hash also resolves to `#/overview`. An empty hash restores the last stored view, falling back to Overview when nothing is stored.
+- Default routing: an unknown hash resolves to `#/overview`. The removed `#/daemon` hash also resolves to `#/overview`. An empty startup hash normalizes to Overview, even if the stored view differs.
 - Daemon card: state chip (ok/warn/danger tone, pulsing dot when operational) and `state`/`endpoint` rows, one grid cell like the other cards. Read-only; lifecycle is supervised, not manual.
 - Vision sidecar (experimental): hidden unless the `visionSidecar` flag is on. The card has an `Enabled`/`Disabled` toggle and a model select. The select lists `provider/model` ids whose provider is enabled, whose model is not disabled, and whose resolved image input is true. Picking a model sets it as the target and enables the sidecar. With no eligible model the card shows an empty state. A configured target that is no longer eligible shows a warning banner. The flag itself lives on `#/experimental`.
 - Default context window: preset buttons (32k/128k/256k/400k/1M) plus a custom token entry, applied to every model without its own override.
@@ -18,10 +18,9 @@ Launch Prism, click `Overview`, or navigate to an unknown hash. The daemon card 
 
 ```sh
 bash verify/scripts/desktop-controls.sh
-bash verify/scripts/vision-sidecar-proof.sh
 ```
 
-The harness navigates to an unknown hash and requires Overview, proving the fallback route. It also requires the daemon card's state row to read ready/operational and the endpoint row to equal `http://127.0.0.1:$PORT`. A direct `GET /api/v1/health` must also succeed, but its body is not compared to the card. The context-window card is not driven by any script. `vision-sidecar-proof.sh` enables the experimental flag first, then drives the sidecar writes through the real card controls and compares against `GET /api/v1/providers` (vision sidecar target, per-model settings) after each write.
+The harness navigates to an unknown hash and requires Overview, proving the fallback route. It also requires the daemon card's state row to read ready/operational and the endpoint row to equal `http://127.0.0.1:$PORT`. A direct `GET /api/v1/health` must also succeed, but its body is not compared to the card. The context-window card is not driven by any script. The legacy `vision-sidecar-proof.sh` is not migrated to checked process and CDP ownership. Do not count it as an owned-runtime proof. See `vision.md` for the remaining coverage.
 
 ## Gotchas
 

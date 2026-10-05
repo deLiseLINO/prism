@@ -28,7 +28,7 @@ Read-only proof (required for any quota rendering change):
 verify/scripts/quota-proof.sh
 ```
 
-It needs `~/.prism` with accounts on both the codex and antigravity wires, and it refuses to run if a daemon is bound to port 18787. It copies the real state into a sandbox daemon, snapshots accounts and providers, fetches live per-account quota, and reads the Accounts cards only. It never opens Usage. Per card it reads name, provider, first badge, and each window label, value and reset. It compares provider, state label (cooling down, needs reauth, soft avoid), window count and the sorted `NN%` left values against the API windows. It asserts the card count equals the expected displayed count. It re-hashes the accounts snapshot to prove nothing was mutated, ignoring `quota` and `credentialGeneration`. It fails if either live wire has no account.
+It needs `~/.prism` with accounts on both the codex and antigravity wires, and it refuses to run if a daemon is bound to port 18787. It copies the real state into a sandbox daemon, snapshots accounts and providers, fetches live per-account quota, and reads the Accounts cards only. It never opens Usage. Per card it reads name, provider, first badge, and each window label, value and reset. It compares provider, state label (cooling down, needs reauth, soft avoid), window count and the sorted `NN%` left values against the API windows. It asserts the card count equals the expected displayed count. It compares the before and after account fields directly, excluding `quota` and `credentialGeneration`. It fails if either live wire has no account.
 
 By hand:
 
@@ -39,7 +39,7 @@ By hand:
 5. Type in `#usage-search` to filter.
 6. `Refresh all` triggers the quota refresh route per account.
 
-Mutation paths are proven by `scripts/prismctl-proof.sh` in the sandbox. `accounts select` pins a stored account when one exists, and `accounts pause/resume/priority/quota/remove` run against the isolated daemon when an account exists there. Never drive Remove during verification against the user's real accounts. A delete-path change is proven in the sandbox only. See management-views.md for the bridge drive recipe and the CAS gotchas.
+The CLI script exercises account mutations only when the sandbox contains a stored account. Its normal empty-account fixture records these actions as skipped. `accounts select` pins a stored account when one exists, and `accounts pause/resume/priority/quota/remove` run against the isolated daemon when an account exists there. Never drive Remove during verification against the user's real accounts. A delete-path change is proven in the sandbox only. See management-views.md for the bridge drive recipe and the CAS gotchas.
 
 ## Gotchas
 

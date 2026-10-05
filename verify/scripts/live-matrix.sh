@@ -9,7 +9,7 @@ fail() {
 run_with_timeout() {
   seconds=$1
   shift
-  perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "$seconds" "$@"
+  env -i "${_VERIFY_ENV[@]}" perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "$seconds" "$@"
 }
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
@@ -27,104 +27,65 @@ fi
 PORT="${PRISM_PORT:-18787}"
 CDP_PORT="${PRISM_CDP_PORT:-19222}"
 HEADLESS="${PRISM_HEADLESS:-1}"
-if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
-  fail "a daemon is already bound to port $PORT; stop it before the live matrix (the skill refuses to double-drive a shared instance)"
-fi
-
-RUNDIR=$(mktemp -d /tmp/prism-matrix.XXXXXX)
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init live-matrix "$PORT" "$CDP_PORT"
 RUN_ID="$(date +%Y%m%d-%H%M%S).$$"
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-$REPO_ROOT/verify/evidence/live-matrix/$RUN_ID}"
-EVID_WORK="$RUNDIR/evidence"
+PRIVATE_WORK="$RUNDIR/private-matrix"
 MIN_SECONDS="${PRISM_MATRIX_MIN_SECONDS:-300}"
 MAX_REQUESTS="${PRISM_MATRIX_MAX_REQUESTS:-60}"
 CEILING_SECONDS="${PRISM_MATRIX_CEILING_SECONDS:-540}"
 GROK_MODELS="${PRISM_MATRIX_GROK_MODELS:-}"
 OMP_MODELS="${PRISM_MATRIX_OMP_MODELS:-}"
-mkdir -p "$EVID_WORK/daemon" "$EVID_WORK/pairs" "$RUNDIR/.prism" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent" "$RUNDIR/work"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    DAEMON_PID=$(pgrep -P "$APP_PID" -f "prism daemon" 2>/dev/null | head -1)
-    kill -TERM "$APP_PID" 2>/dev/null
-    wait "$APP_PID" 2>/dev/null
-  fi
-  if [ -n "${DAEMON_PID:-}" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
-    kill -TERM "$DAEMON_PID" 2>/dev/null
-  fi
-  [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
-  [ -f "$RUNDIR/build.log" ] && cp "$RUNDIR/build.log" "$EVID_WORK/build.log"
-  mkdir -p "$EVID_FINAL"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
+mkdir -p "$PRIVATE_WORK/daemon" "$PRIVATE_WORK/pairs" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent" "$RUNDIR/work"
 
 SOURCE_STATE="${PRISM_VERIFY_STATE_DIR:-$REAL_HOME/.prism}"
-[ -f "$SOURCE_STATE/prism.json" ] || fail "live matrix needs $SOURCE_STATE/prism.json"
-[ -d "$SOURCE_STATE/credentials" ] || fail "live matrix needs $SOURCE_STATE/credentials"
-cp "$SOURCE_STATE/prism.json" "$RUNDIR/.prism/prism.json"
-cp -R "$SOURCE_STATE/credentials" "$RUNDIR/.prism/credentials"
-chmod -R go-rwx "$RUNDIR/.prism"
-"$PY3" - "$RUNDIR/.prism/prism.json" "$EVID_WORK/daemon/prism.json.sanitized" <<'SANITIZE'
-import json, sys
-with open(sys.argv[1]) as f:
-    d = json.load(f)
-for provider in (d.get('config', {}).get('providers') or {}).values():
-    provider.pop('apiKeyRef', None)
-with open(sys.argv[2], 'w') as f:
-    json.dump(d, f, indent=2)
-SANITIZE
+VERIFY_LIVE=1
+verify_stage_state "$SOURCE_STATE"
 
 echo "==> building prism and desktop"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 echo "==> launching isolated Electron app"
-PRISMD_PATH="$RUNDIR/prism" \
-PRISM_PORT="$PORT" \
-PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
-PRISM_HEADLESS="$HEADLESS" \
-HOME="$RUNDIR" \
-"$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
-  --user-data-dir="$RUNDIR/electron" \
-  --remote-debugging-port="$CDP_PORT" > "$RUNDIR/app.log" 2>&1 &
-APP_PID=$!
-
-for _ in $(seq 1 80); do
-  kill -0 "$APP_PID" 2>/dev/null || { cat "$RUNDIR/app.log" 2>/dev/null; fail "electron exited during startup"; }
-  curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-curl -sf "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/daemon/health.json" || fail "daemon health failed"
-for _ in $(seq 1 80); do
-  curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
+verify_start_electron
+curl -sf --max-time 5 "http://127.0.0.1:$PORT/api/v1/health" > "$PRIVATE_WORK/daemon/health.json" || fail "daemon health failed"
 
 cdp_eval() {
-  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1"
+  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1" "${2:-30000}"
 }
 
-curl -sf "http://127.0.0.1:$PORT/api/v1/usage" > "$EVID_WORK/daemon/usage-before.json" || fail "usage snapshot failed"
-DAEMON_LOG_START=$(wc -l < "$RUNDIR/app.log" || echo 0)
+curl -sf "http://127.0.0.1:$PORT/api/v1/usage" > "$PRIVATE_WORK/daemon/usage-before.json" || fail "usage snapshot failed"
+DAEMON_LOG="$RUNDIR/.prism/prism.log"
+DAEMON_LOG_START=$(wc -l < "$DAEMON_LOG")
+
+echo "==> enabling Other agents through the real UI"
+cdp_eval "await (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const nav = [...document.querySelectorAll('nav button')].find((node) => node.textContent.includes('Experimental'))
+  if (!nav) throw new Error('Experimental navigation button not found')
+  nav.click()
+  for (let i = 0; i < 40; i++) {
+    const row = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes('Other agents'))
+    const input = row?.querySelector('input')
+    if (input) {
+      if (!input.checked) input.click()
+      if (!input.checked) throw new Error('Other agents did not enable')
+      return {enabled: true}
+    }
+    await sleep(100)
+  }
+  throw new Error('Other agents toggle not found')
+})()" > "$EVID_WORK/experimental-agents.json"
 
 echo "==> applying client configs through the real UI"
 for ID in grok omp; do
   node "$REPO_ROOT/verify/scripts/apply-integration.mjs" "$WS" "$ID" \
-    > "$EVID_WORK/apply-$ID.json" 2> "$EVID_WORK/apply-$ID.stderr" \
-    || { cat "$EVID_WORK/apply-$ID.stderr" >&2; fail "UI Apply failed for $ID"; }
+    > "$PRIVATE_WORK/apply-$ID.json" 2> "$PRIVATE_WORK/apply-$ID.stderr" \
+    || fail "UI Apply failed for $ID; diagnostics remain private"
 done
-cp "$RUNDIR/.grok/config.toml" "$EVID_WORK/grok-config.toml" 2>/dev/null || true
-cp "$RUNDIR/.omp/agent/models.yml" "$EVID_WORK/omp-models.yml" 2>/dev/null || true
-HOME="$RUNDIR" run_with_timeout 30 grok models > "$EVID_WORK/grok-models.txt" 2>&1 || fail "Grok cannot load the config written by Apply"
-HOME="$RUNDIR" run_with_timeout 30 omp models > "$EVID_WORK/omp-models.txt" 2>&1 || fail "OMP cannot load the config written by Apply"
+HOME="$RUNDIR" run_with_timeout 30 grok models > "$PRIVATE_WORK/grok-models.txt" 2>&1 || fail "Grok cannot load the config written by Apply"
+HOME="$RUNDIR" run_with_timeout 30 omp models > "$PRIVATE_WORK/omp-models.txt" 2>&1 || fail "OMP cannot load the config written by Apply"
 
-curl -sf "http://127.0.0.1:$PORT/api/v1/providers" > "$EVID_WORK/daemon/providers.json" || fail "provider snapshot failed"
+curl -sf "http://127.0.0.1:$PORT/api/v1/providers" > "$PRIVATE_WORK/daemon/providers.json" || fail "provider snapshot failed"
 
 DERIVED_MODEL=$("$PY3" -c 'import json,sys,urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:"+sys.argv[1]+"/api/v1/models"))["models"][0]["id"])' "$PORT")
 if [ -z "$GROK_MODELS" ]; then
@@ -135,7 +96,7 @@ if [ -z "$OMP_MODELS" ]; then
 fi
 DERIVED_PROVIDER=${DERIVED_MODEL%%/*}
 provider_enabled() {
-  "$PY3" - "$EVID_WORK/daemon/providers.json" "$1" <<'PENEOF'
+  "$PY3" - "$PRIVATE_WORK/daemon/providers.json" "$1" <<'PENEOF'
 import json, sys
 try:
     providers = json.load(open(sys.argv[1])).get('providers', [])
@@ -194,23 +155,29 @@ pair_result() {
   result_name=$(echo "$alias" | tr '/' '-')
   start_ts=$6 end_ts=$7 exit_code=$8 transport_errors=$9
   marker_count=${10} final_chars=${11} stdout_name=${12} stderr_name=${13} log_name=${14} transcript_note=${15}
+  failed_attempts=${16} failed_attempt_errors=${17} attempts=${18} requests=${19}
   elapsed=$(( end_ts - start_ts ))
   verdict=pass
   [ "$exit_code" -eq 0 ] || verdict=fail
   [ "$elapsed" -ge "$MIN_SECONDS" ] || verdict=fail
   [ "$transport_errors" -eq 0 ] || verdict=fail
+  [ "$failed_attempts" -eq 0 ] || verdict=fail
   [ "$marker_count" -eq 1 ] || verdict=fail
   [ "$final_chars" -ge 1000 ] || verdict=fail
   $PY3 - "$client" "$model_id" "$provider" "$alias" "$account" "$start_ts" "$end_ts" \
     "$exit_code" "$transport_errors" "$marker_count" "$final_chars" "$verdict" \
-    "$stdout_name" "$stderr_name" "$log_name" "$transcript_note" > "$EVID_WORK/pairs/$client--$result_name.result.json" <<'PYEOF'
+    "$stdout_name" "$stderr_name" "$log_name" "$transcript_note" \
+    "$failed_attempts" "$failed_attempt_errors" "$attempts" "$requests" > "$PRIVATE_WORK/pairs/$client--$result_name.result.json" <<'PYEOF'
 import json, sys
 client, model_id, provider, alias, account = sys.argv[1:6]
 start_ts, end_ts, exit_code, transport_errors, marker_count, final_chars, verdict = sys.argv[6:13]
 stdout_name, stderr_name, log_name, transcript_note = sys.argv[13:17]
+failed_attempts, failed_attempt_errors, attempts, requests = map(int, sys.argv[17:21])
 elapsed = int(end_ts) - int(start_ts)
 record = {
     "schema": "prism-live-matrix-pair/1",
+    "scope": "repeated-request stress",
+    "continuousSession": False,
     "client": client,
     "modelId": model_id,
     "provider": provider,
@@ -221,6 +188,10 @@ record = {
     "elapsedSeconds": int(elapsed),
     "exitCode": int(exit_code),
     "transportErrorCount": int(transport_errors),
+    "failedAttemptCount": failed_attempts,
+    "failedAttemptErrorCount": failed_attempt_errors,
+    "attemptCount": attempts,
+    "requestCount": requests,
     "markerCount": int(marker_count),
     "finalAssistantChars": int(final_chars),
     "verdict": verdict,
@@ -248,10 +219,15 @@ run_grok_pair() {
   i=0
   marker_sent=0
   ok_parts=0
-  mkdir -p "$EVID_WORK/pairs/$pair_dir_name-failed"
+  failed_attempts=0
+  failed_attempt_errors=0
+  attempts=0
+  requests=0
+  mkdir -p "$PRIVATE_WORK/pairs/$pair_dir_name-failed"
   while :; do
     i=$(( i + 1 ))
     [ "$i" -le "$MAX_REQUESTS" ] || break
+    requests=$i
     now=$(date +%s)
     elapsed=$(( now - start_ts ))
     if [ "$elapsed" -ge $(( MIN_SECONDS + 30 )) ]; then
@@ -274,6 +250,7 @@ PROMPT
     bad_events=1
     while [ "$attempt" -lt 3 ]; do
       attempt=$(( attempt + 1 ))
+      attempts=$(( attempts + 1 ))
       set +e
       HOME="$RUNDIR" run_with_timeout "$CEILING_SECONDS" grok \
         -m "$alias" \
@@ -281,19 +258,21 @@ PROMPT
         --output-format streaming-json \
         --no-subagents \
         --prompt-file "$prompt_file" \
-        > "$EVID_WORK/pairs/$pair_dir_name-$i.stdout" 2> "$EVID_WORK/pairs/$pair_dir_name-$i.stderr"
+        > "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stdout" 2> "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stderr"
       rc=$?
       set -e
-      bad_events=$(count_ndjson_errors "$EVID_WORK/pairs/$pair_dir_name-$i.stdout")
+      bad_events=$(count_ndjson_errors "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stdout")
       if [ "$rc" -eq 0 ] && [ "$bad_events" -eq 0 ]; then
         break
       fi
-      cp "$EVID_WORK/pairs/$pair_dir_name-$i.stdout" "$EVID_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.stdout" 2>/dev/null || true
-      cp "$EVID_WORK/pairs/$pair_dir_name-$i.stderr" "$EVID_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.stderr" 2>/dev/null || true
+      failed_attempts=$(( failed_attempts + 1 ))
+      failed_attempt_errors=$(( failed_attempt_errors + bad_events ))
+      cp "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stdout" "$PRIVATE_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.stdout"
+      cp "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stderr" "$PRIVATE_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.stderr"
       sleep 5
     done
     if [ "$rc" -ne 0 ] || [ "$bad_events" -ne 0 ]; then
-      rm -f "$EVID_WORK/pairs/$pair_dir_name-$i.stdout" "$EVID_WORK/pairs/$pair_dir_name-$i.stderr"
+      rm -f "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stdout" "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stderr"
       if [ "$rc" -ne 0 ]; then
         exit_code=$rc
       else
@@ -301,7 +280,7 @@ PROMPT
       fi
       continue
     fi
-    stats=$("$PY3" - "$EVID_WORK/pairs/$pair_dir_name-$i.stdout" "$marker" <<'PYEOF'
+    stats=$("$PY3" - "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stdout" "$marker" <<'PYEOF'
 import json, sys
 last_text = ''
 final_result = ''
@@ -328,20 +307,20 @@ PYEOF
     ok_parts=$(( ok_parts + 1 ))
     [ "$marker_sent" -eq 1 ] && [ "$marker_count" -ge 1 ] && break
   done
-  cat "$EVID_WORK/pairs/"$pair_dir_name-*.stdout > "$EVID_WORK/pairs/$pair_dir_name.stdout" 2>/dev/null || true
-  cat "$EVID_WORK/pairs/"$pair_dir_name-*.stderr > "$EVID_WORK/pairs/$pair_dir_name.stderr" 2>/dev/null || true
-  rm -f "$EVID_WORK/pairs/"$pair_dir_name-[0-9]*.stdout "$EVID_WORK/pairs/"$pair_dir_name-[0-9]*.stderr
+  cat "$PRIVATE_WORK/pairs/"$pair_dir_name-*.stdout > "$PRIVATE_WORK/pairs/$pair_dir_name.stdout" 2>/dev/null || true
+  cat "$PRIVATE_WORK/pairs/"$pair_dir_name-*.stderr > "$PRIVATE_WORK/pairs/$pair_dir_name.stderr" 2>/dev/null || true
+  rm -f "$PRIVATE_WORK/pairs/"$pair_dir_name-[0-9]*.stdout "$PRIVATE_WORK/pairs/"$pair_dir_name-[0-9]*.stderr
   end_ts=$(date +%s)
   account=$(account_for "$provider")
-  transport_errors=$(count_ndjson_errors "$EVID_WORK/pairs/$pair_dir_name.stdout")
+  transport_errors=$(( $(count_ndjson_errors "$PRIVATE_WORK/pairs/$pair_dir_name.stdout") + failed_attempt_errors ))
   final_chars=$total_chars
-  sed -n "$(( DAEMON_LOG_START + 1 )),\$p" "$RUNDIR/app.log" > "$EVID_WORK/pairs/$pair_dir_name.daemon.log" || true
-  DAEMON_LOG_START=$(wc -l < "$RUNDIR/app.log" || echo 0)
-  cat > "$EVID_WORK/pairs/$pair_dir_name.cmd.txt" <<CMD
+  sed -n "$(( DAEMON_LOG_START + 1 )),\$p" "$DAEMON_LOG" > "$PRIVATE_WORK/pairs/$pair_dir_name.daemon.log"
+  DAEMON_LOG_START=$(wc -l < "$DAEMON_LOG")
+  cat > "$PRIVATE_WORK/pairs/$pair_dir_name.cmd.txt" <<CMD
 HOME=$RUNDIR grok -m $alias --reasoning-effort $effort --output-format streaming-json --no-subagents (sequential requests; failed attempts in $pair_dir_name-failed/)
 CMD
-  result=$(pair_result grok "$model_id" "$provider" "$alias" "$account" "$start_ts" "$end_ts" "$exit_code" "$transport_errors" "$marker_count" "$final_chars" "$pair_dir_name.stdout" "$pair_dir_name.stderr" "$pair_dir_name.daemon.log" "transcript contains clean requests only; failed attempts preserved in -failed/")
-  echo "grok/$alias: $result (ok=$ok_parts)"
+  result=$(pair_result grok "$model_id" "$provider" "$alias" "$account" "$start_ts" "$end_ts" "$exit_code" "$transport_errors" "$marker_count" "$final_chars" "$pair_dir_name.stdout" "$pair_dir_name.stderr" "$pair_dir_name.daemon.log" "transcript contains successful requests only; failed attempts counted and preserved in -failed/" "$failed_attempts" "$failed_attempt_errors" "$attempts" "$requests")
+  echo "grok repeated-request stress: $result (ok=$ok_parts, failedAttempts=$failed_attempts)"
   [ "$(echo "$result" | cut -d' ' -f2)" = "pass" ] || MATRIX_FAILED=1
 }
 
@@ -359,10 +338,15 @@ run_omp_pair() {
   i=0
   marker_sent=0
   ok_parts=0
-  mkdir -p "$EVID_WORK/pairs/$pair_dir_name-failed"
+  failed_attempts=0
+  failed_attempt_errors=0
+  attempts=0
+  requests=0
+  mkdir -p "$PRIVATE_WORK/pairs/$pair_dir_name-failed"
   while :; do
     i=$(( i + 1 ))
     [ "$i" -le "$MAX_REQUESTS" ] || break
+    requests=$i
     now=$(date +%s)
     elapsed=$(( now - start_ts ))
     if [ "$elapsed" -ge $(( MIN_SECONDS + 30 )) ]; then
@@ -386,6 +370,7 @@ run_omp_pair() {
     bad_events=1
     while [ "$attempt" -lt 3 ]; do
       attempt=$(( attempt + 1 ))
+      attempts=$(( attempts + 1 ))
       set +e
       HOME="$RUNDIR" run_with_timeout "$CEILING_SECONDS" omp \
         --mode json \
@@ -400,19 +385,21 @@ run_omp_pair() {
         --thinking "$thinking" \
         --print-thoughts \
         "$prompt" \
-        > "$EVID_WORK/pairs/$pair_dir_name-$i.ndjson" 2> "$EVID_WORK/pairs/$pair_dir_name-$i.stderr"
+        > "$PRIVATE_WORK/pairs/$pair_dir_name-$i.ndjson" 2> "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stderr"
       rc=$?
       set -e
-      bad_events=$(count_ndjson_errors "$EVID_WORK/pairs/$pair_dir_name-$i.ndjson")
+      bad_events=$(count_ndjson_errors "$PRIVATE_WORK/pairs/$pair_dir_name-$i.ndjson")
       if [ "$rc" -eq 0 ] && [ "$bad_events" -eq 0 ]; then
         break
       fi
-      cp "$EVID_WORK/pairs/$pair_dir_name-$i.ndjson" "$EVID_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.ndjson" 2>/dev/null || true
-      cp "$EVID_WORK/pairs/$pair_dir_name-$i.stderr" "$EVID_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.stderr" 2>/dev/null || true
+      failed_attempts=$(( failed_attempts + 1 ))
+      failed_attempt_errors=$(( failed_attempt_errors + bad_events ))
+      cp "$PRIVATE_WORK/pairs/$pair_dir_name-$i.ndjson" "$PRIVATE_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.ndjson"
+      cp "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stderr" "$PRIVATE_WORK/pairs/$pair_dir_name-failed/req-$i-attempt-$attempt.stderr"
       sleep 5
     done
     if [ "$rc" -ne 0 ] || [ "$bad_events" -ne 0 ]; then
-      rm -f "$EVID_WORK/pairs/$pair_dir_name-$i.ndjson" "$EVID_WORK/pairs/$pair_dir_name-$i.stderr"
+      rm -f "$PRIVATE_WORK/pairs/$pair_dir_name-$i.ndjson" "$PRIVATE_WORK/pairs/$pair_dir_name-$i.stderr"
       if [ "$rc" -ne 0 ]; then
         exit_code=$rc
       else
@@ -420,7 +407,7 @@ run_omp_pair() {
       fi
       continue
     fi
-    stats=$("$PY3" - "$EVID_WORK/pairs/$pair_dir_name-$i.ndjson" "$marker" <<'PYEOF'
+    stats=$("$PY3" - "$PRIVATE_WORK/pairs/$pair_dir_name-$i.ndjson" "$marker" <<'PYEOF'
 import json, sys
 last_text = ''
 marker = sys.argv[2]
@@ -450,26 +437,26 @@ PYEOF
     ok_parts=$(( ok_parts + 1 ))
     [ "$marker_sent" -eq 1 ] && [ "$marker_count" -ge 1 ] && break
   done
-  cat "$EVID_WORK/pairs/"$pair_dir_name-*.ndjson > "$EVID_WORK/pairs/$pair_dir_name.ndjson" 2>/dev/null || true
-  cat "$EVID_WORK/pairs/"$pair_dir_name-*.stderr > "$EVID_WORK/pairs/$pair_dir_name.stderr" 2>/dev/null || true
-  rm -f "$EVID_WORK/pairs/"$pair_dir_name-[0-9]*.ndjson "$EVID_WORK/pairs/"$pair_dir_name-[0-9]*.stderr
+  cat "$PRIVATE_WORK/pairs/"$pair_dir_name-*.ndjson > "$PRIVATE_WORK/pairs/$pair_dir_name.ndjson" 2>/dev/null || true
+  cat "$PRIVATE_WORK/pairs/"$pair_dir_name-*.stderr > "$PRIVATE_WORK/pairs/$pair_dir_name.stderr" 2>/dev/null || true
+  rm -f "$PRIVATE_WORK/pairs/"$pair_dir_name-[0-9]*.ndjson "$PRIVATE_WORK/pairs/"$pair_dir_name-[0-9]*.stderr
   end_ts=$(date +%s)
   account=$(account_for "$provider")
-  transport_errors=$(count_ndjson_errors "$EVID_WORK/pairs/$pair_dir_name.ndjson")
+  transport_errors=$(( $(count_ndjson_errors "$PRIVATE_WORK/pairs/$pair_dir_name.ndjson") + failed_attempt_errors ))
   final_chars=$total_chars
-  sed -n "$(( DAEMON_LOG_START + 1 )),\$p" "$RUNDIR/app.log" > "$EVID_WORK/pairs/$pair_dir_name.daemon.log" || true
-  DAEMON_LOG_START=$(wc -l < "$RUNDIR/app.log" || echo 0)
-  cat > "$EVID_WORK/pairs/$pair_dir_name.cmd.txt" <<CMD
+  sed -n "$(( DAEMON_LOG_START + 1 )),\$p" "$DAEMON_LOG" > "$PRIVATE_WORK/pairs/$pair_dir_name.daemon.log"
+  DAEMON_LOG_START=$(wc -l < "$DAEMON_LOG")
+  cat > "$PRIVATE_WORK/pairs/$pair_dir_name.cmd.txt" <<CMD
 HOME=$RUNDIR omp --mode json --print --no-session --no-tools --no-skills --no-rules --cwd $RUNDIR/work --model $selector --thinking $thinking --print-thoughts (sequential requests; failed attempts in $pair_dir_name-failed/)
 CMD
-  result=$(pair_result omp "$model_id" "$provider" "$selector" "$account" "$start_ts" "$end_ts" "$exit_code" "$transport_errors" "$marker_count" "$final_chars" "$pair_dir_name.ndjson" "$pair_dir_name.stderr" "$pair_dir_name.daemon.log" "transcript contains clean requests only; failed attempts preserved in -failed/")
-  echo "omp/$model_id: $result (ok=$ok_parts)"
+  result=$(pair_result omp "$model_id" "$provider" "$selector" "$account" "$start_ts" "$end_ts" "$exit_code" "$transport_errors" "$marker_count" "$final_chars" "$pair_dir_name.ndjson" "$pair_dir_name.stderr" "$pair_dir_name.daemon.log" "transcript contains successful requests only; failed attempts counted and preserved in -failed/" "$failed_attempts" "$failed_attempt_errors" "$attempts" "$requests")
+  echo "omp repeated-request stress: $result (ok=$ok_parts, failedAttempts=$failed_attempts)"
   [ "$(echo "$result" | cut -d' ' -f2)" = "pass" ] || MATRIX_FAILED=1
 }
 
 MATRIX_FAILED=0
 
-echo "==> running Grok live matrix"
+echo "==> running Grok repeated-request stress matrix"
 for entry in $GROK_MODELS; do
   case "$entry" in
     prism-codex-gpt-5-6-luna) model_id="codex/gpt-5.6-luna"; provider="codex" ;;
@@ -477,13 +464,13 @@ for entry in $GROK_MODELS; do
     *) model_id="$DERIVED_MODEL"; provider="${DERIVED_MODEL%%/*}" ;;
   esac
   if [ "$(provider_enabled "$provider")" = "no" ]; then
-    echo "grok/$model_id: skipped (provider disabled in source config)"
+    echo "grok pair skipped (provider disabled in source config)"
     continue
   fi
   run_grok_pair "$entry" "$model_id" "$provider"
 done
 
-echo "==> running OMP live matrix"
+echo "==> running OMP repeated-request stress matrix"
 for entry in $OMP_MODELS; do
   case "$entry" in
     prism/codex/gpt-5.6-luna) model_id="codex/gpt-5.6-luna"; provider="codex" ;;
@@ -491,17 +478,17 @@ for entry in $OMP_MODELS; do
     *) model_id="${entry#prism/}"; provider="${model_id%%/*}" ;;
   esac
   if [ "$(provider_enabled "$provider")" = "no" ]; then
-    echo "omp/$model_id: skipped (provider disabled in source config)"
+    echo "omp pair skipped (provider disabled in source config)"
     continue
   fi
   run_omp_pair "$entry" "$model_id" "$provider"
 done
 
-curl -sf "http://127.0.0.1:$PORT/api/v1/usage" > "$EVID_WORK/daemon/usage-after.json" || fail "post-run usage snapshot failed"
-BEFORE=$(usage_state_line "$EVID_WORK/daemon/usage-before.json")
-AFTER=$(usage_state_line "$EVID_WORK/daemon/usage-after.json")
+curl -sf "http://127.0.0.1:$PORT/api/v1/usage" > "$PRIVATE_WORK/daemon/usage-after.json" || fail "post-run usage snapshot failed"
+BEFORE=$(usage_state_line "$PRIVATE_WORK/daemon/usage-before.json")
+AFTER=$(usage_state_line "$PRIVATE_WORK/daemon/usage-after.json")
 
-"$PY3" - "$RUN_ID" "$PORT" "$EVID_WORK" "$GROK_MODELS" "$OMP_MODELS" "$MIN_SECONDS" > "$EVID_WORK/run.json" <<'RUNJSON'
+"$PY3" - "$RUN_ID" "$PORT" "$PRIVATE_WORK" "$GROK_MODELS" "$OMP_MODELS" "$MIN_SECONDS" > "$PRIVATE_WORK/run.json" <<'RUNJSON'
 import json, os, sys
 run_id, port, evid, grok_models, omp_models, min_seconds = sys.argv[1:7]
 pairs = []
@@ -510,6 +497,9 @@ for name in sorted(os.listdir(os.path.join(evid, 'pairs'))):
         pairs.append(json.loads(open(os.path.join(evid, 'pairs', name)).read()))
 print(json.dumps({
     "schema": "prism-live-matrix-run/1",
+    "scope": "repeated-request stress",
+    "continuousSession": False,
+    "durationIncludes": ["requests", "retries", "delays"],
     "runId": run_id,
     "featureId": "client-compatibility",
     "daemonPort": int(port),
@@ -520,24 +510,48 @@ print(json.dumps({
 }, indent=2))
 RUNJSON
 
-(cd "$EVID_WORK" && if command -v shasum >/dev/null 2>&1; then find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 shasum -a 256; elif command -v sha256sum >/dev/null 2>&1; then find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 sha256sum; else find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 openssl dgst -sha256 -r; fi) > "$EVID_WORK/manifest.sha256"
+(cd "$PRIVATE_WORK" && if command -v shasum >/dev/null 2>&1; then find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 shasum -a 256; elif command -v sha256sum >/dev/null 2>&1; then find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 sha256sum; else find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 openssl dgst -sha256 -r; fi) > "$PRIVATE_WORK/manifest.sha256"
 
-node "$REPO_ROOT/verify/scripts/assert-matrix-run.mjs" "$EVID_WORK" >/dev/null \
-  || fail "matrix assertions failed"
-(cd "$EVID_WORK" && find . -type f ! -name manifest.sha256 -print0 | sort -z | xargs -0 shasum -a 256) > "$EVID_WORK/manifest.sha256"
+ASSERTION_STATUS=0
+node "$REPO_ROOT/verify/scripts/assert-matrix-run.mjs" "$PRIVATE_WORK" > "$RUNDIR/matrix-assertion.stdout" 2> "$RUNDIR/matrix-assertion.stderr" \
+  || ASSERTION_STATUS=$?
 
-kill -TERM "$APP_PID"
-wait "$APP_PID" 2>/dev/null || true
-APP_PID=
-sleep 1
-if curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then
-  fail "daemon still reachable after Electron quit"
+"$PY3" - "$PRIVATE_WORK/run.json" "$EVID_WORK/run.json" "$ASSERTION_STATUS" "$MATRIX_FAILED" "$BEFORE" "$AFTER" <<'SUMMARY'
+import json, sys
+run = json.load(open(sys.argv[1]))
+degraded = any(item.rsplit('=', 1)[-1] in ('cooling_down', 'soft_avoid') for item in sys.argv[6].split())
+json.dump({
+    'schema': 'prism-live-matrix-summary/1',
+    'runId': run['runId'],
+    'scope': run['scope'],
+    'continuousSession': False,
+    'durationIncludes': run['durationIncludes'],
+    'minSeconds': run['minSeconds'],
+    'assertions': 'passed' if sys.argv[3] == '0' else 'failed',
+    'pairChecks': 'passed' if sys.argv[4] == '0' else 'failed',
+    'accountStateCheck': 'failed' if degraded else 'passed',
+    'accountStatesChanged': sys.argv[5] != sys.argv[6],
+    'verdict': 'unavailable' if not run['pairs'] else ('pass' if sys.argv[3:5] == ['0', '0'] and not degraded else 'fail'),
+    'rawEvidence': 'private, no sanitizer contract',
+    'pairs': [{k: pair[k] for k in ('client', 'elapsedSeconds', 'exitCode', 'transportErrorCount', 'failedAttemptCount', 'failedAttemptErrorCount', 'attemptCount', 'requestCount', 'markerCount', 'finalAssistantChars', 'verdict')} for pair in run['pairs']],
+}, open(sys.argv[2], 'w'), indent=2)
+SUMMARY
+
+echo "==> quitting Electron, attesting the shared daemon, then stopping it explicitly"
+verify_quit_app
+verify_attest_daemon
+verify_stop_daemon
+
+if ! "$PY3" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["pairs"] else 1)' "$PRIVATE_WORK/run.json"; then
+  echo "VERIFIED_UNREACHABLE: no enabled requested provider pairs" >&2
+  exit 3
 fi
 
 if [ -n "$(echo "$AFTER" | tr ' ' '\n' | grep -E 'cooling_down|soft_avoid' || true)" ]; then
-  fail "post-matrix account states degraded to cooling_down/soft_avoid: $AFTER (was: $BEFORE)"
+  fail "post-matrix account states degraded to cooling_down/soft_avoid; details remain private"
 fi
 
+[ "$ASSERTION_STATUS" = "0" ] || fail "matrix assertions failed; diagnostics remain private"
 [ "$MATRIX_FAILED" = "0" ] || fail "one or more matrix pairs failed"
 
-echo "live matrix passed"
+echo "repeated-request stress matrix passed"
