@@ -18,27 +18,8 @@ if [ -z "$PY3" ]; then
 fi
 [ -n "$PY3" ] || fail "no working python3 found"
 PORT="${PRISM_PORT:-${PRISMCTL_PROOF_PORT:-18792}}"
-RUNDIR=$(mktemp -d /tmp/prism-apisweep.XXXXXX)
-RUN_ID="$(date +%Y%m%d-%H%M%S).$$"
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-$REPO_ROOT/verify/evidence/api-sweep/$RUN_ID}"
-EVID_WORK="$RUNDIR/evidence"
-mkdir -p "$EVID_WORK" "$RUNDIR/.prism"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${PID:-}" ] && kill -0 "$PID" 2>/dev/null; then
-    kill -TERM "$PID" 2>/dev/null
-    wait "$PID" 2>/dev/null
-  fi
-  mkdir -p "$EVID_FINAL"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init api-sweep "$PORT"
 
 cat > "$RUNDIR/.prism/prism.json" <<CONFIG
 {
@@ -61,13 +42,7 @@ CONFIG
 echo "==> building prism"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 
-"$RUNDIR/prism" daemon --listen "127.0.0.1:$PORT" --config "$RUNDIR/.prism/prism.json" --credential-store "$RUNDIR/creds" > "$RUNDIR/out.log" 2>&1 &
-PID=$!
-for _ in $(seq 1 40); do
-  curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null || fail "daemon health failed"
+verify_start_daemon
 
 BASE="http://127.0.0.1:$PORT"
 record() {
@@ -183,7 +158,6 @@ record inference-wrong-method 405 "$BASE/v1/responses"
 record unknown-v1 404 "$BASE/v1/frobnicate"
 record unknown-root 404 "$BASE/frobnicate"
 
-kill -TERM "$PID"
-wait "$PID" || fail "daemon exited nonzero on SIGTERM"
+verify_stop_daemon
 
 echo "api sweep OK (management reads, negatives, provider/combo/route CAS writes, auth pending, inference shapes)"

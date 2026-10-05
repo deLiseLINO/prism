@@ -1,21 +1,29 @@
-# Vision: image input through the sidecar
+# Vision input and sidecar
 
-Text-only models receive image descriptions from a vision-capable sidecar model; image-capable models receive images directly. Image capability is the settings override when one is set, otherwise the last listing. Enabling the sidecar does not mark other models image-capable in client configs. The Overview card sits behind the experimental `visionSidecar` flag and lists models whose resolved image is true. The daemon feature itself is always active when configured.
+Image-capable models receive image input directly. When an image request routes to a text-only target, an enabled image-capable sidecar can describe the image for that target.
 
-## Wiring
+## Sub-features
 
-- Main traffic rides the provider's configured wire (router: chat).
-- Images only work on the upstream responses endpoint, so the sidecar target lives on its own provider with `wire: responses` (chat-resp), never by flipping the main provider's wire.
-- The sidecar description turn streams; the upstream rejects non-streaming image requests.
+- Image capability comes from the model settings override when present, otherwise the catalog value.
+- The Overview sidecar card requires the experimental `visionSidecar` flag. It lists eligible enabled image-capable targets.
+- The sidecar description request uses the normal router and a canonical non-streaming request. There is no universal responses-only provider requirement.
+- Enabling the sidecar does not mark other models image-capable in generated client configs.
+- Description failure produces an unavailable-description note for downstream input. It does not invent image content.
 
-## Verify
+## How to get to it
 
-1. `curl http://127.0.0.1:10200/api/v1/providers` — router wire stays `chat`, chat-resp wire `responses`.
-2. POST an image request (responses shape, `input_image`) to a text-only model: answer must describe the image, HTTP 200.
-3. POST the same to the sidecar target's provider directly (chat-resp/gpt-5.6-luna): HTTP 200.
+Enable the sidecar flag on Experimental, then open Overview. Choose an eligible target and enable the sidecar. For direct image input, select an image-capable model in the client.
 
-## Never
+## Verification recipe and limits
 
-- Never edit `~/.prism/prism.json` by hand (jq/ruby/sed) — raw edits bypass the generation counter and clobber concurrent manager writes.
-- Never flip the router provider wire to make vision work — it breaks codex chat traffic.
-- All changes go through the management API: `PUT /api/v1/providers/{id}`, `PUT /api/v1/vision-sidecar`, with `expectedGeneration`.
+The legacy `vision-sidecar-proof.sh` has not migrated to checked process and CDP ownership. Do not count it as a safe owned-runtime proof or run it against a shared app.
+
+A future owned drive must verify the Overview controls through visible clicks and compare the selected target against the management API. Send the same known image to an image-capable target directly and through a text-only target with the sidecar enabled. Compare the response to facts visible in that image, not merely an HTTP 200.
+
+Image ingress shapes and adapter behavior need separate proof. A single configured upstream does not establish a universal wire restriction.
+
+## Gotchas
+
+- Never edit the user's state JSON to select a target. Use generation-checked management writes against an owned daemon.
+- Discover an eligible target from the current catalog. Do not hard-code a user's provider, model, or endpoint into evidence.
+- Native or upstream image behavior is unavailable when its prerequisite is missing. A source read alone does not prove image inference.

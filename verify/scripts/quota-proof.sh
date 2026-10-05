@@ -31,87 +31,36 @@ hash256() {
   fi
 }
 
-if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
-  fail "a daemon is already bound to port $PORT; stop it before the quota proof (the skill refuses to double-drive a shared instance)"
-fi
-RUNDIR=$(mktemp -d /tmp/prism-quotaproof.XXXXXX)
-RUN_ID="$(date +%Y%m%d-%H%M%S).$$"
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-$REPO_ROOT/verify/evidence/quota-proof/$RUN_ID}"
-EVID_WORK="$RUNDIR/evidence"
-mkdir -p "$EVID_WORK" "$RUNDIR/.prism" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    DAEMON_PID=$(pgrep -P "$APP_PID" -f "prism daemon" 2>/dev/null | head -1)
-    kill -TERM "$APP_PID" 2>/dev/null
-    wait "$APP_PID" 2>/dev/null
-  fi
-  if [ -n "${DAEMON_PID:-}" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
-    kill -TERM "$DAEMON_PID" 2>/dev/null
-  fi
-  [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
-  mkdir -p "$EVID_FINAL"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
-
 SOURCE_STATE="${PRISM_VERIFY_STATE_DIR:-$HOME/.prism}"
-[ -f "$SOURCE_STATE/prism.json" ] || fail "quota proof needs $SOURCE_STATE/prism.json"
-[ -d "$SOURCE_STATE/credentials" ] || fail "quota proof needs $SOURCE_STATE/credentials"
-cp "$SOURCE_STATE/prism.json" "$RUNDIR/.prism/prism.json"
-cp -R "$SOURCE_STATE/credentials" "$RUNDIR/.prism/credentials"
-chmod -R go-rwx "$RUNDIR/.prism"
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init quota-proof "$PORT" "$CDP_PORT"
+VERIFY_LIVE=1
+verify_stage_state "$SOURCE_STATE"
+PRIVATE_WORK="$RUNDIR/private-proof"
+mkdir -p "$PRIVATE_WORK" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent"
 
 echo "==> building prism and desktop"
 (cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 echo "==> launching isolated Electron against a copy of real accounts"
-PRISMD_PATH="$RUNDIR/prism" \
-PRISM_PORT="$PORT" \
-PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
-PRISM_HEADLESS="$HEADLESS" \
-HOME="$RUNDIR" \
-"$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
-  --user-data-dir="$RUNDIR/electron" \
-  --remote-debugging-port="$CDP_PORT" > "$RUNDIR/app.log" 2>&1 &
-APP_PID=$!
-
-for _ in $(seq 1 80); do
-  kill -0 "$APP_PID" 2>/dev/null || { cat "$RUNDIR/app.log" 2>/dev/null; fail "electron exited during startup"; }
-  curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-curl -sf "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/health.json" || fail "daemon health failed"
-
-for _ in $(seq 1 80); do
-  curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
+verify_start_electron
+curl -sf --max-time 5 "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/health.json" || fail "daemon health failed"
 
 cdp_eval() {
-  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1"
+  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1" "${2:-30000}"
 }
 
-curl -sf "http://127.0.0.1:$PORT/api/v1/accounts" > "$EVID_WORK/accounts.json" || fail "accounts list failed"
-curl -sf "http://127.0.0.1:$PORT/api/v1/providers" > "$EVID_WORK/providers.json" || fail "providers list failed"
+curl -sf "http://127.0.0.1:$PORT/api/v1/accounts" > "$PRIVATE_WORK/accounts.json" || fail "accounts list failed"
+curl -sf "http://127.0.0.1:$PORT/api/v1/providers" > "$PRIVATE_WORK/providers.json" || fail "providers list failed"
 
-# Fetch the same live quota resources the Accounts renderer uses before matching UI.
-# Account ids are URL-encoded so ids containing spaces or reserved characters remain valid.
 while IFS=$'\t' read -r account_id encoded_id wire; do
   [ -n "$account_id" ] || continue
   if [ "$wire" = codex ] || [ "$wire" = antigravity ]; then
     curl -sf "http://127.0.0.1:$PORT/api/v1/accounts/$encoded_id/quota" \
-      > "$EVID_WORK/quota-$encoded_id.json" \
+      > "$PRIVATE_WORK/quota-$encoded_id.json" \
       || fail "live quota endpoint failed for $account_id ($wire)"
   fi
-done < <("$PY3" - "$EVID_WORK" <<'QUOTA_IDS'
+done < <("$PY3" - "$PRIVATE_WORK" <<'QUOTA_IDS'
 import json, sys, urllib.parse
 evid = sys.argv[1]
 accounts = json.load(open(f'{evid}/accounts.json'))['accounts']
@@ -122,7 +71,7 @@ for account in accounts:
     print(f"{account_id}\t{urllib.parse.quote(account_id, safe='')}\t{wires.get(account['provider'], '')}")
 QUOTA_IDS
 )
-N_ACCOUNTS=$("$PY3" -c 'import json; print(len(json.load(open("'"$EVID_WORK"'/accounts.json"))["accounts"]))')
+N_ACCOUNTS=$("$PY3" -c 'import json; print(len(json.load(open("'"$PRIVATE_WORK"'/accounts.json"))["accounts"]))')
 [ "$N_ACCOUNTS" -gt 0 ] || fail "no accounts present; quota proof needs at least one real account"
 
 echo "==> reading Accounts UI cards"
@@ -154,13 +103,13 @@ cdp_eval "await (async () => {
   }))
   if (cards.length === 0) throw new Error('no usage cards rendered')
   return {cards}
-})()" > "$EVID_WORK/accounts-ui-cards.json" || fail "could not read Accounts view cards through the UI"
+})()" > "$PRIVATE_WORK/accounts-ui-cards.json" || fail "could not read Accounts view cards through the UI"
 
-node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/accounts.png"
+node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$PRIVATE_WORK/accounts.png"
 
 echo "==> matching management API responses"
-curl -sf "http://127.0.0.1:$PORT/api/v1/usage" > "$EVID_WORK/usage.json" || fail "usage endpoint failed"
-"$PY3" - "$EVID_WORK" <<'MATCH'
+curl -sf "http://127.0.0.1:$PORT/api/v1/usage" > "$PRIVATE_WORK/usage.json" || fail "usage endpoint failed"
+"$PY3" - "$PRIVATE_WORK" <<'MATCH'
 import json, pathlib, sys, urllib.parse
 evid = pathlib.Path(sys.argv[1])
 accounts = json.load(open(evid / 'accounts.json'))['accounts']
@@ -200,9 +149,6 @@ for account in accounts:
         state = 'unavailable' if quota.get('limit') is None else 'available'
     windows = quota.get('windows') or []
 
-    # Cards exist for accounts on live-quota wires plus any account whose
-    # quota has already loaded; other custom-wire accounts are hidden by the
-    # Accounts view filter, so absence there is correct.
     if live_wire or (quota.get('source', 'unknown') != 'unknown' and windows):
         if card is None:
             raise SystemExit(f'account {account_id} not visible in Accounts UI cards')
@@ -237,12 +183,8 @@ json.dump({'ok': True, 'accounts': findings}, open(evid / 'quota-match.json', 'w
 print(f'matched {len(findings)} account(s) by provider wire')
 MATCH
 
-curl -sf "http://127.0.0.1:$PORT/api/v1/accounts" > "$EVID_WORK/accounts-after.json" || fail "post-read accounts snapshot failed"
-# Quota reads actively refresh the stored quota snapshot, and the background
-# token refresher advances credentialGeneration when a refresh grant renews
-# an expiring credential; both are by-design writes, so the mutation check
-# compares every account field EXCEPT quota and credentialGeneration.
-if ! "$PY3" - "$EVID_WORK" <<'MUTATION'
+curl -sf "http://127.0.0.1:$PORT/api/v1/accounts" > "$PRIVATE_WORK/accounts-after.json" || fail "post-read accounts snapshot failed"
+if ! "$PY3" - "$PRIVATE_WORK" <<'MUTATION'
 import json, sys
 evid = sys.argv[1]
 VOLATILE = {'quota', 'credentialGeneration'}
@@ -259,12 +201,20 @@ then
   fail "accounts state changed during quota proof (mutation detected)"
 fi
 
-kill -TERM "$APP_PID"
-wait "$APP_PID" 2>/dev/null || true
-APP_PID=
-sleep 1
-if curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1; then
-  fail "daemon still reachable after Electron quit"
-fi
+"$PY3" - "$PRIVATE_WORK/quota-match.json" "$EVID_WORK/quota-summary.json" <<'SUMMARY'
+import json, sys
+result = json.load(open(sys.argv[1]))
+json.dump({
+    'ok': result['ok'],
+    'matchedAccounts': len(result['accounts']),
+    'accountMutationCheck': 'passed',
+    'rawEvidence': 'private, no sanitizer contract',
+}, open(sys.argv[2], 'w'), indent=2)
+SUMMARY
+
+echo "==> quitting Electron, attesting the shared daemon, then stopping it explicitly"
+verify_quit_app
+verify_attest_daemon
+verify_stop_daemon
 
 echo "quota proof passed (read-only; no account mutated)"

@@ -10,39 +10,16 @@ REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_AGENTS_UI_PORT:-18798}"
 CDP_PORT="${PRISM_CDP_PORT:-19223}"
-if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
-  fail "a daemon is already bound to port $PORT; stop it before verification"
-fi
-RUNDIR=$(mktemp -d /tmp/prism-agentsui.XXXXXX)
-EVID_WORK="$RUNDIR/evidence"
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-/tmp/prism-agentsui-evidence.$(date +%Y%m%d-%H%M%S).$$}"
-mkdir -p "$EVID_WORK" "$RUNDIR/.prism" "$RUNDIR/sandbox/tools" "$RUNDIR/sandbox/home/.local/bin"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    DAEMON_PID=$(pgrep -P "$APP_PID" -f "prism daemon" 2>/dev/null | head -1)
-    kill -TERM "$APP_PID" 2>/dev/null
-    wait "$APP_PID" 2>/dev/null
-  fi
-  if [ -n "${DAEMON_PID:-}" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
-    kill -TERM "$DAEMON_PID" 2>/dev/null
-  fi
-  [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_WORK/app.log"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
+HEADLESS="${PRISM_HEADLESS:-1}"
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init agents-ui-drive "$PORT" "$CDP_PORT"
+mkdir -p "$RUNDIR/sandbox/tools" "$RUNDIR/.local/bin"
 
 for tool in bash sh; do
   printf '#!/bin/sh\nexit 0\n' > "$RUNDIR/sandbox/tools/$tool"
   chmod 755 "$RUNDIR/sandbox/tools/$tool"
 done
-NPM_PREFIX="$RUNDIR/sandbox/home/.local"
+NPM_PREFIX="$RUNDIR/.local"
 mkdir -p "$NPM_PREFIX/bin"
 cat > "$RUNDIR/sandbox/tools/npm" <<NPM
 #!/bin/sh
@@ -78,33 +55,17 @@ echo "==> building prism and desktop"
 npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 
 echo "==> launching isolated Electron with sandbox PATH"
-SANDBOX_PATH="$RUNDIR/sandbox/tools:$RUNDIR/sandbox/home/.local/bin:/usr/bin:/bin"
-PRISMD_PATH="$RUNDIR/prism" \
-PRISM_PORT="$PORT" \
-PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
-PRISM_HEADLESS=1 \
-PATH="$SANDBOX_PATH" \
-HOME="$RUNDIR" \
-"$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
-  --user-data-dir="$RUNDIR/electron" \
-  --remote-debugging-port="$CDP_PORT" > "$RUNDIR/app.log" 2>&1 &
-APP_PID=$!
-
-for _ in $(seq 1 80); do
-  kill -0 "$APP_PID" 2>/dev/null || { cat "$RUNDIR/app.log" 2>/dev/null; fail "electron exited during startup"; }
-  curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-curl -sf "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/health.json" || fail "daemon health failed"
-
-for _ in $(seq 1 80); do
-  curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
+SANDBOX_PATH="$RUNDIR/sandbox/tools:$RUNDIR/.local/bin:/usr/bin:/bin"
+VERIFY_PATH="$SANDBOX_PATH"
+VERIFY_SHELL="$RUNDIR/sandbox/login-shell"
+printf '#!/bin/sh\nprintf "%%s" '\''%s'\''\n' "$SANDBOX_PATH" > "$VERIFY_SHELL"
+chmod 755 "$VERIFY_SHELL"
+[ "$(env -i "$VERIFY_SHELL" -ilc 'printf "%s" "$PATH"')" = "$SANDBOX_PATH" ] || fail "login shell fixture did not return the sandbox PATH with an empty environment"
+verify_start_electron
+curl -sf --max-time 5 "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/health.json" || fail "daemon health failed"
 
 cdp_eval() {
-  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1"
+  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1" "${2:-30000}"
 }
 
 echo "==> enabling Other agents and Agent install and update through the real UI"
@@ -179,7 +140,14 @@ grep -q '"state":"succeeded"' "$EVID_WORK/daemon-job.json" || fail "daemon job i
 grep -q 'npm install -g @openai/codex' "$EVID_WORK/daemon-job.json" || fail "daemon job did not run the npm plan"
 curl -sf "http://127.0.0.1:$PORT/api/v1/agents/codex" > "$EVID_WORK/daemon-status-codex.json" || fail "daemon agent status failed"
 grep -q '"installed":true' "$EVID_WORK/daemon-status-codex.json" || fail "daemon does not report codex as installed after UI install"
+[ -x "$RUNDIR/.local/bin/codex" ] || fail "install did not create codex under the isolated HOME"
+[ "$("$RUNDIR/.local/bin/codex" --version)" = "0.0.0-prism-verify" ] || fail "installed fixture version differs"
 
 node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/integrations-after.png"
+
+echo "==> quitting Electron, attesting the shared daemon, then stopping it explicitly"
+verify_quit_app
+verify_attest_daemon
+verify_stop_daemon
 
 echo "PASS: agents install/update UI drive"
