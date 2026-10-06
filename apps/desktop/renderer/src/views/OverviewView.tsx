@@ -171,9 +171,6 @@ function DaemonCard({
           </span>
           <div>
             <div className="ov-title">Daemon</div>
-            <p className="ov-sub">
-              local daemon shared with the prism CLI
-            </p>
           </div>
         </div>
         <span className={`chip chip-${chip.tone}`}>
@@ -406,7 +403,6 @@ export function OverviewView({
             </svg>
             Overview
           </h1>
-          <p className="sub">daemon state and default context window</p>
         </div>
       </div>
       <div className="ov-grid">

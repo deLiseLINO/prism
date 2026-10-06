@@ -350,9 +350,6 @@ export function UsagePanel(): JSX.Element {
             </svg>
             Accounts
           </h1>
-          <p className="sub">
-            per-account quota windows, the account in use per provider, login
-          </p>
         </div>
         <div className="head-actions">
           <Button

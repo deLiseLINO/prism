@@ -178,7 +178,6 @@ body::before {
 .sub { color: var(--fg-subtle); font-size: 12.5px; margin-top: 3px; }
 .head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .panel-title, .card__title { font-size: 14.5px; font-weight: 620; letter-spacing: -0.01em; }
-.panel-sub { color: var(--fg-subtle); font-size: 12px; margin-top: 2px; }
 
 .btn {
   display: inline-flex; align-items: center; gap: 8px;

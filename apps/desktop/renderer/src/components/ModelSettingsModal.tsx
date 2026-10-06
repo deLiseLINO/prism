@@ -172,7 +172,6 @@ export function ModelSettingsModal({
             <div className="msm-title num">{model}</div>
             <div className="msm-sub">
               <span className="badge badge--muted">{providerId}</span>
-              <span className="msm-hint">{isNew ? 'New model' : 'Model settings'}</span>
             </div>
           </div>
           <button type="button" className="ibtn" aria-label="Close" onClick={onCancel}>
