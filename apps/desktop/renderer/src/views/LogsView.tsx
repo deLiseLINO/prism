@@ -141,21 +141,17 @@ export function LogsView(): JSX.Element {
             </svg>
             Logs
           </h1>
-          <p className="sub">
-            model requests and failover history, newest first
-            {logs.state.kind === 'ready' ? (
-              <>
-                {' · '}
-                <span className="num">{requests.length}</span> in ring
-                {dropped > 0 ? (
-                  <>
-                    {' · ring evicted '}
-                    <span className="num">{dropped}</span> older record{dropped === 1 ? '' : 's'}
-                  </>
-                ) : null}
-              </>
-            ) : null}
-          </p>
+          {logs.state.kind === 'ready' ? (
+            <div className="sub">
+              <span className="num">{requests.length}</span> in ring
+              {dropped > 0 ? (
+                <>
+                  {' · ring evicted '}
+                  <span className="num">{dropped}</span> older record{dropped === 1 ? '' : 's'}
+                </>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="head-actions">
           <SearchInput

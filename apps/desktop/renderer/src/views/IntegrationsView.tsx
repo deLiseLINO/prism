@@ -351,7 +351,6 @@ export function IntegrationsView(): JSX.Element {
             </svg>
             Integrations
           </h1>
-          <p className="sub">config apply and rollback for each CLI Prism manages</p>
         </div>
       </div>
 

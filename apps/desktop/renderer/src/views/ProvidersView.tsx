@@ -597,7 +597,6 @@ export function ProvidersView(): JSX.Element {
             <svg width="19" height="19" className="h-ic"><use href="#i-plug" /></svg>
             Providers
           </h1>
-          <p className="sub">pick a provider on the left, manage its models on the right</p>
         </div>
         <div className="head-actions">
           <SearchInput

@@ -89,7 +89,6 @@ function StatsRow({
 
 function StatsPanel({
   title,
-  sub,
   rows,
   max,
   nameOf,
@@ -99,7 +98,6 @@ function StatsPanel({
   state,
 }: {
   readonly title: string
-  readonly sub: string
   readonly rows: readonly (StatsProviderView | StatsModelView)[]
   readonly max: number
   readonly nameOf: (row: StatsProviderView | StatsModelView) => string
@@ -111,7 +109,6 @@ function StatsPanel({
   return (
     <section className="panel card panel-pad" style={{ '--i': 2 } as CSSProperties}>
       <div className="panel-title">{title}</div>
-      <p className="panel-sub">{sub}</p>
       <div className="divide" style={{ marginTop: 10 }}>
         <AsyncBoundary<StatsResponseView>
           state={state}
@@ -189,9 +186,6 @@ export function StatsView(): JSX.Element {
             </svg>
             Stats
           </h1>
-          <p className="sub">
-            request and token statistics across providers and models
-          </p>
         </div>
         <div className="head-actions">
           <div className="seg" role="group" aria-label="Stats time range">
@@ -249,7 +243,6 @@ export function StatsView(): JSX.Element {
       </section>
       <StatsPanel
         title="Providers"
-        sub="requests, completions, failures and total tokens per provider"
         rows={providers}
         max={maxTotal}
         nameOf={(row) => row.provider}
@@ -259,7 +252,6 @@ export function StatsView(): JSX.Element {
       />
       <StatsPanel
         title="Models"
-        sub="top models by total tokens in the selected range"
         rows={models}
         max={maxTotal}
         nameOf={(row) => (row as StatsModelView).model}

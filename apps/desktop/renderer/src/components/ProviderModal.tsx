@@ -83,7 +83,6 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
             <div className="msm-title num">{existing === null ? 'New provider' : existing.id}</div>
             <div className="msm-sub">
               <span className="badge badge--muted num">{wireLabel(existing === null ? wire : existing.wire)}</span>
-              <span className="msm-hint">{existing === null ? 'Create' : 'Edit provider'}</span>
             </div>
           </div>
           <button type="button" className="ibtn" aria-label="Close" onClick={onCancel}>

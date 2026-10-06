@@ -5,13 +5,12 @@ import { ReportActions } from './ReportActions'
 
 export interface CardProps {
   readonly title?: string
-  readonly description?: string
   readonly tone?: 'default' | 'warn' | 'error' | 'ok'
   readonly action?: ReactNode
   readonly children: ReactNode
 }
 
-export function Card({ title, description, tone = 'default', action, children }: CardProps): JSX.Element {
+export function Card({ title, tone = 'default', action, children }: CardProps): JSX.Element {
   const toneClass = tone === 'default' ? '' : `card--${tone}`
   return (
     <section className={`card ${toneClass}`.trim()}>
@@ -19,12 +18,9 @@ export function Card({ title, description, tone = 'default', action, children }:
         <div className="card__head">
           <div className="card__headings">
             {title !== undefined ? <h3 className="card__title">{title}</h3> : null}
-            {description !== undefined ? <p className="card__description">{description}</p> : null}
           </div>
           {action !== undefined ? <div className="card__action">{action}</div> : null}
         </div>
-      ) : description !== undefined ? (
-        <p className="card__description">{description}</p>
       ) : null}
       <div className="card__body">{children}</div>
     </section>

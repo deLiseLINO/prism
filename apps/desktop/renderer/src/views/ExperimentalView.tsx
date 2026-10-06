@@ -10,7 +10,6 @@ export function ExperimentalView(): JSX.Element {
       <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
         <div>
           <h1 id="h-experimental">Experimental</h1>
-          <p className="sub">unfinished features, off by default</p>
         </div>
       </div>
       <div className="cards" style={{ '--i': 1 } as CSSProperties}>
