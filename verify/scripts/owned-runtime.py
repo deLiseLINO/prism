@@ -81,22 +81,41 @@ def unbound(port):
                 raise ValueError("TCP port cannot be reserved") from None
 
 
+def process_absent(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        result = run(["/bin/ps", "-p", str(pid), "-o", "pid="], env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+        require(result.returncode == 1 and not result.stdout and not result.stderr, "process identity unreadable")
+        return True
+    return False
+
+
 def process(pid):
     require(type(pid) is int and pid > 1, "invalid process identity")
     require(sys.platform in ("darwin", "linux"), "unsupported process platform")
     result = run(["/bin/ps", "-ww", "-p", str(pid), "-o", "lstart=", "-o", "stat=", "-o", "args="], env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
-    if result.returncode == 1 and not result.stdout:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return None
-        raise ValueError("process identity unreadable")
+    if result.returncode == 1 and not result.stdout and not result.stderr:
+        require(process_absent(pid), "process identity unreadable")
+        return None
     match = re.fullmatch(r"\s*(\S+\s+\S+\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(\S+)\s+(.+)\s*", result.stdout)
     require(result.returncode == 0 and match is not None, "process identity unreadable")
     if match[2].startswith("Z"):
+        require(process_absent(pid), "process identity unreadable")
         return None
-    exe = os.readlink(f"/proc/{pid}/exe") if sys.platform == "linux" else run(["/bin/ps", "-ww", "-p", str(pid), "-o", "comm="]).stdout.strip()
-    require(exe.startswith("/") and Path(exe).exists(), "executable identity unreadable")
+    if sys.platform == "linux":
+        try:
+            exe = os.readlink(f"/proc/{pid}/exe")
+        except FileNotFoundError:
+            require(process_absent(pid), "executable identity unreadable")
+            return None
+    else:
+        result = run(["/bin/ps", "-ww", "-p", str(pid), "-o", "comm="])
+        require(result.returncode == 0 or (result.returncode == 1 and not result.stdout and not result.stderr), "executable identity unreadable")
+        exe = result.stdout.strip()
+    if not (exe.startswith("/") and Path(exe).exists()):
+        require(process_absent(pid), "executable identity unreadable")
+        return None
     return {"pid": pid, "start": " ".join(match[1].split()), "command": match[3].strip(), "executable": str(Path(exe).resolve())}
 
 
@@ -106,9 +125,31 @@ def same(record):
     return current is not None
 
 
+def running(record):
+    try:
+        current = process(record["pid"])
+    except ValueError as error:
+        if str(error) not in ("process identity unreadable", "executable identity unreadable"):
+            raise
+        result = run(["/bin/ps", "-p", str(record["pid"]), "-o", "lstart=", "-o", "stat="], env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+        if result.returncode == 1 and not result.stdout and not result.stderr:
+            require(process_absent(record["pid"]), "process identity unreadable")
+            return False
+        match = re.fullmatch(r"\s*(\S+\s+\S+\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(\S+)\s*", result.stdout)
+        require(result.returncode == 0 and not result.stderr and match is not None, "process identity unreadable")
+        require(" ".join(match[1].split()) == record["start"], "process identity changed")
+        if match[2].startswith("Z"):
+            return False
+        if sys.platform == "darwin" and "E" in match[2]:
+            return True
+        raise
+    require(current is None or current == record, "process identity changed")
+    return current is not None
+
+
 def gone(record, timeout=15):
     deadline = time.monotonic() + timeout
-    while same(record):
+    while running(record):
         require(time.monotonic() < deadline, "process exit timed out")
         time.sleep(0.2)
 
@@ -414,7 +455,7 @@ def main():
         deadline = time.monotonic() + 45
         while True:
             require(time.monotonic() < deadline, "replacement daemon timed out")
-            if not same(old["process"]):
+            if not running(old["process"]):
                 try:
                     new = attest(root, port)
                     require(all(new["registration"][k] != old["registration"][k] for k in ("id", "pid")), "replacement identity unchanged")
@@ -432,7 +473,7 @@ def main():
             unbound(args[0])
     elif command == "stop":
         app = root / ".runtime/app.json"
-        require(not app.exists() or not same(read(app)), "supervisor still running")
+        require(not app.exists() or not running(read(app)), "supervisor still running")
         if (root / ".prism/daemon.json").exists():
             record = attest(root, port)
             previous = root / ".runtime/daemon.json"
@@ -441,7 +482,7 @@ def main():
             service(root, "stop")
             gone(record["process"])
         elif (root / ".runtime/daemon.json").exists():
-            require(not same(read(root / ".runtime/daemon.json")["process"]), "registration disappeared from live daemon")
+            require(not running(read(root / ".runtime/daemon.json")["process"]), "registration disappeared from live daemon")
         require(not (root / ".prism/daemon.json").exists(), "registration remains after stop")
         unbound(port)
     elif command == "stage":
