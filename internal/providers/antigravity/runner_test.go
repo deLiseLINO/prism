@@ -265,7 +265,7 @@ func TestRunnerRunErrorClassification(t *testing.T) {
 		kind   provider.RunErrorKind
 	}{
 		{http.StatusUnauthorized, provider.ClassUnauthorized, provider.TerminalOmitted},
-		{http.StatusForbidden, provider.ClassUnauthorized, provider.TerminalOmitted},
+		{http.StatusForbidden, provider.ClassForbidden, provider.TerminalOmitted},
 		{http.StatusNotFound, provider.ClassNotFound, provider.TerminalOmitted},
 		{http.StatusInternalServerError, provider.ClassServer, provider.Retryable},
 		{http.StatusBadGateway, provider.ClassServer, provider.Retryable},
@@ -385,4 +385,113 @@ func readAllBodyMust(r *http.Request) []byte {
 		panic(err)
 	}
 	return data
+}
+
+type renewingCreds struct {
+	stubCreds
+	next     CredentialPair
+	rejected []string
+}
+
+func (c *renewingCreds) RefreshRejected(_ context.Context, _ account.Lease, rejected string) (CredentialPair, error) {
+	c.rejected = append(c.rejected, rejected)
+	return c.next, nil
+}
+
+func TestRunnerUnauthorizedRenewsCredentialAndReplaysOnce(t *testing.T) {
+	var auths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths = append(auths, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer tok-new" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		fixedSSE(textStream())(w, r)
+	}))
+	defer server.Close()
+	creds := &renewingCreds{
+		stubCreds: stubCreds{pair: CredentialPair{AccessToken: "tok-old", ProjectID: "p"}},
+		next:      CredentialPair{AccessToken: "tok-new", ProjectID: "p"},
+	}
+	runner, _ := NewRunner(creds, server.Client(), server.URL, nil)
+	var sink recordingSink
+	if err := runner.Run(context.Background(), testRequest(), &sink); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(auths) != 2 || auths[1] != "Bearer tok-new" {
+		t.Fatalf("upstream saw %v, want a rejected attempt then one with the renewed token", auths)
+	}
+	if len(creds.rejected) != 1 || creds.rejected[0] != "tok-old" {
+		t.Fatalf("renewal asked to replace %v, want [tok-old]", creds.rejected)
+	}
+}
+
+func TestRunnerUnauthorizedAfterRenewalIsReportedOnce(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	creds := &renewingCreds{
+		stubCreds: stubCreds{pair: CredentialPair{AccessToken: "tok-old"}},
+		next:      CredentialPair{AccessToken: "tok-new"},
+	}
+	runner, _ := NewRunner(creds, server.Client(), server.URL, nil)
+	err := runner.Run(context.Background(), testRequest(), &recordingSink{})
+	var runErr provider.RunError
+	if !errors.As(err, &runErr) || runErr.Class != provider.ClassUnauthorized {
+		t.Fatalf("err = %v, want unauthorized RunError", err)
+	}
+	if calls != 2 {
+		t.Fatalf("upstream calls = %d, want 2", calls)
+	}
+}
+
+// The attempt timeout bounds waiting for the upstream to answer, not the
+// length of a response that is actively streaming.
+func TestRunnerAttemptTimeoutDoesNotCutAnActiveStream(t *testing.T) {
+	frame := func(text string) string {
+		return "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"" + text + "\"}]}}]}}\n\n"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		for i := 0; i < 6; i++ {
+			_, _ = w.Write([]byte(frame("x")))
+			flusher.Flush()
+			time.Sleep(50 * time.Millisecond)
+		}
+		_, _ = w.Write([]byte(textStream()))
+	}))
+	defer server.Close()
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
+	req := testRequest()
+	req.Target.Timeout = 150 * time.Millisecond
+	var sink recordingSink
+	if err := runner.Run(context.Background(), req, &sink); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	last := sink.events[len(sink.events)-1]
+	if _, ok := last.(canon.TurnFinished); !ok {
+		t.Fatalf("last event = %T (%+v), want TurnFinished", last, last)
+	}
+}
+
+func TestRunnerFinalThrottleCarriesRetryAfter(t *testing.T) {
+	clock := newFakeClock()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "19")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"busy"}}`))
+	}))
+	defer server.Close()
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
+	runner.SetSleep(clock.Sleep)
+	err := runner.Run(context.Background(), testRequest(), &recordingSink{})
+	var runErr provider.RunError
+	if !errors.As(err, &runErr) || runErr.RetryAfter != 19*time.Second {
+		t.Fatalf("err = %v, want RunError with RetryAfter 19s", err)
+	}
 }

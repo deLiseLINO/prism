@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -345,7 +344,7 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 			return
 		}
 		e.lastDiscover[pid] = e.now()
-		models, err := fetchModels(ctx, e.client, current.BaseURL, e.storedKey(ctx, pid, current.APIKeyRef))
+		models, err := fetchModels(ctx, e.client, current, e.storedKey(ctx, pid, current.APIKeyRef))
 		if err != nil {
 			log.Printf("prism: discover models for %s: %v", id, err)
 			e.saveDoc(id, p, doc, snap.Generation)
@@ -384,20 +383,15 @@ func (e *daemonEnv) storedKey(ctx context.Context, providerID account.ProviderID
 	return string(b)
 }
 
-func fetchModels(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]string, error) {
+func fetchModels(ctx context.Context, client *http.Client, p config.Provider, apiKey string) ([]string, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	url := strings.TrimRight(baseURL, "/") + "/models"
 	reqCtx, cancel := context.WithTimeout(ctx, discoverTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	req, err := modelsRequest(reqCtx, p, apiKey)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

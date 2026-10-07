@@ -3,6 +3,7 @@ package cline
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -24,11 +25,13 @@ func (t UnwrapTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !enveloped(resp) {
 		return resp, nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (100<<20)+1))
 	resp.Body.Close()
+	if len(body) > 100<<20 {
+		return nil, fmt.Errorf("cline: response body exceeds size limit")
+	}
 	if err != nil {
-		resp.Body = io.NopCloser(bytes.NewReader(nil))
-		return resp, nil
+		return nil, err
 	}
 	var wrapper struct {
 		Data json.RawMessage `json:"data"`

@@ -128,3 +128,49 @@ func TestChatWireInboundChatAndResponsesRoutes(t *testing.T) {
 		}
 	})
 }
+
+func TestChatRouteAcceptsSlashlessRouteAndComboNames(t *testing.T) {
+	events := []canon.Event{
+		canon.ItemStarted{Item: messageAssistant("m1", "ok")},
+		canon.TextDelta{ItemID: "m1", Text: "ok"},
+		canon.ItemFinished{Item: messageAssistant("m1", "ok")},
+		canon.TurnFinished{Status: canon.Completed()},
+	}
+	runner := &fakeRunner{scripts: []fakeScript{{events: events}, {events: events}}}
+	plans := map[canon.ModelID]routing.Plan{"fast": singlePlan("p1"), "pair": singlePlan("p1")}
+	h := newTestServer(t, nil, plans, func(reg *provider.Registry) {
+		if err := reg.Register("p1", runner); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, model := range []string{"fast", "pair"} {
+		rec := postJSON(t, h, "/v1/chat/completions", `{"model":"`+model+`","messages":[{"role":"user","content":"hi"}]}`)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ok") {
+			t.Fatalf("model %q: status = %d body %s", model, rec.Code, rec.Body.String())
+		}
+	}
+	rec := postJSON(t, h, "/v1/chat/completions", `{"model":"nothing","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown model: status = %d body %s, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFullyDisabledComboIsNotFoundOnNonStream(t *testing.T) {
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"gone": {}}, nil)
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/chat/completions", `{"model":"gone","messages":[{"role":"user","content":"hi"}]}`},
+		{"/v1/messages", `{"model":"gone","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}`},
+	} {
+		if rec := postJSON(t, h, tc.path, tc.body); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: status = %d body %s, want 404", tc.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestFullyDisabledComboIsNotFoundOnCountTokens(t *testing.T) {
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"gone": {}}, nil)
+	rec := postJSON(t, h, "/v1/messages/count_tokens", `{"model":"gone","messages":[{"role":"user","content":"hi"}]}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body %s, want 404", rec.Code, rec.Body.String())
+	}
+}

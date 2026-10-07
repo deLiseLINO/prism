@@ -1083,6 +1083,50 @@ func TestMessageWireIDsAreUniquePerResponse(t *testing.T) {
 	}
 }
 
+func TestFinishOnlyContentIsStreamedBeforeDone(t *testing.T) {
+	b := &lockBuffer{}
+	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)
+	defer e.Close()
+	if err := e.Begin(header()); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range []canon.Event{
+		canon.ItemStarted{Item: canon.Message{ID: "m1", Role: canon.RoleAssistant}},
+		canon.ItemFinished{Item: canon.Message{ID: "m1", Role: canon.RoleAssistant, Phase: canon.PhaseFinalAnswer, Content: []canon.Content{canon.TextContent{Text: "whole"}}}},
+		canon.ItemStarted{Item: canon.FunctionCall{ID: "f1", CallID: "c1", Name: "run"}},
+		canon.ItemFinished{Item: canon.FunctionCall{ID: "f1", CallID: "c1", Name: "run", Arguments: []byte(`{"a":1}`)}},
+		canon.TurnFinished{Status: canon.Completed()},
+	} {
+		if err := e.Frame(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var text, args string
+	for _, f := range eventFrames(t, b) {
+		m := dataMap(t, f)
+		switch f.event {
+		case "response.output_text.delta":
+			text += m["delta"].(string)
+		case "response.function_call_arguments.delta":
+			args += m["delta"].(string)
+		case "response.output_text.done":
+			if m["text"] != text {
+				t.Fatalf("output_text.done %q disagrees with streamed %q", m["text"], text)
+			}
+		case "response.function_call_arguments.done":
+			if m["arguments"] != args {
+				t.Fatalf("arguments.done %q disagrees with streamed %q", m["arguments"], args)
+			}
+		}
+	}
+	if text != "whole" || args != `{"a":1}` {
+		t.Fatalf("streamed text=%q args=%q", text, args)
+	}
+}
+
 func TestEncryptedReasoningStateIsHandedToTheClient(t *testing.T) {
 	b := &lockBuffer{}
 	e := NewWithClock(b, codexFacts(), newFakeClock(time.Unix(0, 0)), nil)

@@ -2,11 +2,13 @@ package antigravity
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func decodeFixture(t *testing.T, name string) []canon.Event {
@@ -16,7 +18,7 @@ func decodeFixture(t *testing.T, name string) []canon.Event {
 		t.Fatalf("read fixture: %v", err)
 	}
 	var events []canon.Event
-	err = DecodeStream(strings.NewReader(string(data)), func(e canon.Event) error {
+	err = DecodeStream(strings.NewReader(string(data)+"\n"), func(e canon.Event) error {
 		events = append(events, e)
 		return nil
 	})
@@ -180,10 +182,9 @@ func TestDecodeStreamOneTerminalInvariant(t *testing.T) {
 func TestDecodeStreamErrorFrame(t *testing.T) {
 	stream := "data: {\"error\":{\"message\":\"upstream boom\"}}\n\n"
 	var events []canon.Event
-	if err := DecodeStream(strings.NewReader(stream), func(e canon.Event) error {
-		events = append(events, e)
-		return nil
-	}); err != nil {
+	err := DecodeStream(strings.NewReader(stream), func(e canon.Event) error { events = append(events, e); return nil })
+	var re provider.RunError
+	if !errors.As(err, &re) || re.Kind != provider.TerminalEmitted {
 		t.Fatalf("DecodeStream: %v", err)
 	}
 	if countTerminals(events) != 1 {
@@ -202,13 +203,8 @@ func TestDecodeStreamMissingWrapper(t *testing.T) {
 		events = append(events, e)
 		return nil
 	})
-	fin, ok := lastTerminal(events).(canon.TurnFinished)
-	if !ok {
-		t.Fatalf("expected TurnFinished, got %T", lastTerminal(events))
-	}
-	reason, incomplete := fin.Status.Reason()
-	if !incomplete || reason != canon.IncompleteAdapterEOF {
-		t.Fatalf("status = %v/%v, want incomplete adapter_eof", fin.Status.Kind(), reason)
+	if failed, ok := lastTerminal(events).(canon.TurnFailed); !ok || failed.Failure.Reason != canon.FailUpstreamTransport {
+		t.Fatalf("terminal = %v", lastTerminal(events))
 	}
 }
 
@@ -230,12 +226,8 @@ func TestDecodeStreamNoTerminalSignal(t *testing.T) {
 		events = append(events, e)
 		return nil
 	})
-	fin, ok := lastTerminal(events).(canon.TurnFinished)
-	if !ok {
-		t.Fatalf("expected TurnFinished, got %T", lastTerminal(events))
-	}
-	if fin.Status.Kind() != canon.StatusCompleted {
-		t.Fatalf("text delivered before EOF must complete the turn, got %v", fin.Status.Kind())
+	if failed, ok := lastTerminal(events).(canon.TurnFailed); !ok || failed.Failure.Reason != canon.FailUpstreamTransport {
+		t.Fatalf("terminal = %v", lastTerminal(events))
 	}
 	if countTerminals(events) != 1 {
 		t.Fatalf("terminals = %d, want 1", countTerminals(events))
@@ -254,67 +246,25 @@ func TestDecodeStreamNoTerminalSignal(t *testing.T) {
 }
 
 func TestDecodeStreamEOFGate(t *testing.T) {
-	cases := []struct {
-		name      string
-		stream    string
-		wantKind  canon.StatusKind
-		wantInc   canon.IncompleteReason
-		wantIncOK bool
-	}{
-		{
-			name:     "text delivered completes",
-			stream:   "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial answer\"}]}}]}}\n\n",
-			wantKind: canon.StatusCompleted,
-		},
-		{
-			name:     "tool call with complete object args completes",
-			stream:   "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"SF\"}}}]}}]}}\n\n",
-			wantKind: canon.StatusCompleted,
-		},
-		{
-			name:      "tool call with non-object args stays truncated",
-			stream:    "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":\"{\\\"city\\\":\"}}]}}]}}\n\n",
-			wantKind:  canon.StatusIncomplete,
-			wantInc:   canon.IncompleteAdapterEOF,
-			wantIncOK: true,
-		},
-		{
-			name:      "thought-only output stays truncated",
-			stream:    "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"internal\",\"thought\":true}]}}]}}\n\n",
-			wantKind:  canon.StatusIncomplete,
-			wantInc:   canon.IncompleteAdapterEOF,
-			wantIncOK: true,
-		},
-		{
-			name:      "no output stays truncated",
-			stream:    "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[]}}]}}\n\n",
-			wantKind:  canon.StatusIncomplete,
-			wantInc:   canon.IncompleteAdapterEOF,
-			wantIncOK: true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var events []canon.Event
-			_ = DecodeStream(strings.NewReader(tc.stream), func(e canon.Event) error {
-				events = append(events, e)
-				return nil
-			})
-			if countTerminals(events) != 1 {
-				t.Fatalf("terminals = %d, want 1", countTerminals(events))
-			}
-			fin, ok := lastTerminal(events).(canon.TurnFinished)
-			if !ok {
-				t.Fatalf("terminal = %T, want TurnFinished", lastTerminal(events))
-			}
-			if fin.Status.Kind() != tc.wantKind {
-				t.Fatalf("kind = %v, want %v", fin.Status.Kind(), tc.wantKind)
-			}
-			reason, incomplete := fin.Status.Reason()
-			if tc.wantIncOK && (!incomplete || reason != tc.wantInc) {
-				t.Fatalf("reason = %v/%v, want %v", incomplete, reason, tc.wantInc)
-			}
-		})
+	for _, stream := range []string{
+		`{"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}}`,
+		`{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"read","args":{}}}]}}]}}`,
+		`{"response":{"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1}}}`,
+		`{"response":{"candidates":[{"finishReason":"STOP"}]}}`,
+	} {
+		var events []canon.Event
+		payload := "data: " + stream + "\n\n"
+		if strings.Contains(stream, "STOP") {
+			payload = strings.TrimSuffix(payload, "\n")
+		}
+		err := DecodeStream(strings.NewReader(payload), func(e canon.Event) error { events = append(events, e); return nil })
+		var re provider.RunError
+		if !errors.As(err, &re) || re.Kind != provider.TerminalEmitted || re.Class != provider.ClassTransport {
+			t.Fatalf("error = %v", err)
+		}
+		if _, ok := lastTerminal(events).(canon.TurnFailed); !ok || countTerminals(events) != 1 {
+			t.Fatalf("events = %v", events)
+		}
 	}
 }
 
@@ -335,7 +285,7 @@ func TestDecodeStreamMalformedFrame(t *testing.T) {
 }
 
 func TestDecodeStreamTruncatedToolTurn(t *testing.T) {
-	stream := "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"f\",\"args\":{}}}]}}]}}\n" +
+	stream := "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"f\",\"args\":{}}}]}}]}}\n\n" +
 		"data: {\"response\":{\"candidates\":[{\"finishReason\":\"MAX_TOKENS\"}]}}\n\n"
 	var events []canon.Event
 	_ = DecodeStream(strings.NewReader(stream), func(e canon.Event) error {

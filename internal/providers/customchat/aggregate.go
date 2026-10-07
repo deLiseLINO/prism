@@ -1,6 +1,7 @@
 package customchat
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,12 +16,7 @@ type aggregateResponse struct {
 	ID      string            `json:"id"`
 	Choices []aggregateChoice `json:"choices"`
 	Usage   json.RawMessage   `json:"usage"`
-	Error   *aggregateError   `json:"error"`
-}
-
-type aggregateError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Error   json.RawMessage   `json:"error"`
 }
 
 type aggregateChoice struct {
@@ -34,6 +30,7 @@ type aggregateMessage struct {
 	Content          *string             `json:"content"`
 	ReasoningContent string              `json:"reasoning_content"`
 	Reasoning        string              `json:"reasoning"`
+	ReasoningText    string              `json:"reasoning_text"`
 	ToolCalls        []aggregateToolCall `json:"tool_calls"`
 }
 
@@ -41,7 +38,10 @@ func (m aggregateMessage) reasoningText() string {
 	if m.ReasoningContent != "" {
 		return m.ReasoningContent
 	}
-	return m.Reasoning
+	if m.Reasoning != "" {
+		return m.Reasoning
+	}
+	return m.ReasoningText
 }
 
 type aggregateToolCall struct {
@@ -52,7 +52,6 @@ type aggregateToolCall struct {
 		Arguments string `json:"arguments"`
 	} `json:"function"`
 }
-
 
 func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customTools) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
@@ -70,7 +69,7 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 		}
 		return nil
 	}
-	if payload.Error != nil {
+	if e := bytes.TrimSpace(payload.Error); len(e) > 0 && string(e) != "null" {
 		parsed, ok := openaierr.Parse(raw)
 		if !ok {
 			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customchat: error response carried no error value"))
@@ -84,7 +83,7 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 		if cause == "" {
 			cause = "provider error"
 		}
-		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
+		return provider.RunError{Kind: provider.TerminalEmitted, Class: openaierr.ClassForInband(parsed, provider.ClassServer), Accepted: true, Cause: errors.New(cause), Reported: &copied}
 	}
 	if len(payload.Choices) == 0 {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0,
@@ -94,16 +93,24 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0,
 			fmt.Errorf("customchat: upstream response carries %d choices; only one is representable", len(payload.Choices)))
 	}
+	choice := payload.Choices[0]
+	if choice.Index != 0 {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customchat: choice index must be zero"))
+	}
 	usage, err := decodeChatUsage(payload.Usage)
 	if err != nil {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
 	}
-	choice := payload.Choices[0]
-	for _, tc := range choice.Message.ToolCalls {
+	for i, tc := range choice.Message.ToolCalls {
+		if tc.Type != "" && tc.Type != "function" || tc.Function.Name == "" {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, fmt.Errorf("customchat: malformed upstream tool call %d", i))
+		}
 		if custom.has(tc.Function.Name) {
 			if _, err := unwrapCustomInput(tc.Function.Arguments); err != nil {
 				return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
 			}
+		} else if tc.Function.Arguments != "" && !json.Valid([]byte(tc.Function.Arguments)) {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customchat: malformed upstream function arguments"))
 		}
 	}
 	status, known := finishStatus(choice.FinishReason)

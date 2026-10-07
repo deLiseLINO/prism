@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/account"
@@ -59,12 +60,7 @@ func NewRunner(creds CredentialSource, client *http.Client, baseURL string, curr
 		baseURL:         baseURL,
 		currentProvider: currentProvider,
 		rand:            rand.Float64,
-		sleep: func(d time.Duration) {
-			timer := time.NewTimer(d)
-			defer timer.Stop()
-			<-timer.C
-		},
-		newID: NewRequestID,
+		newID:           NewRequestID,
 	}, nil
 }
 
@@ -138,6 +134,12 @@ func firstUserText(items []canon.Item) string {
 	return ""
 }
 
+const (
+	headerWaiting int32 = iota
+	headerReceived
+	headerExpired
+)
+
 func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider.Sink, creds CredentialPair, body []byte) error {
 	timeout := req.Target.Timeout
 	if timeout <= 0 {
@@ -149,11 +151,22 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 	}
 	url := StreamURL(baseURL)
 	replayUsed := false
+	renewed := false
 	for attempt := 0; attempt < RetryAttempts; attempt++ {
 		if ctx.Err() != nil {
 			return transportError(ctx.Err())
 		}
-		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+		attemptCtx, cancelAttempt := context.WithCancel(ctx)
+		var headerState atomic.Int32
+		timer := time.AfterFunc(timeout, func() {
+			if headerState.CompareAndSwap(headerWaiting, headerExpired) {
+				cancelAttempt()
+			}
+		})
+		cancel := func() {
+			timer.Stop()
+			cancelAttempt()
+		}
 		httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			cancel()
@@ -165,37 +178,77 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 		if req.CredentialObserver != nil {
 			req.CredentialObserver(creds.Generation)
 		}
+		startedAt := time.Now()
+		observe := func(status int, err error) {
+			if req.AttemptObserver != nil {
+				req.AttemptObserver(provider.NetworkAttempt{StartedAt: startedAt, FinishedAt: time.Now(), StatusCode: status, Err: err})
+			}
+		}
 		resp, err := r.client.Do(httpReq)
+		if err == nil {
+			if !headerState.CompareAndSwap(headerWaiting, headerReceived) {
+				resp.Body.Close()
+				err = context.DeadlineExceeded
+			}
+			timer.Stop()
+		}
 		if err != nil {
+			observe(0, err)
 			cancel()
 			if ctx.Err() != nil {
 				return transportError(ctx.Err())
 			}
-			if isTimeout(err) {
+			if headerState.Load() == headerExpired || isTimeout(err) {
 				return provider.RunError{
 					Kind: provider.Retryable, Class: provider.ClassTimeout, ReplaySafe: true, Cause: err,
 				}
 			}
+			failure := provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, ReplaySafe: true, Cause: err}
 			if attempt < RetryAttempts-1 {
-				r.sleep(BackoffDelay(attempt, r.rand()))
+				if err := r.waitRetry(ctx, BackoffDelay(attempt, r.rand()), failure); err != nil {
+					return err
+				}
 				continue
 			}
-			return provider.RunError{
-				Kind: provider.Retryable, Class: provider.ClassTransport, ReplaySafe: true, Cause: err,
-			}
+			return failure
 		}
 		if resp.StatusCode == http.StatusOK {
 			result := r.stream(resp, sink)
+			observe(resp.StatusCode, result)
 			cancel()
 			return result
 		}
 		errorBody, readErr := readBody(resp)
 		cancel()
 		if readErr != nil {
+			observe(resp.StatusCode, readErr)
+		} else {
+			class, kind := classifyStatus(resp.StatusCode)
+			if resp.StatusCode == http.StatusTooManyRequests && isQuotaExhaustedBody(string(errorBody)) {
+				class = provider.ClassQuotaExhausted
+			}
+			observe(resp.StatusCode, provider.RunError{Kind: kind, Class: class, Cause: fmt.Errorf("antigravity: upstream status %d", resp.StatusCode)})
+		}
+		if readErr != nil {
 			return transportError(readErr)
 		}
 		payloadText := string(errorBody)
 
+		if resp.StatusCode == http.StatusUnauthorized && !renewed {
+			if renewer, ok := r.creds.(CredentialRenewer); ok {
+				// The token passed the expiry check yet the upstream refused
+				// it: revoked or rotated server-side. Nothing was streamed,
+				// so one replay with a renewed token is safe.
+				renewed = true
+				fresh, rerr := renewer.RefreshRejected(ctx, req.Lease, creds.AccessToken)
+				if rerr != nil {
+					return provider.CredentialRunError(rerr)
+				}
+				creds = fresh
+				attempt--
+				continue
+			}
+		}
 		if resp.StatusCode == http.StatusBadRequest && !replayUsed {
 			if repaired, changed := repairEnvelope(body, payloadText); changed {
 				replayUsed = true
@@ -209,20 +262,22 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 				Kind:       provider.TerminalOmitted,
 				Class:      provider.ClassQuotaExhausted,
 				ReplaySafe: true,
+				RetryAfter: provider.HTTPRetryAfterDelay(resp),
 				Cause:      fmt.Errorf("antigravity: quota exhausted: %s", errorEnvelopeMessage(payloadText)),
 			}
 		}
 		class, kind := classifyStatus(resp.StatusCode)
+		failure := provider.RunError{Kind: kind, Class: class, ReplaySafe: true,
+			RetryAfter: provider.HTTPRetryAfterDelay(resp),
+			Cause:      fmt.Errorf("antigravity: upstream status %d: %s", resp.StatusCode, errorEnvelopeMessage(payloadText))}
 		if kind == provider.Retryable && attempt < RetryAttempts-1 {
-			r.sleep(BackoffDelay(attempt, r.rand()))
+			delay := max(BackoffDelay(attempt, r.rand()), failure.RetryAfter)
+			if err := r.waitRetry(ctx, delay, failure); err != nil {
+				return err
+			}
 			continue
 		}
-		return provider.RunError{
-			Kind:       kind,
-			Class:      class,
-			ReplaySafe: true,
-			Cause:      fmt.Errorf("antigravity: upstream status %d: %s", resp.StatusCode, errorEnvelopeMessage(payloadText)),
-		}
+		return failure
 	}
 	return provider.RunError{
 		Kind:       provider.TerminalOmitted,

@@ -33,8 +33,10 @@ const (
 
 func classifyStatus(status int) (provider.ErrorClass, provider.RunErrorKind) {
 	switch status {
-	case statusUnauthorized, statusForbidden:
+	case statusUnauthorized:
 		return provider.ClassUnauthorized, provider.TerminalOmitted
+	case statusForbidden:
+		return provider.ClassForbidden, provider.TerminalOmitted
 	case statusNotFound:
 		return provider.ClassNotFound, provider.TerminalOmitted
 	case statusTooManyRequests:

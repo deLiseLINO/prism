@@ -62,7 +62,7 @@ func TestFetchModelsParsesOpenAIList(t *testing.T) {
 	})
 	defer srv.Close()
 
-	got, err := fetchModels(context.Background(), srv.Client(), srv.URL+"/v1", "secret-key")
+	got, err := fetchModels(context.Background(), srv.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: srv.URL + "/v1"}, "secret-key")
 	if err != nil {
 		t.Fatalf("fetch models: %v", err)
 	}
@@ -79,13 +79,13 @@ func TestFetchModelsFailsCleanly(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if _, err := fetchModels(context.Background(), srv.Client(), srv.URL, ""); err == nil {
+	if _, err := fetchModels(context.Background(), srv.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: srv.URL}, ""); err == nil {
 		t.Fatal("expected error on 500")
 	}
 
 	empty := modelsServer(t, `{"data":[]}`, nil)
 	defer empty.Close()
-	if _, err := fetchModels(context.Background(), empty.Client(), empty.URL, ""); err == nil {
+	if _, err := fetchModels(context.Background(), empty.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: empty.URL}, ""); err == nil {
 		t.Fatal("expected error on empty list")
 	}
 }
@@ -181,7 +181,7 @@ func TestReconcileSetsKeyRefFromStoredCredential(t *testing.T) {
 	}
 	key, err := env.creds.resolve(context.Background(), provider.Target{Provider: "edge", APIKeyRef: got.APIKeyRef}, lease)
 	if err != nil || string(key) != "test-key" || lease.CredGen != 1 {
-		t.Fatalf("legacy key did not activate immediately: key=%q lease=%+v err=%v", key, lease, err)
+		t.Fatalf("backfilled key not immediately active: %q gen=%d err=%v", key, lease.CredGen, err)
 	}
 }
 

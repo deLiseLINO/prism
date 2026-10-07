@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/execution"
@@ -361,5 +362,39 @@ func TestEmptyReasoningItemIsNotReplayed(t *testing.T) {
 				t.Fatalf("empty reasoning item was sent as a thinking block: %v", m)
 			}
 		}
+	}
+}
+
+func TestPromptTooLongIsContextLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}`))
+	}))
+	defer server.Close()
+	err := New(Options{BaseURL: server.URL}).Run(t.Context(), provider.RunRequest{
+		Request: baseRequest(),
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+	}, &collectingSink{})
+	var re *provider.RunError
+	if !errors.As(err, &re) || re.Class != provider.ClassContextLength {
+		t.Fatalf("err = %#v, want context length class", err)
+	}
+}
+
+func TestUpstreamRateLimitCarriesRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "17")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"slow"}}`))
+	}))
+	defer server.Close()
+	runner := New(Options{BaseURL: server.URL})
+	err := runner.Run(t.Context(), provider.RunRequest{
+		Request: baseRequest(),
+		Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+	}, &collectingSink{})
+	var re *provider.RunError
+	if !errors.As(err, &re) || re.RetryAfter != 17*time.Second {
+		t.Fatalf("err = %v, want RunError with RetryAfter 17s", err)
 	}
 }

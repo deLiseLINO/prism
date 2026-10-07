@@ -154,4 +154,3 @@ func TestSanitizeInvalidJSONFallsBack(t *testing.T) {
 		t.Fatalf("invalid input must fall back: %s", got)
 	}
 }
-

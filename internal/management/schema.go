@@ -309,14 +309,27 @@ type UsageBreakdownView struct {
 	Total     int64 `json:"total"`
 }
 
-type AttemptView struct {
-	Provider   string `json:"provider"`
-	Account    string `json:"account"`
-	Model      string `json:"model"`
+type NetworkAttemptView struct {
 	StartedAt  string `json:"startedAt"`
+	FinishedAt string `json:"finishedAt"`
 	DurationMS int64  `json:"durationMs"`
+	StatusCode int    `json:"statusCode,omitempty"`
 	Outcome    string `json:"outcome"`
 	Error      string `json:"error,omitempty"`
+}
+
+type AttemptView struct {
+	Provider               string               `json:"provider"`
+	Account                string               `json:"account"`
+	CredentialGeneration   uint64               `json:"credentialGeneration,omitempty"`
+	Version                uint64               `json:"version,omitempty"`
+	NetworkAttempts        []NetworkAttemptView `json:"networkAttempts,omitempty"`
+	NetworkAttemptsDropped int                  `json:"networkAttemptsDropped,omitempty"`
+	Model                  string               `json:"model"`
+	StartedAt              string               `json:"startedAt"`
+	DurationMS             int64                `json:"durationMs"`
+	Outcome                string               `json:"outcome"`
+	Error                  string               `json:"error,omitempty"`
 }
 
 type RequestView struct {
@@ -341,14 +354,22 @@ type RequestsResponse struct {
 func requestView(e requestlog.Entry) RequestView {
 	views := make([]AttemptView, 0, len(e.Attempts))
 	for _, a := range e.Attempts {
+		network := make([]NetworkAttemptView, 0, len(a.NetworkAttempts))
+		for _, n := range a.NetworkAttempts {
+			network = append(network, NetworkAttemptView{StartedAt: n.StartedAt.UTC().Format(time.RFC3339Nano), FinishedAt: n.FinishedAt.UTC().Format(time.RFC3339Nano), DurationMS: n.FinishedAt.Sub(n.StartedAt).Milliseconds(), StatusCode: n.StatusCode, Outcome: n.Outcome.String(), Error: n.Error})
+		}
 		views = append(views, AttemptView{
-			Provider:   string(a.Provider),
-			Account:    string(a.AccountID),
-			Model:      string(a.Model),
-			StartedAt:  a.StartedAt.UTC().Format(time.RFC3339),
-			DurationMS: a.Duration.Milliseconds(),
-			Outcome:    a.Outcome.String(),
-			Error:      a.Error,
+			Provider:               string(a.Provider),
+			Account:                string(a.AccountID),
+			CredentialGeneration:   uint64(a.CredGen),
+			Version:                uint64(a.Version),
+			NetworkAttempts:        network,
+			NetworkAttemptsDropped: a.NetworkAttemptsDropped,
+			Model:                  string(a.Model),
+			StartedAt:              a.StartedAt.UTC().Format(time.RFC3339),
+			DurationMS:             a.Duration.Milliseconds(),
+			Outcome:                a.Outcome.String(),
+			Error:                  a.Error,
 		})
 	}
 	v := RequestView{

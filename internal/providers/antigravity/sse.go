@@ -75,7 +75,6 @@ type frameExtraContent struct {
 	} `json:"google"`
 }
 
-
 type streamDecoder struct {
 	emit             func(canon.Event) error
 	messageID        canon.ItemID
@@ -88,11 +87,8 @@ type streamDecoder struct {
 	messageText      strings.Builder
 	pendingSig       string
 	usage            canon.Usage
-	sawFrame         bool
-	sawTerminal      bool
 	finishReason     string
 	toolCallsStarted int
-	toolArgs         [][]byte
 	finished         bool
 }
 
@@ -104,18 +100,33 @@ func DecodeStream(r io.Reader, emit func(canon.Event) error) error {
 	}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEFrameBytes)
+	var payload strings.Builder
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+		if line == "" {
+			if data := strings.TrimSpace(payload.String()); data != "" {
+				if err := d.frame([]byte(data)); err != nil {
+					return err
+				}
+				if d.finished {
+					return nil
+				}
+			}
+			payload.Reset()
 			continue
 		}
-		payload := strings.TrimSpace(line[len("data:"):])
-		if payload == "" {
+		if line != "data" && !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		if err := d.frame([]byte(payload)); err != nil {
-			return err
+		value := ""
+		if line != "data" {
+			value = strings.TrimPrefix(line[len("data:"):], " ")
 		}
+		if payload.Len()+len(value)+1 > maxSSEFrameBytes {
+			return d.fail(canon.FailUpstreamTransport, "antigravity: SSE frame exceeds size limit")
+		}
+		payload.WriteString(value)
+		payload.WriteByte('\n')
 	}
 	if err := scanner.Err(); err != nil {
 		return d.fail(canon.FailUpstreamTransport, "antigravity: stream read failed: "+err.Error())
@@ -125,10 +136,14 @@ func DecodeStream(r io.Reader, emit func(canon.Event) error) error {
 
 func (d *streamDecoder) fail(reason canon.FailureReason, message string) error {
 	d.finished = true
-	return d.emit(canon.TurnFailed{
-		Failure: canon.Failure{Reason: reason, Message: message},
-		Usage:   d.usage,
-	})
+	if err := d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: reason, Message: message}, Usage: d.usage}); err != nil {
+		return err
+	}
+	class := provider.ClassServer
+	if reason == canon.FailUpstreamTransport {
+		class = provider.ClassTransport
+	}
+	return provider.RunError{Kind: provider.TerminalEmitted, Class: class, Accepted: true, Cause: errors.New(message)}
 }
 
 func (d *streamDecoder) failProvider(reason canon.FailureReason, payload []byte) error {
@@ -139,23 +154,20 @@ func (d *streamDecoder) failProvider(reason canon.FailureReason, payload []byte)
 	d.finished = true
 	copied := parsed
 	message := openaierr.Text(parsed)
-	return d.emit(canon.TurnFailed{
-		Failure: canon.Failure{Reason: reason, Message: message, Provider: &copied},
-		Usage:   d.usage,
-	})
+	if err := d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: reason, Message: message, Provider: &copied}, Usage: d.usage}); err != nil {
+		return err
+	}
+	return provider.RunError{Kind: provider.TerminalEmitted, Class: openaierr.ClassForInband(copied, provider.ClassServer), Accepted: true, Cause: errors.New(message), Reported: &copied}
 }
 
 func (d *streamDecoder) frame(payload []byte) error {
-	usage, err := decodeNativeUsage(payload, d.usage)
-	if err != nil {
-		if emitErr := d.fail(canon.FailUpstreamTransport, "antigravity: invalid upstream usage: "+err.Error()); emitErr != nil {
-			return emitErr
-		}
-		return provider.RunError{Kind: provider.TerminalEmitted, Class: provider.ClassTransport, Accepted: true, Cause: err}
-	}
 	var chunk streamFrame
 	if err := json.Unmarshal(payload, &chunk); err != nil {
-		return d.fail(canon.FailOriginRejected, "antigravity: malformed upstream SSE data frame")
+		return d.fail(canon.FailUpstreamTransport, "antigravity: malformed upstream SSE data frame")
+	}
+	usage, err := decodeNativeUsage(payload, d.usage)
+	if err != nil {
+		return d.fail(canon.FailUpstreamTransport, "antigravity: invalid upstream usage: "+err.Error())
 	}
 	if chunk.Error != nil {
 		return d.failProvider(canon.FailOriginRejected, payload)
@@ -163,27 +175,25 @@ func (d *streamDecoder) frame(payload []byte) error {
 	if chunk.Response == nil {
 		return nil
 	}
-	d.sawFrame = true
 	root := chunk.Response
 	if len(root.UsageMetadata) > 0 && string(root.UsageMetadata) != "null" {
 		d.usage = usage
-		d.sawTerminal = true
 	}
-	if len(root.Candidates) == 0 {
-		return nil
-	}
-	candidate := root.Candidates[0]
-	if candidate.FinishReason != "" {
-		d.finishReason = candidate.FinishReason
-		d.sawTerminal = true
-	}
-	if candidate.Content == nil {
-		return nil
-	}
-	for _, part := range candidate.Content.Parts {
-		if err := d.part(part); err != nil {
-			return err
+	if len(root.Candidates) > 0 {
+		candidate := root.Candidates[0]
+		if candidate.FinishReason != "" {
+			d.finishReason = candidate.FinishReason
 		}
+		if candidate.Content != nil {
+			for _, part := range candidate.Content.Parts {
+				if err := d.part(part); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if d.finishReason != "" && (d.finishReason != "STOP" || len(root.UsageMetadata) > 0 && string(root.UsageMetadata) != "null") {
+		return d.finish()
 	}
 	return nil
 }
@@ -196,14 +206,13 @@ func (d *streamDecoder) part(part responsePart) error {
 	if sig == "" && part.ExtraContent != nil && part.ExtraContent.Google != nil {
 		sig = part.ExtraContent.Google.ThoughtSignature
 	}
-	if part.Thought && sig != "" && likelyRealSignature(sig) {
-		d.pendingSig = sig
-		d.reasoningSig = sig
-	}
 	if part.Text != "" {
 		if err := d.textDelta(part.Thought, part.Text); err != nil {
 			return err
 		}
+	}
+	if part.Thought && likelyRealSignature(sig) {
+		d.pendingSig, d.reasoningSig = sig, sig
 	}
 	if part.FunctionCall != nil {
 		if part.FunctionCall.Name == "" {
@@ -218,6 +227,12 @@ func (d *streamDecoder) part(part responsePart) error {
 
 func (d *streamDecoder) textDelta(thought bool, text string) error {
 	if thought {
+		if !d.reasoningOpen && d.reasoningText.Len() > 0 {
+			d.seq++
+			d.reasoningID = canon.ItemID(fmt.Sprintf("reasoning-%d", d.seq))
+			d.reasoningText.Reset()
+			d.reasoningSig = ""
+		}
 		if !d.reasoningOpen {
 			if d.messageOpen {
 				if err := d.closeMessage(); err != nil {
@@ -233,6 +248,11 @@ func (d *streamDecoder) textDelta(thought bool, text string) error {
 		return d.emit(canon.ReasoningDelta{ItemID: d.reasoningID, Text: text})
 	}
 	if !d.messageOpen {
+		if d.messageText.Len() > 0 {
+			d.seq++
+			d.messageID = canon.ItemID(fmt.Sprintf("assistant-%d", d.seq))
+			d.messageText.Reset()
+		}
 		if d.reasoningOpen {
 			if err := d.closeReasoning(); err != nil {
 				return err
@@ -266,6 +286,16 @@ func (d *streamDecoder) closeMessage() error {
 }
 
 func (d *streamDecoder) functionCall(part responsePart) error {
+	if d.messageOpen {
+		if err := d.closeMessage(); err != nil {
+			return err
+		}
+	}
+	if d.reasoningOpen {
+		if err := d.closeReasoning(); err != nil {
+			return err
+		}
+	}
 	d.seq++
 	id := canon.ItemID(fmt.Sprintf("call-%d", d.seq))
 	callID := canon.CallID(part.FunctionCall.ID)
@@ -276,6 +306,10 @@ func (d *streamDecoder) functionCall(part responsePart) error {
 	if len(args) == 0 {
 		args = []byte("{}")
 	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(args, &object) != nil || object == nil {
+		return d.fail(canon.FailToolArgsMalformed, "antigravity: functionCall args must be an object")
+	}
 	state := canon.OpaqueRef{}
 	sig := part.ThoughtSignature
 	if sig == "" {
@@ -284,12 +318,14 @@ func (d *streamDecoder) functionCall(part responsePart) error {
 	if sig == "" {
 		sig = d.pendingSig
 	}
+	if sig == "" && part.ExtraContent != nil && part.ExtraContent.Google != nil {
+		sig = part.ExtraContent.Google.ThoughtSignature
+	}
 	if likelyRealSignature(sig) {
 		state = canon.OpaqueRef{Store: signatureStore, Key: sig}
 	}
 	d.pendingSig = ""
 	d.toolCallsStarted++
-	d.toolArgs = append(d.toolArgs, args)
 	if err := d.emit(canon.ItemStarted{Item: canon.FunctionCall{
 		ID:        id,
 		CallID:    callID,
@@ -326,8 +362,8 @@ func (d *streamDecoder) finish() error {
 			return err
 		}
 	}
-	if !d.sawFrame || !d.sawTerminal {
-		return d.upstreamEOF()
+	if d.finishReason == "" {
+		return d.fail(canon.FailUpstreamTransport, "antigravity: stream ended before terminal finish reason")
 	}
 	truncated := d.finishReason == "MAX_TOKENS" || d.finishReason == "MALFORMED_FUNCTION_CALL"
 	if truncated && (d.toolCallsStarted > 0 || d.finishReason == "MALFORMED_FUNCTION_CALL") {
@@ -339,35 +375,11 @@ func (d *streamDecoder) finish() error {
 		return d.emit(canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens), Usage: d.usage})
 	case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII":
 		return d.emit(canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteContentFilter), Usage: d.usage})
+	case "STOP":
+		return d.emit(canon.TurnFinished{Status: canon.Completed(), Usage: d.usage})
 	default:
-		return d.emit(canon.TurnFinished{Status: canon.Completed(), Usage: d.usage})
+		return d.fail(canon.FailUpstreamTransport, "antigravity: unsupported finish reason "+d.finishReason)
 	}
-}
-
-// upstreamEOF closes a turn whose stream ended without any terminal signal.
-// Buffered output makes that recoverable only when the user saw text or every
-// tool call carries complete JSON object arguments; a half-written call or an
-// empty stream stays a truncation. The truncation is reported as an incomplete
-// turn (reason adapter_eof), not a transport failure, so clients treat it as a
-// terminal state instead of blind-retrying.
-func (d *streamDecoder) upstreamEOF() error {
-	if d.messageText.Len() > 0 || d.toolCallsComplete() {
-		return d.emit(canon.TurnFinished{Status: canon.Completed(), Usage: d.usage})
-	}
-	return d.emit(canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteAdapterEOF), Usage: d.usage})
-}
-
-func (d *streamDecoder) toolCallsComplete() bool {
-	if d.toolCallsStarted == 0 {
-		return false
-	}
-	for _, args := range d.toolArgs {
-		var obj map[string]any
-		if err := json.Unmarshal(args, &obj); err != nil || obj == nil {
-			return false
-		}
-	}
-	return true
 }
 
 func decodeNativeUsage(payload []byte, previous canon.Usage) (canon.Usage, error) {
