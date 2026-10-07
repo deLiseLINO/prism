@@ -75,3 +75,16 @@ Codex, Antigravity, and Messages upstreams always use streams, including for a b
 The separate Antigravity per-attempt deadline is unchanged.
 A waiting limit ends the turn as `upstream_stall` in the response, request history, and usage.
 It does not replay the request on another provider. A client disconnect remains `client_closed`.
+
+## Token usage
+
+Upstream token counts must be exact nonnegative integers within `int64`.
+Integral decimal and exponential JSON numbers are accepted without float conversion.
+Invalid counts, overflowing sums, conflicting totals, and invalid cache or reasoning details fail the response.
+An invalid update retains the last valid usage snapshot.
+
+Chat and Responses cache and reasoning counts are included in input and output respectively.
+Messages input includes uncached input plus cache reads and writes. Its cache fields and input deltas may be null.
+Antigravity reasoning counts are not limited by output tokens.
+Usage storage keeps cache writes for requests and attempts and migrates existing SQLite databases on open.
+

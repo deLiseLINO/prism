@@ -165,28 +165,3 @@ func runError(kind provider.RunErrorKind, class provider.ErrorClass, accepted, r
 	}
 }
 
-func usageFrom(response map[string]any) canon.Usage {
-	var usage canon.Usage
-	u, ok := response["usage"].(map[string]any)
-	if !ok {
-		return usage
-	}
-	usage.InputTokens = numberOf(u["input_tokens"])
-	usage.OutputTokens = numberOf(u["output_tokens"])
-	usage.TotalTokens = numberOf(u["total_tokens"])
-	if d, ok := u["input_tokens_details"].(map[string]any); ok {
-		usage.CachedInputTokens = numberOf(d["cached_tokens"])
-	}
-	if d, ok := u["output_tokens_details"].(map[string]any); ok {
-		usage.ReasoningTokens = numberOf(d["reasoning_tokens"])
-	}
-	return usage
-}
-
-func numberOf(v any) int64 {
-	f, ok := v.(float64)
-	if !ok {
-		return 0
-	}
-	return int64(f)
-}

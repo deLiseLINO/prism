@@ -86,6 +86,7 @@ type openOut struct {
 type streamer struct {
 	sink provider.Sink
 	open map[canon.ItemID]*openOut
+	usage canon.Usage
 }
 
 func (r *Runner) runStream(body io.Reader, sink provider.Sink) error {
@@ -113,12 +114,21 @@ func (s *streamer) emit(ev canon.Event) error {
 
 func (s *streamer) handleFrame(f sseFrame) error {
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(f.data), &payload); err != nil {
-		return nil
+	decoder := json.NewDecoder(strings.NewReader(f.data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return s.protocolError("malformed upstream stream frame")
 	}
 	name, _ := payload["type"].(string)
 	if name == "" {
 		name = f.event
+	}
+	if response, ok := payload["response"].(map[string]any); ok {
+		usage, err := decodeResponseUsage(response, s.usage)
+		if err != nil {
+			return s.protocolError(err.Error())
+		}
+		s.usage = usage
 	}
 	switch name {
 	case "response.created", "response.in_progress", "response.heartbeat", "":
@@ -215,7 +225,7 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		if response == nil {
 			response = map[string]any{}
 		}
-		if err := s.emit(canon.TurnFinished{Status: canon.Completed(), Usage: usageFrom(response)}); err != nil {
+		if err := s.emit(canon.TurnFinished{Status: canon.Completed(), Usage: s.usage}); err != nil {
 			return err
 		}
 		return errTerminalDone
@@ -235,7 +245,7 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		default:
 			return s.failUnknown(fmt.Sprintf("upstream stream ended early (%s)", reason))
 		}
-		if err := s.emit(canon.TurnFinished{Status: status, Usage: usageFrom(response)}); err != nil {
+		if err := s.emit(canon.TurnFinished{Status: status, Usage: s.usage}); err != nil {
 			return err
 		}
 		return errTerminalDone
@@ -260,7 +270,7 @@ func (s *streamer) failUnknown(message string) error {
 }
 
 func (s *streamer) emitFailed(failure canon.Failure) error {
-	if err := s.emit(canon.TurnFailed{Failure: failure}); err != nil {
+	if err := s.emit(canon.TurnFailed{Failure: failure, Usage: s.usage}); err != nil {
 		return err
 	}
 	cause := failure.Message
@@ -271,7 +281,11 @@ func (s *streamer) emitFailed(failure canon.Failure) error {
 }
 
 func (s *streamer) protocolError(message string) error {
-	return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0, errors.New("customresponses: "+message))
+	cause := errors.New("customresponses: " + message)
+	if err := s.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: cause.Error()}, Usage: s.usage}); err != nil {
+		return err
+	}
+	return runError(provider.TerminalEmitted, provider.ClassTransport, true, false, 0, cause)
 }
 
 func (s *streamer) ensureOpen(id canon.ItemID, kind string) error {
@@ -421,4 +435,8 @@ func itemFromWire(item map[string]any, open ...*openOut) (canon.Item, canon.Item
 	default:
 		return nil, "", runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0, fmt.Errorf("customresponses: upstream output item type %q cannot be represented in canon", kind))
 	}
+}
+
+func malformedWire(message string) error {
+	return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0, errors.New("customresponses: "+message))
 }

@@ -14,7 +14,7 @@ import (
 type aggregateResponse struct {
 	ID      string            `json:"id"`
 	Choices []aggregateChoice `json:"choices"`
-	Usage   *usageJSON        `json:"usage"`
+	Usage   json.RawMessage   `json:"usage"`
 	Error   *aggregateError   `json:"error"`
 }
 
@@ -53,34 +53,6 @@ type aggregateToolCall struct {
 	} `json:"function"`
 }
 
-type usageJSON struct {
-	PromptTokens        int64 `json:"prompt_tokens"`
-	CompletionTokens    int64 `json:"completion_tokens"`
-	TotalTokens         int64 `json:"total_tokens"`
-	PromptTokensDetails *struct {
-		CachedTokens int64 `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-	CompletionTokensDetails *struct {
-		ReasoningTokens int64 `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
-}
-
-func (u *usageJSON) canon() canon.Usage {
-	if u == nil {
-		return canon.Usage{}
-	}
-	var out canon.Usage
-	out.InputTokens = u.PromptTokens
-	out.OutputTokens = u.CompletionTokens
-	out.TotalTokens = u.TotalTokens
-	if u.PromptTokensDetails != nil {
-		out.CachedInputTokens = u.PromptTokensDetails.CachedTokens
-	}
-	if u.CompletionTokensDetails != nil {
-		out.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
-	}
-	return out
-}
 
 func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customTools) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
@@ -121,6 +93,10 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 	if len(payload.Choices) > 1 {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0,
 			fmt.Errorf("customchat: upstream response carries %d choices; only one is representable", len(payload.Choices)))
+	}
+	usage, err := decodeChatUsage(payload.Usage)
+	if err != nil {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
 	}
 	choice := payload.Choices[0]
 	for _, tc := range choice.Message.ToolCalls {
@@ -217,5 +193,5 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 			return err
 		}
 	}
-	return emit(canon.TurnFinished{Status: status, Usage: payload.Usage.canon()})
+	return emit(canon.TurnFinished{Status: status, Usage: usage})
 }

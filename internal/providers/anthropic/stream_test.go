@@ -99,7 +99,7 @@ func TestFullStreamVocabulary(t *testing.T) {
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`{"city":`)},
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`"Paris"}`)},
 		canon.ItemFinished{Item: canon.FunctionCall{ID: "toolu_1", CallID: "toolu_1", Name: "get_weather", Arguments: []byte(`{"city":"Paris"}`)}},
-		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 115, OutputTokens: 25, CachedInputTokens: 10, TotalTokens: 140}},
+		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 115, OutputTokens: 25, CachedInputTokens: 10, CacheWriteInputTokens: 5, TotalTokens: 140}},
 	}
 	if len(sink.events) != len(want) {
 		t.Fatalf("events = %d, want %d", len(sink.events), len(want))

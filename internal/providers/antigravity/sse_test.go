@@ -329,7 +329,7 @@ func TestDecodeStreamMalformedFrame(t *testing.T) {
 		t.Fatalf("expected one terminal, got %d", countTerminals(events))
 	}
 	failed := events[0].(canon.TurnFailed)
-	if failed.Failure.Reason != canon.FailOriginRejected {
+	if failed.Failure.Reason != canon.FailUpstreamTransport {
 		t.Fatalf("reason = %v", failed.Failure.Reason)
 	}
 }

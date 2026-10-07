@@ -1,6 +1,7 @@
 package customresponses
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,7 +20,7 @@ type responsePayload struct {
 	Error             *errorWire       `json:"error"`
 	IncompleteDetails *incompleteWire  `json:"incomplete_details"`
 	Output            []map[string]any `json:"output"`
-	Usage             usageWire        `json:"usage"`
+	Usage             json.RawMessage  `json:"usage"`
 }
 
 type errorWire struct {
@@ -31,31 +32,6 @@ type incompleteWire struct {
 	Reason string `json:"reason"`
 }
 
-type usageWire struct {
-	InputTokens        float64 `json:"input_tokens"`
-	InputTokensDetails *struct {
-		CachedTokens float64 `json:"cached_tokens"`
-	} `json:"input_tokens_details"`
-	OutputTokens        float64 `json:"output_tokens"`
-	OutputTokensDetails *struct {
-		ReasoningTokens float64 `json:"reasoning_tokens"`
-	} `json:"output_tokens_details"`
-	TotalTokens float64 `json:"total_tokens"`
-}
-
-func (u usageWire) inputCached() int64 {
-	if u.InputTokensDetails == nil {
-		return 0
-	}
-	return int64(u.InputTokensDetails.CachedTokens)
-}
-
-func (u usageWire) outputReasoning() int64 {
-	if u.OutputTokensDetails == nil {
-		return 0
-	}
-	return int64(u.OutputTokensDetails.ReasoningTokens)
-}
 
 func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
@@ -72,12 +48,17 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		}
 		return nil
 	}
-	usage := canon.Usage{
-		InputTokens:       int64(payload.Usage.InputTokens),
-		OutputTokens:      int64(payload.Usage.OutputTokens),
-		TotalTokens:       int64(payload.Usage.TotalTokens),
-		CachedInputTokens: payload.Usage.inputCached(),
-		ReasoningTokens:   payload.Usage.outputReasoning(),
+	var usageFields map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(payload.Usage))
+	decoder.UseNumber()
+	if len(payload.Usage) > 0 {
+		if err := decoder.Decode(&usageFields); err != nil {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
+		}
+	}
+	usage, err := decodeResponseUsage(map[string]any{"usage": usageFields}, canon.Usage{})
+	if err != nil {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
 	}
 	if payload.Error != nil || payload.Status == "failed" {
 		parsed, ok := openaierr.Parse(raw)
