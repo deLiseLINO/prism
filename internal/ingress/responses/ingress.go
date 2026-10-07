@@ -1,17 +1,18 @@
 package responses
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/execution"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
 var _ interface {
@@ -67,11 +68,6 @@ type Warning struct {
 	Detail string
 }
 
-// opaqueCompactionNote stands in for a replayed compact-family item whose
-// encrypted summary no wire can carry: the codex wire rejects the raw item,
-// so the model at least sees that earlier context existed.
-const opaqueCompactionNote = "[earlier conversation was compacted; the summary is stored in a format this model cannot read]"
-
 type Ingress struct {
 	warn func(Warning)
 }
@@ -118,13 +114,18 @@ func (g *Ingress) Parse(ctx context.Context, hr *http.Request) (canon.Request, e
 		}
 	}
 	var root map[string]any
-	if err := json.Unmarshal(body, &root); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
 		return canon.Request{}, execution.Facts{}, &ParseError{
 			Status: http.StatusBadRequest,
 			Reason: ReasonInvalidJSON,
 			Field:  "body",
 			Err:    err,
 		}
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return canon.Request{}, execution.Facts{}, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidJSON, Field: "body"}
 	}
 	req, err := g.requestFrom(root)
 	if err != nil {
@@ -144,6 +145,9 @@ func (g *Ingress) requestFrom(root map[string]any) (canon.Request, error) {
 		return req, &ParseError{Status: http.StatusBadRequest, Reason: ReasonMissingField, Field: "model"}
 	}
 	req.Model = canon.ModelID(model)
+	if previous := root["previous_response_id"]; previous != nil && previous != "" {
+		return req, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "previous_response_id", Err: fmt.Errorf("resend the full conversation without previous_response_id")}
+	}
 	if s, ok := root["stream"].(bool); ok {
 		req.Stream = s
 	}
@@ -154,10 +158,12 @@ func (g *Ingress) requestFrom(root map[string]any) (canon.Request, error) {
 			return req, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "instructions"}
 		}
 	}
-	if max, ok := root["max_output_tokens"].(float64); ok && max > 0 {
+	if max, ok := numberValue(root["max_output_tokens"]); ok && max > 0 {
 		req.MaxOutputTokens = int(max)
 	}
-	g.textInto(root, &req)
+	if err := g.textInto(root, &req); err != nil {
+		return req, err
+	}
 	req.Sampling = samplingFrom(root)
 	reasoning, err := g.reasoningFrom(root)
 	if err != nil {
@@ -174,51 +180,91 @@ func (g *Ingress) requestFrom(root map[string]any) (canon.Request, error) {
 		return req, err
 	}
 	g.unmappedFrom(root)
-	g.normalizeArguments(&req)
 	return req, nil
 }
 
-func (g *Ingress) textInto(root map[string]any, req *canon.Request) {
+func (g *Ingress) textInto(root map[string]any, req *canon.Request) error {
+	if root["text"] == nil {
+		return nil
+	}
 	text, ok := root["text"].(map[string]any)
 	if !ok {
-		return
+		return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text"}
+	}
+	switch text["verbosity"] {
+	case "low":
+		req.Text.Verbosity = canon.VerbosityLow
+	case "medium":
+		req.Text.Verbosity = canon.VerbosityMedium
+	case "high":
+		req.Text.Verbosity = canon.VerbosityHigh
+	case nil:
+	default:
+		return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.verbosity"}
+	}
+	if text["format"] == nil {
+		return nil
 	}
 	format, ok := text["format"].(map[string]any)
 	if !ok {
-		return
+		return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.format"}
 	}
-	tf := &canon.TextFormat{}
-	if t, ok := format["type"].(string); ok {
-		tf.Type = t
+	typ, _ := format["type"].(string)
+	if typ != "text" && typ != "json_object" && typ != "json_schema" {
+		return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.format.type"}
 	}
-	if n, ok := format["name"].(string); ok {
-		tf.Name = n
-	}
-	if d, ok := format["description"].(string); ok {
-		tf.Description = d
-	}
-	if s, ok := format["schema"]; ok {
-		if raw, err := json.Marshal(s); err == nil {
-			tf.Schema = raw
+	for key := range format {
+		if key != "type" && (typ != "json_schema" || key != "name" && key != "description" && key != "schema" && key != "strict") {
+			return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.format." + key}
 		}
 	}
-	if strict, ok := format["strict"].(bool); ok {
-		tf.Strict = &strict
+	tf := &canon.TextFormat{Type: typ}
+	if typ == "json_schema" {
+		name, ok := format["name"].(string)
+		if !ok || name == "" {
+			return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.format.name"}
+		}
+		tf.Name = name
+		if _, ok := format["schema"].(map[string]any); !ok {
+			return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.format.schema"}
+		}
+		tf.Schema, _ = json.Marshal(format["schema"])
+		if value, present := format["description"]; present {
+			description, ok := value.(string)
+			if !ok {
+				return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.format.description"}
+			}
+			tf.Description = description
+		}
+		if value := format["strict"]; value != nil {
+			strict, ok := value.(bool)
+			if !ok {
+				return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "text.format.strict"}
+			}
+			tf.Strict = &strict
+		}
 	}
 	req.Text.Format = tf
+	return nil
 }
 
 func samplingFrom(root map[string]any) canon.Sampling {
 	var s canon.Sampling
-	if v, ok := root["temperature"].(float64); ok {
+	if v, ok := numberValue(root["temperature"]); ok {
 		s.Temperature = &v
 	}
-	if v, ok := root["top_p"].(float64); ok {
+	if v, ok := numberValue(root["top_p"]); ok {
 		s.TopP = &v
+	}
+	if v, ok := numberValue(root["presence_penalty"]); ok {
+		s.PresencePenalty = &v
+	}
+	if v, ok := numberValue(root["frequency_penalty"]); ok {
+		s.FrequencyPenalty = &v
 	}
 	if stop, ok := root["stop"].([]any); ok {
 		for _, raw := range stop {
-			if v, ok := raw.(string); ok {
+			if v, ok := raw.(string); ok && v != "" {
 				s.Stop = append(s.Stop, v)
 			}
 		}
@@ -227,12 +273,26 @@ func samplingFrom(root map[string]any) canon.Sampling {
 		s.ParallelToolCalls = &v
 	}
 	switch root["service_tier"] {
+	case "default":
+		s.ServiceTier = canon.TierDefault
 	case "flex":
 		s.ServiceTier = canon.TierFlex
 	case "priority":
 		s.ServiceTier = canon.TierPriority
 	}
 	return s
+}
+
+func numberValue(value any) (float64, bool) {
+	switch number := value.(type) {
+	case json.Number:
+		v, err := number.Float64()
+		return v, err == nil
+	case float64:
+		return number, true
+	default:
+		return 0, false
+	}
 }
 
 func (g *Ingress) reasoningFrom(root map[string]any) (canon.ReasoningConfig, error) {
@@ -243,13 +303,10 @@ func (g *Ingress) reasoningFrom(root map[string]any) (canon.ReasoningConfig, err
 	}
 	if e, ok := m["effort"].(string); ok {
 		switch e {
-		case "none":
-			rc.Effort = 0
-			g.warnOf(WarnUnmappedField, "reasoning.effort=none")
+		case "none", "off":
+			rc.Effort = canon.EffortOff
 		case "minimal":
 			rc.Effort = canon.EffortMinimal
-		case "off":
-			rc.Effort = canon.EffortOff
 		case "low":
 			rc.Effort = canon.EffortLow
 		case "medium":
@@ -311,7 +368,7 @@ func (g *Ingress) toolsFrom(root map[string]any, req *canon.Request) error {
 			req.Tools = append(req.Tools, canon.LocalShellToolDef{})
 		case "tool_search":
 			limit := 0
-			if f, ok := tm["max_results"].(float64); ok {
+			if f, ok := numberValue(tm["max_results"]); ok {
 				limit = int(f)
 			}
 			req.Tools = append(req.Tools, canon.ToolSearchToolDef{Limit: limit})
@@ -559,43 +616,105 @@ func (g *Ingress) toolChoiceFrom(root map[string]any, req *canon.Request) error 
 			if mode != "required" && mode != "auto" {
 				return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "tool_choice.mode"}
 			}
-			names := allowedToolNames(tc)
-			if mode == "required" && len(names) == 1 {
-				req.ToolChoice = canon.ToolNamed{Name: canon.ToolName(names[0])}
-				req.Tools = filterTools(req.Tools, names)
-			} else if mode == "required" {
-				req.ToolChoice = canon.ToolRequired{}
-				req.Tools = filterTools(req.Tools, names)
-			} else {
+			selectors, ok := tc["tools"].([]any)
+			if !ok || len(selectors) == 0 {
+				return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "tool_choice.tools"}
+			}
+			var names []string
+			for _, raw := range selectors {
+				selector, ok := raw.(map[string]any)
+				if !ok {
+					return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "tool_choice.tools"}
+				}
+				name, err := resolveToolSelector(selector, req)
+				if err != nil {
+					return err
+				}
+				names = append(names, name)
+			}
+			req.Tools = filterTools(req.Tools, names)
+			if mode == "auto" {
 				req.ToolChoice = canon.ToolAuto{}
+			} else if len(req.Tools) == 1 {
+				if _, function := req.Tools[0].(canon.FunctionTool); function {
+					req.ToolChoice = canon.ToolNamed{Name: canon.ToolName(names[0])}
+				} else {
+					req.ToolChoice = canon.ToolRequired{}
+				}
+			} else {
+				req.ToolChoice = canon.ToolRequired{}
 			}
 		default:
-			if name, ok := tc["name"].(string); ok {
-				req.ToolChoice = canon.ToolNamed{Name: canon.ToolName(name)}
+			name, err := resolveToolSelector(tc, req)
+			if err != nil {
+				return err
+			}
+			selected := filterTools(req.Tools, []string{name})
+			if _, custom := selected[0].(canon.CustomToolDef); custom {
+				req.Tools = selected
+				req.ToolChoice = canon.ToolRequired{}
 			} else {
-				return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "tool_choice.type"}
+				req.ToolChoice = canon.ToolNamed{Name: canon.ToolName(name)}
 			}
 		}
+	case nil:
+	default:
+		return &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "tool_choice"}
 	}
 	return nil
 }
 
-func allowedToolNames(tc map[string]any) []string {
-	var names []string
-	tools, ok := tc["tools"].([]any)
-	if !ok {
-		return names
+func resolveToolSelector(selector map[string]any, req *canon.Request) (string, error) {
+	fail := func(field string) (string, error) {
+		return "", &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: "tool_choice." + field}
 	}
-	for _, tv := range tools {
-		tm, ok := tv.(map[string]any)
+	name, ok := selector["name"].(string)
+	if !ok || name == "" {
+		return fail("name")
+	}
+	var namespace string
+	if raw, present := selector["namespace"]; present {
+		var ok bool
+		namespace, ok = raw.(string)
 		if !ok {
-			continue
-		}
-		if n, ok := tm["name"].(string); ok {
-			names = append(names, n)
+			return fail("namespace")
 		}
 	}
-	return names
+	wire := wireToolName(namespace, name)
+	if _, explicit := selector["namespace"]; explicit {
+		route := req.ToolRoutes[canon.ToolName(wire)]
+		if isBareNamespace(namespace) {
+			if route.Namespace != "" {
+				return fail("namespace")
+			}
+		} else if route != (canon.ToolRoute{Namespace: namespace, Name: name}) {
+			return fail("namespace")
+		}
+	}
+	var kind string
+	for _, tool := range req.Tools {
+		var toolName canon.ToolName
+		var toolKind string
+		switch tool := tool.(type) {
+		case canon.FunctionTool:
+			toolName, toolKind = tool.Name, "function"
+		case canon.CustomToolDef:
+			toolName, toolKind = tool.Name, "custom"
+		}
+		if string(toolName) == wire {
+			if kind != "" {
+				return fail("name")
+			}
+			kind = toolKind
+		}
+	}
+	if kind == "" {
+		return fail("name")
+	}
+	if typ, present := selector["type"]; present && typ != kind {
+		return fail("type")
+	}
+	return wire, nil
 }
 
 func filterTools(tools []canon.Tool, names []string) []canon.Tool {
@@ -672,10 +791,19 @@ func (g *Ingress) itemFrom(m map[string]any, i int) (canon.Item, error) {
 		return g.functionOutputFrom(m, path)
 	case "custom_tool_call":
 		id, _ := m["id"].(string)
-		callID, _ := m["call_id"].(string)
-		name, _ := m["name"].(string)
+		callID, ok := m["call_id"].(string)
+		if !ok || callID == "" {
+			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonMissingField, Field: path + ".call_id"}
+		}
+		name, ok := m["name"].(string)
+		if !ok || name == "" {
+			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonMissingField, Field: path + ".name"}
+		}
 		name = replayedToolName(m, name)
-		input, _ := m["input"].(string)
+		input, ok := m["input"].(string)
+		if !ok {
+			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: path + ".input"}
+		}
 		return canon.CustomToolCall{
 			ID:     canon.ItemID(id),
 			CallID: canon.CallID(callID),
@@ -683,8 +811,25 @@ func (g *Ingress) itemFrom(m map[string]any, i int) (canon.Item, error) {
 			Input:  input,
 		}, nil
 	case "custom_tool_call_output":
-		callID, _ := m["call_id"].(string)
-		output, _ := m["output"].(string)
+		callID, ok := m["call_id"].(string)
+		if !ok || callID == "" {
+			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonMissingField, Field: path + ".call_id"}
+		}
+		if _, array := m["output"].([]any); array {
+			item, err := g.functionOutputFrom(m, path)
+			if err != nil {
+				return nil, err
+			}
+			content := item.(canon.FunctionOutput).Output
+			if content == nil {
+				content = []canon.Content{}
+			}
+			return canon.CustomToolOutput{CallID: canon.CallID(callID), Content: content}, nil
+		}
+		output, ok := m["output"].(string)
+		if !ok {
+			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: path + ".output"}
+		}
 		return canon.CustomToolOutput{CallID: canon.CallID(callID), Output: output}, nil
 	case "local_shell_call":
 		id, _ := m["id"].(string)
@@ -699,7 +844,7 @@ func (g *Ingress) itemFrom(m map[string]any, i int) (canon.Item, error) {
 		id, _ := m["id"].(string)
 		callID, _ := m["call_id"].(string)
 		exit := 0
-		if e, ok := m["exit_code"].(float64); ok {
+		if e, ok := numberValue(m["exit_code"]); ok {
 			exit = int(e)
 		}
 		output, _ := m["output"].(string)
@@ -741,18 +886,16 @@ func (g *Ingress) itemFrom(m map[string]any, i int) (canon.Item, error) {
 		}
 		return out, nil
 	case "compaction", "compaction_summary", "context_compaction":
+		if raw, supplied := m["encrypted_content"]; supplied && raw != nil {
+			if _, ok := raw.(string); !ok {
+				return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: path + ".encrypted_content"}
+			}
+		}
 		enc, _ := m["encrypted_content"].(string)
 		if enc == "" {
-			// A bare marker carries no readable summary; when it has no
-			// payload the summary (if any) follows as its own user message,
-			// so the marker itself is dropped.
 			return nil, nil
 		}
-		g.warnOf(WarnOpaquePayload, path+".encrypted_content")
-		return canon.Message{
-			Role:    canon.RoleUser,
-			Content: []canon.Content{canon.TextContent{Text: opaqueCompactionNote}},
-		}, nil
+		return canon.CompactionMarker{ID: itemID(m["id"]), Kind: canon.CompactionExplicit, Type: typ, State: canon.OpaqueRef{Store: canon.StoreWire, Key: enc}}, nil
 	case "compaction_trigger":
 		return nil, nil
 	case "additional_tools":
@@ -834,6 +977,12 @@ func (g *Ingress) partToContent(part map[string]any, path string) (canon.Content
 			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonMissingField, Field: path + ".text"}
 		}
 		return canon.TextContent{Text: text}, nil
+	case "refusal":
+		text, ok := part["refusal"].(string)
+		if !ok {
+			return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonMissingField, Field: path + ".refusal"}
+		}
+		return canon.TextContent{Text: text}, nil
 	case "input_image", "output_image":
 		imageURL, _ := part["image_url"].(string)
 		detail, _ := part["detail"].(string)
@@ -911,7 +1060,23 @@ func (g *Ingress) reasoningItemFrom(m map[string]any, path string) (canon.Item, 
 		}
 	}
 	if enc, ok := m["encrypted_content"].(string); ok && enc != "" {
-		item.State = canon.OpaqueRef{Store: "wire", Key: enc}
+		if strings.HasPrefix(enc, reasonenv.Prefix) {
+			if _, ok := reasonenv.Decode(enc); !ok {
+				return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: path + ".encrypted_content"}
+			}
+		}
+		if env, ok := reasonenv.Decode(enc); ok {
+			if env.Sig != "" {
+				item.Signature = env.Sig
+			} else {
+				item.Signature = enc
+			}
+			if item.Content == "" || env.Sig != "" {
+				item.Content = env.Txt
+			}
+		} else {
+			item.State = canon.OpaqueRef{Store: canon.StoreWire, Key: enc}
+		}
 	}
 	return item, nil
 }
@@ -964,7 +1129,7 @@ func (g *Ingress) functionCallFrom(m map[string]any, path string) (canon.Item, e
 		Name:   canon.ToolName(name),
 	}
 	if args, ok := m["arguments"].(string); ok && args != "" {
-		var v any
+		var v map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(args), &v); err != nil {
 			return nil, &ParseError{
 				Status: http.StatusBadRequest,
@@ -973,7 +1138,7 @@ func (g *Ingress) functionCallFrom(m map[string]any, path string) (canon.Item, e
 				Err:    err,
 			}
 		}
-		if _, ok := v.(map[string]any); !ok {
+		if v == nil {
 			return nil, &ParseError{
 				Status: http.StatusBadRequest,
 				Reason: ReasonInvalidField,
@@ -1014,6 +1179,13 @@ func (g *Ingress) functionOutputFrom(m map[string]any, path string) (canon.Item,
 				}
 				contents = append(contents, content)
 				continue
+			}
+			typ, _ := part["type"].(string)
+			if typ != "input_text" && typ != "output_text" && typ != "text" && typ != "refusal" {
+				return nil, &ParseError{Status: http.StatusBadRequest, Reason: ReasonInvalidField, Field: fmt.Sprintf("%s.output[%d].type", path, i)}
+			}
+			if typ == "refusal" {
+				part = map[string]any{"text": part["refusal"]}
 			}
 			text, ok := part["text"].(string)
 			if !ok {
@@ -1067,131 +1239,6 @@ func (g *Ingress) unmappedFrom(root map[string]any) {
 	if _, ok := root["include"]; ok {
 		g.warnOf(WarnUnmappedField, "include")
 	}
-}
-
-func (g *Ingress) normalizeArguments(req *canon.Request) {
-	schemas := make(map[canon.ToolName][]byte)
-	for _, t := range req.Tools {
-		if fn, ok := t.(canon.FunctionTool); ok && len(fn.Parameters) > 0 {
-			schemas[fn.Name] = fn.Parameters
-		}
-	}
-	if len(schemas) == 0 {
-		return
-	}
-	for i, item := range req.Input {
-		call, ok := item.(canon.FunctionCall)
-		if !ok || len(call.Arguments) == 0 {
-			continue
-		}
-		schema, ok := schemas[call.Name]
-		if !ok {
-			continue
-		}
-		if normalized, changed := normalizeAgainstSchema(schema, call.Arguments); changed {
-			call.Arguments = normalized
-			req.Input[i] = call
-		}
-	}
-}
-
-func normalizeAgainstSchema(schema []byte, args []byte) ([]byte, bool) {
-	var schemaAny any
-	if err := json.Unmarshal(schema, &schemaAny); err != nil {
-		return args, false
-	}
-	sm, ok := schemaAny.(map[string]any)
-	if !ok {
-		return args, false
-	}
-	var v any
-	if err := json.Unmarshal(args, &v); err != nil {
-		return args, false
-	}
-	fixed, changed := normalizeValue(sm, v)
-	if !changed {
-		return args, false
-	}
-	out, err := json.Marshal(fixed)
-	if err != nil {
-		return args, false
-	}
-	return out, true
-}
-
-func normalizeValue(schema map[string]any, v any) (any, bool) {
-	switch t := schema["type"].(type) {
-	case string:
-		return normalizeByType(t, schema, v)
-	case []any:
-		for _, tv := range t {
-			if s, ok := tv.(string); ok {
-				if fixed, changed := normalizeByType(s, schema, v); changed {
-					return fixed, true
-				}
-			}
-		}
-		return v, false
-	default:
-		return v, false
-	}
-}
-
-func normalizeByType(t string, schema map[string]any, v any) (any, bool) {
-	switch t {
-	case "integer":
-		if f, ok := v.(float64); ok && f == math.Trunc(f) && !math.IsInf(f, 0) {
-			return int64(f), true
-		}
-		return v, false
-	case "object":
-		return normalizeObject(schema, v)
-	case "array":
-		return normalizeArray(schema, v)
-	default:
-		return v, false
-	}
-}
-
-func normalizeObject(schema map[string]any, v any) (any, bool) {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return v, false
-	}
-	props, _ := schema["properties"].(map[string]any)
-	changed := false
-	for k, pv := range m {
-		ps, ok := props[k].(map[string]any)
-		if !ok {
-			continue
-		}
-		nv, c := normalizeValue(ps, pv)
-		if c {
-			m[k] = nv
-			changed = true
-		}
-	}
-	return m, changed
-}
-
-func normalizeArray(schema map[string]any, v any) (any, bool) {
-	arr, ok := v.([]any)
-	if !ok {
-		return v, false
-	}
-	items, ok := schema["items"].(map[string]any)
-	if !ok {
-		return v, false
-	}
-	changed := false
-	for i, ev := range arr {
-		nv, c := normalizeValue(items, ev)
-		if c {
-			arr[i] = nv
-			changed = true
-		}
-	}
-	return arr, changed
 }
 
 func factsFrom(hr *http.Request) (execution.Facts, error) {

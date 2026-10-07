@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
 )
 
 type envelope struct {
@@ -83,11 +84,13 @@ type geminiFunctionCallingConfig struct {
 }
 
 type geminiGenerationConfig struct {
-	MaxOutputTokens int             `json:"maxOutputTokens,omitempty"`
-	Temperature     *float64        `json:"temperature,omitempty"`
-	TopP            *float64        `json:"topP,omitempty"`
-	StopSequences   []string        `json:"stopSequences,omitempty"`
-	ThinkingConfig  json.RawMessage `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens    int             `json:"maxOutputTokens,omitempty"`
+	Temperature        *float64        `json:"temperature,omitempty"`
+	TopP               *float64        `json:"topP,omitempty"`
+	StopSequences      []string        `json:"stopSequences,omitempty"`
+	ThinkingConfig     json.RawMessage `json:"thinkingConfig,omitempty"`
+	ResponseMIMEType   string          `json:"responseMimeType,omitempty"`
+	ResponseJSONSchema json.RawMessage `json:"responseJsonSchema,omitempty"`
 }
 
 type wireCall struct {
@@ -101,29 +104,58 @@ type envelopeBuilder struct {
 	pendingSig string
 }
 
-func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]byte, error) {
+type ModelSelection struct {
+	Mode    config.ModelMode
+	Catalog ModelCatalog
+}
+
+func BuildEnvelope(req canon.Request, project, requestID, sessionID string, selection ModelSelection) ([]byte, error) {
+	if req.Text.Verbosity != 0 && req.Text.Verbosity != canon.VerbosityDefault {
+		return nil, invalidRequestf("text verbosity is not representable on this wire")
+	}
 	b := &envelopeBuilder{claude: isClaudeModel(string(req.Model))}
-	system, err := b.systemInstruction(req.Instructions)
+	instructions := append([]canon.Content(nil), req.Instructions...)
+	input := make([]canon.Item, 0, len(req.Input))
+	for _, item := range req.Input {
+		if msg, ok := item.(canon.Message); ok && (msg.Role == canon.RoleSystem || msg.Role == canon.RoleDeveloper) {
+			instructions = append(instructions, msg.Content...)
+			continue
+		}
+		input = append(input, item)
+	}
+	system, err := b.systemInstruction(instructions)
 	if err != nil {
 		return nil, err
 	}
-	if err := b.buildContents(req.Input); err != nil {
+	if err := b.buildContents(input); err != nil {
 		return nil, err
 	}
 	tools, toolConfig, err := b.tools(req.Tools, req.ToolChoice)
 	if err != nil {
 		return nil, err
 	}
-	present := presenceSnapshot()
+	if req.Sampling.ParallelToolCalls != nil && !*req.Sampling.ParallelToolCalls && len(tools) > 0 {
+		if _, none := req.ToolChoice.(canon.ToolNone); !none {
+			return nil, invalidRequestf("parallel_tool_calls=false is not representable on this wire")
+		}
+	}
+	present := selection.Catalog.present
 	f := familyForLogical(string(req.Model), present)
 	ef := resolvedEffort(req, f)
-	wire := resolveWireModel(string(req.Model), ef, present)
+	wire := string(req.Model)
+	if selection.Mode != config.ModelModeRaw {
+		wire = resolveWireModel(wire, ef, present)
+	}
+	gc, err := generationConfig(req, f, ef, wire)
+	if err != nil {
+		return nil, err
+	}
 	body := geminiRequest{
 		Contents:          b.contents,
 		SystemInstruction: system,
 		Tools:             tools,
 		ToolConfig:        toolConfig,
-		GenerationConfig:  generationConfig(req, f, ef, wire),
+		GenerationConfig:  gc,
 		SessionID:         sessionID,
 	}
 	if b.claude && req.ToolChoice != nil {
@@ -131,6 +163,8 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]b
 		case canon.ToolNone:
 			body.Tools = nil
 			body.ToolConfig = nil
+		case canon.ToolRequired, canon.ToolNamed:
+			return nil, invalidRequestf("forced tool choice is not representable on the alternate model family")
 		default:
 			body.ToolConfig = &geminiToolConfig{FunctionCallingConfig: geminiFunctionCallingConfig{Mode: "VALIDATED"}}
 		}
@@ -151,7 +185,7 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]b
 }
 
 func (g *geminiGenerationConfig) empty() bool {
-	return g.MaxOutputTokens == 0 && g.Temperature == nil && g.TopP == nil && len(g.StopSequences) == 0 && len(g.ThinkingConfig) == 0
+	return g.MaxOutputTokens == 0 && g.Temperature == nil && g.TopP == nil && len(g.StopSequences) == 0 && len(g.ThinkingConfig) == 0 && g.ResponseMIMEType == "" && len(g.ResponseJSONSchema) == 0
 }
 
 func isClaudeModel(model string) bool {
@@ -184,15 +218,6 @@ func (b *envelopeBuilder) systemInstruction(instructions []canon.Content) (*gemi
 		return nil, nil
 	}
 	return &geminiContent{Parts: []geminiPart{{Text: strings.Join(texts, "\n\n")}}}, nil
-}
-
-func (b *envelopeBuilder) lastModelIndex() int {
-	for i := len(b.contents) - 1; i >= 0; i-- {
-		if b.contents[i].Role == "model" {
-			return i
-		}
-	}
-	return -1
 }
 
 func (b *envelopeBuilder) buildContents(items []canon.Item) error {
@@ -268,21 +293,18 @@ func messageContent(msg canon.Message) (*geminiContent, error) {
 }
 
 func (b *envelopeBuilder) reasoning(item canon.ReasoningItem) error {
-	if item.Content == "" && len(item.Summary) == 0 {
+	// A thought the upstream cannot verify is stripped from the wire anyway;
+	// replaying it would only leave an empty model turn behind.
+	if item.Content == "" || !likelyRealSignature(item.Signature) {
 		return nil
 	}
-	parts := []geminiPart{}
-	if item.Content != "" {
-		parts = append(parts, geminiPart{Text: item.Content, Thought: true})
-	}
-	if likelyRealSignature(item.Signature) {
-		for i := range parts {
-			parts[i].ThoughtSignature = item.Signature
-		}
-		b.pendingSig = item.Signature
-	}
-	if idx := b.lastModelIndex(); idx >= 0 {
-		b.contents[idx].Parts = append(b.contents[idx].Parts, parts...)
+	parts := []geminiPart{{Text: item.Content, Thought: true, ThoughtSignature: item.Signature}}
+	b.pendingSig = item.Signature
+	// Thinking joins the model turn that is still open at the tail. Behind a
+	// user or tool-result turn it starts its own model turn, so an earlier
+	// turn never gains thoughts that belong to a later one.
+	if n := len(b.contents); n > 0 && b.contents[n-1].Role == "model" {
+		b.contents[n-1].Parts = append(b.contents[n-1].Parts, parts...)
 		return nil
 	}
 	b.contents = append(b.contents, geminiContent{Role: "model", Parts: parts})
@@ -428,17 +450,34 @@ func wireToolName(name canon.ToolName) (string, error) {
 
 func (b *envelopeBuilder) tools(tools []canon.Tool, choice canon.ToolChoice) ([]geminiTool, *geminiToolConfig, error) {
 	if len(tools) == 0 {
+		switch choice.(type) {
+		case canon.ToolRequired, canon.ToolNamed:
+			return nil, nil, invalidRequestf("forced tool choice requires declared tools")
+		}
 		return nil, nil, nil
 	}
 	var decls []geminiFunctionDeclaration
 	for _, t := range tools {
 		switch v := t.(type) {
 		case canon.FunctionTool:
-			decls = append(decls, geminiFunctionDeclaration{
-				Name:        string(v.Name),
-				Description: v.Description,
-				Parameters:  sanitizeToolParameters(v.Parameters),
-			})
+			decl := geminiFunctionDeclaration{Name: string(v.Name), Description: v.Description}
+			if b.claude {
+				if err := validateAlternateSchema(v.Parameters); err != nil {
+					return nil, nil, invalidRequestf("tool %q parameters: %v", v.Name, err)
+				}
+				decl.Parameters = sanitizeToolParameters(v.Parameters)
+			} else {
+				parameters := v.Parameters
+				if len(parameters) == 0 {
+					parameters = []byte(rootSchemaFallback)
+				}
+				var schema map[string]json.RawMessage
+				if json.Unmarshal(parameters, &schema) != nil || schema == nil {
+					return nil, nil, invalidRequestf("tool %q parameters must be a JSON schema object", v.Name)
+				}
+				decl.ParametersJSONSchema = parameters
+			}
+			decls = append(decls, decl)
 		default:
 			return nil, nil, invalidRequestf("tool definition %T is not representable on the antigravity wire", t)
 		}
@@ -456,6 +495,16 @@ func (b *envelopeBuilder) tools(tools []canon.Tool, choice canon.ToolChoice) ([]
 		case canon.ToolRequired:
 			config = &geminiToolConfig{FunctionCallingConfig: geminiFunctionCallingConfig{Mode: "ANY"}}
 		case canon.ToolNamed:
+			found := false
+			for _, decl := range decls {
+				if decl.Name == string(v.Name) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, nil, invalidRequestf("named tool choice %q has no matching declaration", v.Name)
+			}
 			config = &geminiToolConfig{FunctionCallingConfig: geminiFunctionCallingConfig{
 				Mode:                 "ANY",
 				AllowedFunctionNames: []string{string(v.Name)},
@@ -467,7 +516,7 @@ func (b *envelopeBuilder) tools(tools []canon.Tool, choice canon.ToolChoice) ([]
 	return []geminiTool{{FunctionDeclarations: decls}}, config, nil
 }
 
-func generationConfig(req canon.Request, f *family, ef effort, wire string) *geminiGenerationConfig {
+func generationConfig(req canon.Request, f *family, ef effort, wire string) (*geminiGenerationConfig, error) {
 	gc := &geminiGenerationConfig{
 		Temperature:   req.Sampling.Temperature,
 		TopP:          req.Sampling.TopP,
@@ -483,10 +532,32 @@ func generationConfig(req canon.Request, f *family, ef effort, wire string) *gem
 	} else {
 		gc.ThinkingConfig = thinkingConfig(f, ef)
 	}
-	if gc.empty() {
-		return nil
+	if format := req.Text.Format; format != nil {
+		switch format.Type {
+		case "text":
+			if !isClaudeModel(wire) {
+				gc.ResponseMIMEType = "text/plain"
+			}
+		case "json_object", "json_schema":
+			if isClaudeModel(wire) || strings.HasPrefix(strings.ToLower(wire), "gpt-oss-") {
+				return nil, invalidRequestf("text format %q is not representable on the alternate model family", format.Type)
+			}
+			gc.ResponseMIMEType = "application/json"
+			if format.Type == "json_schema" {
+				var schema map[string]json.RawMessage
+				if json.Unmarshal(format.Schema, &schema) != nil || schema == nil {
+					return nil, invalidRequestf("output format requires a JSON schema object")
+				}
+				gc.ResponseJSONSchema = format.Schema
+			}
+		default:
+			return nil, invalidRequestf("unsupported text format %q", format.Type)
+		}
 	}
-	return gc
+	if gc.empty() {
+		return nil, nil
+	}
+	return gc, nil
 }
 
 // budgetThinking reports the thinking budget for a budget-family effort: the

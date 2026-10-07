@@ -7,7 +7,7 @@ import (
 )
 
 // Effort-tier variant collapsing
-//  
+//
 // Upstream advertises sibling
 // SKUs like {family}-{effort} / -tiered; prism collapses
 // them into one logical model id with per-effort routing to the wire ids.
@@ -37,19 +37,18 @@ const (
 // "google-level", "budget", or "" for surface-less families (keep reasoning,
 // drop thinking config).
 type family struct {
-	id                         string
-	name                       string
-	members                    []string
-	routing                    map[effort]string
-	retired                    []string
-	defaultMember              string
-	thinking                   string
-	suppressWhenOff            bool
-	requiresEffort             bool
-	preserveAbsentEffortRoutes bool
-	aliases                    []string
-	effortBudgets              map[effort]int
-	efforts                    []effort
+	id              string
+	name            string
+	members         []string
+	routing         map[effort]string
+	retired         []string
+	defaultMember   string
+	thinking        string
+	suppressWhenOff bool
+	requiresEffort  bool
+	aliases         []string
+	effortBudgets   map[effort]int
+	efforts         []effort
 }
 
 // families is the reviewed google-antigravity table
@@ -134,9 +133,8 @@ var families = []*family{
 			effortMedium:  "claude-sonnet-4-5-thinking",
 			effortHigh:    "claude-sonnet-4-5-thinking",
 		},
-		thinking:                   "budget",
-		efforts:                    []effort{effortMinimal, effortLow, effortMedium, effortHigh},
-		preserveAbsentEffortRoutes: true,
+		thinking: "budget",
+		efforts:  []effort{effortMinimal, effortLow, effortMedium, effortHigh},
 	},
 	{
 		id:      "claude-opus-4-5",
@@ -149,9 +147,8 @@ var families = []*family{
 			effortMedium:  "claude-opus-4-5-thinking",
 			effortHigh:    "claude-opus-4-5-thinking",
 		},
-		thinking:                   "budget",
-		efforts:                    []effort{effortMinimal, effortLow, effortMedium, effortHigh},
-		preserveAbsentEffortRoutes: true,
+		thinking: "budget",
+		efforts:  []effort{effortMinimal, effortLow, effortMedium, effortHigh},
 	},
 	{
 		id:      "gemini-2.5-flash",
@@ -164,9 +161,8 @@ var families = []*family{
 			effortMedium:  "gemini-2.5-flash-thinking",
 			effortHigh:    "gemini-2.5-flash-thinking",
 		},
-		thinking:                   "budget",
-		efforts:                    []effort{effortMinimal, effortLow, effortMedium, effortHigh},
-		preserveAbsentEffortRoutes: true,
+		thinking: "budget",
+		efforts:  []effort{effortMinimal, effortLow, effortMedium, effortHigh},
 	},
 }
 
@@ -196,7 +192,7 @@ func wireOutputTokenCap(wire string) int {
 }
 
 // templateFamily is the gemini-{rev}-flash revision template
-//  
+//
 // One concrete family is instantiated per revision discovered.
 type templateFamily struct {
 	family
@@ -303,19 +299,18 @@ func (t *templateFamily) instantiate(rev string) *family {
 	}
 	src := &t.family
 	out := &family{
-		id:                         fill(src.id, rev),
-		name:                       fill(src.name, rev),
-		members:                    make([]string, len(src.members)),
-		routing:                    make(map[effort]string, len(src.routing)),
-		retired:                    nil,
-		defaultMember:              fillIfSet(src.defaultMember, rev),
-		thinking:                   src.thinking,
-		suppressWhenOff:            src.suppressWhenOff,
-		requiresEffort:             src.requiresEffort,
-		preserveAbsentEffortRoutes: src.preserveAbsentEffortRoutes,
-		aliases:                    nil,
-		effortBudgets:              nil,
-		efforts:                    src.efforts,
+		id:              fill(src.id, rev),
+		name:            fill(src.name, rev),
+		members:         make([]string, len(src.members)),
+		routing:         make(map[effort]string, len(src.routing)),
+		retired:         nil,
+		defaultMember:   fillIfSet(src.defaultMember, rev),
+		thinking:        src.thinking,
+		suppressWhenOff: src.suppressWhenOff,
+		requiresEffort:  src.requiresEffort,
+		aliases:         nil,
+		effortBudgets:   nil,
+		efforts:         src.efforts,
 	}
 	for i, m := range src.members {
 		out.members[i] = fill(m, rev)
@@ -611,11 +606,6 @@ func familyForLogical(logical string, present map[string]bool) *family {
 
 // resolveWireModel returns the raw wire id a logical model routes to at the
 // given effort.
-// A routing entry applies iff its target is declared, present (or the effort
-// is not "off" and the family preserves absent effort routes), and not
-// retired — the same survival rule the collapse loop applies. Anything else
-// falls back to the family's default wire id; the envelope clamps requiresEffort
-// efforts before an unset effort ever reaches the default.
 func resolveWireModel(logical string, ef effort, present map[string]bool) string {
 	f := familyForLogical(logical, present)
 	if f == nil {
@@ -623,10 +613,6 @@ func resolveWireModel(logical string, ef effort, present map[string]bool) string
 	}
 	retired := retiredSet(f)
 	if present == nil {
-		rev, ok := templateRevision(logical)
-		if !ok || geminiFlashTemplate.instantiate(rev) == nil || fill(geminiFlashTemplate.id, rev) != logical {
-			return logical
-		}
 		present = make(map[string]bool, len(f.members))
 		for _, member := range f.members {
 			if !retired[member] {
@@ -637,12 +623,8 @@ func resolveWireModel(logical string, ef effort, present map[string]bool) string
 	if len(present) == 0 {
 		return logical
 	}
-	if target, ok := f.routing[ef]; ok {
-		targetPresent := present[target]
-		preserveAbsent := ef != effortOff && f.preserveAbsentEffortRoutes
-		if (targetPresent || preserveAbsent) && !retired[target] {
-			return target
-		}
+	if target, ok := f.routing[ef]; ok && present[target] && !retired[target] {
+		return target
 	}
 	if wire := defaultWireFor(f, present); wire != "" {
 		return wire
@@ -668,14 +650,9 @@ func effortsFor(logical string) []effort {
 	return nil
 }
 
-// rawMembersFor returns the live raw member wire ids for a logical model:
-// non-retired members filtered by the present map when it is non-empty, else
-// all non-retired members. Discovery-populated presence keeps the list
-// faithful to what the account advertises; the table default serves the
-// pre-sync and stale-snapshot cases.
 func rawMembersFor(logical string, present map[string]bool) []string {
 	var f *family
-	if len(present) == 0 {
+	if present == nil {
 		f = familyForLogicalNoPresent(logical)
 	} else {
 		f = familyForLogical(logical, present)
@@ -689,7 +666,7 @@ func rawMembersFor(logical string, present map[string]bool) []string {
 		if retired[m] {
 			continue
 		}
-		if len(present) > 0 && !present[m] && m != f.id {
+		if present != nil && !present[m] {
 			continue
 		}
 		if !containsString(out, m) {

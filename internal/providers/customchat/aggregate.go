@@ -1,6 +1,7 @@
 package customchat
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,13 +15,8 @@ import (
 type aggregateResponse struct {
 	ID      string            `json:"id"`
 	Choices []aggregateChoice `json:"choices"`
-	Usage   *usageJSON        `json:"usage"`
-	Error   *aggregateError   `json:"error"`
-}
-
-type aggregateError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Usage   json.RawMessage   `json:"usage"`
+	Error   json.RawMessage   `json:"error"`
 }
 
 type aggregateChoice struct {
@@ -34,6 +30,7 @@ type aggregateMessage struct {
 	Content          *string             `json:"content"`
 	ReasoningContent string              `json:"reasoning_content"`
 	Reasoning        string              `json:"reasoning"`
+	ReasoningText    string              `json:"reasoning_text"`
 	ToolCalls        []aggregateToolCall `json:"tool_calls"`
 }
 
@@ -41,7 +38,10 @@ func (m aggregateMessage) reasoningText() string {
 	if m.ReasoningContent != "" {
 		return m.ReasoningContent
 	}
-	return m.Reasoning
+	if m.Reasoning != "" {
+		return m.Reasoning
+	}
+	return m.ReasoningText
 }
 
 type aggregateToolCall struct {
@@ -53,36 +53,7 @@ type aggregateToolCall struct {
 	} `json:"function"`
 }
 
-type usageJSON struct {
-	PromptTokens        int64 `json:"prompt_tokens"`
-	CompletionTokens    int64 `json:"completion_tokens"`
-	TotalTokens         int64 `json:"total_tokens"`
-	PromptTokensDetails *struct {
-		CachedTokens int64 `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-	CompletionTokensDetails *struct {
-		ReasoningTokens int64 `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
-}
-
-func (u *usageJSON) canon() canon.Usage {
-	if u == nil {
-		return canon.Usage{}
-	}
-	var out canon.Usage
-	out.InputTokens = u.PromptTokens
-	out.OutputTokens = u.CompletionTokens
-	out.TotalTokens = u.TotalTokens
-	if u.PromptTokensDetails != nil {
-		out.CachedInputTokens = u.PromptTokensDetails.CachedTokens
-	}
-	if u.CompletionTokensDetails != nil {
-		out.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
-	}
-	return out
-}
-
-func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
+func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customTools) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
 	if err != nil {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
@@ -98,7 +69,7 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		}
 		return nil
 	}
-	if payload.Error != nil {
+	if e := bytes.TrimSpace(payload.Error); len(e) > 0 && string(e) != "null" {
 		parsed, ok := openaierr.Parse(raw)
 		if !ok {
 			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customchat: error response carried no error value"))
@@ -112,7 +83,7 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		if cause == "" {
 			cause = "provider error"
 		}
-		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
+		return provider.RunError{Kind: provider.TerminalEmitted, Class: openaierr.ClassForInband(parsed, provider.ClassServer), Accepted: true, Cause: errors.New(cause), Reported: &copied}
 	}
 	if len(payload.Choices) == 0 {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0,
@@ -123,6 +94,25 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 			fmt.Errorf("customchat: upstream response carries %d choices; only one is representable", len(payload.Choices)))
 	}
 	choice := payload.Choices[0]
+	if choice.Index != 0 {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customchat: choice index must be zero"))
+	}
+	usage, err := decodeChatUsage(payload.Usage)
+	if err != nil {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
+	}
+	for i, tc := range choice.Message.ToolCalls {
+		if tc.Type != "" && tc.Type != "function" || tc.Function.Name == "" {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, fmt.Errorf("customchat: malformed upstream tool call %d", i))
+		}
+		if custom.has(tc.Function.Name) {
+			if _, err := unwrapCustomInput(tc.Function.Arguments); err != nil {
+				return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
+			}
+		} else if tc.Function.Arguments != "" && !json.Valid([]byte(tc.Function.Arguments)) {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customchat: malformed upstream function arguments"))
+		}
+	}
 	status, known := finishStatus(choice.FinishReason)
 	if !known {
 		message := fmt.Sprintf("upstream finish reason %q is not representable", choice.FinishReason)
@@ -173,6 +163,23 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		if callID == "" {
 			callID = mintCallID()
 		}
+		if custom.has(tc.Function.Name) {
+			input, _ := unwrapCustomInput(tc.Function.Arguments)
+			call := canon.CustomToolCall{ID: canon.ItemID(callID), CallID: canon.CallID(callID), Name: canon.ToolName(tc.Function.Name)}
+			if err := emit(canon.ItemStarted{Item: call}); err != nil {
+				return err
+			}
+			if input != "" {
+				if err := emit(canon.CustomToolInputDelta{ItemID: call.ID, Text: input}); err != nil {
+					return err
+				}
+			}
+			call.Input = input
+			if err := emit(canon.ItemFinished{Item: call}); err != nil {
+				return err
+			}
+			continue
+		}
 		fc := canon.FunctionCall{
 			ID:     canon.ItemID(callID),
 			CallID: canon.CallID(callID),
@@ -193,5 +200,5 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 			return err
 		}
 	}
-	return emit(canon.TurnFinished{Status: status, Usage: payload.Usage.canon()})
+	return emit(canon.TurnFinished{Status: status, Usage: usage})
 }

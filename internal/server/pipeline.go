@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/egress"
@@ -84,6 +85,7 @@ func (s *messagesSink) Close()                               { s.e.Close() }
 
 type pipeline struct {
 	sink            streamSink
+	buffered        bool
 	tracker         *stream.Tracker
 	mu              sync.Mutex
 	terminalWritten bool
@@ -130,17 +132,58 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 	}
 	start := s.clock.Now()
 	sink := s.newSink(w, proto, req, facts)
-	p := &pipeline{sink: sink, tracker: stream.NewTracker()}
+	defer sink.Close()
+	p := &pipeline{sink: sink, tracker: stream.NewTracker(), buffered: !req.Stream}
 	if err := sink.Begin(); err != nil {
 		return
 	}
 	res := s.router.Turn(r.Context(), req, facts, sink.Lifecycle(), p)
-	if f, failed := res.Terminal.(routing.Failed); failed && !req.Stream && proto != protocolResponses {
-		w.WriteHeader(failureStatus(f.Event.Failure.Reason))
+	if !req.Stream {
+		if res.RetryAfter > 0 {
+			seconds := res.RetryAfter / time.Second
+			if res.RetryAfter%time.Second != 0 {
+				seconds++
+			}
+			w.Header().Set("Retry-After", strconv.FormatInt(int64(seconds), 10))
+		}
+		status := bufferedStatus(proto, res.Terminal)
+		if status == http.StatusOK && proto == protocolMessages {
+			if terminal, ok := res.Terminal.(routing.Finished); ok {
+				if failure, failed := sink.(*messagesSink).e.ResponseFailure(terminal.Event); failed {
+					status = failureStatus(failure.Reason)
+				}
+			}
+		}
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+		}
 	}
 	p.finish(res)
-	sink.Close()
 	s.recordUsage(facts, req, proto, res, start)
+}
+
+func bufferedStatus(proto protocol, terminal routing.Terminal) int {
+	switch t := terminal.(type) {
+	case routing.Failed:
+		return failureStatus(t.Event.Failure.Reason)
+	case routing.Finished:
+		if proto == protocolResponses {
+			return http.StatusOK
+		}
+		if reason, incomplete := t.Event.Status.Reason(); incomplete {
+			switch reason {
+			case canon.IncompleteMaxOutputTokens, canon.IncompleteContentFilter:
+				return http.StatusOK
+			case canon.IncompleteUpstreamStall:
+				return http.StatusGatewayTimeout
+			case canon.IncompleteClientDisconnected:
+				return 499
+			default:
+				return http.StatusBadGateway
+			}
+		}
+	}
+	return http.StatusOK
 }
 
 func failureStatus(r canon.FailureReason) int {
@@ -212,25 +255,40 @@ func (p *pipeline) Emit(ev canon.Event) error {
 	if err := p.tracker.Apply(ev); err != nil {
 		return err
 	}
+	if p.buffered {
+		switch ev.(type) {
+		case canon.TurnFinished, canon.TurnFailed:
+			return nil
+		}
+	}
 	if err := p.sink.Frame(ev); err != nil {
 		return err
+	}
+	switch ev.(type) {
+	case canon.TurnFinished, canon.TurnFailed:
+		p.terminalWritten = true
 	}
 	return nil
 }
 func (p *pipeline) finish(res routing.TurnResult) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.terminalWritten {
-		return
+	if !p.terminalWritten {
+		p.terminalWritten = true
+		switch t := res.Terminal.(type) {
+		case routing.Failed:
+			if err := p.sink.Frame(t.Event); err != nil {
+				log.Printf("server: writing terminal: %v", err)
+			}
+		case routing.Finished:
+			if err := p.sink.Frame(t.Event); err != nil {
+				log.Printf("server: writing terminal: %v", err)
+			}
+		}
 	}
-	p.terminalWritten = true
-	switch t := res.Terminal.(type) {
-	case routing.Failed:
-		_ = p.sink.Frame(t.Event)
-	case routing.Finished:
-		_ = p.sink.Frame(t.Event)
+	if err := p.sink.Flush(); err != nil {
+		log.Printf("server: flushing response: %v", err)
 	}
-	_ = p.sink.Flush()
 }
 func (s *Server) writeParseError(w http.ResponseWriter, proto protocol, err error) {
 	var mbe *http.MaxBytesError

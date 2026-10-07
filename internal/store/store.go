@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/deLiseLINO/prism/internal/account"
 )
@@ -51,7 +54,6 @@ func (s *FileCredentialStore) PutIdempotent(ctx context.Context, p account.Provi
 }
 
 const (
-	staleLockAge = 60 * time.Second
 	lockAttempts = 8
 	lockDelay    = 20 * time.Millisecond
 )
@@ -73,7 +75,115 @@ func (s *FileCredentialStore) blobPath(p account.ProviderID, a account.AccountID
 	return filepath.Join(s.accountDir(p, a), "gen-"+strconv.FormatUint(uint64(g), 10)+".blob")
 }
 
+func (s *FileCredentialStore) customKeyPath(p account.ProviderID, ref string) (string, bool, error) {
+	id := string(p)
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/\\:\x00") || filepath.IsAbs(id) {
+		return "", false, errors.New("store: invalid provider path")
+	}
+	if ref == "" || ref == id+":default" {
+		return s.blobPath(p, account.AccountID(id+":default"), 1), true, nil
+	}
+	revision, err := uuid.Parse(strings.TrimPrefix(ref, "prism-key:"))
+	if !strings.HasPrefix(ref, "prism-key:") || err != nil || ref != "prism-key:"+revision.String() {
+		return "", false, errors.New("store: invalid custom credential reference")
+	}
+	return filepath.Join(s.accountDir(p, account.AccountID(id+":default")), "key-"+revision.String()+".blob"), false, nil
+}
+
+func (s *FileCredentialStore) GetCustomDefaultSecret(ctx context.Context, p account.ProviderID, ref string) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	path, _, err := s.customKeyPath(p, ref)
+	if err != nil {
+		return nil, false, err
+	}
+	blob, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	return blob, err == nil, err
+}
+
+func (s *FileCredentialStore) CustomDefaultGeneration(ctx context.Context, p account.ProviderID, ref string) (account.CredentialGeneration, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	path, legacy, err := s.customKeyPath(p, ref)
+	if err != nil {
+		return 0, err
+	}
+	if legacy {
+		return 1, nil
+	}
+	raw, err := os.ReadFile(strings.TrimSuffix(path, ".blob") + ".generation")
+	if os.IsNotExist(err) {
+		return 1, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	gen, err := strconv.ParseUint(string(raw), 10, 64)
+	if err != nil || gen == 0 {
+		return 0, errors.New("store: invalid custom credential generation")
+	}
+	return account.CredentialGeneration(gen), nil
+}
+
+func (s *FileCredentialStore) StageCustomDefaultSecret(ctx context.Context, p account.ProviderID, currentRef string, secret []byte) (string, error) {
+	previous, exists, err := s.GetCustomDefaultSecret(ctx, p, currentRef)
+	if err != nil {
+		return "", err
+	}
+	if exists && bytes.Equal(previous, secret) {
+		if currentRef == "" {
+			currentRef = string(p) + ":default"
+		}
+		return currentRef, nil
+	}
+	gen, err := s.CustomDefaultGeneration(ctx, p, currentRef)
+	if err != nil {
+		return "", err
+	}
+	if gen == ^account.CredentialGeneration(0) {
+		return "", errors.New("store: credential generation exhausted")
+	}
+	dir := s.accountDir(p, account.AccountID(string(p)+":default"))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := writeTemp(dir, secret)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp)
+	revision := uuid.NewString()
+	if err := os.Link(tmp, filepath.Join(dir, "key-"+revision+".blob")); err != nil {
+		return "", err
+	}
+	genTmp, err := writeTemp(dir, []byte(strconv.FormatUint(uint64(gen+1), 10)))
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(genTmp)
+	if err := os.Link(genTmp, filepath.Join(dir, "key-"+revision+".generation")); err != nil {
+		return "", err
+	}
+	for path := dir; ; path = filepath.Dir(path) {
+		if err := syncDir(path); err != nil {
+			return "", err
+		}
+		if filepath.Dir(path) == path {
+			break
+		}
+	}
+	return "prism-key:" + revision, nil
+}
+
 func (s *FileCredentialStore) Put(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration, blob []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if p == "" || a == "" {
 		return fmt.Errorf("store: empty key: provider %q account %q", p, a)
 	}
@@ -91,8 +201,11 @@ func (s *FileCredentialStore) Put(ctx context.Context, p account.ProviderID, a a
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, final); err != nil {
-		os.Remove(tmp)
+	defer os.Remove(tmp)
+	if err := os.Link(tmp, final); err != nil {
+		if os.IsExist(err) {
+			return ErrCredentialExists
+		}
 		return err
 	}
 	return syncDir(dir)
@@ -168,8 +281,7 @@ func syncDir(dir string) error {
 }
 
 type RefreshLock struct {
-	path string
-	f    *os.File
+	f *os.File
 }
 
 func (s *FileCredentialStore) lockPath(fingerprint []byte) string {
@@ -178,6 +290,9 @@ func (s *FileCredentialStore) lockPath(fingerprint []byte) string {
 }
 
 func (s *FileCredentialStore) AcquireRefreshLock(ctx context.Context, fingerprint []byte) (*RefreshLock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	path := s.lockPath(fingerprint)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -193,21 +308,13 @@ func (s *FileCredentialStore) AcquireRefreshLock(ctx context.Context, fingerprin
 				f.Close()
 				return nil, err
 			}
-			return &RefreshLock{path: path, f: f}, nil
+			return &RefreshLock{f: f}, nil
 		}
 		if err != nil && !wouldBlock(err) {
 			f.Close()
 			return nil, err
 		}
-		held := err != nil
 		f.Close()
-		if held {
-			if stale, statErr := isStale(path, s.now()); statErr == nil && stale {
-				if rmErr := os.Remove(path); rmErr == nil || os.IsNotExist(rmErr) {
-					continue
-				}
-			}
-		}
 		if attempt+1 >= lockAttempts {
 			return nil, ErrLockUnavailable
 		}
@@ -224,18 +331,7 @@ func (l *RefreshLock) Release() error {
 	if cerr := l.f.Close(); err == nil {
 		err = cerr
 	}
-	if rerr := os.Remove(l.path); rerr != nil && !os.IsNotExist(rerr) && err == nil {
-		err = rerr
-	}
 	return err
-}
-
-func isStale(path string, now time.Time) (bool, error) {
-	st, err := os.Stat(path)
-	if err != nil {
-		return false, err
-	}
-	return now.Sub(st.ModTime()) > staleLockAge, nil
 }
 
 func stampLock(f *os.File, now time.Time) error {

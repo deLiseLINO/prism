@@ -76,13 +76,14 @@ func (Ingress) Parse(_ context.Context, hr *http.Request) (canon.Request, execut
 	if b.Model == "" {
 		return canon.Request{}, execution.Facts{}, missing("model")
 	}
-	if !validModelSlug(b.Model) {
-		return canon.Request{}, execution.Facts{}, invalid("model", fmt.Errorf("model %q is not <provider>/<model>", b.Model))
-	}
 	if len(b.Messages) == 0 {
 		return canon.Request{}, execution.Facts{}, missing("messages")
 	}
 	items, err := itemsFrom(b.Messages)
+	if err != nil {
+		return canon.Request{}, execution.Facts{}, err
+	}
+	sampling, err := samplingFrom(b)
 	if err != nil {
 		return canon.Request{}, execution.Facts{}, err
 	}
@@ -91,14 +92,58 @@ func (Ingress) Parse(_ context.Context, hr *http.Request) (canon.Request, execut
 		Stream:          b.Stream,
 		Input:           items,
 		MaxOutputTokens: maxTokensFrom(b),
-		Sampling:        samplingFrom(b),
+		Sampling:        sampling,
 		Reasoning:       reasoningFrom(b.ReasoningEffort),
+	}
+	switch b.Verbosity {
+	case "low":
+		req.Text.Verbosity = canon.VerbosityLow
+	case "medium":
+		req.Text.Verbosity = canon.VerbosityMedium
+	case "high":
+		req.Text.Verbosity = canon.VerbosityHigh
+	case "":
+	default:
+		return canon.Request{}, execution.Facts{}, invalid("verbosity", fmt.Errorf("unsupported verbosity %q", b.Verbosity))
+	}
+	switch b.ServiceTier {
+	case "default":
+		req.Sampling.ServiceTier = canon.TierDefault
+	case "flex":
+		req.Sampling.ServiceTier = canon.TierFlex
+	case "priority":
+		req.Sampling.ServiceTier = canon.TierPriority
+	}
+	if req.Text.Format, err = responseFormatFrom(b.ResponseFormat); err != nil {
+		return canon.Request{}, execution.Facts{}, err
 	}
 	if req.Tools, err = toolsFrom(b.Tools); err != nil {
 		return canon.Request{}, execution.Facts{}, err
 	}
 	if req.ToolChoice, err = toolChoiceFrom(b.ToolChoice); err != nil {
 		return canon.Request{}, execution.Facts{}, err
+	}
+	if allowed, ok := req.ToolChoice.(canon.ToolAllowed); ok {
+		selected := make([]canon.Tool, 0, len(allowed.Tools))
+		for _, name := range allowed.Tools {
+			found := false
+			for _, tool := range req.Tools {
+				if tool := tool.(canon.FunctionTool); tool.Name == name {
+					selected = append(selected, tool)
+					found = true
+					break
+				}
+			}
+			if !found {
+				return canon.Request{}, execution.Facts{}, invalid("tool_choice", fmt.Errorf("allowed tool %q is not declared", name))
+			}
+		}
+		req.Tools = selected
+		if allowed.Mode == canon.AllowedRequired {
+			req.ToolChoice = canon.ToolRequired{}
+		} else {
+			req.ToolChoice = canon.ToolAuto{}
+		}
 	}
 	return req, facts, nil
 }
@@ -121,11 +166,6 @@ func factsFrom(hr *http.Request) (execution.Facts, error) {
 		return execution.Facts{}, invalid("header", err)
 	}
 	return execution.Facts{Client: execution.ClientOMP, Forward: forward}, nil
-}
-
-func validModelSlug(model string) bool {
-	provider, rest, ok := strings.Cut(model, "/")
-	return ok && provider != "" && rest != ""
 }
 
 func maxTokensFrom(b body) int {
@@ -176,19 +216,88 @@ func reasoningFrom(effort *string) canon.ReasoningConfig {
 	return canon.ReasoningConfig{}
 }
 
-func samplingFrom(b body) canon.Sampling {
-	s := canon.Sampling{
+func samplingFrom(b body) (canon.Sampling, error) {
+	stop, err := stopFrom(b.Stop)
+	if err != nil {
+		return canon.Sampling{}, err
+	}
+	return canon.Sampling{
 		Temperature:       b.Temperature,
 		TopP:              b.TopP,
-		Stop:              b.Stop,
+		Stop:              stop,
 		ParallelToolCalls: b.ParallelToolCalls,
 		PresencePenalty:   b.PresencePenalty,
 		FrequencyPenalty:  b.FrequencyPenalty,
+	}, nil
+}
+
+// stopFrom accepts both shapes the wire allows: one string or a list.
+func stopFrom(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
 	}
-	if len(s.Stop) == 0 {
-		s.Stop = nil
+	var one string
+	if err := json.Unmarshal(raw, &one); err == nil {
+		if one == "" {
+			return nil, nil
+		}
+		return []string{one}, nil
 	}
-	return s
+	var many []string
+	if err := json.Unmarshal(raw, &many); err != nil {
+		return nil, invalid("stop", fmt.Errorf("stop must be a string or an array of strings"))
+	}
+	kept := many[:0:0]
+	for _, m := range many {
+		if m != "" {
+			kept = append(kept, m)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	return kept, nil
+}
+
+func responseFormatFrom(raw json.RawMessage) (*canon.TextFormat, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var rf struct {
+		Type       string `json:"type"`
+		JSONSchema *struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			Schema      json.RawMessage `json:"schema"`
+			Strict      *bool           `json:"strict"`
+		} `json:"json_schema"`
+	}
+	if err := json.Unmarshal(raw, &rf); err != nil {
+		return nil, invalid("response_format", err)
+	}
+	switch rf.Type {
+	case "text", "json_object":
+		return &canon.TextFormat{Type: rf.Type}, nil
+	case "json_schema":
+		if rf.JSONSchema == nil {
+			return nil, missing("response_format.json_schema")
+		}
+		if rf.JSONSchema.Name == "" {
+			return nil, missing("response_format.json_schema.name")
+		}
+		var schema map[string]json.RawMessage
+		if json.Unmarshal(rf.JSONSchema.Schema, &schema) != nil || schema == nil {
+			return nil, invalid("response_format.json_schema.schema", fmt.Errorf("schema must be an object"))
+		}
+		return &canon.TextFormat{
+			Type:        "json_schema",
+			Name:        rf.JSONSchema.Name,
+			Description: rf.JSONSchema.Description,
+			Schema:      rf.JSONSchema.Schema,
+			Strict:      rf.JSONSchema.Strict,
+		}, nil
+	}
+	return nil, invalid("response_format.type", fmt.Errorf("unsupported response_format type %q", rf.Type))
 }
 
 func itemsFrom(msgs []message) ([]canon.Item, error) {
@@ -263,6 +372,7 @@ func functionCallFrom(msgIdx, callIdx int, tc toolCall) (canon.FunctionCall, err
 type contentPart struct {
 	Type     string       `json:"type"`
 	Text     string       `json:"text"`
+	Refusal  string       `json:"refusal"`
 	ImageURL *imageURLRef `json:"image_url"`
 }
 
@@ -289,6 +399,8 @@ func contentFrom(msgIdx int, raw json.RawMessage) ([]canon.Content, error) {
 		switch p.Type {
 		case "text":
 			out = append(out, canon.TextContent{Text: p.Text})
+		case "refusal":
+			out = append(out, canon.TextContent{Text: p.Refusal})
 		case "image_url":
 			if p.ImageURL == nil {
 				return nil, missing(field + ".image_url")
@@ -382,6 +494,34 @@ func toolChoiceFrom(raw json.RawMessage) (canon.ToolChoice, error) {
 			return nil, invalid("tool_choice", fmt.Errorf("unsupported tool_choice %q", mode))
 		}
 	}
+	var allowed struct {
+		Type    string `json:"type"`
+		Allowed struct {
+			Mode  string `json:"mode"`
+			Tools []struct {
+				Type     string `json:"type"`
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		} `json:"allowed_tools"`
+	}
+	if json.Unmarshal(raw, &allowed) == nil && allowed.Type == "allowed_tools" {
+		if len(allowed.Allowed.Tools) == 0 || allowed.Allowed.Mode != "auto" && allowed.Allowed.Mode != "required" {
+			return nil, invalid("tool_choice.allowed_tools", fmt.Errorf("nonempty tools and auto or required mode are required"))
+		}
+		choice := canon.ToolAllowed{Mode: canon.AllowedAuto}
+		if allowed.Allowed.Mode == "required" {
+			choice.Mode = canon.AllowedRequired
+		}
+		for _, tool := range allowed.Allowed.Tools {
+			if tool.Type != "function" || tool.Function.Name == "" {
+				return nil, invalid("tool_choice.allowed_tools.tools", fmt.Errorf("function name is required"))
+			}
+			choice.Tools = append(choice.Tools, canon.ToolName(tool.Function.Name))
+		}
+		return choice, nil
+	}
 	var named struct {
 		Type     string `json:"type"`
 		Function struct {
@@ -405,13 +545,16 @@ type body struct {
 	MaxCompletionTokens json.RawMessage `json:"max_completion_tokens"`
 	Temperature         *float64        `json:"temperature"`
 	TopP                *float64        `json:"top_p"`
-	Stop                []string        `json:"stop"`
+	Stop                json.RawMessage `json:"stop"`
+	ResponseFormat      json.RawMessage `json:"response_format"`
 	PresencePenalty     *float64        `json:"presence_penalty"`
 	FrequencyPenalty    *float64        `json:"frequency_penalty"`
 	ParallelToolCalls   *bool           `json:"parallel_tool_calls"`
 	ReasoningEffort     *string         `json:"reasoning_effort"`
 	Tools               []tool          `json:"tools"`
 	ToolChoice          json.RawMessage `json:"tool_choice"`
+	Verbosity           string          `json:"verbosity"`
+	ServiceTier         string          `json:"service_tier"`
 }
 
 type message struct {

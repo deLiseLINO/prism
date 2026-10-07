@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 const ProviderID = "codex"
@@ -25,7 +26,7 @@ const (
 	ContentTypeJSON         = "application/json"
 )
 
-const reasoningStoreNative = "codex"
+const reasoningStoreNative = canon.StoreWire
 
 var forwardHeaders = []string{
 	"authorization",
@@ -50,8 +51,15 @@ var forwardHeaders = []string{
 type Credential struct {
 	AccessToken      string
 	ChatGPTAccountID string
+	Generation       account.CredentialGeneration
 }
 
 type CredentialSource interface {
 	Credential(ctx context.Context, lease account.Lease) (Credential, error)
+}
+
+// CredentialRenewer is an optional CredentialSource capability: it replaces
+// an access token the upstream rejected even though it had not expired.
+type CredentialRenewer interface {
+	RefreshRejected(ctx context.Context, lease account.Lease, rejected string) (Credential, error)
 }

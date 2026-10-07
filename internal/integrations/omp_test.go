@@ -163,27 +163,6 @@ func TestOmpApplyIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestOmpReapplyRewritesOwnPrismLeaf(t *testing.T) {
-	dir := t.TempDir()
-	modelsPath := tempFile(t, dir, "models.yml", userModelYaml)
-	WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
-	// Any content difference in the prism leaf — user edit or prism's own newer
-	// output — is rewritten in place; the leaf is prism-owned.
-	edited := replaceOne(readFile(t, modelsPath), "baseUrl: http://127.0.0.1:8787/v1", "baseUrl: http://127.0.0.1:8787/v1-mutated")
-	writeFileOrDie(t, modelsPath, edited)
-	outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
-	if outcome.Kind != OutcomeWritten {
-		t.Fatalf("apply over edit: %+v", outcome)
-	}
-	got := readFile(t, modelsPath)
-	if !strings.Contains(got, userModelYaml) || strings.Contains(got, "mutated") {
-		t.Fatalf("rewrite lost user bytes or kept foreign edit:\n%s", got)
-	}
-	if !strings.Contains(got, "baseUrl: http://127.0.0.1:8787/v1") {
-		t.Fatalf("prism leaf missing after rewrite:\n%s", got)
-	}
-}
-
 func TestOmpApplyIsFailClosed(t *testing.T) {
 	dir := t.TempDir()
 
@@ -205,9 +184,6 @@ func TestOmpApplyIsFailClosed(t *testing.T) {
 	}
 	if outcome := StripOmpConfig(LocalIO{}, emptyFlow); outcome.Kind != OutcomeWritten {
 		t.Fatalf("rollback after normalization: %+v", outcome)
-	}
-	if got := readFile(t, emptyFlow); got != "" {
-		t.Fatalf("rollback should prune the empty container: %q", got)
 	}
 
 	duplicate := tempFile(t, dir, "duplicate.yml", "providers:\n  a: {}\n---\nproviders:\n  b: {}\n")

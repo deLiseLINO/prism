@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/deLiseLINO/prism/internal/account"
@@ -139,7 +140,7 @@ func (s *Server) handleCountTokens(w http.ResponseWriter, r *http.Request) {
 		}})
 		return
 	}
-	if _, ok := s.planner.Plan(counted.model); !ok {
+	if plan, ok := s.planner.Plan(counted.model); !ok || len(plan.Targets) == 0 {
 		writeJSON(w, http.StatusNotFound, messagesErrorEnvelope{Type: "error", Error: messagesErrorBody{
 			Type:    "not_found_error",
 			Message: fmt.Sprintf("no route for model %q", counted.model),
@@ -365,127 +366,175 @@ func (s *Server) handleCompact(w http.ResponseWriter, r *http.Request) {
 		}})
 		return
 	}
-	target := plan.Targets[0]
-	if runner, found := s.registry.Lookup(target.Provider); found {
-		if comp, is := runner.(provider.Compactor); is {
-			s.compactViaProvider(w, r, comp, target, facts, req)
-			return
-		}
-	}
-	s.compactViaTurn(w, r, target, facts, req)
-}
-
-func (s *Server) compactViaProvider(w http.ResponseWriter, r *http.Request, comp provider.Compactor, target provider.Target, facts execution.Facts, req canon.Request) {
-	lease, err := s.pool.Acquire(r.Context(), account.AcquireRequest{
-		Provider:   target.Provider,
-		Model:      target.Model,
-		QuotaGroup: s.group,
-		Session:    facts.Session,
-		Thread:     facts.Thread,
-		Policy:     target.Policy,
-	})
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorEnvelope{Error: errorObject{
-			Code:    "pool_exhausted",
-			Message: err.Error(),
-		}})
-		return
-	}
-	result, err := comp.Compact(r.Context(), provider.CompactRequest{
-		Target:       target,
-		Lease:        lease,
-		Facts:        facts,
-		Instructions: req.Instructions,
-		Input:        req.Input,
-	})
-	if err != nil {
-		_ = s.pool.Record(r.Context(), lease, account.RequestRejected{})
-		writeJSON(w, http.StatusBadGateway, errorEnvelope{Error: errorObject{
-			Code:    "compact_failed",
-			Message: err.Error(),
-		}})
-		return
-	}
-	_ = s.pool.Record(r.Context(), lease, account.TurnSucceeded{Usage: result.Usage})
-	writeCompact(w, http.StatusOK, req.Input, result)
-}
-
-// compactViaTurn produces a real summary for providers without a Compactor:
-// a tool-free model turn dispatched through the standard run machinery with
-// the compaction prompt as the final user message, never fabricated history.
-func (s *Server) compactViaTurn(w http.ResponseWriter, r *http.Request, target provider.Target, facts execution.Facts, req canon.Request) {
-	summary, err := s.compactSummaryTurn(r.Context(), target, facts, req)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, errorEnvelope{Error: errorObject{
-			Code:    "compact_failed",
-			Message: err.Error(),
-		}})
-		return
-	}
-	writeCompact(w, http.StatusOK, req.Input, provider.CompactResult{Summary: summary})
-}
-
-func (s *Server) compactSummaryTurn(ctx context.Context, target provider.Target, facts execution.Facts, req canon.Request) (canon.Message, error) {
+	facts.RequestID = execution.RequestID(newRequestID())
+	start := s.clock.Now()
+	sink := &summarySink{}
 	turnReq := req
 	turnReq.Stream = false
 	turnReq.Tools = nil
 	turnReq.ToolChoice = nil
 	turnReq.Text = canon.TextOutput{}
 	turnReq.Input = compactionTurnInput(req.Input)
-	sink := &summarySink{}
-	res := s.router.Turn(ctx, turnReq, facts, notStartedLifecycle{}, sink)
+	router := routing.NewRouter(s.pool, operationRunners{registry: s.registry, input: req.Input, output: &sink.output}, s.planner, s.group, s.rlog)
+	res := router.Turn(r.Context(), turnReq, facts, notStartedLifecycle{}, sink)
+	s.recordUsage(facts, req, protocolResponses, res, start)
 	if failed, ok := res.Terminal.(routing.Failed); ok {
-		return canon.Message{}, fmt.Errorf("provider %q compaction turn failed: %s", target.Provider, failed.Event.Failure.Message)
+		if res.RetryAfter > 0 {
+			seconds := int64(res.RetryAfter / time.Second)
+			if res.RetryAfter%time.Second != 0 {
+				seconds++
+			}
+			w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+		}
+		writeJSON(w, failureStatus(failed.Event.Failure.Reason), errorEnvelope{Error: errorObject{Code: "compact_failed", Message: failed.Event.Failure.Message}})
+		return
 	}
 	finished, ok := res.Terminal.(routing.Finished)
 	if !ok || finished.Event.Status.Kind() != canon.StatusCompleted {
-		return canon.Message{}, fmt.Errorf("provider %q compaction turn did not complete", target.Provider)
+		writeJSON(w, http.StatusBadGateway, errorEnvelope{Error: errorObject{Code: "compact_failed", Message: "compaction turn did not complete"}})
+		return
 	}
-	text := sink.assistantText()
-	if strings.TrimSpace(text) == "" {
-		return canon.Message{}, fmt.Errorf("provider %q compaction turn produced no summary text", target.Provider)
+	writeCompact(w, http.StatusOK, req.Input, provider.CompactResult{Summary: canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: sink.assistantText()}}}, Output: sink.output, Usage: finished.Event.Usage})
+}
+
+type operationRunners struct {
+	registry *provider.Registry
+	input    []canon.Item
+	output   *[]json.RawMessage
+}
+
+func (r operationRunners) Lookup(id account.ProviderID) (provider.Runner, bool) {
+	runner, ok := r.registry.Lookup(id)
+	if !ok {
+		return nil, false
 	}
-	return canon.Message{
-		Role:    canon.RoleUser,
-		Content: []canon.Content{canon.TextContent{Text: text}},
-	}, nil
+	return compactionRunner{inner: runner, input: r.input, output: r.output}, true
+}
+
+type compactionRunner struct {
+	inner  provider.Runner
+	input  []canon.Item
+	output *[]json.RawMessage
+}
+
+func (r compactionRunner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
+	attempt := &summarySink{progress: req.Progress}
+	var err error
+	var output []json.RawMessage
+	if comp, ok := r.inner.(provider.Compactor); ok {
+		input := r.input
+		if !req.Target.ImageInput {
+			input = withoutImages(input)
+		}
+		result, compactErr := comp.Compact(ctx, provider.CompactRequest{Target: req.Target, Lease: req.Lease, Facts: req.Facts, Instructions: req.Request.Instructions, Input: input, AttemptObserver: req.AttemptObserver, CredentialObserver: req.CredentialObserver})
+		err = compactErr
+		if err == nil {
+			output = result.Output
+			if len(output) == 0 {
+				if emitErr := attempt.Emit(canon.ItemFinished{Item: canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: summaryText(result.Summary)}}}}); emitErr != nil {
+					return emitErr
+				}
+			}
+			if emitErr := attempt.Emit(canon.TurnFinished{Status: canon.Completed(), Usage: result.Usage}); emitErr != nil {
+				return emitErr
+			}
+		}
+	} else {
+		err = r.inner.Run(ctx, req, attempt)
+	}
+	if failed, ok := attempt.terminal.(canon.TurnFailed); ok {
+		if emitErr := sink.Emit(failed); emitErr != nil {
+			return emitErr
+		}
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	finished, ok := attempt.terminal.(canon.TurnFinished)
+	if !ok {
+		return nil
+	}
+	if finished.Status.Kind() == canon.StatusCompleted {
+		text := attempt.assistantText()
+		if len(output) == 0 && strings.TrimSpace(text) == "" {
+			failure := canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailServerOverloaded, Message: "compaction turn produced no summary text"}, Usage: finished.Usage}
+			if err := sink.Emit(failure); err != nil {
+				return err
+			}
+			return provider.RunError{Kind: provider.TerminalEmitted, Class: provider.ClassServer, Accepted: true, ReplaySafe: true, Cause: errors.New(failure.Failure.Message)}
+		}
+		if len(output) > 0 {
+			*r.output = output
+		} else if err := sink.Emit(canon.ItemFinished{Item: canon.Message{Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: text}}}}); err != nil {
+			return err
+		}
+	}
+	return sink.Emit(finished)
 }
 
 // compactionTurnInput prepares the summarizer turn's input: images become a
 // text marker (a summary needs no pixels and text-only gateways reject
 // them) and the compaction prompt lands as the final user message.
 func compactionTurnInput(input []canon.Item) []canon.Item {
-	out := make([]canon.Item, 0, len(input)+1)
-	for _, item := range input {
-		m, ok := item.(canon.Message)
-		if !ok {
-			out = append(out, item)
-			continue
-		}
-		content := make([]canon.Content, len(m.Content))
-		for i, c := range m.Content {
-			if _, isImage := c.(canon.ImageContent); isImage {
-				content[i] = canon.TextContent{Text: "[image omitted for compaction]"}
-				continue
-			}
-			content[i] = c
-		}
-		out = append(out, canon.Message{ID: m.ID, Role: m.Role, Content: content})
-	}
-	return append(out, canon.Message{
+	return append(withoutImages(input), canon.Message{
 		Role:    canon.RoleUser,
 		Content: []canon.Content{canon.TextContent{Text: compactPrompt}},
 	})
 }
 
+func withoutImages(input []canon.Item) []canon.Item {
+	strip := func(parts []canon.Content) []canon.Content {
+		content := make([]canon.Content, len(parts))
+		for i, c := range parts {
+			if _, isImage := c.(canon.ImageContent); isImage {
+				content[i] = canon.TextContent{Text: "[image omitted for compaction]"}
+			} else {
+				content[i] = c
+			}
+		}
+		return content
+	}
+	out := make([]canon.Item, len(input))
+	for i, item := range input {
+		switch v := item.(type) {
+		case canon.Message:
+			v.Content = strip(v.Content)
+			out[i] = v
+		case canon.FunctionOutput:
+			v.Output = strip(v.Output)
+			out[i] = v
+		case canon.CustomToolOutput:
+			if v.Content != nil {
+				v.Content = strip(v.Content)
+			}
+			out[i] = v
+		default:
+			out[i] = item
+		}
+	}
+	return out
+}
+
 type summarySink struct {
-	mu    sync.Mutex
-	parts []string
+	mu       sync.Mutex
+	parts    []string
+	terminal canon.Event
+	progress provider.Progress
+	output   []json.RawMessage
 }
 
 func (s *summarySink) Emit(ev canon.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.terminal != nil {
+		return errors.New("compaction: event after terminal")
+	}
+	provider.Mark(s.progress)
+	switch ev.(type) {
+	case canon.TurnFinished, canon.TurnFailed:
+		s.terminal = ev
+	}
 	if finished, ok := ev.(canon.ItemFinished); ok {
 		m, ok := finished.Item.(canon.Message)
 		if !ok || m.Role != canon.RoleAssistant {
@@ -511,6 +560,12 @@ type notStartedLifecycle struct{}
 func (notStartedLifecycle) CommitState() provider.CommitState { return provider.NotStarted }
 
 func writeCompact(w http.ResponseWriter, status int, input []canon.Item, result provider.CompactResult) {
+	if len(result.Output) > 0 {
+		writeJSON(w, status, struct {
+			Output []json.RawMessage `json:"output"`
+		}{Output: result.Output})
+		return
+	}
 	writeJSON(w, status, compactResponse{Output: compactOutputItems(input, summaryText(result.Summary))})
 }
 

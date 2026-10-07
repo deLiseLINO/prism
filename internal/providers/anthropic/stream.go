@@ -9,15 +9,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/usagewire"
 	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
+
+var errTerminalDone = errors.New("anthropic: terminal emitted")
 
 type sseFrame struct {
 	event string
@@ -45,7 +50,10 @@ func scanSSE(body io.Reader, handle func(sseFrame) error) error {
 				if line != "" {
 					applySSELine(line, &event, &data)
 				}
-				return flush()
+				if data.Len() != 0 || event != "" {
+					return errors.New("anthropic: truncated SSE event")
+				}
+				return nil
 			}
 			return err
 		}
@@ -110,19 +118,32 @@ type wireUsage struct {
 func (s *streamState) emit(ev canon.Event) error {
 	return s.sink.Emit(ev)
 }
-func (u *wireUsage) merge(next wireUsage) {
+func (u *wireUsage) merge(next wireUsage) error {
+	merged := *u
 	if next.input != nil {
-		u.input = next.input
+		merged.input = next.input
 	}
 	if next.output != nil {
-		u.output = next.output
+		merged.output = next.output
 	}
 	if next.cacheRead != nil {
-		u.cacheRead = next.cacheRead
+		merged.cacheRead = next.cacheRead
 	}
 	if next.cacheWrE != nil {
-		u.cacheWrE = next.cacheWrE
+		merged.cacheWrE = next.cacheWrE
 	}
+	var total int64
+	for _, count := range []*int64{merged.input, merged.cacheRead, merged.cacheWrE, merged.output} {
+		if count == nil {
+			continue
+		}
+		if *count < 0 || *count > math.MaxInt64-total {
+			return errors.New("token sum exceeds int64")
+		}
+		total += *count
+	}
+	*u = merged
+	return nil
 }
 
 func (u *wireUsage) canonUsage() canon.Usage {
@@ -142,6 +163,7 @@ func (u *wireUsage) canonUsage() canon.Usage {
 	}
 	out.InputTokens += read + write
 	out.CachedInputTokens = read
+	out.CacheWriteInputTokens = write
 	out.TotalTokens = out.InputTokens + out.OutputTokens
 	return out
 }
@@ -155,7 +177,7 @@ func (r *Runner) stream(body io.Reader, sink provider.Sink, custom customTools) 
 		blocks: make(map[string]*openBlock),
 	}
 	err := scanSSE(body, state.handle)
-	if err != nil {
+	if err != nil && !errors.Is(err, errTerminalDone) {
 		var re *provider.RunError
 		if errors.As(err, &re) {
 			return re
@@ -169,10 +191,12 @@ func (r *Runner) stream(body io.Reader, sink provider.Sink, custom customTools) 
 }
 
 func (s *streamState) handle(frame sseFrame) error {
-	payload, err := decodeJSON(frame.data)
-	if err != nil {
-		s.log.Warn("anthropic: dropped unparseable SSE frame", slog.String("error", err.Error()))
+	if len(frame.data) == 0 {
 		return nil
+	}
+	payload, err := decodeStreamJSON(frame.data)
+	if err != nil {
+		return s.protocolFailure(fmt.Errorf("anthropic: malformed SSE JSON: %w", err))
 	}
 	eventType := frame.event
 	if eventType == "" {
@@ -204,37 +228,84 @@ func (s *streamState) messageStart(payload map[string]any) error {
 	if message == nil {
 		return nil
 	}
-	s.usage.merge(usageFromMap(message["usage"]))
+	if err := s.mergeUsage(message["usage"], false); err != nil {
+		return err
+	}
 	if id, _ := message["id"].(string); id != "" {
 		s.msgID = id
 	}
 	return nil
 }
 
-func usageFromMap(value any) wireUsage {
-	m, ok := value.(map[string]any)
-	if !ok {
-		return wireUsage{}
+func decodeStreamJSON(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
 	}
-	return wireUsage{
-		input:     int64Field(m, "input_tokens"),
-		output:    int64Field(m, "output_tokens"),
-		cacheRead: int64Field(m, "cache_read_input_tokens"),
-		cacheWrE:  int64Field(m, "cache_creation_input_tokens"),
+	if payload == nil {
+		return nil, errors.New("expected JSON object")
 	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return nil, errors.New("trailing JSON data")
+	}
+	return payload, nil
 }
 
-func int64Field(m map[string]any, key string) *int64 {
-	if v, ok := m[key].(float64); ok {
-		n := int64(v)
-		return &n
+func (s *streamState) protocolFailure(cause error) error {
+	s.terminal = true
+	if err := s.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: cause.Error()}, Usage: s.usage.canonUsage()}); err != nil {
+		return err
+	}
+	return &provider.RunError{Kind: provider.TerminalEmitted, Class: provider.ClassTransport, Accepted: true, Cause: cause}
+}
+
+func (s *streamState) mergeUsage(value any, delta bool) error {
+	next, err := usageFromMap(value, delta)
+	if err == nil {
+		err = s.usage.merge(next)
+	}
+	if err != nil {
+		return s.protocolFailure(fmt.Errorf("anthropic: invalid upstream usage: %w", err))
 	}
 	return nil
 }
 
+func usageFromMap(value any, delta bool) (wireUsage, error) {
+	if value == nil {
+		return wireUsage{}, nil
+	}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return wireUsage{}, errors.New("usage must be an object or null")
+	}
+	var out wireUsage
+	for _, field := range []struct {
+		key      string
+		count    **int64
+		nullable bool
+	}{
+		{"input_tokens", &out.input, delta}, {"output_tokens", &out.output, false},
+		{"cache_read_input_tokens", &out.cacheRead, true}, {"cache_creation_input_tokens", &out.cacheWrE, true},
+	} {
+		raw, present := m[field.key]
+		if !present || raw == nil && field.nullable {
+			continue
+		}
+		count, err := usagewire.Number(raw)
+		if err != nil {
+			return wireUsage{}, fmt.Errorf("%s: %w", field.key, err)
+		}
+		*field.count = &count
+	}
+	return out, nil
+}
+
 func (s *streamState) blockKey(payload map[string]any) string {
-	if index, ok := payload["index"].(float64); ok {
-		return fmt.Sprintf("%d", int(index))
+	if index, err := usagewire.Number(payload["index"]); err == nil {
+		return strconv.FormatInt(index, 10)
 	}
 	return ""
 }
@@ -251,9 +322,12 @@ func (s *streamState) blockItemID(key string) canon.ItemID {
 func (s *streamState) contentBlockStart(payload map[string]any) error {
 	block, _ := payload["content_block"].(map[string]any)
 	if block == nil {
-		return nil
+		return s.protocolFailure(errors.New("anthropic: content_block_start missing block"))
 	}
 	key := s.blockKey(payload)
+	if key == "" || s.blocks[key] != nil {
+		return s.protocolFailure(errors.New("anthropic: missing or duplicate block index"))
+	}
 	blockType, _ := block["type"].(string)
 	open := &openBlock{kind: blockType}
 	switch blockType {
@@ -299,22 +373,22 @@ func (s *streamState) openBlockFor(payload map[string]any) *openBlock {
 func (s *streamState) contentBlockDelta(payload map[string]any) error {
 	delta, _ := payload["delta"].(map[string]any)
 	if delta == nil {
-		return nil
+		return s.protocolFailure(errors.New("anthropic: content_block_delta missing delta"))
 	}
 	deltaType, _ := delta["type"].(string)
 	open := s.openBlockFor(payload)
 	switch deltaType {
 	case "text_delta":
-		text, _ := delta["text"].(string)
-		if open == nil {
-			return nil
+		text, ok := delta["text"].(string)
+		if !ok || open == nil || open.kind != "text" {
+			return s.protocolFailure(errors.New("anthropic: invalid text delta"))
 		}
 		open.text.WriteString(text)
 		return s.emit(canon.TextDelta{ItemID: open.itemID, Text: text})
 	case "thinking_delta":
-		text, _ := delta["thinking"].(string)
-		if open == nil {
-			return nil
+		text, ok := delta["thinking"].(string)
+		if !ok || open == nil || open.kind != "thinking" {
+			return s.protocolFailure(errors.New("anthropic: invalid thinking delta"))
 		}
 		open.text.WriteString(text)
 		return s.emit(canon.ReasoningDelta{ItemID: open.itemID, Text: text})
@@ -327,9 +401,9 @@ func (s *streamState) contentBlockDelta(payload map[string]any) error {
 		open.signature = signature
 		return nil
 	case "input_json_delta":
-		partial, _ := delta["partial_json"].(string)
-		if open == nil || open.kind != "tool_use" {
-			return nil
+		partial, ok := delta["partial_json"].(string)
+		if !ok || open == nil || open.kind != "tool_use" {
+			return s.protocolFailure(errors.New("anthropic: invalid tool arguments delta"))
 		}
 		open.args.WriteString(partial)
 		if open.custom {
@@ -496,7 +570,9 @@ func (s *streamState) finishCustomCall(open *openBlock) error {
 }
 
 func (s *streamState) messageDelta(payload map[string]any) error {
-	s.usage.merge(usageFromMap(payload["usage"]))
+	if err := s.mergeUsage(payload["usage"], true); err != nil {
+		return err
+	}
 	delta, _ := payload["delta"].(map[string]any)
 	if delta == nil {
 		return nil
@@ -532,7 +608,13 @@ func (s *streamState) messageStop() error {
 		return errors.New("anthropic: duplicate message_stop")
 	}
 	s.terminal = true
-	return s.emit(canon.TurnFinished{Status: s.mapStopReason(s.stopValue), Usage: s.usage.canonUsage()})
+	if len(s.blocks) != 0 {
+		return s.protocolFailure(errors.New("anthropic: message_stop with unfinished content blocks"))
+	}
+	if err := s.emit(canon.TurnFinished{Status: s.mapStopReason(s.stopValue), Usage: s.usage.canonUsage()}); err != nil {
+		return err
+	}
+	return errTerminalDone
 }
 
 func (s *streamState) upstreamErrorEvent(payload map[string]any) error {
@@ -541,15 +623,46 @@ func (s *streamState) upstreamErrorEvent(payload map[string]any) error {
 	if message == "" {
 		message = "anthropic: upstream stream error"
 	}
-	kind := provider.TerminalOmitted
-	class := provider.ClassServer
-	if typ, _ := errObj["type"].(string); typ == "rate_limit_error" {
-		kind = provider.Retryable
-		class = provider.ClassRateLimited
+	typ, _ := errObj["type"].(string)
+	re := &provider.RunError{Kind: provider.TerminalOmitted, Class: streamErrorClass(typ), Cause: errors.New(message)}
+	if re.Class == provider.ClassRateLimited {
+		re.Kind = provider.Retryable
 	} else if typ == "overloaded_error" {
-		kind = provider.Retryable
+		re.Kind = provider.Retryable
 	}
-	return &provider.RunError{Kind: kind, Class: class, Cause: errors.New(message)}
+	if raw, err := json.Marshal(errObj); err == nil && errObj != nil {
+		re.Reported = &canon.ProviderError{Error: raw}
+	}
+	s.terminal = true
+	if err := s.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message, Provider: re.Reported}, Usage: s.usage.canonUsage()}); err != nil {
+		return err
+	}
+	re.Kind, re.Accepted = provider.TerminalEmitted, true
+	return re
+}
+
+// streamErrorClass maps the error type of a mid-stream error event, which has
+// no HTTP status of its own, onto the class the same condition gets from a
+// status code.
+func streamErrorClass(typ string) provider.ErrorClass {
+	switch typ {
+	case "rate_limit_error":
+		return provider.ClassRateLimited
+	case "invalid_request_error":
+		return provider.ClassInvalidRequest
+	case "authentication_error":
+		return provider.ClassUnauthorized
+	case "permission_error":
+		return provider.ClassForbidden
+	case "not_found_error":
+		return provider.ClassNotFound
+	case "request_too_large":
+		return provider.ClassContextLength
+	case "timeout_error":
+		return provider.ClassTimeout
+	default:
+		return provider.ClassServer
+	}
 }
 
 func (r *Runner) CountTokens(ctx context.Context, req provider.CountTokensRequest) (provider.TokenCount, error) {
@@ -587,13 +700,13 @@ func (r *Runner) CountTokens(ctx context.Context, req provider.CountTokensReques
 	if err != nil {
 		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassTransport, Cause: err}
 	}
-	parsed, err := decodeJSON(payload)
+	parsed, err := decodeStreamJSON(payload)
 	if err != nil {
 		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Cause: err}
 	}
-	tokens, ok := parsed["input_tokens"].(float64)
-	if !ok {
-		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Cause: errors.New("anthropic: count_tokens response missing input_tokens")}
+	tokens, err := usagewire.Number(parsed["input_tokens"])
+	if err != nil {
+		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Cause: fmt.Errorf("anthropic: invalid count_tokens input_tokens: %w", err)}
 	}
-	return provider.TokenCount{InputTokens: int64(tokens)}, nil
+	return provider.TokenCount{InputTokens: tokens}, nil
 }

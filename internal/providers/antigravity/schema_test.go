@@ -2,14 +2,9 @@ package antigravity
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
-
-	"github.com/deLiseLINO/prism/internal/canon"
 )
-
-const grokFixturePath = "/tmp/grok-req.json"
 
 func TestSanitizeTypeArrayBecomesScalar(t *testing.T) {
 	cases := []struct {
@@ -157,59 +152,5 @@ func TestSanitizeInvalidJSONFallsBack(t *testing.T) {
 	got := string(sanitizeToolParameters([]byte(`{not json`)))
 	if got != rootSchemaFallback {
 		t.Fatalf("invalid input must fall back: %s", got)
-	}
-}
-
-func TestEnvelopeSanitizesGrokFixtureTools(t *testing.T) {
-	if _, err := os.Stat(grokFixturePath); err != nil {
-		t.Skipf("grok fixture not present: %v", err)
-	}
-	raw, err := os.ReadFile(grokFixturePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var payload struct {
-		Tools []struct {
-			Name       string          `json:"name"`
-			Parameters json.RawMessage `json:"parameters"`
-		} `json:"tools"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if len(payload.Tools) < 2 {
-		t.Fatalf("fixture must carry at least 2 tools, got %d", len(payload.Tools))
-	}
-	tools := make([]canon.Tool, 0, len(payload.Tools))
-	for _, tm := range payload.Tools {
-		tools = append(tools, canon.FunctionTool{Name: canon.ToolName(tm.Name), Parameters: tm.Parameters})
-	}
-	req := baseRequest()
-	req.Tools = tools
-	body, err := BuildEnvelope(req, "p", "r", "-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(body), `"type":[`) {
-		t.Fatalf("envelope must not carry array types to the wire: %s", body[:400])
-	}
-	var envelope struct {
-		Request struct {
-			Tools []struct {
-				Declarations []struct {
-					Parameters json.RawMessage `json:"parameters"`
-				} `json:"functionDeclarations"`
-			} `json:"tools"`
-		} `json:"request"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	total := 0
-	for _, tool := range envelope.Request.Tools {
-		total += len(tool.Declarations)
-	}
-	if total != len(payload.Tools) {
-		t.Fatalf("all declarations must survive: want %d got %d", len(payload.Tools), total)
 	}
 }

@@ -1,5 +1,7 @@
 package integrations
 
+import "path/filepath"
+
 const ompPrismApiKey = "prism-loopback"
 const ompPrismApi = "openai-completions"
 
@@ -40,7 +42,22 @@ func (o *OmpIntegration) paths() (agentDir string, modelsPath string, err error)
 	}
 	modelsPath = o.options.ModelsPath
 	if modelsPath == "" {
-		modelsPath = OmpModelsConfigPath(agentDir, o.io.FileExists)
+		canonical := filepath.Join(agentDir, "models.yml")
+		_, present, readErr := o.io.ReadText(canonical)
+		if readErr != nil {
+			return "", "", readErr
+		}
+		modelsPath = canonical
+		if !present {
+			fallback := filepath.Join(agentDir, "models.yaml")
+			_, exists, readErr := o.io.ReadText(fallback)
+			if readErr != nil {
+				return "", "", readErr
+			}
+			if exists {
+				modelsPath = fallback
+			}
+		}
 	}
 	return agentDir, modelsPath, nil
 }
@@ -73,9 +90,9 @@ func WriteOmpConfig(io FileIO, options OmpOptions) WriteOutcome {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
 	}
 	spec := NewOmpSpec(options.Port, models)
-	outcome, err := ApplyConfigTransform(io, options.ModelsPath, func(current string) ConfigTransform {
+	outcome, err := applyRestoration(io, options.ModelsPath, func(current string) ConfigTransform {
 		return toTransform(UpsertProviderLeaf(current, "prism", spec))
-	}, options.CrashBeforeRename)
+	}, nil, options.CrashBeforeRename)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("omp apply", err)}
 	}
@@ -83,9 +100,9 @@ func WriteOmpConfig(io FileIO, options OmpOptions) WriteOutcome {
 }
 
 func StripOmpConfig(io FileIO, modelsPath string) WriteOutcome {
-	outcome, err := ApplyConfigTransform(io, modelsPath, func(current string) ConfigTransform {
+	outcome, err := rollbackRestoration(io, modelsPath, func(current string) ConfigTransform {
 		return toTransform(RemoveProviderLeaf(current, "prism"))
-	}, false)
+	})
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("omp rollback", err)}
 	}
@@ -93,7 +110,7 @@ func StripOmpConfig(io FileIO, modelsPath string) WriteOutcome {
 }
 
 func RecoverOmpConfig(io FileIO, modelsPath string) bool {
-	return io.RecoverStaged(modelsPath)
+	return recoverConfigStage(io, modelsPath)
 }
 
 func (o *OmpIntegration) Apply() ApplyResult {
@@ -110,7 +127,10 @@ func (o *OmpIntegration) Status() Status {
 		return Status{ID: o.id, Installed: false, Managed: false, TargetPath: nil, Endpoint: nil, Drift: false, Detail: failureReason("omp status", err)}
 	}
 	return ObservedIntegrationStatus(o.io, o.id, modelsPath, []string{agentDir}, func(path string) ManagedRead {
-		content, ok := o.io.ReadTextIfExists(path)
+		content, ok, err := o.io.ReadText(path)
+		if err != nil {
+			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
+		}
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}

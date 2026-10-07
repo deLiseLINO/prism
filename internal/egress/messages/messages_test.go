@@ -136,10 +136,10 @@ func TestEventMapping(t *testing.T) {
 			canon.ItemFinished{Item: canon.ReasoningItem{ID: "r1", Content: "deep", Signature: "sig9"}},
 			canon.ItemStarted{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant}},
 			canon.TextDelta{ItemID: "t1", Text: "hi"},
-			canon.ItemFinished{Item: canon.Message{ID: "t1"}},
+			canon.ItemFinished{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "hi"}}}},
 			canon.ItemStarted{Item: canon.FunctionCall{ID: "f1", CallID: "call_7", Name: "run_tool"}},
 			canon.ToolArgumentsDelta{ItemID: "f1", Bytes: []byte(`{"x":1}`)},
-			canon.ItemFinished{Item: canon.FunctionCall{ID: "f1", CallID: "call_7", Name: "run_tool"}},
+			canon.ItemFinished{Item: canon.FunctionCall{ID: "f1", CallID: "call_7", Name: "run_tool", Arguments: []byte(`{"x":1}`)}},
 			canon.TurnFinished{Status: canon.Completed()},
 		})
 	frames := parseFrames(t, out)
@@ -375,7 +375,7 @@ func TestUsageCarriesValues(t *testing.T) {
 		}})
 	frames := parseFrames(t, out)
 	usage := frames[len(frames)-2].data["usage"].(map[string]any)
-	if usage["input_tokens"].(float64) != 12 || usage["cache_read_input_tokens"].(float64) != 4 || usage["output_tokens"].(float64) != 34 {
+	if usage["input_tokens"].(float64) != 8 || usage["cache_read_input_tokens"].(float64) != 4 || usage["output_tokens"].(float64) != 34 {
 		t.Fatalf("message_delta usage = %v", usage)
 	}
 }
@@ -475,15 +475,15 @@ func TestFrameContractErrors(t *testing.T) {
 			t.Fatalf("reason = %v, want block_mismatch", err.Reason)
 		}
 	})
-	t.Run("custom tool input unsupported", func(t *testing.T) {
+	t.Run("custom tool input requires open call", func(t *testing.T) {
 		var buf bytes.Buffer
 		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
 		err := mustFrameErr(t, eg.Frame(canon.CustomToolInputDelta{ItemID: "c1", Text: "x"}))
-		if err.Reason != ReasonUnsupportedItem {
-			t.Fatalf("reason = %v, want unsupported_item", err.Reason)
+		if err.Reason != ReasonUnknownItem {
+			t.Fatalf("reason = %v, want unknown_item", err.Reason)
 		}
 	})
 	t.Run("unsupported item started", func(t *testing.T) {
@@ -519,21 +519,28 @@ func TestFrameContractErrors(t *testing.T) {
 			t.Fatalf("reason = %v, want no_terminal", err.Reason)
 		}
 	})
-	t.Run("flush with open block", func(t *testing.T) {
+	t.Run("flush closes a block left open by a truncated turn", func(t *testing.T) {
 		var buf bytes.Buffer
 		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
-		if err := eg.Frame(canon.ItemStarted{Item: canon.Message{ID: "t1"}}); err != nil {
-			t.Fatalf("Frame: %v", err)
+		for _, ev := range []canon.Event{
+			canon.ItemStarted{Item: canon.Message{ID: "t1"}},
+			canon.TextDelta{ItemID: "t1", Text: "partial"},
+			canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteUpstreamStall)},
+		} {
+			if err := eg.Frame(ev); err != nil {
+				t.Fatalf("Frame: %v", err)
+			}
 		}
-		if err := eg.Frame(canon.TurnFinished{Status: canon.Completed()}); err != nil {
-			t.Fatalf("Frame: %v", err)
+		if err := eg.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
 		}
-		err := mustFrameErr(t, eg.Flush())
-		if err.Reason != ReasonOpenBlocks {
-			t.Fatalf("reason = %v, want open_blocks", err.Reason)
+		names := frameNames(parseFrames(t, buf.String()))
+		want := []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "error"}
+		if strings.Join(names, ",") != strings.Join(want, ",") {
+			t.Fatalf("frames = %v, want %v", names, want)
 		}
 	})
 	t.Run("frame after terminal", func(t *testing.T) {
@@ -669,5 +676,93 @@ func TestNonStreamingFailedEmitsErrorJSON(t *testing.T) {
 	}
 	if e.Type != "error" || e.Error.Message != "upstream down" {
 		t.Fatalf("error envelope: %+v", e)
+	}
+}
+
+func TestNonStreamingEmptyTurnHasContentArray(t *testing.T) {
+	var buf bytes.Buffer
+	eg := New(&buf, false)
+	if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := eg.Frame(canon.TurnFinished{Status: canon.Completed()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := eg.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var msg struct {
+		Content *[]any `json:"content"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content == nil {
+		t.Fatalf("content must be [] for an empty turn, body %s", buf.String())
+	}
+}
+
+func TestNonStreamingInterruptedTurnReportsError(t *testing.T) {
+	var buf bytes.Buffer
+	eg := New(&buf, false)
+	if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range []canon.Event{
+		canon.ItemStarted{Item: canon.Message{ID: "t1"}},
+		canon.TextDelta{ItemID: "t1", Text: "par"},
+		canon.TextDelta{ItemID: "t1", Text: "tial"},
+		canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteUpstreamStall)},
+	} {
+		if err := eg.Frame(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := eg.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Type != "error" || response.Error.Type != "api_error" || response.Error.Message == "" || len(response.Content) != 0 {
+		t.Fatalf("interrupted turn did not return an error envelope: %s", buf.String())
+	}
+}
+
+func TestFinishOnlyContentIsStreamedAsDeltas(t *testing.T) {
+	out, _ := runStream(t, ResponseHeader{ID: "msg_1", Model: "m"}, []canon.Event{
+		canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1"}},
+		canon.ItemFinished{Item: canon.ReasoningItem{ID: "r1", Content: "deep", Signature: "sig"}},
+		canon.ItemStarted{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant}},
+		canon.ItemFinished{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "whole"}}}},
+		canon.ItemStarted{Item: canon.FunctionCall{ID: "f1", CallID: "c1", Name: "lookup"}},
+		canon.ItemFinished{Item: canon.FunctionCall{ID: "f1", CallID: "c1", Name: "lookup", Arguments: []byte(`{"q":1}`)}},
+		canon.TurnFinished{Status: canon.Completed()},
+	})
+	got := map[string]string{}
+	for _, f := range parseFrames(t, out) {
+		if f.name != "content_block_delta" {
+			continue
+		}
+		d := f.data["delta"].(map[string]any)
+		switch d["type"] {
+		case "thinking_delta":
+			got["thinking"] += d["thinking"].(string)
+		case "text_delta":
+			got["text"] += d["text"].(string)
+		case "input_json_delta":
+			got["json"] += d["partial_json"].(string)
+		}
+	}
+	if got["thinking"] != "deep" || got["text"] != "whole" || got["json"] != `{"q":1}` {
+		t.Fatalf("deltas = %v\n%s", got, out)
 	}
 }

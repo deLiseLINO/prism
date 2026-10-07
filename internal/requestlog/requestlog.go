@@ -11,6 +11,7 @@ import (
 
 const maxAttemptsPerTurn = 32
 const maxErrorBytes = 512
+const MaxNetworkAttemptsPerAttempt = 8
 
 type Status uint8
 
@@ -86,23 +87,39 @@ type Terminal struct {
 	Usage      canon.Usage
 }
 
+type NetworkAttemptInfo struct {
+	StartedAt  time.Time
+	FinishedAt time.Time
+	StatusCode int
+	Outcome    Outcome
+	Error      string
+}
+
 type AttemptInfo struct {
-	Provider  account.ProviderID
-	AccountID account.AccountID
-	Model     canon.ModelID
-	StartedAt time.Time
-	Outcome   Outcome
-	Error     string
+	Provider               account.ProviderID
+	AccountID              account.AccountID
+	CredGen                account.CredentialGeneration
+	Version                account.StateVersion
+	Model                  canon.ModelID
+	StartedAt              time.Time
+	Outcome                Outcome
+	Error                  string
+	NetworkAttempts        []NetworkAttemptInfo
+	NetworkAttemptsDropped int
 }
 
 type Attempt struct {
-	Provider  account.ProviderID
-	AccountID account.AccountID
-	Model     canon.ModelID
-	StartedAt time.Time
-	Duration  time.Duration
-	Outcome   Outcome
-	Error     string
+	Provider               account.ProviderID
+	AccountID              account.AccountID
+	CredGen                account.CredentialGeneration
+	Version                account.StateVersion
+	Model                  canon.ModelID
+	StartedAt              time.Time
+	Duration               time.Duration
+	Outcome                Outcome
+	Error                  string
+	NetworkAttempts        []NetworkAttemptInfo
+	NetworkAttemptsDropped int
 }
 
 type Entry struct {
@@ -172,6 +189,9 @@ func (j *Journal) Snapshot() []Entry {
 		cp := *e
 		if e.Attempts != nil {
 			cp.Attempts = append([]Attempt(nil), e.Attempts...)
+			for k := range cp.Attempts {
+				cp.Attempts[k].NetworkAttempts = append([]NetworkAttemptInfo(nil), e.Attempts[k].NetworkAttempts...)
+			}
 		}
 		out = append(out, cp)
 	}
@@ -220,15 +240,31 @@ func (t *Turn) Attempt(a AttemptInfo) {
 	if len(err) > maxErrorBytes {
 		err = err[:maxErrorBytes]
 	}
+	network := a.NetworkAttempts
+	dropped := a.NetworkAttemptsDropped
+	if len(network) > MaxNetworkAttemptsPerAttempt {
+		dropped += len(network) - MaxNetworkAttemptsPerAttempt
+		network = network[:MaxNetworkAttemptsPerAttempt]
+	}
+	network = append([]NetworkAttemptInfo(nil), network...)
+	for i := range network {
+		if len(network[i].Error) > maxErrorBytes {
+			network[i].Error = network[i].Error[:maxErrorBytes]
+		}
+	}
 	end := t.j.nowTime()
 	e.Attempts = append(e.Attempts, Attempt{
-		Provider:  a.Provider,
-		AccountID: a.AccountID,
-		Model:     a.Model,
-		StartedAt: a.StartedAt,
-		Duration:  end.Sub(a.StartedAt),
-		Outcome:   a.Outcome,
-		Error:     err,
+		Provider:               a.Provider,
+		AccountID:              a.AccountID,
+		CredGen:                a.CredGen,
+		Version:                a.Version,
+		NetworkAttempts:        network,
+		NetworkAttemptsDropped: dropped,
+		Model:                  a.Model,
+		StartedAt:              a.StartedAt,
+		Duration:               end.Sub(a.StartedAt),
+		Outcome:                a.Outcome,
+		Error:                  err,
 	})
 }
 

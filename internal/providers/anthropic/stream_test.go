@@ -12,6 +12,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 type collectingSink struct {
@@ -99,7 +100,7 @@ func TestFullStreamVocabulary(t *testing.T) {
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`{"city":`)},
 		canon.ToolArgumentsDelta{ItemID: "toolu_1", Bytes: []byte(`"Paris"}`)},
 		canon.ItemFinished{Item: canon.FunctionCall{ID: "toolu_1", CallID: "toolu_1", Name: "get_weather", Arguments: []byte(`{"city":"Paris"}`)}},
-		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 115, OutputTokens: 25, CachedInputTokens: 10, TotalTokens: 140}},
+		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 115, OutputTokens: 25, CachedInputTokens: 10, CacheWriteInputTokens: 5, TotalTokens: 140}},
 	}
 	if len(sink.events) != len(want) {
 		t.Fatalf("events = %d, want %d", len(sink.events), len(want))
@@ -264,8 +265,8 @@ func TestUpstreamSSERateLimitRetryable(t *testing.T) {
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %T, want *provider.RunError", err)
 	}
-	if re.Class != provider.ClassRateLimited || re.Kind != provider.Retryable {
-		t.Fatalf("got kind=%d class=%d, want retryable rate limited", re.Kind, re.Class)
+	if re.Class != provider.ClassRateLimited || re.Kind != provider.TerminalEmitted {
+		t.Fatalf("got kind=%d class=%d, want terminal rate limited", re.Kind, re.Class)
 	}
 }
 
@@ -503,5 +504,47 @@ func TestItemIDsAreUniqueAcrossStreams(t *testing.T) {
 		if second[id] {
 			t.Fatalf("message id %q repeated across streams", id)
 		}
+	}
+}
+
+func TestUpstreamSSEErrorEventClassAndReportedError(t *testing.T) {
+	cases := []struct {
+		typ   string
+		class provider.ErrorClass
+	}{
+		{"overloaded_error", provider.ClassServer},
+		{"api_error", provider.ClassServer},
+		{"rate_limit_error", provider.ClassRateLimited},
+		{"invalid_request_error", provider.ClassInvalidRequest},
+		{"authentication_error", provider.ClassUnauthorized},
+		{"permission_error", provider.ClassForbidden},
+		{"not_found_error", provider.ClassNotFound},
+		{"request_too_large", provider.ClassContextLength},
+	}
+	for _, tc := range cases {
+		t.Run(tc.typ, func(t *testing.T) {
+			payload := sse(
+				ssePart("message_start", `{"type":"message_start","message":{}}`),
+				ssePart("error", `{"type":"error","error":{"type":"`+tc.typ+`","message":"upstream says no"}}`),
+			)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(payload))
+			}))
+			defer server.Close()
+			err := New(Options{BaseURL: server.URL}).Run(t.Context(), provider.RunRequest{
+				Request: baseRequest(),
+				Target:  provider.Target{BaseURL: server.URL, APIKeyRef: "k"},
+			}, &collectingSink{})
+			var re *provider.RunError
+			if !errors.As(err, &re) {
+				t.Fatalf("error = %T, want *provider.RunError", err)
+			}
+			if re.Class != tc.class {
+				t.Fatalf("class = %d, want %d", re.Class, tc.class)
+			}
+			if re.Reported == nil || !strings.Contains(string(re.Reported.Error), tc.typ) || openaierr.Text(*re.Reported) != "upstream says no" {
+				t.Fatalf("provider error not carried to the client: %+v", re.Reported)
+			}
+		})
 	}
 }

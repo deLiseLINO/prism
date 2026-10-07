@@ -616,3 +616,41 @@ func TestWrongMethodWebSocketUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestNonStreamRateLimitSetsRetryAfterHeader(t *testing.T) {
+	for _, path := range []string{"/v1/responses", "/v1/chat/completions", "/v1/messages"} {
+		t.Run(path, func(t *testing.T) {
+			runner := &fakeRunner{scripts: []fakeScript{{
+				err: provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7500 * time.Millisecond},
+			}}}
+			h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
+				if err := reg.Register("p1", runner); err != nil {
+					t.Fatal(err)
+				}
+			})
+			body := `{"model":"test-model","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"hi"}],"input":"hi"}`
+			rec := postJSON(t, h, path, body)
+			if rec.Code != http.StatusTooManyRequests {
+				t.Fatalf("status = %d, want 429: %s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Get("Retry-After"); got != "8" {
+				t.Fatalf("Retry-After = %q, want 8 (rounded up)", got)
+			}
+		})
+	}
+}
+
+func TestNonStreamFailureWithoutHintHasNoRetryAfter(t *testing.T) {
+	runner := &fakeRunner{scripts: []fakeScript{{
+		err: provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true},
+	}}}
+	h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"test-model": singlePlan("p1")}, func(reg *provider.Registry) {
+		if err := reg.Register("p1", runner); err != nil {
+			t.Fatal(err)
+		}
+	})
+	rec := postJSON(t, h, "/v1/chat/completions", `{"model":"test-model","stream":false,"messages":[{"role":"user","content":"hi"}]}`)
+	if got := rec.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want none", got)
+	}
+}

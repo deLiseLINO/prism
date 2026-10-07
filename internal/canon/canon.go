@@ -5,6 +5,11 @@ type ItemID string
 type CallID string
 type ToolName string
 
+// StoreWire marks an OpaqueRef whose Key is the client-visible encrypted
+// payload itself (Responses encrypted_content), so it round-trips through the
+// client without a server-side store.
+const StoreWire = "wire"
+
 type OpaqueRef struct {
 	Store string
 	Key   string
@@ -127,9 +132,10 @@ type CustomToolCall struct {
 }
 
 type CustomToolOutput struct {
-	ID     ItemID
-	CallID CallID
-	Output string
+	ID      ItemID
+	CallID  CallID
+	Output  string
+	Content []Content
 }
 
 type LocalShellCall struct {
@@ -163,8 +169,10 @@ type ToolSearchResult struct {
 }
 
 type CompactionMarker struct {
-	ID   ItemID
-	Kind CompactionKind
+	ID    ItemID
+	Kind  CompactionKind
+	Type  string
+	State OpaqueRef
 }
 
 func (Message) item()          {}
@@ -420,11 +428,12 @@ const (
 )
 
 type Usage struct {
-	InputTokens       int64
-	OutputTokens      int64
-	CachedInputTokens int64
-	ReasoningTokens   int64
-	TotalTokens       int64
+	InputTokens           int64
+	OutputTokens          int64
+	CachedInputTokens     int64
+	CacheWriteInputTokens int64
+	ReasoningTokens       int64
+	TotalTokens           int64
 }
 
 func HasImage(req Request) bool {
@@ -447,6 +456,9 @@ func CollectImages(req Request) []ImageContent {
 		}
 		if o, ok := item.(FunctionOutput); ok {
 			appendImages(o.Output)
+		}
+		if o, ok := item.(CustomToolOutput); ok {
+			appendImages(o.Content)
 		}
 	}
 	return images

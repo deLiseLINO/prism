@@ -501,3 +501,37 @@ func TestUpdateQuotaStoresDeepCopy(t *testing.T) {
 		t.Fatalf("update quota ghost: got %v, want ErrNotFound", err)
 	}
 }
+
+func TestPolicyPersistenceFailureLeavesRuntimeUnchanged(t *testing.T) {
+	p := New()
+	p.Register(acct("a", 1, Active, 200, 0))
+	p.SetPolicyWriter(func(Account) error { return errors.New("disk unavailable") })
+	before := p.Snapshot().Accounts[0]
+	if err := p.Pause(context.Background(), before.ID, before.Version); err == nil {
+		t.Fatal("pause ignored persistence failure")
+	}
+	after := p.Snapshot().Accounts[0]
+	if after.State != before.State || after.Version != before.Version || after.CredGen != before.CredGen {
+		t.Fatalf("failed pause mutated account: %+v", after)
+	}
+}
+
+func TestRejectionOfRefreshedGenerationReleasesStaleLease(t *testing.T) {
+	p := New()
+	p.Register(acct("a", 1, Active, 200, 0))
+	ctx := context.Background()
+	old, err := p.Acquire(ctx, pin("old", "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AdvanceGeneration("a", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Record(ctx, old, AuthRejected{}); err != nil {
+		t.Fatal(err)
+	}
+	a := p.Snapshot().Accounts[0]
+	if a.State != Active || a.InFlight != 0 || a.CredGen != 2 {
+		t.Fatalf("stale rejection=%+v", a)
+	}
+}

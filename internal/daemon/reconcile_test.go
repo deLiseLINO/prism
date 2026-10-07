@@ -37,7 +37,7 @@ func testEnv(t *testing.T, doc config.Document) (*daemonEnv, *config.Manager) {
 		pool,
 		newQuotaTable(pool, nil, nil),
 		provider.NewRegistry(),
-		credentialStore{file: store.NewFileCredentialStore(filepath.Join(dir, "credentials"))},
+		credentialStore{file: store.NewFileCredentialStore(filepath.Join(dir, "credentials")), pool: pool, publication: &credentialPublication{cfg: mgr, refs: map[string]string{}}},
 		http.DefaultClient,
 		http.DefaultClient,
 	)
@@ -62,7 +62,7 @@ func TestFetchModelsParsesOpenAIList(t *testing.T) {
 	})
 	defer srv.Close()
 
-	got, err := fetchModels(context.Background(), srv.Client(), srv.URL+"/v1", "secret-key")
+	got, err := fetchModels(context.Background(), srv.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: srv.URL + "/v1"}, "secret-key")
 	if err != nil {
 		t.Fatalf("fetch models: %v", err)
 	}
@@ -79,13 +79,13 @@ func TestFetchModelsFailsCleanly(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if _, err := fetchModels(context.Background(), srv.Client(), srv.URL, ""); err == nil {
+	if _, err := fetchModels(context.Background(), srv.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: srv.URL}, ""); err == nil {
 		t.Fatal("expected error on 500")
 	}
 
 	empty := modelsServer(t, `{"data":[]}`, nil)
 	defer empty.Close()
-	if _, err := fetchModels(context.Background(), empty.Client(), empty.URL, ""); err == nil {
+	if _, err := fetchModels(context.Background(), empty.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: empty.URL}, ""); err == nil {
 		t.Fatal("expected error on empty list")
 	}
 }
@@ -162,7 +162,7 @@ func TestReconcileSetsKeyRefFromStoredCredential(t *testing.T) {
 			"edge": {Wire: config.WireOpenAIResponses, BaseURL: srv.URL + "/v1"},
 		},
 	})
-	if err := env.creds.Put(context.Background(), "edge", []byte("test-key")); err != nil {
+	if err := env.creds.file.Put(context.Background(), "edge", "edge:default", 1, []byte("test-key")); err != nil {
 		t.Fatalf("store credential: %v", err)
 	}
 
@@ -174,6 +174,14 @@ func TestReconcileSetsKeyRefFromStoredCredential(t *testing.T) {
 	}
 	if len(got.Models) != 1 || got.Models[0] != "m1" {
 		t.Fatalf("models not discovered: %v", got.Models)
+	}
+	lease, err := env.pool.Acquire(context.Background(), account.AcquireRequest{Provider: "edge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := env.creds.resolve(context.Background(), provider.Target{Provider: "edge", APIKeyRef: got.APIKeyRef}, lease)
+	if err != nil || string(key) != "test-key" || lease.CredGen != 1 {
+		t.Fatalf("backfilled key not immediately active: %q gen=%d err=%v", key, lease.CredGen, err)
 	}
 }
 

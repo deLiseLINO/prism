@@ -75,18 +75,24 @@ type fakeCreds struct {
 	store map[string][]byte
 }
 
-func (c *fakeCreds) Put(ctx context.Context, id string, secret []byte) error {
-	c.store[id] = secret
-	return nil
+func (c *fakeCreds) Stage(ctx context.Context, id, currentRef string, secret []byte) (string, error) {
+	ref := fmt.Sprintf("%s:revision-%d", id, len(c.store)+1)
+	c.store[ref] = append([]byte(nil), secret...)
+	return ref, nil
 }
+
+func (c *fakeCreds) Committed(ctx context.Context, id string, previous, next config.Provider) {}
 
 func (c *fakeCreds) Delete(ctx context.Context, id string) error {
 	delete(c.store, id)
 	return nil
 }
 
-func (c *fakeCreds) Configured(ctx context.Context, id string) (bool, error) {
-	_, ok := c.store[id]
+func (c *fakeCreds) Configured(ctx context.Context, id, ref string) (bool, error) {
+	if ref == "" {
+		ref = id
+	}
+	_, ok := c.store[ref]
 	return ok, nil
 }
 

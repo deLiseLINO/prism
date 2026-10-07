@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -345,5 +346,38 @@ func TestOpenMissingDirectoryFailsCleanly(t *testing.T) {
 	_, err := Open(filepath.Join(t.TempDir(), "no-such-dir", "usage.db"))
 	if err == nil {
 		t.Fatal("open in missing directory: expected error")
+	}
+}
+
+func TestCacheWritesSurviveLegacyDatabaseMigrationAndRestart(t *testing.T) {
+	path := dbPath(t)
+	legacy, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustInsert(t, s, Record{RequestID: "cache-write", Timestamp: base, Model: "model", Status: "completed", UsageKind: StatusReported, Usage: Usage{InputTokens: 19, CachedInputTokens: 5, CacheWriteInputTokens: 7, OutputTokens: 2, TotalTokens: 21}, Attempts: []Attempt{{Provider: "native", Model: "model", Outcome: "completed", Usage: Usage{InputTokens: 19, CacheWriteInputTokens: 7, OutputTokens: 2, TotalTokens: 21}}}})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := open(t, path)
+	for _, table := range []string{"requests", "attempts"} {
+		var writes int64
+		if err := reopened.(*dbStore).db.QueryRow("SELECT cache_write_tokens FROM " + table).Scan(&writes); err != nil || writes != 7 {
+			t.Fatalf("%s cache writes=%d err=%v", table, writes, err)
+		}
+	}
+	overview, err := reopened.Overview(context.Background(), time.Time{})
+	if err != nil || overview.InputTokens != 19 || overview.CachedTokens != 5 || overview.TotalTokens != 21 {
+		t.Fatalf("overview=%+v err=%v", overview, err)
 	}
 }

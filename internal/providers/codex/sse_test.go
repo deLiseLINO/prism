@@ -1,10 +1,12 @@
 package codex
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
 )
 
 func decodeStream(t *testing.T, sse string) ([]canon.Event, *Decoder) {
@@ -15,7 +17,10 @@ func decodeStream(t *testing.T, sse string) ([]canon.Event, *Decoder) {
 		return nil
 	})
 	if err := dec.Decode(strings.NewReader(sse)); err != nil {
-		t.Fatalf("Decode: %v", err)
+		var re provider.RunError
+		if !errors.As(err, &re) || re.Kind != provider.TerminalEmitted {
+			t.Fatalf("Decode: %v", err)
+		}
 	}
 	return events, dec
 }
@@ -30,7 +35,7 @@ func TestSSEVocabularyToCanonEvents(t *testing.T) {
 		`{"type":"response.output_text.delta","item_id":"msg-1","delta":"Hello "}`,
 		`{"type":"response.output_text.delta","item_id":"msg-1","delta":"world"}`,
 		`{"type":"response.output_item.done","item":{"type":"message","id":"msg-1","role":"assistant","content":[{"type":"output_text","text":"Hello world"}]}}`,
-		`{"type":"response.completed","response":{"id":"r-1","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7,"input_tokens_details":{"cached_tokens":1},"output_tokens_details":{"reasoning_tokens":3}}}}`,
+		`{"type":"response.completed","response":{"id":"r-1","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7,"input_tokens_details":{"cached_tokens":1},"output_tokens_details":{"reasoning_tokens":2}}}}`,
 	)
 	events, dec := decodeStream(t, sse)
 	if !dec.Done() {
@@ -59,7 +64,7 @@ func TestSSEVocabularyToCanonEvents(t *testing.T) {
 	if terminal.Status.Kind() != canon.StatusCompleted {
 		t.Fatalf("status = %v", terminal.Status.Kind())
 	}
-	wantUsage := canon.Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7, CachedInputTokens: 1, ReasoningTokens: 3}
+	wantUsage := canon.Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7, CachedInputTokens: 1, ReasoningTokens: 2}
 	if terminal.Usage != wantUsage {
 		t.Fatalf("usage = %+v want %+v", terminal.Usage, wantUsage)
 	}
@@ -150,14 +155,13 @@ func TestSSEReasoningOpaqueStateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSSEDuplicateTerminalWarns(t *testing.T) {
-	sse := joinFrames(
-		`{"type":"response.completed","response":{"id":"r-1"}}`,
-		`{"type":"response.completed","response":{"id":"r-2"}}`,
-	)
-	_, dec := decodeStream(t, sse)
-	if !containsString(dec.Warnings(), "duplicate_terminal") {
-		t.Fatalf("warnings = %v", dec.Warnings())
+func TestSSEStopsAtFirstTerminal(t *testing.T) {
+	events, _ := decodeStream(t, joinFrames(`{"type":"response.completed","response":{"id":"r-1"}}`, `{"type":"error","message":"late failure"}`))
+	if len(events) != 1 {
+		t.Fatalf("events = %v", events)
+	}
+	if _, ok := events[0].(canon.TurnFinished); !ok {
+		t.Fatalf("terminal = %T", events[0])
 	}
 }
 
@@ -178,22 +182,36 @@ func TestSSEUnknownTypeWarnsAndContinues(t *testing.T) {
 	}
 }
 
-func TestSSEMalformedPayloadWarns(t *testing.T) {
-	sse := joinFrames(`{"type":"response.completed","response":{"id":"r-1"}}`, `not-json`)
-	_, dec := decodeStream(t, sse)
-	if !containsString(dec.Warnings(), "malformed_sse_payload") {
-		t.Fatalf("warnings = %v", dec.Warnings())
+func TestSSEMalformedPayloadFails(t *testing.T) {
+	var events []canon.Event
+	dec := NewDecoder(func(e canon.Event) error { events = append(events, e); return nil })
+	err := dec.Decode(strings.NewReader(joinFrames(`not-json`, `{"type":"response.completed","response":{}}`)))
+	var re provider.RunError
+	if !errors.As(err, &re) || re.Class != provider.ClassTransport {
+		t.Fatalf("error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %v", events)
 	}
 }
 
 func TestSSECRLFFraming(t *testing.T) {
-	sse := "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"m\",\"delta\":\"x\"}\r\n\r\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\"}}\r\n\r\n"
+	sse := "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"id\":\"m\",\"role\":\"assistant\",\"content\":[]}}\r\n\r\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"m\",\"delta\":\"x\"}\r\n\r\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"output\":[{\"type\":\"message\",\"id\":\"m\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"x\"}]}]}}\r\n\r\n"
 	events, dec := decodeStream(t, sse)
 	if !dec.Done() {
 		t.Fatalf("decoder not done")
 	}
-	if len(events) != 2 {
-		t.Fatalf("events = %d", len(events))
+	var text string
+	for _, event := range events {
+		if delta, ok := event.(canon.TextDelta); ok {
+			text += delta.Text
+		}
+	}
+	if text != "x" {
+		t.Fatalf("CRLF stream text = %q", text)
+	}
+	if _, ok := events[len(events)-1].(canon.TurnFinished); !ok {
+		t.Fatalf("CRLF terminal = %v", events[len(events)-1])
 	}
 }
 
@@ -242,7 +260,6 @@ func TestSSERawReasoningTextReportsProgressWithoutCanonEvent(t *testing.T) {
 	sse := joinFrames(
 		`{"type":"response.reasoning_text.delta","delta":""}`,
 		`{"type":"response.reasoning_text.delta","delta":"hm"}`,
-		`{"type":"response.reasoning_text.delta","delta":7}`,
 		`{"type":"response.in_progress","response":{}}`,
 	)
 	if err := dec.Decode(strings.NewReader(sse)); err != nil {

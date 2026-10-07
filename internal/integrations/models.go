@@ -63,12 +63,11 @@ var piThinkingLevels = []string{"off", "minimal", "low", "medium", "high", "xhig
 const maxOutputTokenBudget = 32000
 
 // maxTokensFor is the output budget written beside a known context window;
-// client schemas require a value, so it clamps to the window.
+// client schemas require a value. It never exceeds half the window: an output
+// cap equal to the window leaves the client no input room, so its compaction
+// re-triggers on every turn and loops without ever reaching the model's answer.
 func maxTokensFor(contextWindow int) int {
-	if contextWindow < maxOutputTokenBudget {
-		return contextWindow
-	}
-	return maxOutputTokenBudget
+	return min(maxOutputTokenBudget, contextWindow/2)
 }
 
 // effortsFor projects a model's declared reasoning ladder onto the vocabulary

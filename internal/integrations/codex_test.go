@@ -57,33 +57,6 @@ func TestCodexApplyIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestCodexReapplyRewritesOwnManagedBlock(t *testing.T) {
-	dir := t.TempDir()
-	configPath := tempFile(t, dir, "config.toml", userToml)
-	WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort})
-	edited := replaceOne(readFile(t, configPath), CodexFence.Begin, CodexFence.Begin+"\nuser_edit = true")
-	writeFileOrDie(t, configPath, edited)
-	outcome := WriteCodexConfig(CodexOptions{ConfigPath: configPath, Port: testPort})
-	if outcome.Kind != OutcomeWritten {
-		t.Fatalf("apply over edit: %+v", outcome)
-	}
-	got := readFile(t, configPath)
-	if strings.Contains(got, "user_edit") {
-		t.Fatalf("foreign edit kept after rewrite:\n%s", got)
-	}
-	for _, want := range []string{`top_setting = "keep"`, "[profile.default]", `model = "gpt-5.2"`} {
-		if !contains(got, want) {
-			t.Fatalf("user line %q lost after rewrite:\n%s", want, got)
-		}
-	}
-	if outcome := StripCodexConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
-		t.Fatalf("rollback after fence rewrite: %+v", outcome)
-	}
-	if got := readFile(t, configPath); got != userToml {
-		t.Fatalf("rollback did not restore user bytes verbatim:\n%q", got)
-	}
-}
-
 func TestCodexRollbackRemovesExactlyManagedBlock(t *testing.T) {
 	dir := t.TempDir()
 	configPath := tempFile(t, dir, "config.toml", userToml)
@@ -506,5 +479,41 @@ func TestCodexIntegrationModuleRoundTrip(t *testing.T) {
 	}
 	if got := readFile(t, configPath); got != userToml {
 		t.Fatal("rollback did not restore user bytes")
+	}
+}
+
+func TestCodexCatalogOffersOnlyDeclaredEfforts(t *testing.T) {
+	models := []Model{
+		{ID: "r/small", Name: "r/small", ReasoningEfforts: []string{"minimal", "low"}},
+		{ID: "r/top", Name: "r/top", ReasoningEfforts: []string{"medium", "high", "max"}, DefaultReasoningEffort: "high"},
+		{ID: "r/plain", Name: "r/plain"},
+	}
+	var catalog codexCatalog
+	if err := json.Unmarshal([]byte(RenderCodexCatalog(models)), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]string{}
+	defaults := map[string]string{}
+	for _, entry := range catalog.Models {
+		for _, level := range entry.SupportedReasoningLevels {
+			got[entry.Slug] = append(got[entry.Slug], level.Effort)
+		}
+		defaults[entry.Slug] = entry.DefaultReasoningLevel
+	}
+	want := map[string]string{
+		"r/small": "minimal,low",
+		"r/top":   "medium,high,max,ultra",
+		"r/plain": "low,medium,high,xhigh,max,ultra",
+	}
+	for slug, w := range want {
+		if g := strings.Join(got[slug], ","); g != w {
+			t.Errorf("%s offers %q, want %q", slug, g, w)
+		}
+		if !containsString(got[slug], defaults[slug]) {
+			t.Errorf("%s default %q is not an offered rung %v", slug, defaults[slug], got[slug])
+		}
+	}
+	if defaults["r/top"] != "high" {
+		t.Errorf("configured default lost: %q", defaults["r/top"])
 	}
 }

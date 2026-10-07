@@ -38,7 +38,7 @@ func fieldValue(line, field string) (string, bool) {
 
 func readFrames(r io.Reader, handle func(sseFrame) error) error {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	sc.Buffer(make([]byte, 0, 64*1024), maxFrameLine)
 	var data []string
 	dispatch := func() error {
 		if len(data) == 0 {
@@ -70,14 +70,19 @@ func readFrames(r io.Reader, handle func(sseFrame) error) error {
 }
 
 type openTool struct {
-	canonID canon.ItemID
-	callID  string
-	name    string
-	args    strings.Builder
+	canonID    canon.ItemID
+	callID     string
+	upstreamID string
+	index      int
+	hasIndex   bool
+	name       string
+	args       strings.Builder
+	started    bool
 }
 
 type streamer struct {
-	sink provider.Sink
+	sink   provider.Sink
+	custom customTools
 
 	respID  string
 	msgID   canon.ItemID
@@ -87,9 +92,8 @@ type streamer struct {
 	reasonText strings.Builder
 	reasonOpen bool
 
-	tools   map[int]*openTool
-	toolSeq []int
-	usage   canon.Usage
+	tools []*openTool
+	usage canon.Usage
 
 	status          canon.Status
 	finished        bool
@@ -97,8 +101,8 @@ type streamer struct {
 	terminalEmitted bool
 }
 
-func (r *Runner) runStream(body io.Reader, sink provider.Sink) error {
-	st := &streamer{sink: sink, tools: make(map[int]*openTool)}
+func (r *Runner) runStream(body io.Reader, sink provider.Sink, custom customTools) error {
+	st := &streamer{sink: sink, custom: custom}
 	err := readFrames(body, st.handleFrame)
 	if err != nil && !errors.Is(err, errTerminalDone) {
 		var runErr provider.RunError
@@ -108,7 +112,7 @@ func (r *Runner) runStream(body io.Reader, sink provider.Sink) error {
 		return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0,
 			fmt.Errorf("customchat: reading upstream stream: %w", err))
 	}
-	if err := st.closeTerminal(); err != nil {
+	if err := st.closeTerminal(); err != nil && !errors.Is(err, errTerminalDone) {
 		return err
 	}
 	if st.terminalEmitted {
@@ -151,9 +155,10 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		return s.emitTerminal()
 	}
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(f.data), &payload); err != nil {
-		return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0,
-			fmt.Errorf("customchat: malformed upstream stream frame: %w", err))
+	decoder := json.NewDecoder(strings.NewReader(f.data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil || decoder.Decode(new(any)) != io.EOF {
+		return s.protocolError("malformed upstream stream frame")
 	}
 	if _, ok := payload["error"]; ok {
 		return s.failedTurn([]byte(f.data))
@@ -164,9 +169,11 @@ func (s *streamer) handleFrame(f sseFrame) error {
 	if id, ok := payload["id"].(string); ok && id != "" {
 		s.respID = id
 	}
-	if usage, ok := usageFromChat(payload["usage"]); ok {
-		s.usage = usage
+	usage, err := mergeChatUsage(payload["usage"], s.usage)
+	if err != nil {
+		return s.protocolError("invalid upstream usage: " + err.Error())
 	}
+	s.usage = usage
 	choices, _ := payload["choices"].([]any)
 	if len(choices) > 1 {
 		return s.protocolError(fmt.Sprintf("upstream chunk carries %d choices; only one is representable", len(choices)))
@@ -178,10 +185,22 @@ func (s *streamer) handleFrame(f sseFrame) error {
 	if !ok {
 		return s.protocolError("upstream chunk choice is not an object")
 	}
-	if index, ok := choice["index"].(float64); ok && int(index) != 0 {
-		return s.protocolError(fmt.Sprintf("upstream choice index %d is not representable", int(index)))
+	if raw, present := choice["index"]; present {
+		index, ok := raw.(json.Number)
+		if !ok || index != "0" {
+			return s.protocolError("upstream choice index must be integer zero")
+		}
 	}
 	delta, _ := choice["delta"].(map[string]any)
+	if s.finished {
+		if len(delta) > 0 {
+			return s.protocolError("upstream emitted output after finish reason")
+		}
+		if reason, ok := choice["finish_reason"].(string); ok && reason != "" && reason != s.finishReason {
+			return s.protocolError("upstream emitted a second finish reason")
+		}
+		return nil
+	}
 	if delta == nil {
 		delta = map[string]any{}
 	}
@@ -211,20 +230,28 @@ func (s *streamer) handleFrame(f sseFrame) error {
 
 func (s *streamer) handleDelta(delta map[string]any) error {
 	if text, ok := delta["content"].(string); ok && text != "" {
-		s.ensureMessageOpen()
+		if err := s.ensureMessageOpen(); err != nil {
+			return err
+		}
 		s.msgText.WriteString(text)
 		if err := s.emit(canon.TextDelta{ItemID: s.msgID, Text: text}); err != nil {
 			return err
 		}
 	}
-	if text, ok := delta["reasoning_content"].(string); ok && text != "" {
-		s.ensureReasoningOpen()
+	if text := reasoningDelta(delta); text != "" {
+		if err := s.ensureReasoningOpen(); err != nil {
+			return err
+		}
 		s.reasonText.WriteString(text)
 		if err := s.emit(canon.ReasoningDelta{ItemID: s.reasoningID(), Text: text}); err != nil {
 			return err
 		}
 	}
-	if rawCalls, ok := delta["tool_calls"].([]any); ok {
+	if raw, present := delta["tool_calls"]; present {
+		rawCalls, ok := raw.([]any)
+		if !ok {
+			return s.protocolError("upstream tool_calls delta is not an array")
+		}
 		for _, raw := range rawCalls {
 			call, ok := raw.(map[string]any)
 			if !ok {
@@ -238,44 +265,158 @@ func (s *streamer) handleDelta(delta map[string]any) error {
 	return nil
 }
 
-func (s *streamer) handleToolCallDelta(call map[string]any) error {
-	rawIndex, ok := call["index"].(float64)
-	if !ok {
-		return s.protocolError("upstream tool call delta is missing index")
-	}
-	index := int(rawIndex)
-	open, exists := s.tools[index]
-	if !exists {
-		id, _ := call["id"].(string)
-		name, _ := call["name"].(string)
-		if fn, ok := call["function"].(map[string]any); ok {
-			if n, ok := fn["name"].(string); ok && n != "" && name == "" {
-				name = n
+// toolFor picks the open call a tool_calls delta belongs to. Gateways differ:
+// the id names the call when present; otherwise the index does; a delta with
+// neither continues the most recent call. A delta that reuses an index but
+// carries a new id starts another call.
+func (s *streamer) toolFor(call map[string]any) *openTool {
+	id, _ := call["id"].(string)
+	index, hasIndex := streamIndex(call["index"])
+	if id != "" {
+		for _, open := range s.tools {
+			if open.upstreamID == id {
+				return open
 			}
 		}
-		callID := id
-		if callID == "" {
-			callID = mintCallID()
+	}
+	if hasIndex {
+		for i := len(s.tools) - 1; i >= 0; i-- {
+			open := s.tools[i]
+			if open.hasIndex && open.index == index {
+				if id != "" && open.upstreamID != "" && open.upstreamID != id {
+					return nil
+				}
+				if id == "" && announcesNewCall(open, call) {
+					return nil
+				}
+				return open
+			}
 		}
-		open = &openTool{canonID: canon.ItemID(callID), callID: callID, name: name}
-		s.tools[index] = open
-		s.toolSeq = append(s.toolSeq, index)
-		if err := s.emit(canon.ItemStarted{Item: canon.FunctionCall{
-			ID:     canon.ItemID(callID),
-			CallID: canon.CallID(callID),
-			Name:   canon.ToolName(name),
-		}}); err != nil {
-			return err
+		return nil
+	}
+	if id != "" && len(s.tools) > 0 {
+		open := s.tools[len(s.tools)-1]
+		if !open.started && open.upstreamID == "" {
+			return open
 		}
 	}
+	if id == "" && len(s.tools) > 0 {
+		open := s.tools[len(s.tools)-1]
+		if announcesNewCall(open, call) {
+			return nil
+		}
+		return open
+	}
+	return nil
+}
+
+// announcesNewCall reports whether an id-less delta starts another call: it
+// names a function while the open call already has one and is either named
+// differently or already holds a complete argument document.
+func announcesNewCall(open *openTool, call map[string]any) bool {
 	fn, _ := call["function"].(map[string]any)
-	if fn != nil {
-		if name, ok := fn["name"].(string); ok && name != "" {
+	name, _ := fn["name"].(string)
+	if name == "" || open.name == "" {
+		return false
+	}
+	return name != open.name || json.Valid([]byte(open.args.String()))
+}
+
+// Gateways name the thinking text differently; a chunk may carry several
+// aliases of the same text, so only the first non-empty one counts.
+func reasoningDelta(delta map[string]any) string {
+	for _, field := range []string{"reasoning_content", "reasoning", "reasoning_text"} {
+		if text, ok := delta[field].(string); ok && text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func (s *streamer) handleToolCallDelta(call map[string]any) error {
+	if typ, present := call["type"]; present && typ != "function" {
+		return s.protocolError("upstream tool call type is not function")
+	}
+	if raw, supplied := call["index"]; supplied {
+		if _, ok := streamIndex(raw); !ok {
+			return s.protocolError("invalid tool call index")
+		}
+	}
+	fn := map[string]any{}
+	if raw, present := call["function"]; present {
+		var ok bool
+		fn, ok = raw.(map[string]any)
+		if !ok {
+			return s.protocolError("upstream tool call function is not an object")
+		}
+	}
+	for _, fields := range []map[string]any{call, fn} {
+		for _, key := range []string{"id", "name", "arguments"} {
+			if value, present := fields[key]; present {
+				if _, ok := value.(string); !ok {
+					return s.protocolError("upstream tool call " + key + " is not a string")
+				}
+			}
+		}
+	}
+	id, _ := call["id"].(string)
+	name, _ := call["name"].(string)
+	if n, _ := fn["name"].(string); n != "" {
+		if name != "" && name != n {
+			return s.protocolError("upstream tool call has conflicting names")
+		}
+		name = n
+	}
+	open := s.toolFor(call)
+	if open == nil {
+		open = &openTool{canonID: canon.ItemID(fmt.Sprintf("chat-tool-%d", len(s.tools))), upstreamID: id, callID: id, name: name}
+		if index, ok := streamIndex(call["index"]); ok {
+			open.index, open.hasIndex = index, true
+		}
+		s.tools = append(s.tools, open)
+	} else if open.started && (id != "" && id != open.callID || name != "" && name != open.name) {
+		return s.protocolError("upstream tool changed published identity")
+	}
+	if !open.started {
+		if id != "" {
+			open.callID, open.upstreamID = id, id
+		}
+		if name != "" {
 			open.name = name
 		}
-		if args, ok := fn["arguments"].(string); ok && args != "" {
-			open.args.WriteString(args)
-			if err := s.emit(canon.ToolArgumentsDelta{ItemID: open.canonID, Bytes: []byte(args)}); err != nil {
+	}
+	args, _ := fn["arguments"].(string)
+	open.args.WriteString(args)
+	if open.started {
+		if args != "" && !s.custom.has(open.name) {
+			return s.emit(canon.ToolArgumentsDelta{ItemID: open.canonID, Bytes: []byte(args)})
+		}
+		return nil
+	}
+	return s.startTools(false)
+}
+
+func (s *streamer) startTools(finishing bool) error {
+	for _, open := range s.tools {
+		if open.started {
+			continue
+		}
+		if open.name == "" || open.callID == "" && !finishing {
+			break
+		}
+		if open.callID == "" {
+			open.callID = mintCallID()
+		}
+		var item canon.Item = canon.FunctionCall{ID: open.canonID, CallID: canon.CallID(open.callID), Name: canon.ToolName(open.name)}
+		if s.custom.has(open.name) {
+			item = canon.CustomToolCall{ID: open.canonID, CallID: canon.CallID(open.callID), Name: canon.ToolName(open.name)}
+		}
+		if err := s.emit(canon.ItemStarted{Item: item}); err != nil {
+			return err
+		}
+		open.started = true
+		if open.args.Len() > 0 && !s.custom.has(open.name) {
+			if err := s.emit(canon.ToolArgumentsDelta{ItemID: open.canonID, Bytes: []byte(open.args.String())}); err != nil {
 				return err
 			}
 		}
@@ -283,16 +424,16 @@ func (s *streamer) handleToolCallDelta(call map[string]any) error {
 	return nil
 }
 
-func (s *streamer) ensureMessageOpen() {
+func (s *streamer) ensureMessageOpen() error {
 	if s.msgOpen {
-		return
+		return nil
 	}
 	s.msgOpen = true
 	s.msgID = canon.ItemID(s.respID)
 	if s.msgID == "" {
 		s.msgID = "assistant"
 	}
-	_ = s.emit(canon.ItemStarted{Item: canon.Message{ID: s.msgID, Role: canon.RoleAssistant}})
+	return s.emit(canon.ItemStarted{Item: canon.Message{ID: s.msgID, Role: canon.RoleAssistant}})
 }
 
 func (s *streamer) reasoningID() canon.ItemID {
@@ -302,15 +443,30 @@ func (s *streamer) reasoningID() canon.ItemID {
 	return canon.ItemID(s.respID + "-reasoning")
 }
 
-func (s *streamer) ensureReasoningOpen() {
+func (s *streamer) ensureReasoningOpen() error {
 	if s.reasonOpen {
-		return
+		return nil
 	}
 	s.reasonOpen = true
-	_ = s.emit(canon.ItemStarted{Item: canon.ReasoningItem{ID: s.reasoningID()}})
+	return s.emit(canon.ItemStarted{Item: canon.ReasoningItem{ID: s.reasoningID()}})
 }
 
 func (s *streamer) finishItems() error {
+	for i, open := range s.tools {
+		if open.name == "" {
+			return s.protocolError(fmt.Sprintf("upstream tool call %d finished without a function name", i))
+		}
+		if s.custom.has(open.name) {
+			if _, err := unwrapCustomInput(open.args.String()); err != nil {
+				return s.protocolError(err.Error())
+			}
+		} else if open.args.Len() > 0 && !json.Valid([]byte(open.args.String())) {
+			return s.protocolError("upstream tool finished with malformed arguments")
+		}
+	}
+	if err := s.startTools(true); err != nil {
+		return err
+	}
 	if s.reasonOpen {
 		if err := s.emit(canon.ItemFinished{Item: canon.ReasoningItem{ID: s.reasoningID(), Content: s.reasonText.String()}}); err != nil {
 			return err
@@ -327,10 +483,21 @@ func (s *streamer) finishItems() error {
 		}
 		s.msgOpen = false
 	}
-	for _, index := range s.toolSeq {
-		open := s.tools[index]
+	for i, open := range s.tools {
 		if open.name == "" {
-			return s.protocolError(fmt.Sprintf("upstream tool call %d finished without a function name", index))
+			return s.protocolError(fmt.Sprintf("upstream tool call %d finished without a function name", i))
+		}
+		if s.custom.has(open.name) {
+			input, _ := unwrapCustomInput(open.args.String())
+			if input != "" {
+				if err := s.emit(canon.CustomToolInputDelta{ItemID: open.canonID, Text: input}); err != nil {
+					return err
+				}
+			}
+			if err := s.emit(canon.ItemFinished{Item: canon.CustomToolCall{ID: open.canonID, CallID: canon.CallID(open.callID), Name: canon.ToolName(open.name), Input: input}}); err != nil {
+				return err
+			}
+			continue
 		}
 		fc := canon.FunctionCall{
 			ID:     open.canonID,
@@ -344,8 +511,7 @@ func (s *streamer) finishItems() error {
 			return err
 		}
 	}
-	s.tools = make(map[int]*openTool)
-	s.toolSeq = nil
+	s.tools = nil
 	return nil
 }
 
@@ -370,45 +536,38 @@ func (s *streamer) failUnknown(message string) error {
 
 func (s *streamer) emitFailed(failure canon.Failure) error {
 	s.terminalEmitted = true
-	if err := s.emit(canon.TurnFailed{Failure: failure}); err != nil {
+	if err := s.emit(canon.TurnFailed{Failure: failure, Usage: s.usage}); err != nil {
 		return err
 	}
 	cause := failure.Message
 	if cause == "" {
 		cause = "provider error"
 	}
-	return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
+	class := provider.ClassServer
+	if failure.Provider != nil {
+		class = openaierr.ClassForInband(*failure.Provider, class)
+	}
+	return provider.RunError{Kind: provider.TerminalEmitted, Class: class, Accepted: true, Cause: errors.New(cause), Reported: failure.Provider}
 }
 
 func (s *streamer) protocolError(message string) error {
-	return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0, errors.New("customchat: "+message))
+	if !s.terminalEmitted {
+		s.terminalEmitted = true
+		failure := canon.Failure{Reason: canon.FailUpstreamTransport, Message: "customchat: " + message}
+		if err := s.emit(canon.TurnFailed{Failure: failure, Usage: s.usage}); err != nil {
+			return err
+		}
+	}
+	return runError(provider.TerminalEmitted, provider.ClassTransport, true, false, 0, errors.New("customchat: "+message))
 }
 
-func usageFromChat(v any) (canon.Usage, bool) {
-	u, ok := v.(map[string]any)
+func streamIndex(value any) (int, bool) {
+	number, ok := value.(json.Number)
 	if !ok {
-		return canon.Usage{}, false
+		return 0, false
 	}
-	usage := canon.Usage{
-		InputTokens:  numberOf(u["prompt_tokens"]),
-		OutputTokens: numberOf(u["completion_tokens"]),
-		TotalTokens:  numberOf(u["total_tokens"]),
-	}
-	if d, ok := u["prompt_tokens_details"].(map[string]any); ok {
-		usage.CachedInputTokens = numberOf(d["cached_tokens"])
-	}
-	if d, ok := u["completion_tokens_details"].(map[string]any); ok {
-		usage.ReasoningTokens = numberOf(d["reasoning_tokens"])
-	}
-	return usage, true
-}
-
-func numberOf(v any) int64 {
-	f, ok := v.(float64)
-	if !ok {
-		return 0
-	}
-	return int64(f)
+	index, err := number.Int64()
+	return int(index), err == nil && index >= 0 && index <= 1<<53-1
 }
 
 func finishStatus(reason string) (canon.Status, bool) {
@@ -423,3 +582,7 @@ func finishStatus(reason string) (canon.Status, bool) {
 		return canon.Status{}, false
 	}
 }
+
+// maxFrameLine bounds one SSE line. A terminal frame can repeat the whole
+// output, so the limit sits well above a typical delta.
+const maxFrameLine = 64 << 20

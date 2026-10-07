@@ -1,9 +1,43 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/providers/anthropic"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
+
+func modelsRequest(ctx context.Context, p config.Provider, apiKey string) (*http.Request, error) {
+	u, err := url.Parse(strings.TrimSpace(p.BaseURL))
+	if err != nil {
+		return nil, err
+	}
+	u.Path = openaierr.APIBase(u.Path) + "/models"
+	u.RawPath = ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	switch p.Wire {
+	case config.WireOpenAIChat, config.WireOpenAIResponses:
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+	case config.WireAnthropicMessages:
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", anthropic.DefaultAPIVersion)
+	default:
+		return nil, fmt.Errorf("wire %q does not support custom model listing", p.Wire)
+	}
+	return req, nil
+}
 
 func parseOpenAIModelList(body []byte) ([]listedModel, error) {
 	var envelope struct {

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -125,11 +126,13 @@ type Sink interface {
 }
 
 type RunRequest struct {
-	Request  canon.Request
-	Target   Target
-	Lease    account.Lease
-	Facts    execution.Facts
-	Progress Progress
+	Request            canon.Request
+	Target             Target
+	Lease              account.Lease
+	Facts              execution.Facts
+	Progress           Progress
+	AttemptObserver    func(NetworkAttempt)
+	CredentialObserver func(account.CredentialGeneration)
 }
 
 type Runner interface {
@@ -162,17 +165,20 @@ type QuotaSource interface {
 }
 
 type CompactRequest struct {
-	Target       Target
-	Lease        account.Lease
-	Facts        execution.Facts
-	Instructions []canon.Content
-	Input        []canon.Item
-	Kept         []canon.ItemID
-	Budget       int
+	Target             Target
+	Lease              account.Lease
+	Facts              execution.Facts
+	Instructions       []canon.Content
+	Input              []canon.Item
+	Kept               []canon.ItemID
+	Budget             int
+	AttemptObserver    func(NetworkAttempt)
+	CredentialObserver func(account.CredentialGeneration)
 }
 
 type CompactResult struct {
 	Summary canon.Message
+	Output  []json.RawMessage
 	Usage   canon.Usage
 }
 

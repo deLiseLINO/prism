@@ -33,7 +33,7 @@ func (p *ConfigPlanner) Plan(model canon.ModelID) (routing.Plan, bool) {
 	if c, ok := d.Combos[key]; ok {
 		return comboPlan(d, c), true
 	}
-	if providerID, modelName, err := ingressmessages.ParseModelAlias(key); err == nil {
+	if providerID, modelName, err := parseAliasKey(d, key); err == nil {
 		if t, err := targetFor(d, providerID, modelName); err == nil {
 			return routing.Plan{Targets: []provider.Target{t}}, true
 		}
@@ -48,6 +48,34 @@ func (p *ConfigPlanner) Plan(model canon.ModelID) (routing.Plan, bool) {
 		return routing.Plan{}, false
 	}
 	return routing.Plan{Targets: []provider.Target{t}}, true
+}
+
+// parseAliasKey splits a claude-<provider>--<model> alias. Provider and model
+// ids may themselves contain "--", so the first separator is not always the
+// right one: a split naming a configured model wins, and otherwise the first
+// split is used.
+func parseAliasKey(d config.Document, key string) (providerID, modelName string, err error) {
+	providerID, modelName, err = ingressmessages.ParseModelAlias(key)
+	if err != nil {
+		return "", "", err
+	}
+	rest := strings.TrimPrefix(key, config.ClaudeAliasPrefix)
+	for from := 0; ; {
+		i := strings.Index(rest[from:], config.ClaudeSeparator)
+		if i < 0 {
+			break
+		}
+		cut := from + i
+		from = cut + 1
+		candidate, name := rest[:cut], rest[cut+len(config.ClaudeSeparator):]
+		if candidate == "" || name == "" {
+			continue
+		}
+		if p, ok := d.Providers[candidate]; ok && slices.Contains(p.Models, name) {
+			return candidate, name, nil
+		}
+	}
+	return providerID, modelName, nil
 }
 
 func (p *ConfigPlanner) planFor(d config.Document, v string) (routing.Plan, bool) {
@@ -141,7 +169,7 @@ func wireFor(w config.Wire) provider.Wire {
 		return provider.WireAntigravity
 	case config.WireAnthropicMessages:
 		return provider.WireMessages
-	case config.WireOpenAIChat:
+	case config.WireOpenAIChat, config.WireCline:
 		return provider.WireChat
 	default:
 		return provider.WireResponses

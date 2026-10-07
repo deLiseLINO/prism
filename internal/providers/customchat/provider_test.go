@@ -94,6 +94,7 @@ func TestExtendedEffortsReachChatWire(t *testing.T) {
 	for effort, want := range map[canon.ReasoningEffort]string{
 		canon.EffortXHigh: "xhigh",
 		canon.EffortMax:   "max",
+		canon.EffortOff:   "none",
 	} {
 		req := testRequest(false)
 		req.Reasoning = canon.ReasoningConfig{Effort: effort}
@@ -205,7 +206,7 @@ func TestBuildUpstreamRequestFullMapping(t *testing.T) {
 		`{"role":"user","content":[{"type":"text","text":"what is this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVA=","detail":"high"}}]},` +
 		`{"role":"assistant","content":"Let me check","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"sf\"}"}}]},` +
 		`{"role":"tool","content":"sunny","tool_call_id":"call_1"},` +
-		`{"role":"developer","content":"dev note"}` +
+		`{"role":"system","content":"dev note"}` +
 		`],"stream":false,"max_completion_tokens":64,"temperature":0.7,"top_p":0.9,"stop":["END"],"parallel_tool_calls":false,"presence_penalty":-0.5,"frequency_penalty":1.5,"service_tier":"flex","reasoning_effort":"low","verbosity":"high","response_format":{"type":"json_schema","json_schema":{"name":"out","schema":{"type":"object"},"strict":true}},"tools":[{"type":"function","function":{"name":"get_weather","description":"weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}],"tool_choice":{"type":"function","function":{"name":"get_weather"}}}`
 	if string(up.Body) != want {
 		t.Fatalf("body =\n%s\nwant\n%s", up.Body, want)
@@ -559,13 +560,17 @@ func TestStreamMalformedFrameIsTypedError(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := New(staticKey, Options{})
-	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, &collector{})
+	events := &collector{}
+	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events)
 	var runErr provider.RunError
 	if !errors.As(err, &runErr) {
 		t.Fatalf("want RunError, got %v", err)
 	}
-	if runErr.Kind != provider.TerminalOmitted || runErr.Class != provider.ClassTransport {
-		t.Fatalf("runErr = %+v", runErr)
+	if runErr.Class != provider.ClassTransport || events.TerminalCount() != 1 {
+		t.Fatalf("error=%v events=%v", runErr, events.All())
+	}
+	if _, ok := events.All()[0].(canon.TurnFailed); !ok {
+		t.Fatalf("malformed stream completed: %v", events.All())
 	}
 }
 
@@ -594,13 +599,17 @@ func TestStreamDoneWithoutFinishReason(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := New(staticKey, Options{})
-	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, &collector{})
+	events := &collector{}
+	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events)
 	var runErr provider.RunError
 	if !errors.As(err, &runErr) {
 		t.Fatalf("want RunError, got %v", err)
 	}
-	if runErr.Kind != provider.TerminalOmitted || runErr.Class != provider.ClassTransport {
-		t.Fatalf("runErr = %+v", runErr)
+	if runErr.Class != provider.ClassTransport || events.TerminalCount() != 1 {
+		t.Fatalf("error=%v events=%v", runErr, events.All())
+	}
+	if _, ok := events.All()[len(events.All())-1].(canon.TurnFailed); !ok {
+		t.Fatalf("unfinished stream completed: %v", events.All())
 	}
 }
 

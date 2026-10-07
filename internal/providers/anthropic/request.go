@@ -50,8 +50,9 @@ type wireTool struct {
 }
 
 type wireToolChoice struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
+	Type                   string `json:"type"`
+	Name                   string `json:"name,omitempty"`
+	DisableParallelToolUse *bool  `json:"disable_parallel_tool_use,omitempty"`
 }
 
 type wireThinking struct {
@@ -59,18 +60,28 @@ type wireThinking struct {
 	BudgetTokens int    `json:"budget_tokens"`
 }
 
+type wireOutputFormat struct {
+	Type   string          `json:"type"`
+	Schema json.RawMessage `json:"schema"`
+}
+
+type wireOutputConfig struct {
+	Format wireOutputFormat `json:"format"`
+}
+
 type wireRequest struct {
-	Model         string          `json:"model"`
-	Messages      []wireMessage   `json:"messages"`
-	System        []wireTextBlock `json:"system,omitempty"`
-	Tools         []wireTool      `json:"tools,omitempty"`
-	ToolChoice    *wireToolChoice `json:"tool_choice,omitempty"`
-	MaxTokens     int             `json:"max_tokens,omitempty"`
-	Temperature   *float64        `json:"temperature,omitempty"`
-	TopP          *float64        `json:"top_p,omitempty"`
-	StopSequences []string        `json:"stop_sequences,omitempty"`
-	Stream        bool            `json:"stream,omitempty"`
-	Thinking      *wireThinking   `json:"thinking,omitempty"`
+	Model         string            `json:"model"`
+	Messages      []wireMessage     `json:"messages"`
+	System        []wireTextBlock   `json:"system,omitempty"`
+	Tools         []wireTool        `json:"tools,omitempty"`
+	ToolChoice    *wireToolChoice   `json:"tool_choice,omitempty"`
+	MaxTokens     int               `json:"max_tokens,omitempty"`
+	Temperature   *float64          `json:"temperature,omitempty"`
+	TopP          *float64          `json:"top_p,omitempty"`
+	StopSequences []string          `json:"stop_sequences,omitempty"`
+	Stream        bool              `json:"stream,omitempty"`
+	Thinking      *wireThinking     `json:"thinking,omitempty"`
+	OutputConfig  *wireOutputConfig `json:"output_config,omitempty"`
 }
 
 type budgetRow map[canon.ReasoningEffort]int
@@ -123,6 +134,9 @@ func (r *Runner) render(request canon.Request, streaming bool) (*outbound, error
 }
 
 func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireRequest, error) {
+	if request.Text.Verbosity != 0 && request.Text.Verbosity != canon.VerbosityDefault {
+		return nil, errors.New("anthropic: text verbosity is not representable on this wire")
+	}
 	messages, folded, err := r.messagesFromItems(request.Input)
 	if err != nil {
 		return nil, err
@@ -130,6 +144,30 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 	system, err := systemBlocks(slices.Concat(request.Instructions, folded))
 	if err != nil {
 		return nil, err
+	}
+	if allowed, ok := request.ToolChoice.(canon.ToolAllowed); ok && len(allowed.Tools) > 0 {
+		filtered := make([]canon.Tool, 0, len(allowed.Tools))
+		for _, name := range allowed.Tools {
+			found := false
+			for _, tool := range request.Tools {
+				switch def := tool.(type) {
+				case canon.FunctionTool:
+					if def.Name == name {
+						filtered = append(filtered, tool)
+						found = true
+					}
+				case canon.CustomToolDef:
+					if def.Name == name {
+						filtered = append(filtered, tool)
+						found = true
+					}
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("anthropic: allowed tool %q has no declaration", name)
+			}
+		}
+		request.Tools = filtered
 	}
 	tools, skipped, err := toolsFrom(request.Tools)
 	if err != nil {
@@ -139,6 +177,19 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 		r.log.Warn("anthropic: skipped tools the upstream cannot accept", "count", len(skipped), "tools", skipped)
 	}
 	choice, err := toolChoiceFrom(request.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+	if request.Sampling.ParallelToolCalls != nil && !*request.Sampling.ParallelToolCalls && len(tools) > 0 {
+		if choice == nil {
+			choice = &wireToolChoice{Type: "auto"}
+		}
+		if choice.Type != "none" {
+			disable := true
+			choice.DisableParallelToolUse = &disable
+		}
+	}
+	outputConfig, err := outputConfigFrom(request.Text.Format)
 	if err != nil {
 		return nil, err
 	}
@@ -157,8 +208,12 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 		TopP:          request.Sampling.TopP,
 		StopSequences: request.Sampling.Stop,
 		Stream:        streaming,
+		OutputConfig:  outputConfig,
 	}
-	if request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff {
+	if request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff && !forcesToolUse(choice) {
+		if request.Sampling.Temperature != nil || request.Sampling.TopP != nil {
+			return nil, errors.New("anthropic: sampling controls are not representable with extended thinking")
+		}
 		budget, ok := budgetFor(request.Model, request.Reasoning.Effort)
 		if !ok {
 			return nil, fmt.Errorf("anthropic: no thinking budget for model %q effort %d", request.Model, request.Reasoning.Effort)
@@ -167,18 +222,38 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 			return nil, fmt.Errorf("anthropic: thinking budget %d below minimum %d", budget, minThinkingBudget)
 		}
 		wr.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget}
-		floor := budget + thinkingHeadroom
-		if maxTokens < floor {
+		// Only a value prism raises is capped; the client's own limit stands.
+		if floor := min(budget+thinkingHeadroom, maxTokensCeiling); maxTokens < floor {
 			maxTokens = floor
-		}
-		if maxTokens > maxTokensCeiling {
-			maxTokens = maxTokensCeiling
 		}
 		wr.MaxTokens = maxTokens
 		wr.Temperature = nil
 		wr.TopP = nil
 	}
 	return wr, nil
+}
+
+// Upstream rejects extended thinking next to a forced tool choice, so the
+// forced call wins over the optional reasoning.
+func forcesToolUse(choice *wireToolChoice) bool {
+	return choice != nil && (choice.Type == "any" || choice.Type == "tool")
+}
+
+func outputConfigFrom(format *canon.TextFormat) (*wireOutputConfig, error) {
+	if format == nil {
+		return nil, nil
+	}
+	if format.Type != "json_schema" {
+		return nil, fmt.Errorf("anthropic: unsupported text format %q", format.Type)
+	}
+	if format.Strict != nil && !*format.Strict {
+		return nil, errors.New("anthropic: non-strict JSON schema output is not supported")
+	}
+	var schema map[string]json.RawMessage
+	if json.Unmarshal(format.Schema, &schema) != nil || schema == nil {
+		return nil, errors.New("anthropic: output format requires a JSON schema object")
+	}
+	return &wireOutputConfig{Format: wireOutputFormat{Type: "json_schema", Schema: format.Schema}}, nil
 }
 
 func systemBlocks(contents []canon.Content) ([]wireTextBlock, error) {
@@ -294,7 +369,13 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 				return nil, nil, errors.New("anthropic: custom tool output has no call id")
 			}
 			result := wireBlock{Type: "tool_result", ToolUseID: string(v.CallID)}
-			if v.Output != "" {
+			if v.Content != nil {
+				blocks, err := contentBlocks(v.Content)
+				if err != nil {
+					return nil, nil, err
+				}
+				result.Content = blocks
+			} else if v.Output != "" {
 				result.Content = []wireBlock{{Type: "text", Text: v.Output}}
 			}
 			appendBlock("user", result)

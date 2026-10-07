@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -45,18 +46,18 @@ type wireTextFormat struct {
 }
 
 type wireItem struct {
-	Type             string        `json:"type"`
-	ID               string        `json:"id,omitempty"`
-	Role             string        `json:"role,omitempty"`
-	Phase            string        `json:"phase,omitempty"`
-	Content          []wireContent `json:"content,omitempty"`
-	Summary          []wireContent `json:"summary,omitempty"`
-	CallID           string        `json:"call_id,omitempty"`
-	Name             string        `json:"name,omitempty"`
-	Arguments        string        `json:"arguments,omitempty"`
-	Input            string        `json:"input,omitempty"`
-	Output           any           `json:"output,omitempty"`
-	EncryptedContent *string       `json:"encrypted_content,omitempty"`
+	Type             string         `json:"type"`
+	ID               string         `json:"id,omitempty"`
+	Role             string         `json:"role,omitempty"`
+	Phase            string         `json:"phase,omitempty"`
+	Content          []wireContent  `json:"content,omitempty"`
+	Summary          *[]wireContent `json:"summary,omitempty"`
+	CallID           string         `json:"call_id,omitempty"`
+	Name             string         `json:"name,omitempty"`
+	Arguments        string         `json:"arguments,omitempty"`
+	Input            string         `json:"input,omitempty"`
+	Output           any            `json:"output,omitempty"`
+	EncryptedContent *string        `json:"encrypted_content,omitempty"`
 }
 
 type wireContent struct {
@@ -137,7 +138,48 @@ func BuildRequestBody(req canon.Request) (BuildResult, error) {
 		body.Tools = tools
 	}
 	if tc, ok := toolChoiceFrom(req.ToolChoice); ok {
+		if named, ok := req.ToolChoice.(canon.ToolNamed); ok {
+			kind := ""
+			for _, tool := range body.Tools {
+				if tool.Name == string(named.Name) {
+					kind = tool.Type
+					break
+				}
+			}
+			if kind == "" {
+				return BuildResult{}, fmt.Errorf("codex: named tool %q has no declaration", named.Name)
+			}
+			tc, _ = json.Marshal(struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			}{kind, string(named.Name)})
+		}
 		body.ToolChoice = tc
+	}
+	if allowed, ok := req.ToolChoice.(canon.ToolAllowed); ok {
+		entries := make([]map[string]string, 0, len(allowed.Tools))
+		for _, name := range allowed.Tools {
+			kind := ""
+			for _, tool := range body.Tools {
+				if tool.Name == string(name) {
+					kind = tool.Type
+					break
+				}
+			}
+			if kind == "" {
+				return BuildResult{}, fmt.Errorf("codex: allowed tool %q has no declaration", name)
+			}
+			entries = append(entries, map[string]string{"type": kind, "name": string(name)})
+		}
+		mode := "auto"
+		if allowed.Mode == canon.AllowedRequired {
+			mode = "required"
+		}
+		body.ToolChoice, _ = json.Marshal(struct {
+			Type  string              `json:"type"`
+			Mode  string              `json:"mode"`
+			Tools []map[string]string `json:"tools"`
+		}{"allowed_tools", mode, entries})
 	}
 	body.ParallelToolCalls = req.Sampling.ParallelToolCalls
 	if req.Sampling.Temperature != nil {
@@ -244,6 +286,11 @@ func inputFrom(items []canon.Item) (inputItems, error) {
 			}
 			out.items = append(out.items, wireItem{Type: "message", ID: string(m.ID), Role: roleWire(m.Role), Phase: string(m.Phase), Content: parts})
 		case canon.ReasoningItem:
+			// With store=false the upstream resolves a replayed reasoning item
+			// only through its encrypted payload; an id alone names nothing.
+			if m.State.Store != reasoningStoreNative || m.State.Key == "" {
+				continue
+			}
 			out.items = append(out.items, reasoningItemFrom(m))
 		case canon.FunctionCall:
 			out.items = append(out.items, wireItem{
@@ -255,11 +302,36 @@ func inputFrom(items []canon.Item) (inputItems, error) {
 		case canon.CustomToolCall:
 			out.items = append(out.items, wireItem{Type: "custom_tool_call", ID: string(m.ID), CallID: string(m.CallID), Name: string(m.Name), Input: m.Input})
 		case canon.CustomToolOutput:
-			out.items = append(out.items, wireItem{Type: "custom_tool_call_output", ID: string(m.ID), CallID: string(m.CallID), Output: m.Output})
+			var output any = m.Output
+			if m.Content != nil {
+				output = functionCallOutputWire(m.Content)
+				if text, ok := output.(string); ok {
+					output = []wireContent{}
+					if len(m.Content) > 0 {
+						output = []wireContent{{Type: "input_text", Text: text}}
+					}
+				}
+			}
+			out.items = append(out.items, wireItem{Type: "custom_tool_call_output", ID: string(m.ID), CallID: string(m.CallID), Output: output})
 		case canon.LocalShellCall:
 			out.items = append(out.items, wireItem{Type: "local_shell_call", ID: string(m.ID), CallID: string(m.CallID), Input: m.Command})
 		case canon.LocalShellOutput:
 			out.items = append(out.items, wireItem{Type: "local_shell_output", ID: string(m.ID), CallID: string(m.CallID), Output: shellOutputWire(m)})
+		case canon.CompactionMarker:
+			if m.State.Store != canon.StoreWire || m.State.Key == "" {
+				return inputItems{}, errors.New("codex: compaction replay requires opaque wire state")
+			}
+			key := m.State.Key
+			kind := m.Type
+			if kind == "" {
+				kind = "compaction"
+			}
+			switch kind {
+			case "compaction", "compaction_summary", "context_compaction":
+			default:
+				return inputItems{}, fmt.Errorf("codex: unsupported compaction replay type %q", kind)
+			}
+			out.items = append(out.items, wireItem{Type: kind, ID: string(m.ID), EncryptedContent: &key})
 		default:
 			return inputItems{}, fmt.Errorf("unsupported canonical item %T", item)
 		}
@@ -268,17 +340,16 @@ func inputFrom(items []canon.Item) (inputItems, error) {
 }
 
 func reasoningItemFrom(m canon.ReasoningItem) wireItem {
+	// The plain-text channel is output of open-weight models; the backend takes
+	// replayed reasoning as summary plus the encrypted payload only.
 	w := wireItem{Type: "reasoning", ID: string(m.ID)}
-	if m.Content != "" {
-		w.Content = []wireContent{{Type: "reasoning_text", Text: m.Content}}
-	}
+	summary := make([]wireContent, 0, len(m.Summary))
 	for _, s := range m.Summary {
-		w.Summary = append(w.Summary, wireContent{Type: "summary_text", Text: s.Text})
+		summary = append(summary, wireContent{Type: "summary_text", Text: s.Text})
 	}
-	if m.State.Store == reasoningStoreNative && m.State.Key != "" {
-		key := m.State.Key
-		w.EncryptedContent = &key
-	}
+	w.Summary = &summary
+	key := m.State.Key
+	w.EncryptedContent = &key
 	return w
 }
 
@@ -343,7 +414,7 @@ func effortWire(e canon.ReasoningEffort) string {
 	case canon.EffortMax:
 		return "max"
 	case canon.EffortOff:
-		return "off"
+		return "none"
 	default:
 		return ""
 	}

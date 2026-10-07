@@ -57,33 +57,37 @@ func TestApplyImageDescriptionsReplacesImages(t *testing.T) {
 	}
 }
 
-func TestApplyImageDescriptionsReplacesFunctionOutputImages(t *testing.T) {
-	req := canon.Request{
-		Input: []canon.Item{canon.FunctionOutput{
-			ID:     "o1",
-			CallID: "c1",
-			Output: []canon.Content{canon.ImageContent{MIMEType: "image/png"}},
-		}},
-	}
-	out := applyImageDescriptions(req, []string{"tool result"})
-	o := out.Input[0].(canon.FunctionOutput)
-	text, ok := o.Output[0].(canon.TextContent)
-	if !ok || !strings.HasPrefix(text.Text, "<image path=\"attachment://") || !strings.HasSuffix(text.Text, "\ntool result\n</image>") {
-		t.Fatalf("replacement = %#v, want description block", o.Output[0])
-	}
-	if o.ID != "o1" || o.CallID != "c1" {
-		t.Fatalf("function output identity = %q/%q, want o1/c1", o.ID, o.CallID)
-	}
-}
-
-func TestCollectImagesIncludesFunctionOutput(t *testing.T) {
-	req := canon.Request{
-		Input: []canon.Item{canon.FunctionOutput{
-			Output: []canon.Content{canon.ImageContent{MIMEType: "image/png"}},
-		}},
-	}
-	if got := canon.CollectImages(req); len(got) != 1 {
-		t.Fatalf("images = %d, want 1", len(got))
+func TestApplyImageDescriptionsReplacesToolOutputImages(t *testing.T) {
+	for _, custom := range []bool{false, true} {
+		parts := []canon.Content{canon.ImageContent{MIMEType: "image/png"}}
+		var item canon.Item = canon.FunctionOutput{ID: "o1", CallID: "c1", Output: parts}
+		if custom {
+			item = canon.CustomToolOutput{ID: "o1", CallID: "c1", Content: parts}
+		}
+		req := canon.Request{Input: []canon.Item{item}}
+		if got := canon.CollectImages(req); len(got) != 1 {
+			t.Fatalf("custom=%t images=%d", custom, len(got))
+		}
+		out := applyImageDescriptions(req, []string{"tool result"})
+		var id canon.ItemID
+		var callID canon.CallID
+		var content []canon.Content
+		switch v := out.Input[0].(type) {
+		case canon.FunctionOutput:
+			id, callID, content = v.ID, v.CallID, v.Output
+		case canon.CustomToolOutput:
+			id, callID, content = v.ID, v.CallID, v.Content
+		}
+		text, ok := content[0].(canon.TextContent)
+		if !ok || !strings.HasPrefix(text.Text, "<image path=\"attachment://") || !strings.HasSuffix(text.Text, "\ntool result\n</image>") {
+			t.Fatalf("custom=%t replacement=%#v", custom, content[0])
+		}
+		if id != "o1" || callID != "c1" {
+			t.Fatalf("identity=%s/%s", id, callID)
+		}
+		if canon.HasImage(out) {
+			t.Fatal("image remains after description")
+		}
 	}
 }
 

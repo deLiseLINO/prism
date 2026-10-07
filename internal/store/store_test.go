@@ -234,15 +234,14 @@ func TestRefreshLockKeyedByFingerprintSHA256(t *testing.T) {
 	}
 }
 
-func TestStaleRefreshLockReplaced(t *testing.T) {
+func TestOldHeldRefreshLockIsNotStolen(t *testing.T) {
 	s := newStore(t)
 	fp := []byte("codex:acct-1:grant")
 	held := simulateForeignProcess(t, s.lockPath(fp), true)
-	_, err := acquire(t, s, fp)
-	if err != nil {
-		t.Fatalf("acquire stale lock: %v", err)
+	defer releaseForeignProcess(t, held)
+	if _, err := acquire(t, s, fp); !errors.Is(err, ErrLockUnavailable) {
+		t.Fatalf("old live lock stolen: %v", err)
 	}
-	_ = held
 }
 
 func TestFreshForeignLockIsNotStolen(t *testing.T) {
@@ -256,26 +255,21 @@ func TestFreshForeignLockIsNotStolen(t *testing.T) {
 	}
 }
 
-func TestReleaseRemovesLockFile(t *testing.T) {
+func TestReleasedLockAllowsAnotherWriter(t *testing.T) {
 	s := newStore(t)
 	fp := []byte("codex:acct-1:grant")
 	lock, err := acquire(t, s, fp)
 	if err != nil {
-		t.Fatalf("acquire: %v", err)
-	}
-	path := s.lockPath(fp)
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("lock file missing while held: %v", err)
+		t.Fatal(err)
 	}
 	if err := lock.Release(); err != nil {
-		t.Fatalf("release: %v", err)
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("lock file after release: err=%v", err)
-	}
-	if _, err := acquire(t, s, fp); err != nil {
+	second, err := acquire(t, s, fp)
+	if err != nil {
 		t.Fatalf("reacquire after release: %v", err)
 	}
+	defer second.Release()
 }
 
 func simulateForeignProcess(t *testing.T, path string, backdate bool) *os.File {
@@ -292,7 +286,7 @@ func simulateForeignProcess(t *testing.T, path string, backdate bool) *os.File {
 		t.Fatalf("foreign process flock: %v", err)
 	}
 	if backdate {
-		old := time.Now().Add(-staleLockAge - time.Minute)
+		old := time.Now().Add(-2 * time.Minute)
 		if err := os.Chtimes(path, old, old); err != nil {
 			f.Close()
 			t.Fatalf("backdate: %v", err)

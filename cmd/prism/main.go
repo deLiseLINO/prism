@@ -21,6 +21,10 @@ import (
 )
 
 func main() {
+	if err := closeInheritedDescriptors(); err != nil {
+		fmt.Fprintln(os.Stderr, "prism:", err)
+		os.Exit(1)
+	}
 	os.Exit(run(os.Args[1:]))
 }
 

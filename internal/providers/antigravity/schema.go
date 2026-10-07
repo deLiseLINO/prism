@@ -3,6 +3,7 @@ package antigravity
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -31,7 +32,9 @@ type schemaState struct {
 
 func sanitizeToolParameters(raw []byte) []byte {
 	var node any
-	if err := json.Unmarshal(raw, &node); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&node); err != nil {
 		return json.RawMessage(rootSchemaFallback)
 	}
 	defs := map[string]map[string]any{}
@@ -408,4 +411,69 @@ func collapseAnyOf(branches []any, depth, refDepth int, state *schemaState) map[
 		}
 	}
 	return map[string]any{}
+}
+
+func validateAlternateSchema(raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return fmt.Errorf("schema must be an object")
+	}
+	for _, key := range []string{"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties", "additionalProperties"} {
+		if _, ok := fields[key]; ok {
+			return fmt.Errorf("constraint %s is not representable on the alternate model family", key)
+		}
+	}
+	if value, ok := fields["const"]; ok {
+		var text string
+		if json.Unmarshal(value, &text) != nil || string(value) == "null" {
+			return fmt.Errorf("non-string const is not representable on the alternate model family")
+		}
+	}
+	if value, ok := fields["enum"]; ok {
+		var values []json.RawMessage
+		if json.Unmarshal(value, &values) != nil {
+			return fmt.Errorf("enum must be an array")
+		}
+		for _, v := range values {
+			var text string
+			if json.Unmarshal(v, &text) != nil || string(v) == "null" {
+				return fmt.Errorf("non-string enum is not representable on the alternate model family")
+			}
+		}
+	}
+	for _, key := range []string{"properties", "$defs", "definitions"} {
+		if value, ok := fields[key]; ok {
+			var children map[string]json.RawMessage
+			if json.Unmarshal(value, &children) != nil {
+				return fmt.Errorf("%s must be an object", key)
+			}
+			for _, child := range children {
+				if err := validateAlternateSchema(child); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if value, ok := fields["items"]; ok {
+		if err := validateAlternateSchema(value); err != nil {
+			return err
+		}
+	}
+	for _, key := range []string{"oneOf", "anyOf", "allOf"} {
+		if value, ok := fields[key]; ok {
+			var children []json.RawMessage
+			if json.Unmarshal(value, &children) != nil {
+				return fmt.Errorf("%s must be an array", key)
+			}
+			for _, child := range children {
+				if err := validateAlternateSchema(child); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }

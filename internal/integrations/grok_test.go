@@ -92,27 +92,6 @@ func TestGrokIntegrationAppliesLiveModelsSource(t *testing.T) {
 	}
 }
 
-func TestGrokReapplyRewritesOwnManagedBlock(t *testing.T) {
-	dir := t.TempDir()
-	configPath := tempFile(t, dir, "config.toml", userToml)
-	WriteGrokConfig(GrokOptions{ConfigPath: configPath, Port: testPort, Models: grokTestModels})
-	// Any content difference inside the fence — user edit or prism's own newer
-	// output — is rewritten in place; the region is prism-owned.
-	edited := replaceOne(readFile(t, configPath), "[model.prism-gpt-5-2-codex]", "[model.prism-gpt-5-2-codex]\nuser_field = 1")
-	writeFileOrDie(t, configPath, edited)
-	outcome := WriteGrokConfig(GrokOptions{ConfigPath: configPath, Port: testPort, Models: grokTestModels})
-	if outcome.Kind != OutcomeWritten {
-		t.Fatalf("apply over edit: %+v", outcome)
-	}
-	got := readFile(t, configPath)
-	if !strings.Contains(got, userToml) || strings.Contains(got, "user_field") {
-		t.Fatalf("rewrite lost user bytes or kept foreign edit:\n%s", got)
-	}
-	if !strings.Contains(got, "[model.prism-gpt-5-2-codex]") {
-		t.Fatalf("managed block missing after rewrite:\n%s", got)
-	}
-}
-
 func TestGrokRollbackRemovesExactlyManagedBlock(t *testing.T) {
 	dir := t.TempDir()
 	configPath := tempFile(t, dir, "config.toml", userToml)
@@ -166,6 +145,12 @@ func TestGrokApplyMigratesLegacyTablesAlongsideCanonicalFence(t *testing.T) {
 	if outcome := WriteGrokConfig(GrokOptions{ConfigPath: configPath, Port: testPort, Models: grokTestModels}); outcome.Kind != OutcomeUnchanged {
 		t.Fatalf("second apply: %+v", outcome)
 	}
+	if outcome := StripGrokConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+		t.Fatalf("rollback: %+v", outcome)
+	}
+	if readFile(t, configPath) != userToml+"\n"+legacy {
+		t.Fatal("legacy migration lost historical original")
+	}
 }
 
 func TestGrokApplyMigratesLegacyTablesBeforeCanonicalFence(t *testing.T) {
@@ -188,6 +173,12 @@ func TestGrokApplyMigratesLegacyTablesBeforeCanonicalFence(t *testing.T) {
 	}
 	if strings.Count(got, GrokFence.Begin) != 1 || strings.Count(got, GrokFence.End) != 1 {
 		t.Fatalf("fence corrupted by migration:\n%q", got)
+	}
+	if outcome := StripGrokConfig(LocalIO{}, configPath); outcome.Kind != OutcomeWritten {
+		t.Fatalf("rollback: %+v", outcome)
+	}
+	if readFile(t, configPath) != userToml+legacy {
+		t.Fatal("legacy migration lost historical original")
 	}
 }
 

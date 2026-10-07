@@ -92,7 +92,7 @@ func TestRunnerSendsFingerprintHeaders(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "tok-1", ProjectID: "proj-1"}}, server.Client(), server.URL)
+	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "tok-1", ProjectID: "proj-1"}}, server.Client(), server.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRunnerEnvelopeCarriesProjectAndSession(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t", ProjectID: "proj-9"}}, server.Client(), server.URL)
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t", ProjectID: "proj-9"}}, server.Client(), server.URL, nil)
 	req := testRequest()
 	req.Facts.Thread = "thread-42"
 	var sink recordingSink
@@ -153,7 +153,7 @@ func TestRunnerRetryThenSuccess(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 	runner.SetSleep(clock.Sleep)
 	runner.SetRand(func() float64 { return 0.5 })
 	var sink recordingSink
@@ -178,7 +178,7 @@ func TestRunner429BodyPeek(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"Quota exceeded for the day"}}`))
 		}))
 		defer server.Close()
-		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 		runner.SetSleep(clock.Sleep)
 		var sink recordingSink
 		err := runner.Run(context.Background(), testRequest(), &sink)
@@ -201,7 +201,7 @@ func TestRunner429BodyPeek(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"Too many requests"}}`))
 		}))
 		defer server.Close()
-		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 		runner.SetSleep(clock.Sleep)
 		runner.SetRand(func() float64 { return 0 })
 		var sink recordingSink
@@ -232,9 +232,10 @@ func TestRunnerRepairAndReplay(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 	runner.SetSleep(clock.Sleep)
 	req := testRequest()
+	req.Request.Model = "claude-edge"
 	req.Request.Tools = []canon.Tool{canon.FunctionTool{
 		Name:       "get_weather",
 		Parameters: []byte(`{"type":"object","properties":{"broken":{"type":"not-a-type"}}}`),
@@ -264,7 +265,7 @@ func TestRunnerRunErrorClassification(t *testing.T) {
 		kind   provider.RunErrorKind
 	}{
 		{http.StatusUnauthorized, provider.ClassUnauthorized, provider.TerminalOmitted},
-		{http.StatusForbidden, provider.ClassUnauthorized, provider.TerminalOmitted},
+		{http.StatusForbidden, provider.ClassForbidden, provider.TerminalOmitted},
 		{http.StatusNotFound, provider.ClassNotFound, provider.TerminalOmitted},
 		{http.StatusInternalServerError, provider.ClassServer, provider.Retryable},
 		{http.StatusBadGateway, provider.ClassServer, provider.Retryable},
@@ -274,7 +275,7 @@ func TestRunnerRunErrorClassification(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(tc.status)
 		}))
-		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 		runner.SetSleep(func(time.Duration) {})
 		runner.SetRand(func() float64 { return 0 })
 		var sink recordingSink
@@ -303,7 +304,7 @@ func TestRunnerCredentialFailureClassification(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			runner, err := NewRunner(stubCreds{err: tc.err}, http.DefaultClient, DefaultBaseURL)
+			runner, err := NewRunner(stubCreds{err: tc.err}, http.DefaultClient, DefaultBaseURL, nil)
 			if err != nil {
 				t.Fatalf("NewRunner: %v", err)
 			}
@@ -324,7 +325,7 @@ func TestRunnerCredentialFailureClassification(t *testing.T) {
 }
 
 func TestRunnerRegister(t *testing.T) {
-	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, http.DefaultClient, DefaultBaseURL)
+	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, http.DefaultClient, DefaultBaseURL, nil)
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
@@ -341,13 +342,13 @@ func TestRunnerRegister(t *testing.T) {
 }
 
 func TestNewRunnerGuards(t *testing.T) {
-	if _, err := NewRunner(nil, http.DefaultClient, ""); err == nil {
+	if _, err := NewRunner(nil, http.DefaultClient, "", nil); err == nil {
 		t.Fatal("nil credential source must be rejected")
 	}
-	if _, err := NewRunner(stubCreds{}, nil, ""); err == nil {
+	if _, err := NewRunner(stubCreds{}, nil, "", nil); err == nil {
 		t.Fatal("nil http client must be rejected")
 	}
-	if _, err := NewRunner(stubCreds{}, http.DefaultClient, ""); err != nil {
+	if _, err := NewRunner(stubCreds{}, http.DefaultClient, "", nil); err != nil {
 		t.Fatalf("default base URL path failed: %v", err)
 	}
 }
@@ -384,4 +385,113 @@ func readAllBodyMust(r *http.Request) []byte {
 		panic(err)
 	}
 	return data
+}
+
+type renewingCreds struct {
+	stubCreds
+	next     CredentialPair
+	rejected []string
+}
+
+func (c *renewingCreds) RefreshRejected(_ context.Context, _ account.Lease, rejected string) (CredentialPair, error) {
+	c.rejected = append(c.rejected, rejected)
+	return c.next, nil
+}
+
+func TestRunnerUnauthorizedRenewsCredentialAndReplaysOnce(t *testing.T) {
+	var auths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths = append(auths, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "Bearer tok-new" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		fixedSSE(textStream())(w, r)
+	}))
+	defer server.Close()
+	creds := &renewingCreds{
+		stubCreds: stubCreds{pair: CredentialPair{AccessToken: "tok-old", ProjectID: "p"}},
+		next:      CredentialPair{AccessToken: "tok-new", ProjectID: "p"},
+	}
+	runner, _ := NewRunner(creds, server.Client(), server.URL, nil)
+	var sink recordingSink
+	if err := runner.Run(context.Background(), testRequest(), &sink); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(auths) != 2 || auths[1] != "Bearer tok-new" {
+		t.Fatalf("upstream saw %v, want a rejected attempt then one with the renewed token", auths)
+	}
+	if len(creds.rejected) != 1 || creds.rejected[0] != "tok-old" {
+		t.Fatalf("renewal asked to replace %v, want [tok-old]", creds.rejected)
+	}
+}
+
+func TestRunnerUnauthorizedAfterRenewalIsReportedOnce(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	creds := &renewingCreds{
+		stubCreds: stubCreds{pair: CredentialPair{AccessToken: "tok-old"}},
+		next:      CredentialPair{AccessToken: "tok-new"},
+	}
+	runner, _ := NewRunner(creds, server.Client(), server.URL, nil)
+	err := runner.Run(context.Background(), testRequest(), &recordingSink{})
+	var runErr provider.RunError
+	if !errors.As(err, &runErr) || runErr.Class != provider.ClassUnauthorized {
+		t.Fatalf("err = %v, want unauthorized RunError", err)
+	}
+	if calls != 2 {
+		t.Fatalf("upstream calls = %d, want 2", calls)
+	}
+}
+
+// The attempt timeout bounds waiting for the upstream to answer, not the
+// length of a response that is actively streaming.
+func TestRunnerAttemptTimeoutDoesNotCutAnActiveStream(t *testing.T) {
+	frame := func(text string) string {
+		return "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"" + text + "\"}]}}]}}\n\n"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		for i := 0; i < 6; i++ {
+			_, _ = w.Write([]byte(frame("x")))
+			flusher.Flush()
+			time.Sleep(50 * time.Millisecond)
+		}
+		_, _ = w.Write([]byte(textStream()))
+	}))
+	defer server.Close()
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
+	req := testRequest()
+	req.Target.Timeout = 150 * time.Millisecond
+	var sink recordingSink
+	if err := runner.Run(context.Background(), req, &sink); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	last := sink.events[len(sink.events)-1]
+	if _, ok := last.(canon.TurnFinished); !ok {
+		t.Fatalf("last event = %T (%+v), want TurnFinished", last, last)
+	}
+}
+
+func TestRunnerFinalThrottleCarriesRetryAfter(t *testing.T) {
+	clock := newFakeClock()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "19")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"busy"}}`))
+	}))
+	defer server.Close()
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
+	runner.SetSleep(clock.Sleep)
+	err := runner.Run(context.Background(), testRequest(), &recordingSink{})
+	var runErr provider.RunError
+	if !errors.As(err, &runErr) || runErr.RetryAfter != 19*time.Second {
+		t.Fatalf("err = %v, want RunError with RetryAfter 19s", err)
+	}
 }

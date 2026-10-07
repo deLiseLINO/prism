@@ -46,12 +46,18 @@ func (s *SshIO) runWithStdin(ctx context.Context, stdin string, script string) (
 	return s.run(ctx, s.address, stdin, script)
 }
 
-func (s *SshIO) ReadTextIfExists(path string) (string, bool) {
+func (s *SshIO) ReadText(path string) (string, bool, error) {
 	out, err := s.runScript(context.Background(), readScript(path))
-	if err != nil || !strings.HasSuffix(out, "\n") {
-		return "", false
+	if err != nil {
+		return "", false, err
 	}
-	return out, true
+	if out == "absent\n" {
+		return "", false, nil
+	}
+	if !strings.HasPrefix(out, "present\n") || !strings.HasSuffix(out, "\n") {
+		return "", false, fmt.Errorf("ssh read %s: invalid file response", path)
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(out, "present\n"), "\n"), true, nil
 }
 
 func (s *SshIO) FileExists(path string) bool {
@@ -67,7 +73,7 @@ func (s *SshIO) StageWrite(path string, content string) error {
 }
 
 func (s *SshIO) CommitStaged(path string) error {
-	_, err := s.runScript(context.Background(), fmt.Sprintf("mv %s %s", shq(StagedPath(path)), shq(path)))
+	_, err := s.runScript(context.Background(), fmt.Sprintf("mv %s %s && sync -f %s && sync -f %s", shq(StagedPath(path)), shq(path), shq(path), shq(shDir(path))))
 	return err
 }
 
@@ -78,6 +84,11 @@ func (s *SshIO) RecoverStaged(path string) bool {
 
 func (s *SshIO) Remove(path string) error {
 	_, err := s.runScript(context.Background(), fmt.Sprintf("rm -f %s", shq(path)))
+	return err
+}
+
+func (s *SshIO) RemoveDurable(path string) error {
+	_, err := s.runScript(context.Background(), fmt.Sprintf("rm -f %s && sync -f %s", shq(path), shq(shDir(path))))
 	return err
 }
 
@@ -97,13 +108,13 @@ func SshHome(ctx context.Context, address string) (string, error) {
 }
 
 func runSshCommand(ctx context.Context, address string, stdin string, script string) (string, error) {
-	if stdin != "" {
-		script = script + "\n"
-	}
-	cmd := exec.CommandContext(ctx, "ssh", address, "sh -s")
-	cmd.Stdin = strings.NewReader(script + stdin)
+	cmd := exec.CommandContext(ctx, "ssh", address, "sh -c "+shq(script))
+	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.Output()
 	if err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("ssh %s: %w: %s", address, err, strings.TrimSpace(string(exit.Stderr)))
+		}
 		return "", fmt.Errorf("ssh %s: %w", address, err)
 	}
 	return string(out), nil
@@ -116,18 +127,12 @@ func SshReachable(ctx context.Context, address string) bool {
 	return err == nil
 }
 
-
-// readScript cats the file and appends a newline sentinel: an existing file
-// ends with \n under the printf, a missing one errors, so ReadTextIfExists
-// never confuses an empty file with an absent one.
 func readScript(path string) string {
-	return fmt.Sprintf("cat %s && printf '\\n'", shq(path))
+	return fmt.Sprintf("p=%s; if detail=$(LC_ALL=C stat -- \"$p\" 2>&1); then printf 'present\\n'; cat -- \"$p\" && printf '\\n'; else case \"$detail\" in *'No such file or directory'*) printf 'absent\\n';; *) printf 'read %%s: %%s\\n' \"$p\" \"$detail\" >&2; exit 1;; esac; fi", shq(path))
 }
 
-// stageScript base64-decodes the last stdin line (the payload rides after the
-// script itself) into the staged temp file, creating the parent directory first.
 func stageScript(path string, staged string) string {
-	return fmt.Sprintf("mkdir -p %s && tail -n 1 | base64 -d > %s", shq(shDir(path)), shq(staged))
+	return fmt.Sprintf("umask 077; mkdir -p %s && base64 -d > %s && sync -f %s || exit 1; d=%s; while test -n \"$d\"; do sync -f \"$d\" || exit 1; test \"$d\" = / && break; next=$(dirname -- \"$d\"); test \"$next\" = \"$d\" && break; d=$next; done", shq(shDir(path)), shq(staged), shq(staged), shq(shDir(path)))
 }
 
 func shDir(path string) string {

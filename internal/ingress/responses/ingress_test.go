@@ -158,23 +158,16 @@ func TestParseExoticItems(t *testing.T) {
 		t.Fatalf("input[2]: %#v", req.Input[2])
 	}
 	for i, item := range req.Input[3:] {
-		msg, ok := item.(canon.Message)
-		if !ok || msg.Role != canon.RoleUser || len(msg.Content) != 1 {
+		marker, ok := item.(canon.CompactionMarker)
+		if !ok || marker.State.Store != canon.StoreWire || marker.State.Key == "" {
 			t.Fatalf("input[%d]: %#v", i+3, item)
-		}
-		text, ok := msg.Content[0].(canon.TextContent)
-		if !ok || text.Text != opaqueCompactionNote {
-			t.Fatalf("input[%d] content: %#v", i+3, msg.Content[0])
-		}
-		if msg.ID != "" {
-			t.Fatalf("input[%d] synthesized id %q", i+3, msg.ID)
 		}
 	}
 	kinds := map[string]int{}
 	for _, w := range sink.warnings {
 		kinds[w.Kind]++
 	}
-	if kinds[WarnOpaquePayload] != 2 {
+	if kinds[WarnOpaquePayload] != 0 {
 		t.Fatalf("opaque payload warnings: %+v", sink.warnings)
 	}
 	if kinds[WarnExoticItem] != 1 {
@@ -384,7 +377,7 @@ func TestCustomToolGrammarFormatParses(t *testing.T) {
 	}
 }
 
-func TestGrokIntegerArgumentNormalization(t *testing.T) {
+func TestReplayPreservesNumericLexemes(t *testing.T) {
 	body := `{
 		"model": "gpt-5.3",
 		"input": [
@@ -407,23 +400,9 @@ func TestGrokIntegerArgumentNormalization(t *testing.T) {
 	if !ok {
 		t.Fatalf("input[0]: %#v", req.Input[0])
 	}
-	var args map[string]any
-	if err := json.Unmarshal(call.Arguments, &args); err != nil {
-		t.Fatal(err)
-	}
-	if args["count"] != float64(3) {
-		t.Fatalf("count: %#v", args["count"])
-	}
-	if args["ratio"] != 0.5 {
-		t.Fatalf("ratio: %#v", args["ratio"])
-	}
-	nested, _ := args["nested"].(map[string]any)
-	if nested["depth"] != float64(2) {
-		t.Fatalf("nested.depth: %#v", nested["depth"])
-	}
-	list, _ := args["list"].([]any)
-	if len(list) != 2 || list[0] != float64(7) || list[1] != 8.5 {
-		t.Fatalf("list: %#v", list)
+	const expected = `{"count": 3.0, "ratio": 0.5, "nested": {"depth": 2.0}, "list": [7.0, 8.5]}`
+	if string(call.Arguments) != expected {
+		t.Fatalf("arguments = %s, want exact %s", call.Arguments, expected)
 	}
 }
 
@@ -441,7 +420,6 @@ func TestParseErrors(t *testing.T) {
 		{"bad input item", `{"model": "gpt-5.3", "input": [42]}`, ReasonInvalidField, "input[0]"},
 		{"bad input kind", `{"model": "gpt-5.3", "input": 5}`, ReasonInvalidField, "input"},
 		{"bad arguments", `{"model": "gpt-5.3", "input": [{"type": "function_call", "call_id": "c", "name": "f", "arguments": "{oops"}]}`, ReasonInvalidJSON, "input[0].arguments"},
-		{"non-object arguments", `{"model": "gpt-5.3", "input": [{"type": "function_call", "call_id": "c", "name": "f", "arguments": "[1]"}]}`, ReasonInvalidField, "input[0].arguments"},
 		{"missing output call id", `{"model": "gpt-5.3", "input": [{"type": "function_call_output", "output": "x"}]}`, ReasonMissingField, "input[0].call_id"},
 		{"bad reasoning effort", `{"model": "gpt-5.3", "input": "hi", "reasoning": {"effort": "ludicrous"}}`, ReasonInvalidField, "reasoning.effort"},
 		{"bad reasoning summary", `{"model": "gpt-5.3", "input": "hi", "reasoning": {"summary": "verbose"}}`, ReasonInvalidField, "reasoning.summary"},
@@ -460,6 +438,14 @@ func TestParseErrors(t *testing.T) {
 		if parseErr.Status < 400 || parseErr.Status >= 500 {
 			t.Fatalf("%s: status %d", tc.name, parseErr.Status)
 		}
+	}
+}
+
+func TestNonObjectFunctionArgumentsAreRejected(t *testing.T) {
+	_, _, _, err := parseBody(t, `{"model":"gpt-5.3","input":[{"type":"function_call","call_id":"c","name":"f","arguments":"[1]"}]}`, nil)
+	rejected, ok := err.(*ParseError)
+	if !ok || rejected.Status != http.StatusBadRequest {
+		t.Fatalf("non-object function arguments must be rejected: %v", err)
 	}
 }
 
@@ -590,5 +576,20 @@ func TestRoleOnlyInputItemIsMessage(t *testing.T) {
 	}
 	if text, _ := msg.Content[0].(canon.TextContent); text.Text != "hi" {
 		t.Fatalf("content = %#v", msg.Content[0])
+	}
+}
+
+func TestAssistantRefusalPartReplaysAsText(t *testing.T) {
+	req, _, _ := mustParse(t, `{"model":"p/m","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"a"},{"type":"refusal","refusal":"no"}]},{"role":"user","content":"x"}]}`, nil)
+	msg := req.Input[0].(canon.Message)
+	if len(msg.Content) != 2 || msg.Content[1].(canon.TextContent).Text != "no" {
+		t.Fatalf("content = %+v", msg.Content)
+	}
+}
+
+func TestTextVerbosityReachesCanon(t *testing.T) {
+	req, _, _ := mustParse(t, `{"model":"p/m","input":"x","text":{"verbosity":"high"}}`, nil)
+	if req.Text.Verbosity != canon.VerbosityHigh {
+		t.Fatalf("verbosity = %v", req.Text.Verbosity)
 	}
 }

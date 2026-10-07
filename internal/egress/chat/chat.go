@@ -53,9 +53,10 @@ type toolState struct {
 	index     int
 	callID    string
 	name      string
-	argsSeen  bool
 	argsFinal string
 	finished  bool
+	custom    bool
+	input     strings.Builder
 }
 
 type Chat struct {
@@ -73,10 +74,12 @@ type Chat struct {
 
 	commitState provider.CommitState
 
-	tools   map[canon.ItemID]*toolState
-	order   []canon.ItemID
-	content strings.Builder
-	usage   canon.Usage
+	tools     map[canon.ItemID]*toolState
+	order     []canon.ItemID
+	content   strings.Builder
+	reasoning strings.Builder
+	seen      map[canon.ItemID]string
+	usage     canon.Usage
 
 	warned map[string]bool
 	warns  []Warning
@@ -89,6 +92,7 @@ func New(w io.Writer, stream bool) *Chat {
 		w:      w,
 		stream: stream,
 		tools:  make(map[canon.ItemID]*toolState),
+		seen:   make(map[canon.ItemID]string),
 		warned: make(map[string]bool),
 	}
 }
@@ -124,17 +128,19 @@ func (c *Chat) Frame(ev canon.Event) error {
 	case canon.ItemStarted:
 		return c.itemStarted(e.Item)
 	case canon.TextDelta:
-		c.content.WriteString(e.Text)
-		c.commit()
-		return c.writeChunk(c.deltaChunk(delta{Content: &e.Text}))
+		c.seen[e.ItemID] += e.Text
+		return c.text(e.Text)
 	case canon.ReasoningDelta:
-		c.commit()
-		return c.writeChunk(c.deltaChunk(delta{ReasoningContent: &e.Text}))
+		c.seen[e.ItemID] += e.Text
+		return c.reasoningText(e.Text)
 	case canon.ToolArgumentsDelta:
 		return c.toolArguments(e)
 	case canon.CustomToolInputDelta:
-		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool input for item %q has no chat wire shape; omitted", e.ItemID))
-		c.commit()
+		tool := c.tools[e.ItemID]
+		if tool == nil || !tool.custom {
+			return fmt.Errorf("egress/chat: custom input for unknown call")
+		}
+		tool.input.WriteString(e.Text)
 		return nil
 	case canon.ItemStateAvailable:
 		return nil
@@ -209,11 +215,26 @@ func (c *Chat) itemStarted(item canon.Item) error {
 			Index: st.index, ID: &id, Type: &ftyp, Function: &funcDelta{Name: &name},
 		}}}))
 	case canon.CustomToolCall:
-		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool call %q has no chat wire shape", it.ID))
+		if err := c.itemStarted(canon.FunctionCall{ID: it.ID, CallID: it.CallID, Name: it.Name}); err != nil {
+			return err
+		}
+		c.tools[it.ID].custom = true
 		return nil
 	default:
 		return nil
 	}
+}
+
+func (c *Chat) text(s string) error {
+	c.content.WriteString(s)
+	c.commit()
+	return c.writeChunk(c.deltaChunk(delta{Content: &s}))
+}
+
+func (c *Chat) reasoningText(s string) error {
+	c.reasoning.WriteString(s)
+	c.commit()
+	return c.writeChunk(c.deltaChunk(delta{ReasoningContent: &s}))
 }
 
 func (c *Chat) toolArguments(e canon.ToolArgumentsDelta) error {
@@ -221,8 +242,8 @@ func (c *Chat) toolArguments(e canon.ToolArgumentsDelta) error {
 	if !ok {
 		return fmt.Errorf("egress/chat: tool arguments for unknown item %q", e.ItemID)
 	}
-	st.argsSeen = true
 	args := string(e.Bytes)
+	c.seen[e.ItemID] += args
 	c.commit()
 	return c.writeChunk(c.deltaChunk(delta{ToolCalls: []toolCallDelta{{
 		Index: st.index, Function: &funcDelta{Arguments: &args},
@@ -242,8 +263,12 @@ func (c *Chat) itemFinished(item canon.Item) error {
 		st.finished = true
 		st.name = string(it.Name)
 		st.argsFinal = string(it.Arguments)
-		if !st.argsSeen && len(it.Arguments) > 0 {
-			args := st.argsFinal
+		seen := c.seen[it.ID]
+		if !strings.HasPrefix(st.argsFinal, seen) {
+			return fmt.Errorf("egress/chat: final arguments conflict with deltas")
+		}
+		if len(st.argsFinal) > len(seen) {
+			args := st.argsFinal[len(seen):]
 			c.commit()
 			if err := c.writeChunk(c.deltaChunk(delta{ToolCalls: []toolCallDelta{{
 				Index: st.index, Function: &funcDelta{Arguments: &args},
@@ -253,10 +278,47 @@ func (c *Chat) itemFinished(item canon.Item) error {
 		}
 		return nil
 	case canon.ReasoningItem:
+		text := it.Content
+		if text == "" {
+			for _, part := range it.Summary {
+				text += part.Text
+			}
+		}
+		seen := c.seen[it.ID]
+		if !strings.HasPrefix(text, seen) {
+			return fmt.Errorf("egress/chat: final reasoning conflicts with deltas")
+		}
+		if len(text) > len(seen) {
+			return c.reasoningText(text[len(seen):])
+		}
+		return nil
+	case canon.Message:
+		var text strings.Builder
+		for _, part := range it.Content {
+			if t, ok := part.(canon.TextContent); ok {
+				text.WriteString(t.Text)
+			}
+		}
+		final, seen := text.String(), c.seen[it.ID]
+		if !strings.HasPrefix(final, seen) {
+			return fmt.Errorf("egress/chat: final text conflicts with deltas")
+		}
+		if len(final) > len(seen) {
+			return c.text(final[len(seen):])
+		}
 		return nil
 	case canon.CustomToolCall:
-		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool call %q has no chat wire shape", it.ID))
-		return nil
+		tool := c.tools[it.ID]
+		if tool == nil || !tool.custom || !strings.HasPrefix(it.Input, tool.input.String()) {
+			return fmt.Errorf("egress/chat: custom tool completion conflicts with deltas")
+		}
+		arguments, err := json.Marshal(struct {
+			Input string `json:"input"`
+		}{Input: it.Input})
+		if err != nil {
+			return err
+		}
+		return c.itemFinished(canon.FunctionCall{ID: it.ID, CallID: it.CallID, Name: it.Name, Arguments: arguments})
 	case canon.CustomToolOutput:
 		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool output for call %q has no chat wire shape", it.CallID))
 		return nil
@@ -310,9 +372,13 @@ func (c *Chat) turnFailed(e canon.TurnFailed) error {
 	c.terminal = true
 	c.failed = true
 	if e.Failure.HasProvider() {
-		body, err := chatProviderError(e.Failure.Provider.Error)
+		raw := e.Failure.Provider.Error
+		if len(raw) == 0 {
+			raw = e.Failure.Provider.StatusDetails
+		}
+		body, err := chatProviderError(raw)
 		if err != nil {
-			return err
+			body = map[string]any{"message": e.Failure.Message, "details": json.RawMessage(raw)}
 		}
 		return c.writeJSON(map[string]any{"error": body})
 	}
@@ -357,7 +423,7 @@ func incompleteFailure(st canon.Status, usage canon.Usage) canon.TurnFailed {
 }
 
 func (c *Chat) messageWire() message {
-	m := message{Role: assistantRole, Content: c.content.String()}
+	m := message{Role: assistantRole, Content: c.content.String(), ReasoningContent: c.reasoning.String()}
 	for _, id := range c.order {
 		st := c.tools[id]
 		m.ToolCalls = append(m.ToolCalls, toolCallFull{

@@ -56,7 +56,7 @@ func TestExtendedEffortsReachResponsesWire(t *testing.T) {
 	for effort, want := range map[canon.ReasoningEffort]string{
 		canon.EffortXHigh: "xhigh",
 		canon.EffortMax:   "max",
-		canon.EffortOff:   "off",
+		canon.EffortOff:   "none",
 	} {
 		req := testRequest(false)
 		req.Reasoning = canon.ReasoningConfig{Effort: effort}
@@ -142,21 +142,19 @@ func TestReasoningReplayIncludesSummary(t *testing.T) {
 		reasoning canon.ReasoningItem
 		want      string
 	}{
-		{name: "empty", reasoning: canon.ReasoningItem{ID: "rs_1"}, want: `{"type":"reasoning","id":"rs_1","summary":[]}`},
+		{name: "empty", reasoning: canon.ReasoningItem{ID: "rs_1"}},
 		{
 			name:      "present",
-			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}},
-			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}]}`,
+			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}, State: canon.OpaqueRef{Store: canon.StoreWire, Key: "opaque"}},
+			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}],"encrypted_content":"opaque"}`,
 		},
 		{
 			name:      "foreign signature",
 			reasoning: canon.ReasoningItem{ID: "rs_1", Signature: "EuYBCkQYAiJA-anthropic-signature"},
-			want:      `{"type":"reasoning","id":"rs_1","summary":[]}`,
 		},
 		{
 			name:      "proxy envelope",
 			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}, Signature: reasonenv.Encode("x")},
-			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}]}`,
 		},
 		{name: "nothing to replay", reasoning: canon.ReasoningItem{}},
 		{name: "only signature", reasoning: canon.ReasoningItem{Signature: reasonenv.Encode("x")}},
@@ -248,7 +246,7 @@ func TestReplayDropsItemIDsTheUpstreamCannotResolve(t *testing.T) {
 		id, _ := item["id"].(string)
 		ids = append(ids, fmt.Sprintf("%s=%s", item["type"], id))
 	}
-	want := "message=,reasoning=,reasoning=rs_1,function_call=,function_call=fc_2,custom_tool_call=,custom_tool_call=ctc_4"
+	want := "message=,function_call=,function_call=fc_2,custom_tool_call=,custom_tool_call=ctc_4"
 	if gotIDs := strings.Join(ids, ","); gotIDs != want {
 		t.Fatalf("ids = %s, want %s", gotIDs, want)
 	}
@@ -623,13 +621,20 @@ func TestTargetValidation(t *testing.T) {
 	}
 }
 
-func TestUnsupportedItemIsTypedError(t *testing.T) {
-	r := New(staticKey, Options{})
-	_, err := buildBody(canon.Request{Input: []canon.Item{canon.CompactionMarker{ID: "c1"}}})
-	if err == nil || !strings.Contains(err.Error(), "unsupported canonical item") {
-		t.Fatalf("err = %v", err)
+func TestSessionHistoryItemsAreSkipped(t *testing.T) {
+	raw, err := buildBody(canon.Request{Input: []canon.Item{
+		canon.CompactionMarker{ID: "c1"},
+		canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+	}})
+	if err != nil {
+		t.Fatalf("buildBody: %v", err)
 	}
-	_ = r
+	var got struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil || len(got.Input) != 1 || got.Input[0]["type"] != "message" {
+		t.Fatalf("input = %v (%v)", got.Input, err)
+	}
 }
 
 type collector struct {
@@ -754,5 +759,55 @@ func TestForwardHeadersReachResponsesUpstream(t *testing.T) {
 		if !found {
 			t.Fatalf("header %s missing from %v", name, up.Headers)
 		}
+	}
+}
+
+func TestTextFormatAndVerbosityReachTheUpstream(t *testing.T) {
+	req := testRequest(false)
+	strict := true
+	req.Text = canon.TextOutput{
+		Verbosity: canon.VerbosityLow,
+		Format:    &canon.TextFormat{Type: "json_schema", Name: "out", Schema: []byte(`{"type":"object"}`), Strict: &strict},
+	}
+	raw, err := buildBody(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Text struct {
+			Verbosity string `json:"verbosity"`
+			Format    struct {
+				Type   string          `json:"type"`
+				Name   string          `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+				Strict bool            `json:"strict"`
+			} `json:"format"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	f := got.Text.Format
+	if got.Text.Verbosity != "low" || f.Type != "json_schema" || f.Name != "out" || string(f.Schema) != `{"type":"object"}` || !f.Strict {
+		t.Fatalf("text = %s", raw)
+	}
+	if plain, _ := buildBody(testRequest(false)); strings.Contains(string(plain), `"text":{`) {
+		t.Fatalf("a request without text options must not send text: %s", plain)
+	}
+}
+
+func TestStopSequencesAreNotSentToAResponsesUpstream(t *testing.T) {
+	req := testRequest(false)
+	req.Sampling.Stop = []string{"END"}
+	raw, err := buildBody(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := got["stop"]; present {
+		t.Fatalf("the Responses wire has no stop parameter and strict upstreams reject it: %s", raw)
 	}
 }

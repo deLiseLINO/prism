@@ -2,15 +2,10 @@ package integrations
 
 import (
 	"encoding/json"
-	"regexp"
-	"strconv"
+	"fmt"
 	"strings"
 )
 
-// JSONPatch mirrors YamlLeafPatch: the next bytes and whether they changed, or
-// a named refusal (fail-closed). A refusal with Retryable set is a conflict
-// with user-owned bytes that a confirmed (forced) apply may take over;
-// structural refusals stay final.
 type JSONPatch struct {
 	Kind      string
 	Next      string
@@ -18,14 +13,10 @@ type JSONPatch struct {
 	Reason    string
 	Retryable bool
 }
-
-// JSONScalarEntry is one `"key": "value"` member prism owns inside a container.
 type JSONScalarEntry struct {
 	Key   string
 	Value string
 }
-
-// JSONLeafRead mirrors ProviderLeafRead for JSON targets.
 type JSONLeafRead struct {
 	Kind     string
 	Endpoint *string
@@ -38,711 +29,461 @@ const (
 	jsonLeafRefused = "refused"
 )
 
-// jsonString renders a JSON string literal with escaping identical to
-// encoding/json, so canonical bytes are deterministic.
-func jsonString(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return `"` + s + `"`
+func jsonString(s string) string { b, _ := json.Marshal(s); return string(b) }
+func jsonUnquote(s string) string {
+	var v string
+	if json.Unmarshal([]byte(`"`+s+`"`), &v) != nil {
+		return s
 	}
-	return string(b)
+	return v
 }
-
-// jsonUnquote resolves a captured raw string body (between the quotes) back to
-// its value; on any malformed escape the raw body is returned as-is.
-func jsonUnquote(raw string) string {
-	var out string
-	if err := json.Unmarshal([]byte(`"`+raw+`"`), &out); err != nil {
-		return raw
-	}
-	return out
-}
-
-func jsonMemberRe(key string) *regexp.Regexp {
-	return regexp.MustCompile(`^"` + regexp.QuoteMeta(key) + `"[ \t]*:`)
-}
-
-var jsonScalarValueRe = regexp.MustCompile(`^"((?:[^"\\]|\\.)*)"[ \t]*,?[ \t]*$`)
-
-// jsonDocument is a walked JSON object document: the root object's opener and
-// closer line indexes and the member indent. Only pretty-printed block-style
-// documents are addressable; everything else refuses.
-type jsonDocument struct {
-	lines        []sourceLine
-	opener       int
-	closer       int
-	memberIndent int
-}
-
-// scanJSONDocument validates the document shape and locates the root object.
-// Refusals: tab indentation, JSONC comments, a non-object or non-block-style
-// root, an unclosed root object, or trailing content after it.
-func scanJSONDocument(text string, fileLabel string) (jsonDocument, string) {
-	lines := sourceLines(text)
-	for _, line := range lines {
-		if strings.HasPrefix(line.text, "\t") {
-			return jsonDocument{}, "prism: " + fileLabel + " patch refused — tab indentation is unsupported"
-		}
-		trimmedLeft := strings.TrimLeft(line.text, " \t\n\r\v\f")
-		if strings.HasPrefix(trimmedLeft, "//") || strings.HasPrefix(trimmedLeft, "/*") || strings.HasPrefix(trimmedLeft, "*") || strings.HasPrefix(trimmedLeft, "*/") {
-			return jsonDocument{}, "prism: " + fileLabel + " patch refused — comments (JSONC) are unsupported"
-		}
-	}
-	opener := -1
-	for i, line := range lines {
-		if line.blank {
-			continue
-		}
-		if strings.TrimSpace(line.text) != "{" {
-			return jsonDocument{}, "prism: " + fileLabel + " patch refused — root is not a block-style JSON object"
-		}
-		opener = i
-		break
-	}
-	if opener == -1 {
-		return jsonDocument{lines: lines, opener: -1, closer: -1, memberIndent: -1}, ""
-	}
-	closer := -1
-	for i := opener + 1; i < len(lines); i++ {
-		if lines[i].blank {
-			continue
-		}
-		if lines[i].indent <= lines[opener].indent {
-			if strings.TrimSpace(lines[i].text) == "}" {
-				closer = i
-			}
-			break
-		}
-	}
-	if closer == -1 {
-		return jsonDocument{}, "prism: " + fileLabel + " patch refused — root object is missing its closing brace"
-	}
-	if !allBlankAfter(lines, closer+1) {
-		return jsonDocument{}, "prism: " + fileLabel + " patch refused — trailing content after the root object"
-	}
-	return jsonDocument{lines: lines, opener: opener, closer: closer, memberIndent: immediateIndent(lines, opener+1, closer)}, ""
-}
-
-func allBlankAfter(lines []sourceLine, start int) bool {
-	for i := start; i < len(lines); i++ {
-		if !lines[i].blank {
-			return false
-		}
-	}
-	return true
-}
-
-func memberInline(text, key string) (string, bool) {
-	rest := strings.TrimLeft(text, " ")
-	loc := jsonMemberRe(key).FindStringIndex(rest)
-	if loc == nil {
-		return "", false
-	}
-	return strings.TrimSpace(rest[loc[1]:]), true
-}
-
-// findJSONMember locates the single `key:` member line of the container span
-// [containerStart, containerEnd) at the given indent. Duplicate keys refuse.
-func findJSONMember(lines []sourceLine, containerStart, containerEnd, indent int, key, fileLabel string) (int, string, string) {
-	found := -1
-	inline := ""
-	for i := containerStart + 1; i < containerEnd; i++ {
-		line := lines[i]
-		if line.blank || line.indent != indent {
-			continue
-		}
-		rest, ok := memberInline(line.text, key)
-		if !ok {
-			continue
-		}
-		if found != -1 {
-			return -1, "", "prism: " + fileLabel + " patch refused — duplicate \"" + key + "\" keys"
-		}
-		found = i
-		inline = rest
-	}
-	return found, inline, ""
-}
-
-// jsonBlockEnd finds the closer line of the object whose member line is start
-// (inline remainder `{`), or refuses when no closer arrives in span.
-func jsonBlockEnd(lines []sourceLine, start, containerEnd int, fileLabel string) (int, string) {
-	indent := lines[start].indent
-	for i := start + 1; i < containerEnd; i++ {
-		line := lines[i]
-		if line.blank {
-			continue
-		}
-		if line.indent <= indent {
-			trimmed := strings.TrimSpace(line.text)
-			if trimmed == "}" || trimmed == "}," {
-				return i, ""
-			}
-			break
-		}
-	}
-	return -1, "prism: " + fileLabel + " patch refused — object opened at line " + strconv.Itoa(start+1) + " is not closed before its parent"
-}
-
-// locateJSONContainer finds the container member of the root object: member
-// line index, closer line index (equal to the member line for an inline `{}`
-// container), and the child indent. Absent container returns start -1.
-func locateJSONContainer(doc jsonDocument, containerKey, fileLabel string) (start, closer, childIndent int, refusal string) {
-	if doc.opener == -1 {
-		return -1, -1, -1, ""
-	}
-	found, inline, refused := findJSONMember(doc.lines, doc.opener, doc.closer, doc.memberIndent, containerKey, fileLabel)
-	if refused != "" {
-		return -1, -1, -1, refused
-	}
-	if found == -1 {
-		return -1, -1, -1, ""
-	}
-	if inline == "{" {
-		end, refused := jsonBlockEnd(doc.lines, found, doc.closer, fileLabel)
-		if refused != "" {
-			return -1, -1, -1, refused
-		}
-		return found, end, immediateIndent(doc.lines, found+1, end), ""
-	}
-	if inline == "{}" || inline == "{}," {
-		return found, found, -1, ""
-	}
-	return -1, -1, -1, "prism: " + fileLabel + " patch refused — \"" + containerKey + "\" is a flow-style or non-object value"
-}
-
-func endsWithComma(text string) bool {
-	return strings.HasSuffix(strings.TrimRight(text, " \t\r"), ",")
-}
-
-func stripTrailingComma(text string) string {
-	trimmed := strings.TrimRight(text, " \t\r")
-	if strings.HasSuffix(trimmed, ",") {
-		return trimmed[:len(trimmed)-1]
-	}
-	return text
-}
-
-func appendComma(text string) string {
-	return strings.TrimRight(text, " \t\r") + ","
-}
-
-// lastContentLine returns the index of the last non-blank line in [from, to).
-func lastContentLine(lines []sourceLine, from, to int) int {
-	for i := to - 1; i >= from; i-- {
-		if !lines[i].blank {
-			return i
-		}
-	}
-	return -1
-}
-
-func jsonLines(parts ...string) []sourceLine {
-	out := make([]sourceLine, len(parts))
-	for i, part := range parts {
-		out[i] = sourceLine{text: part, indent: leadingSpaces(part), blank: strings.TrimSpace(part) == ""}
-	}
-	return out
-}
-
-func spliceLines(lines []sourceLine, cutFrom, cutTo int, replacement []sourceLine) []sourceLine {
-	next := make([]sourceLine, 0, len(lines)+len(replacement))
-	next = append(next, lines[:cutFrom]...)
-	next = append(next, replacement...)
-	next = append(next, lines[cutTo:]...)
-	return next
-}
-
-func jsonPatchWritten(lines []sourceLine, changed bool) JSONPatch {
-	return JSONPatch{Kind: "written", Next: joinLines(lines), Changed: changed}
-}
-
-func jsonPatchRefused(reason string) JSONPatch {
-	return JSONPatch{Kind: "refused", Reason: reason}
-}
-
+func jsonPatchRefused(reason string) JSONPatch { return JSONPatch{Kind: "refused", Reason: reason} }
 func jsonPatchForceable(reason string) JSONPatch {
 	return JSONPatch{Kind: "refused", Reason: reason, Retryable: true}
 }
+func jsonResult(before, next string) JSONPatch {
+	return JSONPatch{Kind: "written", Next: next, Changed: before != next}
+}
 
-// UpsertJSONBlockLeaf patches one `container.leaf` object member into a
-// pretty-printed JSON document. renderBody receives the leaf key line's indent
-// and returns the leaf's full lines (opening `"leaf": {` through closing `}`,
-// no trailing commas — the patcher adds them). Only the leaf's own lines
-// change; every other byte stays exactly as written. A content difference
-// rewrites the leaf in place; a one-line or `{}` leaf is expanded.
-func UpsertJSONBlockLeaf(text, containerKey, leafKey, fileLabel string, renderBody func(leafIndent int) string) JSONPatch {
-	doc, refused := scanJSONDocument(text, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
-	}
-	if doc.opener == -1 {
-		return insertRootContainerWithLeaf(doc, containerKey, renderBody)
-	}
-	containerStart, containerEnd, childIndent, refused := locateJSONContainer(doc, containerKey, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
-	}
-	if containerStart == -1 {
-		return insertContainerMemberWithLeaf(doc, containerKey, renderBody)
-	}
-	if childIndent == -1 {
-		childIndent = doc.memberIndent + 2
-	}
-	leafLine, inline, refused := findJSONMember(doc.lines, containerStart, containerEnd, childIndent, leafKey, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
-	}
-	body := jsonLines(strings.Split(renderBody(childIndent), "\n")...)
-	if leafLine == -1 {
-		return insertLeafIntoContainer(doc, containerStart, containerEnd, body)
-	}
-	if inline == "{" {
-		leafEnd, endRefused := jsonBlockEnd(doc.lines, leafLine, containerEnd, fileLabel)
-		if endRefused != "" {
-			return jsonPatchRefused(endRefused)
+type jsonMember struct {
+	key               string
+	start, end, comma int
+	value             *jsonNode
+}
+type jsonNode struct {
+	start, end int
+	object     bool
+	members    []jsonMember
+}
+type jsonParser struct {
+	text string
+	pos  int
+}
+
+func (p *jsonParser) space() error {
+	for p.pos < len(p.text) {
+		switch p.text[p.pos] {
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+		case '/':
+			if strings.HasPrefix(p.text[p.pos:], "//") {
+				for p.pos < len(p.text) && p.text[p.pos] != '\n' {
+					p.pos++
+				}
+			} else if strings.HasPrefix(p.text[p.pos:], "/*") {
+				end := strings.Index(p.text[p.pos+2:], "*/")
+				if end < 0 {
+					return fmt.Errorf("unclosed comment")
+				}
+				p.pos += end + 4
+			} else {
+				return fmt.Errorf("invalid comment")
+			}
+		default:
+			return nil
 		}
-		if endsWithComma(doc.lines[leafEnd].text) {
-			body[len(body)-1].text = appendComma(body[len(body)-1].text)
-		} else {
-			body[len(body)-1].text = stripTrailingComma(body[len(body)-1].text)
+	}
+	return nil
+}
+func (p *jsonParser) stringValue() (string, error) {
+	start := p.pos
+	p.pos++
+	for p.pos < len(p.text) {
+		c := p.text[p.pos]
+		p.pos++
+		if c == '\\' {
+			p.pos++
+		} else if c == '"' {
+			var s string
+			err := json.Unmarshal([]byte(p.text[start:p.pos]), &s)
+			return s, err
 		}
-		if leafText(doc.lines, leafLine, leafEnd+1) == joinLines(body) {
-			return jsonPatchWritten(doc.lines, false)
+	}
+	return "", fmt.Errorf("unclosed string")
+}
+func (p *jsonParser) value(depth int) (*jsonNode, error) {
+	if depth > 256 {
+		return nil, fmt.Errorf("nesting too deep")
+	}
+	if err := p.space(); err != nil {
+		return nil, err
+	}
+	if p.pos >= len(p.text) {
+		return nil, fmt.Errorf("missing value")
+	}
+	n := &jsonNode{start: p.pos}
+	c := p.text[p.pos]
+	if c == '{' || c == '[' {
+		n.object = c == '{'
+		p.pos++
+		seen := map[string]bool{}
+		for {
+			if err := p.space(); err != nil {
+				return nil, err
+			}
+			if p.pos >= len(p.text) {
+				return nil, fmt.Errorf("unclosed container")
+			}
+			if (c == '{' && p.text[p.pos] == '}') || (c == '[' && p.text[p.pos] == ']') {
+				p.pos++
+				n.end = p.pos
+				return n, nil
+			}
+			m := jsonMember{start: p.pos, comma: -1}
+			if n.object {
+				if p.text[p.pos] != '"' {
+					return nil, fmt.Errorf("object key is not a string")
+				}
+				key, err := p.stringValue()
+				if err != nil {
+					return nil, err
+				}
+				m.key = key
+				if seen[key] {
+					return nil, fmt.Errorf("duplicate key %q", key)
+				}
+				seen[key] = true
+				if err = p.space(); err != nil {
+					return nil, err
+				}
+				if p.pos >= len(p.text) || p.text[p.pos] != ':' {
+					return nil, fmt.Errorf("missing colon")
+				}
+				p.pos++
+			}
+			value, err := p.value(depth + 1)
+			if err != nil {
+				return nil, err
+			}
+			m.value = value
+			m.end = p.pos
+			if err = p.space(); err != nil {
+				return nil, err
+			}
+			if p.pos < len(p.text) && p.text[p.pos] == ',' {
+				m.comma = p.pos
+				p.pos++
+				n.members = append(n.members, m)
+				continue
+			}
+			n.members = append(n.members, m)
+			if p.pos >= len(p.text) || !((c == '{' && p.text[p.pos] == '}') || (c == '[' && p.text[p.pos] == ']')) {
+				return nil, fmt.Errorf("missing comma")
+			}
 		}
-		return replaceLeafLines(doc, leafLine, leafEnd, body)
 	}
-	if strings.HasPrefix(inline, "{") {
-		return replaceLeafLines(doc, leafLine, leafLine, body)
-	}
-	return jsonPatchRefused("prism: " + fileLabel + " patch refused — \"" + leafKey + "\" under \"" + containerKey + "\" is a non-object value")
-}
-
-func replaceLeafLines(doc jsonDocument, leafStart, leafEnd int, body []sourceLine) JSONPatch {
-	lines := doc.lines
-	hadComma := endsWithComma(lines[leafEnd].text)
-	if hadComma && !endsWithComma(body[len(body)-1].text) {
-		body[len(body)-1].text = appendComma(body[len(body)-1].text)
-	}
-	if !hadComma {
-		body[len(body)-1].text = stripTrailingComma(body[len(body)-1].text)
-	}
-	body[0].indent = lines[leafStart].indent
-	next := spliceLines(lines, leafStart, leafEnd+1, body)
-	return jsonPatchWritten(next, true)
-}
-
-func insertLeafIntoContainer(doc jsonDocument, containerStart, containerEnd int, body []sourceLine) JSONPatch {
-	lines := doc.lines
-	if containerStart == containerEnd {
-		openerText := strings.TrimSuffix(strings.TrimSuffix(strings.TrimRight(lines[containerStart].text, " \t\r"), ","), "{}") + "{"
-		expanded := []sourceLine{{text: openerText, indent: lines[containerStart].indent}}
-		expanded = append(expanded, body...)
-		closerText := strings.Repeat(" ", lines[containerStart].indent) + "}"
-		if endsWithComma(lines[containerStart].text) {
-			closerText += ","
+	if c == '"' {
+		if _, err := p.stringValue(); err != nil {
+			return nil, err
 		}
-		expanded = append(expanded, sourceLine{text: closerText, indent: lines[containerStart].indent})
-		next := spliceLines(lines, containerStart, containerStart+1, expanded)
-		return jsonPatchWritten(next, true)
+	} else {
+		for p.pos < len(p.text) && !strings.ContainsRune(" \t\r\n,}]/", rune(p.text[p.pos])) {
+			p.pos++
+		}
+		if p.pos == n.start || !json.Valid([]byte(p.text[n.start:p.pos])) {
+			return nil, fmt.Errorf("invalid scalar")
+		}
 	}
-	if prev := lastContentLine(lines, containerStart+1, containerEnd); prev != -1 && !endsWithComma(lines[prev].text) {
-		lines[prev].text = appendComma(lines[prev].text)
+	n.end = p.pos
+	return n, nil
+}
+func parseJSONObject(text string) (*jsonNode, error) {
+	p := jsonParser{text: text}
+	if strings.HasPrefix(text, "\xef\xbb\xbf") {
+		p.pos = 3
 	}
-	body[len(body)-1].text = stripTrailingComma(body[len(body)-1].text)
-	next := spliceLines(lines, containerEnd, containerEnd, body)
-	return jsonPatchWritten(next, true)
+	if err := p.space(); err != nil {
+		return nil, err
+	}
+	if p.pos == len(text) {
+		return nil, nil
+	}
+	n, err := p.value(0)
+	if err != nil {
+		return nil, err
+	}
+	if !n.object {
+		return nil, fmt.Errorf("root is not an object")
+	}
+	if err = p.space(); err != nil {
+		return nil, err
+	}
+	if p.pos != len(text) {
+		return nil, fmt.Errorf("trailing content")
+	}
+	return n, nil
+}
+func jsonContainer(text, key, label string) (*jsonNode, *jsonNode, string) {
+	root, err := parseJSONObject(text)
+	if err != nil {
+		return nil, nil, "prism: " + label + " patch refused: " + err.Error()
+	}
+	if root == nil {
+		return nil, nil, ""
+	}
+	for _, m := range root.members {
+		if m.key == key {
+			if !m.value.object {
+				return root, nil, "prism: " + label + " patch refused: " + key + " is not an object"
+			}
+			return root, m.value, ""
+		}
+	}
+	return root, nil, ""
+}
+func jsonFind(n *jsonNode, key string) (jsonMember, bool) {
+	if n != nil {
+		for _, m := range n.members {
+			if m.key == key {
+				return m, true
+			}
+		}
+	}
+	return jsonMember{}, false
+}
+func jsonIndent(text string, pos int) int {
+	start := strings.LastIndex(text[:pos], "\n") + 1
+	n := 0
+	for start+n < pos && text[start+n] == ' ' {
+		n++
+	}
+	return n
+}
+func jsonInsert(text string, n *jsonNode, key, value string) string {
+	indent := jsonIndent(text, n.start) + 2
+	if len(n.members) > 0 {
+		indent = jsonIndent(text, n.members[0].start)
+	}
+	end := n.end - 1
+	line := strings.LastIndex(text[:end], "\n") + 1
+	block := line > n.start && strings.TrimSpace(text[line:end]) == ""
+	insert := end
+	suffix := ""
+	prefix := "\n"
+	if block {
+		insert = line
+		prefix = ""
+	} else {
+		suffix = "\n" + strings.Repeat(" ", max(0, indent-2))
+	}
+	body := prefix + strings.Repeat(" ", indent) + jsonString(key) + ": " + value + "\n" + suffix
+	if len(n.members) > 0 {
+		last := n.members[len(n.members)-1]
+		if last.comma < 0 {
+			text = text[:last.end] + "," + text[last.end:]
+			insert++
+		}
+	}
+	return text[:insert] + body + text[insert:]
+}
+func jsonRemoveMember(text string, n *jsonNode, key string) string {
+	m, ok := jsonFind(n, key)
+	if !ok {
+		return text
+	}
+	start, end := m.start, m.end
+	if m.comma >= 0 {
+		end = m.comma + 1
+	}
+	line := strings.LastIndex(text[:start], "\n") + 1
+	if strings.TrimSpace(text[line:start]) == "" {
+		start = line
+		next := strings.IndexByte(text[end:], '\n')
+		if next >= 0 && strings.TrimSpace(text[end:end+next]) == "" {
+			end += next + 1
+		}
+	}
+	if m.comma < 0 {
+		for i, prev := range n.members {
+			if prev.key == key && i > 0 {
+				comma := n.members[i-1].comma
+				if comma >= 0 {
+					text = text[:comma] + text[comma+1:]
+					if comma < start {
+						start--
+						end--
+					}
+				}
+				break
+			}
+		}
+	}
+	return text[:start] + text[end:]
+}
+func jsonUpsert(text string, n *jsonNode, key, value string) string {
+	if m, ok := jsonFind(n, key); ok {
+		if text[m.value.start:m.value.end] == value {
+			return text
+		}
+		return text[:m.value.start] + value + text[m.value.end:]
+	}
+	return jsonInsert(text, n, key, value)
 }
 
-func insertContainerMemberWithLeaf(doc jsonDocument, containerKey string, renderBody func(leafIndent int) string) JSONPatch {
-	lines := doc.lines
-	memberIndent := doc.memberIndent
-	if memberIndent == -1 {
-		memberIndent = 2
+func jsonContainerHasOnlyMember(text string, n *jsonNode) bool {
+	if len(n.members) != 1 {
+		return false
 	}
-	body := jsonLines(strings.Split(renderBody(memberIndent+2), "\n")...)
-	block := []sourceLine{{text: strings.Repeat(" ", memberIndent) + jsonString(containerKey) + ": {", indent: memberIndent}}
-	block = append(block, body...)
-	block = append(block, sourceLine{text: strings.Repeat(" ", memberIndent) + "}", indent: memberIndent})
-	if prev := lastContentLine(lines, doc.opener+1, doc.closer); prev != -1 && !endsWithComma(lines[prev].text) {
-		lines[prev].text = appendComma(lines[prev].text)
+	m := n.members[0]
+	end := m.end
+	if m.comma >= 0 {
+		end = m.comma + 1
 	}
-	next := spliceLines(lines, doc.closer, doc.closer, block)
-	return jsonPatchWritten(next, true)
+	return strings.TrimSpace(text[n.start+1:m.start]) == "" && strings.TrimSpace(text[end:n.end-1]) == ""
 }
-
-func insertRootContainerWithLeaf(doc jsonDocument, containerKey string, renderBody func(leafIndent int) string) JSONPatch {
-	body := jsonLines(strings.Split(renderBody(4), "\n")...)
-	lines := jsonLines("{", "  "+jsonString(containerKey)+": {")
-	lines = append(lines, body...)
-	lines = append(lines, sourceLine{text: "  }", indent: 2}, sourceLine{text: "}", indent: 0}, sourceLine{text: "", indent: 0})
-	return jsonPatchWritten(lines, true)
+func UpsertJSONBlockLeaf(text, containerKey, leafKey, fileLabel string, renderBody func(int) string) JSONPatch {
+	root, container, reason := jsonContainer(text, containerKey, fileLabel)
+	if reason != "" {
+		return jsonPatchRefused(reason)
+	}
+	indent := 4
+	if container != nil {
+		indent = jsonIndent(text, container.start) + 2
+		if len(container.members) > 0 {
+			indent = jsonIndent(text, container.members[0].start)
+		}
+	}
+	body := renderBody(indent)
+	pos := strings.IndexByte(body, ':')
+	if pos < 0 {
+		return jsonPatchRefused("prism: invalid rendered leaf")
+	}
+	value := strings.TrimSpace(body[pos+1:])
+	if container != nil {
+		if m, ok := jsonFind(container, leafKey); ok && !m.value.object {
+			return jsonPatchRefused("prism: " + fileLabel + " patch refused: " + leafKey + " is not an object")
+		}
+		return jsonResult(text, jsonUpsert(text, container, leafKey, value))
+	}
+	member := "{\n" + strings.Repeat(" ", indent) + jsonString(leafKey) + ": " + value + "\n" + strings.Repeat(" ", indent-2) + "}"
+	if root == nil {
+		next := "{\n  " + jsonString(containerKey) + ": " + member + "\n}\n"
+		return jsonResult(text, next)
+	}
+	return jsonResult(text, jsonInsert(text, root, containerKey, member))
 }
-
-// RemoveJSONBlockLeaf removes exactly the `container.leaf` member (and the
-// container member line itself when the container becomes empty). User bytes
-// elsewhere are preserved verbatim.
 func RemoveJSONBlockLeaf(text, containerKey, leafKey, fileLabel string) JSONPatch {
-	doc, refused := scanJSONDocument(text, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
+	root, container, reason := jsonContainer(text, containerKey, fileLabel)
+	if reason != "" {
+		return jsonPatchRefused(reason)
 	}
-	if doc.opener == -1 {
-		return jsonPatchWritten(doc.lines, false)
+	if container == nil {
+		return jsonResult(text, text)
 	}
-	containerStart, containerEnd, childIndent, refused := locateJSONContainer(doc, containerKey, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
+	if _, ok := jsonFind(container, leafKey); !ok {
+		return jsonResult(text, text)
 	}
-	if containerStart == -1 || containerStart == containerEnd {
-		return jsonPatchWritten(doc.lines, false)
+	if len(container.members) == 1 && jsonContainerHasOnlyMember(text, container) {
+		return jsonResult(text, jsonRemoveMember(text, root, containerKey))
 	}
-	leafLine, inline, leafRefused := findJSONMember(doc.lines, containerStart, containerEnd, childIndent, leafKey, fileLabel)
-	if leafRefused != "" {
-		return jsonPatchRefused(leafRefused)
-	}
-	if leafLine == -1 {
-		return jsonPatchWritten(doc.lines, false)
-	}
-	leafEnd := leafLine
-	if inline == "{" {
-		end, refused := jsonBlockEnd(doc.lines, leafLine, containerEnd, fileLabel)
-		if refused != "" {
-			return jsonPatchRefused(refused)
-		}
-		leafEnd = end
-	}
-	lines := doc.lines
-	next := spliceLines(lines, leafLine, leafEnd+1, nil)
-	newContainerEnd := containerEnd - (leafEnd + 1 - leafLine)
-	if containerMembersAllBlank(next, containerStart, newContainerEnd) {
-		next = pruneJSONContainer(next, doc.opener, containerStart, newContainerEnd)
-		return jsonPatchWritten(next, true)
-	}
-	if idx := lastContentLine(next, containerStart+1, newContainerEnd); idx != -1 && endsWithComma(next[idx].text) {
-		next[idx].text = stripTrailingComma(next[idx].text)
-	}
-	return jsonPatchWritten(next, true)
+	return jsonResult(text, jsonRemoveMember(text, container, leafKey))
 }
-
-func pruneJSONContainer(lines []sourceLine, parentOpener, containerStart, containerEnd int) []sourceLine {
-	lines = spliceLines(lines, containerStart, containerEnd+1, nil)
-	if idx := lastContentLine(lines, parentOpener+1, containerStart); idx != -1 && endsWithComma(lines[idx].text) {
-		lines[idx].text = stripTrailingComma(lines[idx].text)
+func jsonEndpoint(text string, n *jsonNode, key string) *string {
+	if n == nil {
+		return nil
 	}
-	return lines
-}
-
-func containerMembersAllBlank(lines []sourceLine, containerStart, containerEnd int) bool {
-	for i := containerStart + 1; i < containerEnd; i++ {
-		if !lines[i].blank {
-			return false
+	if m, ok := jsonFind(n, key); ok {
+		var s string
+		if json.Unmarshal([]byte(text[m.value.start:m.value.end]), &s) == nil {
+			return &s
 		}
 	}
-	return true
+	for _, m := range n.members {
+		if m.value.object {
+			if s := jsonEndpoint(text, m.value, key); s != nil {
+				return s
+			}
+		}
+	}
+	return nil
 }
-
-// ReadJSONBlockLeaf derives the leaf's presence and endpoint from the bytes.
 func ReadJSONBlockLeaf(text, containerKey, leafKey, fileLabel, endpointKey string) JSONLeafRead {
-	doc, refused := scanJSONDocument(text, fileLabel)
-	if refused != "" {
-		return JSONLeafRead{Kind: jsonLeafRefused, Reason: refused}
+	_, container, reason := jsonContainer(text, containerKey, fileLabel)
+	if reason != "" {
+		return JSONLeafRead{Kind: jsonLeafRefused, Reason: reason}
 	}
-	if doc.opener == -1 {
+	m, ok := jsonFind(container, leafKey)
+	if !ok {
 		return JSONLeafRead{Kind: jsonLeafAbsent}
 	}
-	containerStart, containerEnd, childIndent, refused := locateJSONContainer(doc, containerKey, fileLabel)
-	if refused != "" {
-		return JSONLeafRead{Kind: jsonLeafRefused, Reason: refused}
-	}
-	if containerStart == -1 {
-		return JSONLeafRead{Kind: jsonLeafAbsent}
-	}
-	leafLine, inline, leafRefused := findJSONMember(doc.lines, containerStart, containerEnd, childIndent, leafKey, fileLabel)
-	if leafRefused != "" {
-		return JSONLeafRead{Kind: jsonLeafRefused, Reason: leafRefused}
-	}
-	if leafLine == -1 {
-		return JSONLeafRead{Kind: jsonLeafAbsent}
-	}
-	leafEnd := leafLine
-	if inline == "{" {
-		if end, ok := jsonBlockEndSafe(doc.lines, leafLine, containerEnd); ok {
-			leafEnd = end
-		}
-	}
-	leaf := leafText(doc.lines, leafLine, leafEnd+1)
-	if m := jsonEndpointRe(endpointKey).FindStringSubmatch(leaf); m != nil {
-		endpoint := jsonUnquote(m[1])
-		return JSONLeafRead{Kind: jsonLeafPresent, Endpoint: &endpoint}
-	}
-	return JSONLeafRead{Kind: jsonLeafPresent, Endpoint: nil}
+	return JSONLeafRead{Kind: jsonLeafPresent, Endpoint: jsonEndpoint(text, m.value, endpointKey)}
 }
-
-func jsonBlockEndSafe(lines []sourceLine, start, containerEnd int) (int, bool) {
-	indent := lines[start].indent
-	for i := start + 1; i < containerEnd; i++ {
-		if lines[i].blank {
-			continue
-		}
-		if lines[i].indent <= indent {
-			trimmed := strings.TrimSpace(lines[i].text)
-			return i, trimmed == "}" || trimmed == "},"
-		}
-	}
-	return start, false
-}
-
-var jsonEndpointPatterns = map[string]*regexp.Regexp{}
-
-func jsonEndpointRe(key string) *regexp.Regexp {
-	if re, ok := jsonEndpointPatterns[key]; ok {
-		return re
-	}
-	re := regexp.MustCompile(`(?m)^[ \t]*"` + regexp.QuoteMeta(key) + `"[ \t]*:[ \t]*"((?:[^"\\]|\\.)*)"[ \t]*,?[ \t]*$`)
-	jsonEndpointPatterns[key] = re
-	return re
-}
-
-// UpsertJSONScalarKeys patches a fixed set of `"key": "value"` members inside
-// one container. Ownership is derived from the bytes: when any target key
-// already carries its canonical value the set is prism-owned and is rewritten
-// in place (healing partial states); when target keys hold other values and no
-// canonical value is present they are user-owned and the patch refuses before
-// any write.
 func UpsertJSONScalarKeys(text, containerKey, fileLabel string, entries []JSONScalarEntry) JSONPatch {
 	return UpsertJSONScalarKeysForced(text, containerKey, fileLabel, entries, false)
 }
-
-// UpsertJSONScalarKeysForced takes over user-owned scalar keys after an
-// explicit confirmation: the displaced key lines are journaled in the fence
-// comment of the sibling leaf so rollback restores them verbatim.
 func UpsertJSONScalarKeysForced(text, containerKey, fileLabel string, entries []JSONScalarEntry, force bool) JSONPatch {
-	doc, refused := scanJSONDocument(text, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
+	root, container, reason := jsonContainer(text, containerKey, fileLabel)
+	if reason != "" {
+		return jsonPatchRefused(reason)
 	}
-	if doc.opener == -1 {
-		return insertRootContainerWithKeys(containerKey, entries)
-	}
-	containerStart, containerEnd, childIndent, refused := locateJSONContainer(doc, containerKey, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
-	}
-	if containerStart == -1 {
-		return insertContainerMemberWithKeys(doc, containerKey, entries)
-	}
-	if containerStart == containerEnd {
-		return expandInlineContainerWithKeys(doc, containerStart, doc.memberIndent+2, entries)
-	}
-	if childIndent == -1 {
-		childIndent = doc.memberIndent + 2
-	}
-	prismOwned := false
-	var userOwned []string
-	for _, entry := range entries {
-		line, value, entryRefused := findJSONScalarMember(doc.lines, containerStart, containerEnd, childIndent, entry.Key, fileLabel)
-		if entryRefused != "" {
-			return jsonPatchRefused(entryRefused)
+	owned := false
+	var foreign []string
+	for _, e := range entries {
+		if m, ok := jsonFind(container, e.Key); ok {
+			var s string
+			if json.Unmarshal([]byte(text[m.value.start:m.value.end]), &s) != nil {
+				return jsonPatchRefused("prism: " + fileLabel + " patch refused: " + e.Key + " is not a string")
+			}
+			if s == e.Value {
+				owned = true
+			} else {
+				foreign = append(foreign, e.Key)
+			}
 		}
-		if line == -1 {
-			continue
+	}
+	if len(foreign) > 0 && !owned && !force {
+		return jsonPatchForceable("prism: " + fileLabel + " patch refused: user-owned settings " + strings.Join(foreign, ", "))
+	}
+	next := text
+	if container == nil {
+		var body []string
+		for _, e := range entries {
+			body = append(body, "    "+jsonString(e.Key)+": "+jsonString(e.Value))
 		}
-		if value == entry.Value {
-			prismOwned = true
+		value := "{\n" + strings.Join(body, ",\n") + "\n  }"
+		if root == nil {
+			next = "{\n  " + jsonString(containerKey) + ": " + value + "\n}\n"
 		} else {
-			userOwned = append(userOwned, entry.Key)
+			next = jsonInsert(text, root, containerKey, value)
+		}
+	} else {
+		for _, e := range entries {
+			_, container, _ = jsonContainer(next, containerKey, fileLabel)
+			next = jsonUpsert(next, container, e.Key, jsonString(e.Value))
 		}
 	}
-	if len(userOwned) > 0 && !prismOwned {
-		if !force {
-			return jsonPatchForceable("prism: " + fileLabel + " patch refused — " + strings.Join(userOwned, ", ") + " under \"" + containerKey + "\" is user-owned; remove or rename it before applying")
-		}
-	}
-	lines := doc.lines
-	changed := false
-	for _, entry := range entries {
-		line, value, _ := findJSONScalarMember(lines, containerStart, containerEnd, childIndent, entry.Key, fileLabel)
-		rendered := strings.Repeat(" ", childIndent) + jsonString(entry.Key) + ": " + jsonString(entry.Value)
-		if line == -1 {
-			if prev := lastContentLine(lines, containerStart+1, containerEnd); prev != -1 && !endsWithComma(lines[prev].text) {
-				lines[prev].text = appendComma(lines[prev].text)
-			}
-			lines = spliceLines(lines, containerEnd, containerEnd, jsonLines(rendered))
-			containerEnd++
-			changed = true
-			continue
-		}
-		if value == entry.Value {
-			continue
-		}
-		hadComma := endsWithComma(lines[line].text)
-		lines[line].text = rendered
-		if hadComma {
-			lines[line].text = appendComma(lines[line].text)
-		}
-		changed = true
-	}
-	return jsonPatchWritten(lines, changed)
+	return jsonResult(text, next)
 }
-
-func expandInlineContainerWithKeys(doc jsonDocument, containerStart, childIndent int, entries []JSONScalarEntry) JSONPatch {
-	openerText := strings.TrimSuffix(strings.TrimSuffix(strings.TrimRight(doc.lines[containerStart].text, " \t\r"), ","), "{}") + "{"
-	expanded := []sourceLine{{text: openerText, indent: doc.lines[containerStart].indent}}
-	for i, entry := range entries {
-		line := strings.Repeat(" ", childIndent) + jsonString(entry.Key) + ": " + jsonString(entry.Value)
-		if i < len(entries)-1 {
-			line += ","
-		}
-		expanded = append(expanded, sourceLine{text: line, indent: childIndent})
-	}
-	closerText := strings.Repeat(" ", doc.lines[containerStart].indent) + "}"
-	if endsWithComma(doc.lines[containerStart].text) {
-		closerText += ","
-	}
-	expanded = append(expanded, sourceLine{text: closerText, indent: doc.lines[containerStart].indent})
-	next := spliceLines(doc.lines, containerStart, containerStart+1, expanded)
-	return jsonPatchWritten(next, true)
-}
-
-func insertContainerMemberWithKeys(doc jsonDocument, containerKey string, entries []JSONScalarEntry) JSONPatch {
-	lines := doc.lines
-	memberIndent := doc.memberIndent
-	if memberIndent == -1 {
-		memberIndent = 2
-	}
-	block := []sourceLine{{text: strings.Repeat(" ", memberIndent) + jsonString(containerKey) + ": {", indent: memberIndent}}
-	for i, entry := range entries {
-		line := strings.Repeat(" ", memberIndent+2) + jsonString(entry.Key) + ": " + jsonString(entry.Value)
-		if i < len(entries)-1 {
-			line += ","
-		}
-		block = append(block, sourceLine{text: line, indent: memberIndent + 2})
-	}
-	block = append(block, sourceLine{text: strings.Repeat(" ", memberIndent) + "}", indent: memberIndent})
-	if prev := lastContentLine(lines, doc.opener+1, doc.closer); prev != -1 && !endsWithComma(lines[prev].text) {
-		lines[prev].text = appendComma(lines[prev].text)
-	}
-	next := spliceLines(lines, doc.closer, doc.closer, block)
-	return jsonPatchWritten(next, true)
-}
-
-func insertRootContainerWithKeys(containerKey string, entries []JSONScalarEntry) JSONPatch {
-	lines := jsonLines("{")
-	lines = append(lines, sourceLine{text: "  " + jsonString(containerKey) + ": {", indent: 2})
-	for i, entry := range entries {
-		line := "    " + jsonString(entry.Key) + ": " + jsonString(entry.Value)
-		if i < len(entries)-1 {
-			line += ","
-		}
-		lines = append(lines, sourceLine{text: line, indent: 4})
-	}
-	lines = append(lines, sourceLine{text: "  }", indent: 2}, sourceLine{text: "}", indent: 0}, sourceLine{text: "", indent: 0})
-	return jsonPatchWritten(lines, true)
-}
-
-// findJSONScalarMember locates one string-valued member line of a container.
-// A present-but-non-string value refuses.
-func findJSONScalarMember(lines []sourceLine, containerStart, containerEnd, indent int, key, fileLabel string) (int, string, string) {
-	line, inline, refused := findJSONMember(lines, containerStart, containerEnd, indent, key, fileLabel)
-	if refused != "" || line == -1 {
-		return -1, "", refused
-	}
-	m := jsonScalarValueRe.FindStringSubmatch(inline)
-	if m == nil {
-		return -1, "", "prism: " + fileLabel + " patch refused — \"" + key + "\" under its container is not a JSON string value"
-	}
-	return line, jsonUnquote(m[1]), ""
-}
-
-// RemoveJSONScalarKeys removes exactly the named members from the container
-// (and the container member line when the container becomes empty), whatever
-// value they now carry.
 func RemoveJSONScalarKeys(text, containerKey, fileLabel string, keys []string) JSONPatch {
-	doc, refused := scanJSONDocument(text, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
-	}
-	if doc.opener == -1 {
-		return jsonPatchWritten(doc.lines, false)
-	}
-	containerStart, containerEnd, childIndent, refused := locateJSONContainer(doc, containerKey, fileLabel)
-	if refused != "" {
-		return jsonPatchRefused(refused)
-	}
-	if containerStart == -1 || containerStart == containerEnd {
-		return jsonPatchWritten(doc.lines, false)
-	}
-	lines := doc.lines
-	removedAny := false
+	next := text
 	for _, key := range keys {
-		line, inline, keyRefused := findJSONMember(lines, containerStart, containerEnd, childIndent, key, fileLabel)
-		if keyRefused != "" {
-			return jsonPatchRefused(keyRefused)
+		root, container, reason := jsonContainer(next, containerKey, fileLabel)
+		if reason != "" {
+			return jsonPatchRefused(reason)
 		}
-		if line == -1 {
+		if container == nil {
 			continue
 		}
-		end := line
-		if inline == "{" {
-			blockEnd, refused := jsonBlockEnd(lines, line, containerEnd, fileLabel)
-			if refused != "" {
-				return jsonPatchRefused(refused)
-			}
-			end = blockEnd
-		} else if strings.HasPrefix(inline, "{") || strings.HasPrefix(inline, "[") {
-			return jsonPatchRefused("prism: " + fileLabel + " patch refused — \"" + key + "\" under its container is a flow-style value")
+		if _, ok := jsonFind(container, key); !ok {
+			continue
 		}
-		lines = spliceLines(lines, line, end+1, nil)
-		containerEnd -= end + 1 - line
-		removedAny = true
+		if len(container.members) == 1 && jsonContainerHasOnlyMember(next, container) {
+			next = jsonRemoveMember(next, root, containerKey)
+		} else {
+			next = jsonRemoveMember(next, container, key)
+		}
 	}
-	if !removedAny {
-		return jsonPatchWritten(lines, false)
-	}
-	if containerMembersAllBlank(lines, containerStart, containerEnd) {
-		lines = pruneJSONContainer(lines, doc.opener, containerStart, containerEnd)
-		return jsonPatchWritten(lines, true)
-	}
-	if idx := lastContentLine(lines, containerStart+1, containerEnd); idx != -1 && endsWithComma(lines[idx].text) {
-		lines[idx].text = stripTrailingComma(lines[idx].text)
-	}
-	return jsonPatchWritten(lines, true)
+	return jsonResult(text, next)
 }
-
-// ReadJSONScalarKeys derives presence from any target key and the endpoint
-// from the endpoint key's value.
 func ReadJSONScalarKeys(text, containerKey, endpointKey, fileLabel string, keys []string) JSONLeafRead {
-	doc, refused := scanJSONDocument(text, fileLabel)
-	if refused != "" {
-		return JSONLeafRead{Kind: jsonLeafRefused, Reason: refused}
+	_, container, reason := jsonContainer(text, containerKey, fileLabel)
+	if reason != "" {
+		return JSONLeafRead{Kind: jsonLeafRefused, Reason: reason}
 	}
-	if doc.opener == -1 {
-		return JSONLeafRead{Kind: jsonLeafAbsent}
-	}
-	containerStart, containerEnd, childIndent, refused := locateJSONContainer(doc, containerKey, fileLabel)
-	if refused != "" {
-		return JSONLeafRead{Kind: jsonLeafRefused, Reason: refused}
-	}
-	if containerStart == -1 {
-		return JSONLeafRead{Kind: jsonLeafAbsent}
-	}
-	anyPresent := false
 	for _, key := range keys {
-		line, _, keyRefused := findJSONMember(doc.lines, containerStart, containerEnd, childIndent, key, fileLabel)
-		if keyRefused != "" {
-			return JSONLeafRead{Kind: jsonLeafRefused, Reason: keyRefused}
-		}
-		if line != -1 {
-			anyPresent = true
-			break
+		if _, ok := jsonFind(container, key); ok {
+			return JSONLeafRead{Kind: jsonLeafPresent, Endpoint: jsonEndpoint(text, container, endpointKey)}
 		}
 	}
-	if !anyPresent {
-		return JSONLeafRead{Kind: jsonLeafAbsent}
-	}
-	if line, value, malformed := findJSONScalarMember(doc.lines, containerStart, containerEnd, childIndent, endpointKey, fileLabel); malformed == "" && line != -1 {
-		return JSONLeafRead{Kind: jsonLeafPresent, Endpoint: &value}
-	}
-	return JSONLeafRead{Kind: jsonLeafPresent, Endpoint: nil}
+	return JSONLeafRead{Kind: jsonLeafAbsent}
 }

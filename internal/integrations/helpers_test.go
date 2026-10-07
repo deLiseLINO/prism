@@ -78,5 +78,6 @@ func localFileExists(path string) bool {
 }
 
 func localReadTextIfExists(path string) (string, bool) {
-	return LocalIO{}.ReadTextIfExists(path)
+	text, present, _ := LocalIO{}.ReadText(path)
+	return text, present
 }

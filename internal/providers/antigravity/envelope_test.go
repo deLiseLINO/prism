@@ -26,7 +26,7 @@ func TestEnvelopeKeyOrderAndValues(t *testing.T) {
 	req := baseRequest()
 	req.Model = "standalone-model"
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	body, err := BuildEnvelope(req, "proj-1", "agent-abc", "-123")
+	body, err := BuildEnvelope(req, "proj-1", "agent-abc", "-123", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestEnvelopeKeyOrderAndValues(t *testing.T) {
 func TestEnvelopeFieldOrdering(t *testing.T) {
 	req := baseRequest()
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestEnvelopeContentsMapping(t *testing.T) {
 		},
 		textMessage(canon.RoleAssistant, "done"),
 	}
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestEnvelopeEmptyUserTurnPlaceholder(t *testing.T) {
 	req.Input = []canon.Item{
 		canon.Message{ID: "m1", Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: ""}}},
 	}
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -144,23 +144,23 @@ func TestEnvelopeToolsAndToolChoice(t *testing.T) {
 	}}
 	req.ToolChoice = canon.ToolNamed{Name: "get_weather"}
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
-	want := `"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get weather","parameters":{"type":"object","properties":{}}}]}],` +
+	want := `"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get weather","parametersJsonSchema":{"type":"object"}}]}],` +
 		`"toolConfig":{"functionCallingConfig":{"mode":"ANY","allowedFunctionNames":["get_weather"]}}`
 	if !strings.Contains(string(body), want) {
 		t.Fatalf("tools mapping mismatch: %s", body)
 	}
 
 	req.ToolChoice = canon.ToolNone{}
-	body, _ = BuildEnvelope(req, "p", "r", "-1")
+	body, _ = BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if !strings.Contains(string(body), `"mode":"NONE"`) {
 		t.Fatalf("tool none mapping mismatch: %s", body)
 	}
 	req.ToolChoice = canon.ToolRequired{}
-	body, _ = BuildEnvelope(req, "p", "r", "-1")
+	body, _ = BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if !strings.Contains(string(body), `"toolConfig":{"functionCallingConfig":{"mode":"ANY"}}`) {
 		t.Fatalf("tool required mapping mismatch: %s", body)
 	}
@@ -183,7 +183,7 @@ func TestEnvelopeClaudeQuirks(t *testing.T) {
 		canon.FunctionOutput{ID: "fo1", CallID: "call_1", Output: []canon.Content{canon.TextContent{Text: "ok"}}},
 		textMessage(canon.RoleAssistant, "prefill"),
 	}
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestEnvelopeClaudeThinkingWithoutSignatureDropped(t *testing.T) {
 		canon.ReasoningItem{ID: "r1", Content: "secret thoughts"},
 		textMessage(canon.RoleUser, "Hi"),
 	}
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestEnvelopeGeminiThinkingWithoutSignatureDropped(t *testing.T) {
 		canon.ReasoningItem{ID: "r1", Content: "hmm"},
 		textMessage(canon.RoleUser, "Hi"),
 	}
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -236,35 +236,9 @@ func TestEnvelopeGeminiThinkingWithoutSignatureDropped(t *testing.T) {
 	}
 }
 
-// seedPresence installs a discovery snapshot for family-aware envelope tests
-// and restores the prior snapshot on cleanup, so envelope tests stay
-// independent of each other and of models_test.go's FetchModels runs.
-func seedPresence(t *testing.T, raw ...string) {
+func envelopeJSON(t *testing.T, req canon.Request, selection ModelSelection) string {
 	t.Helper()
-	previous := presenceSnapshot()
-	recordDiscovery(raw)
-	t.Cleanup(func() {
-		if previous == nil {
-			discoverySnapshot.Lock()
-			discoverySnapshot.present = nil
-			discoverySnapshot.Unlock()
-			return
-		}
-		recordDiscovery(keysOf(previous))
-	})
-}
-
-func keysOf(present map[string]bool) []string {
-	ids := make([]string, 0, len(present))
-	for id := range present {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
-func envelopeJSON(t *testing.T, req canon.Request) string {
-	t.Helper()
-	body, err := BuildEnvelope(req, "p", "r", "-1")
+	body, err := BuildEnvelope(req, "p", "r", "-1", selection)
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
@@ -283,18 +257,16 @@ func TestEnvelopeColdTemplateRouting(t *testing.T) {
 		{"unset", "gemini-3.8-flash", 0, "gemini-3.8-flash-low", `{"includeThoughts":true,"thinkingLevel":"LOW"}`, nil},
 		{"high", "gemini-3.8-flash", canon.EffortHigh, "gemini-3.8-flash-high", `{"includeThoughts":true,"thinkingLevel":"HIGH"}`, nil},
 		{"raw template member", "gemini-3.8-flash-high", 0, "gemini-3.8-flash-high", "", nil},
-		{"raw concrete bare", "gemini-2.5-flash", canon.EffortHigh, "gemini-2.5-flash", `{"includeThoughts":true,"thinkingBudget":16384}`, nil},
+		{"cold concrete logical", "gemini-2.5-flash", canon.EffortHigh, "gemini-2.5-flash-thinking", `{"includeThoughts":true,"thinkingBudget":16384}`, nil},
 		{"known empty", "gemini-3.8-flash", 0, "gemini-3.8-flash", "", []string{}},
 		{"known unrelated", "gemini-3.8-flash", 0, "gemini-3.8-flash", "", []string{"standalone-model"}},
 		{"known low only", "gemini-3.8-flash", canon.EffortHigh, "gemini-3.8-flash-low", `{"includeThoughts":true,"thinkingLevel":"HIGH"}`, []string{"gemini-3.8-flash-low"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			seedPresence(t, tc.present...)
-			if tc.present == nil {
-				discoverySnapshot.Lock()
-				discoverySnapshot.present = nil
-				discoverySnapshot.Unlock()
+			selection := ModelSelection{}
+			if tc.present != nil {
+				selection.Catalog = NewModelCatalog(tc.present)
 			}
 			req := baseRequest()
 			req.Model = tc.model
@@ -308,7 +280,7 @@ func TestEnvelopeColdTemplateRouting(t *testing.T) {
 					} `json:"generationConfig"`
 				} `json:"request"`
 			}
-			if err := json.Unmarshal([]byte(envelopeJSON(t, req)), &got); err != nil {
+			if err := json.Unmarshal([]byte(envelopeJSON(t, req, selection)), &got); err != nil {
 				t.Fatal(err)
 			}
 			if got.Model != tc.wire {
@@ -322,7 +294,7 @@ func TestEnvelopeColdTemplateRouting(t *testing.T) {
 }
 
 func TestEnvelopeGoogleLevelFamilyPerEffort(t *testing.T) {
-	seedPresence(t, "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered"})}
 	cases := []struct {
 		effort canon.ReasoningEffort
 		model  string
@@ -340,7 +312,7 @@ func TestEnvelopeGoogleLevelFamilyPerEffort(t *testing.T) {
 		req.Sampling = canon.Sampling{}
 		req.Reasoning = canon.ReasoningConfig{Effort: tc.effort}
 		req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-		got := envelopeJSON(t, req)
+		got := envelopeJSON(t, req, selection)
 		if want := `"model":"` + tc.model + `"`; !strings.Contains(got, want) {
 			t.Fatalf("effort %d: missing %s in %s", tc.effort, want, got)
 		}
@@ -351,7 +323,7 @@ func TestEnvelopeGoogleLevelFamilyPerEffort(t *testing.T) {
 }
 
 func TestEnvelopeBudgetFamilyPerEffort(t *testing.T) {
-	seedPresence(t, "gemini-3.5-flash-extra-low", "gemini-3.5-flash-low", "gemini-3-flash-agent")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"gemini-3.5-flash-extra-low", "gemini-3.5-flash-low", "gemini-3-flash-agent"})}
 	cases := []struct {
 		effort canon.ReasoningEffort
 		model  string
@@ -370,7 +342,7 @@ func TestEnvelopeBudgetFamilyPerEffort(t *testing.T) {
 		req.Sampling = canon.Sampling{}
 		req.Reasoning = canon.ReasoningConfig{Effort: tc.effort}
 		req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-		got := envelopeJSON(t, req)
+		got := envelopeJSON(t, req, selection)
 		if want := `"model":"` + tc.model + `"`; !strings.Contains(got, want) {
 			t.Fatalf("effort %d: missing %s in %s", tc.effort, want, got)
 		}
@@ -381,7 +353,7 @@ func TestEnvelopeBudgetFamilyPerEffort(t *testing.T) {
 }
 
 func TestEnvelopeBudgetAccommodatesCallerCap(t *testing.T) {
-	seedPresence(t, "claude-sonnet-4-6")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"claude-sonnet-4-6"})}
 	cases := []struct {
 		name   string
 		effort canon.ReasoningEffort
@@ -403,7 +375,7 @@ func TestEnvelopeBudgetAccommodatesCallerCap(t *testing.T) {
 		req.Sampling = canon.Sampling{Temperature: &temp}
 		req.Reasoning = canon.ReasoningConfig{Effort: tc.effort}
 		req.Input = []canon.Item{textMessage(canon.RoleUser, "Reply with exactly: budget-ok")}
-		got := envelopeJSON(t, req)
+		got := envelopeJSON(t, req, selection)
 		if want := `"model":"claude-sonnet-4-6"`; !strings.Contains(got, want) {
 			t.Fatalf("%s: missing %s in %s", tc.name, want, got)
 		}
@@ -414,7 +386,7 @@ func TestEnvelopeBudgetAccommodatesCallerCap(t *testing.T) {
 }
 
 func TestEnvelopeBudgetUnprofiledWireUsesUnknownCeiling(t *testing.T) {
-	seedPresence(t, "gpt-oss-120b-medium")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"gpt-oss-120b-medium"})}
 	req := baseRequest()
 	req.Model = "gpt-oss-120b"
 	req.Instructions = nil
@@ -422,7 +394,7 @@ func TestEnvelopeBudgetUnprofiledWireUsesUnknownCeiling(t *testing.T) {
 	req.Sampling = canon.Sampling{}
 	req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortHigh}
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	got := envelopeJSON(t, req)
+	got := envelopeJSON(t, req, selection)
 	if !strings.Contains(got, `"model":"gpt-oss-120b-medium"`) {
 		t.Fatalf("unprofiled family must route to its live member: %s", got)
 	}
@@ -456,7 +428,7 @@ func TestAccommodateBudgetClamp(t *testing.T) {
 }
 
 func TestEnvelopeOffOnSuppressWhenOffFamily(t *testing.T) {
-	seedPresence(t, "gemini-3.5-flash-extra-low", "gemini-3.5-flash-low", "gemini-3-flash-agent")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"gemini-3.5-flash-extra-low", "gemini-3.5-flash-low", "gemini-3-flash-agent"})}
 	req := baseRequest()
 	req.Model = "gemini-3.5-flash"
 	req.Instructions = nil
@@ -464,7 +436,7 @@ func TestEnvelopeOffOnSuppressWhenOffFamily(t *testing.T) {
 	req.Sampling = canon.Sampling{}
 	req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortOff}
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	got := envelopeJSON(t, req)
+	got := envelopeJSON(t, req, selection)
 	if !strings.Contains(got, `"model":"gemini-3.5-flash-extra-low"`) {
 		t.Fatalf("off must route to the off wire id: %s", got)
 	}
@@ -474,7 +446,7 @@ func TestEnvelopeOffOnSuppressWhenOffFamily(t *testing.T) {
 }
 
 func TestEnvelopeOffOnSuppressWhenOffGoogleLevelFamily(t *testing.T) {
-	seedPresence(t, "gemini-3-pro-low", "gemini-3-pro-high")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"gemini-3-pro-low", "gemini-3-pro-high"})}
 	req := baseRequest()
 	req.Model = "gemini-3-pro"
 	req.Instructions = nil
@@ -482,7 +454,7 @@ func TestEnvelopeOffOnSuppressWhenOffGoogleLevelFamily(t *testing.T) {
 	req.Sampling = canon.Sampling{}
 	req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortOff}
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	got := envelopeJSON(t, req)
+	got := envelopeJSON(t, req, selection)
 	if !strings.Contains(got, `"model":"gemini-3-pro-low"`) {
 		t.Fatalf("off must route to the off wire id: %s", got)
 	}
@@ -492,13 +464,13 @@ func TestEnvelopeOffOnSuppressWhenOffGoogleLevelFamily(t *testing.T) {
 }
 
 func TestEnvelopeUnsetEffortClampsOnRequiresEffortFamily(t *testing.T) {
-	seedPresence(t, "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered"})}
 	req := baseRequest()
 	req.Instructions = nil
 	req.MaxOutputTokens = 0
 	req.Sampling = canon.Sampling{}
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	got := envelopeJSON(t, req)
+	got := envelopeJSON(t, req, selection)
 	if !strings.Contains(got, `"model":"gemini-3.7-flash-low"`) {
 		t.Fatalf("unset effort on a requiresEffort family must clamp to the lowest effort's wire id: %s", got)
 	}
@@ -508,14 +480,14 @@ func TestEnvelopeUnsetEffortClampsOnRequiresEffortFamily(t *testing.T) {
 }
 
 func TestEnvelopeUnsetEffortOnNonRequiresEffortFamilyOmitsThinking(t *testing.T) {
-	seedPresence(t, "claude-sonnet-4-6")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"claude-sonnet-4-6"})}
 	req := baseRequest()
 	req.Model = "claude-sonnet-4-6"
 	req.Instructions = nil
 	req.MaxOutputTokens = 0
 	req.Sampling = canon.Sampling{}
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	got := envelopeJSON(t, req)
+	got := envelopeJSON(t, req, selection)
 	if !strings.Contains(got, `"model":"claude-sonnet-4-6"`) {
 		t.Fatalf("family model with unset effort must keep the logical wire id: %s", got)
 	}
@@ -525,14 +497,14 @@ func TestEnvelopeUnsetEffortOnNonRequiresEffortFamilyOmitsThinking(t *testing.T)
 }
 
 func TestEnvelopeUnsetEffortOnNonFamilyModelUnchanged(t *testing.T) {
-	seedPresence(t, "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered")
+	selection := ModelSelection{Catalog: NewModelCatalog([]string{"gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered"})}
 	req := baseRequest()
 	req.Model = "claude-opus-4"
 	req.Instructions = nil
 	req.MaxOutputTokens = 0
 	req.Sampling = canon.Sampling{}
 	req.Input = []canon.Item{textMessage(canon.RoleUser, "Hi")}
-	got := envelopeJSON(t, req)
+	got := envelopeJSON(t, req, selection)
 	if !strings.Contains(got, `"model":"claude-opus-4"`) {
 		t.Fatalf("non-family model must pass through unchanged: %s", got)
 	}
@@ -541,5 +513,67 @@ func TestEnvelopeUnsetEffortOnNonFamilyModelUnchanged(t *testing.T) {
 	}
 	if strings.Contains(got, "generationConfig") {
 		t.Fatalf("no sampling and no thinking means no generationConfig: %s", got)
+	}
+}
+
+func TestEnvelopeReplayedThinkingStaysInItsOwnTurn(t *testing.T) {
+	const sig = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/AbCdEf=="
+	for _, model := range []canon.ModelID{"gemini-3-pro", "claude-sonnet-4-5"} {
+		req := baseRequest()
+		req.Model = model
+		req.Instructions = nil
+		req.MaxOutputTokens = 0
+		req.Sampling = canon.Sampling{}
+		req.Input = []canon.Item{
+			textMessage(canon.RoleUser, "u1"),
+			canon.ReasoningItem{ID: "r1", Content: "think1", Signature: sig},
+			textMessage(canon.RoleAssistant, "a1"),
+			textMessage(canon.RoleUser, "u2"),
+			canon.ReasoningItem{ID: "r2", Content: "think2", Signature: sig},
+			textMessage(canon.RoleAssistant, "a2"),
+			textMessage(canon.RoleUser, "u3"),
+		}
+		body, err := BuildEnvelope(req, "p", "r", "-1", ModelSelection{})
+		if err != nil {
+			t.Fatalf("%s: BuildEnvelope: %v", model, err)
+		}
+		var env struct {
+			Request struct {
+				Contents []struct {
+					Role  string
+					Parts []struct {
+						Text    string
+						Thought bool
+					}
+				}
+			}
+		}
+		if err := json.Unmarshal(body, &env); err != nil {
+			t.Fatal(err)
+		}
+		// Walk the contents: a thought part may only sit in a model turn
+		// that lies after the last user turn seen before its assistant text.
+		userTurns := 0
+		thoughtUserTurns := map[string]int{}
+		textUserTurns := map[string]int{}
+		for _, c := range env.Request.Contents {
+			if c.Role == "user" {
+				userTurns++
+				continue
+			}
+			for _, p := range c.Parts {
+				if p.Thought {
+					thoughtUserTurns[p.Text] = userTurns
+				} else {
+					textUserTurns[p.Text] = userTurns
+				}
+			}
+		}
+		if thoughtUserTurns["think2"] != textUserTurns["a2"] {
+			t.Fatalf("%s: think2 replayed after %d user turns, its answer after %d: %s", model, thoughtUserTurns["think2"], textUserTurns["a2"], body)
+		}
+		if thoughtUserTurns["think1"] != textUserTurns["a1"] {
+			t.Fatalf("%s: think1 replayed after %d user turns, its answer after %d: %s", model, thoughtUserTurns["think1"], textUserTurns["a1"], body)
+		}
 	}
 }

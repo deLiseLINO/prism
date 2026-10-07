@@ -7,38 +7,60 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
-	"sync"
+	"strings"
 )
 
-// discoverySnapshot is the last raw model list a successful FetchModels
-// observed, shared across the process. The envelope consults it to resolve
-// family wire models at request time: the Runner carries no presence, and a
-// package-level snapshot populated by the same call that feeds config sync
-// keeps raw member ids out of every other layer.
-var discoverySnapshot struct {
-	sync.Mutex
-	present map[string]bool
+type ModelCatalog struct{ present map[string]bool }
+
+func NewModelCatalog(raw []string) ModelCatalog {
+	present := make(map[string]bool, len(raw))
+	for _, id := range raw {
+		present[id] = true
+	}
+	return ModelCatalog{present: present}
 }
 
-// FetchModels lists the account's available models from the Antigravity
-// model-discovery endpoint, the same fetchAvailableModels call the quota
-// probe uses. The response keys the model ids the Cloud Code Assist backend
-// will route for the credential's project.
-//
-// Effort-tier variants collapse here: sibling SKUs the backend lists
-// separately (the family's tiered member ids) return as one
-// logical id. The raw list stays in the package via the snapshot; the raw
-// member ids are exposed to the management layer through RawModels.
-func FetchModels(ctx context.Context, client *http.Client, baseURL string, cred CredentialPair) ([]string, error) {
+func (c ModelCatalog) RawIDs() []string {
+	ids := make([]string, 0, len(c.present))
+	for id := range c.present {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func (c ModelCatalog) Models() []string {
+	ids := collapseIds(c.RawIDs())
+	sort.Strings(ids)
+	return ids
+}
+
+func (c ModelCatalog) RawModels(logical string) []string { return rawMembersFor(logical, c.present) }
+
+func EndpointKey(baseURL string) string {
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+	u.Scheme, u.Host = strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+	return strings.TrimRight(u.String(), "/")
+}
+
+func FetchModels(ctx context.Context, client *http.Client, baseURL string, cred CredentialPair) (ModelCatalog, error) {
 	if client == nil {
-		return nil, fmt.Errorf("antigravity: models fetch needs an http client")
+		return ModelCatalog{}, fmt.Errorf("antigravity: models fetch needs an http client")
 	}
 	if cred.AccessToken == "" {
-		return nil, fmt.Errorf("antigravity: models fetch needs an access token")
+		return ModelCatalog{}, fmt.Errorf("antigravity: models fetch needs an access token")
 	}
 	if cred.ProjectID == "" {
-		return nil, fmt.Errorf("antigravity: models fetch needs a project id")
+		return ModelCatalog{}, fmt.Errorf("antigravity: models fetch needs a project id")
 	}
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -47,11 +69,11 @@ func FetchModels(ctx context.Context, client *http.Client, baseURL string, cred 
 	defer cancel()
 	body, err := json.Marshal(map[string]string{"project": cred.ProjectID})
 	if err != nil {
-		return nil, fmt.Errorf("antigravity: models request encode: %w", err)
+		return ModelCatalog{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, quotaURL(baseURL), bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("antigravity: models request: %w", err)
+		return ModelCatalog{}, fmt.Errorf("antigravity: models request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
@@ -59,111 +81,46 @@ func FetchModels(ctx context.Context, client *http.Client, baseURL string, cred 
 	req.Header.Set("User-Agent", RequestUserAgent())
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("antigravity: models fetch: %w", err)
+		return ModelCatalog{}, fmt.Errorf("antigravity: models fetch: %w", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("antigravity: models fetch: status %d", res.StatusCode)
+		return ModelCatalog{}, fmt.Errorf("antigravity: models fetch: status %d", res.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, quotaMaxBytes))
 	if err != nil {
-		return nil, fmt.Errorf("antigravity: models read: %w", err)
+		return ModelCatalog{}, fmt.Errorf("antigravity: models read: %w", err)
 	}
 	return parseModelIDs(raw)
 }
 
-// parseModelIDs decodes and collapses the discovery payload. The raw ids are
-// recorded in the package snapshot before collapsing, so resolveWireModel
-// and RawModels stay presence-faithful between syncs.
-func parseModelIDs(raw []byte) ([]string, error) {
+func parseModelIDs(raw []byte) (ModelCatalog, error) {
 	var payload struct {
 		Models map[string]struct {
 			Internal bool `json:"isInternal"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, fmt.Errorf("antigravity: models decode: %w", err)
+		return ModelCatalog{}, fmt.Errorf("antigravity: models decode: %w", err)
 	}
 	if payload.Models == nil {
-		return nil, fmt.Errorf("antigravity: models payload has no models object")
+		return ModelCatalog{}, fmt.Errorf("antigravity: models payload has no models object")
 	}
 	rawIDs := make([]string, 0, len(payload.Models))
 	for id, meta := range payload.Models {
-		if id == "" || discoveryDenylist[id] || meta.Internal {
-			continue
+		if id != "" && !discoveryDenylist[id] && !meta.Internal {
+			rawIDs = append(rawIDs, id)
 		}
-		rawIDs = append(rawIDs, id)
 	}
-	if len(rawIDs) == 0 {
-		return nil, fmt.Errorf("antigravity: models payload carries no model")
-	}
-	recordDiscovery(rawIDs)
-	collapsed := collapseIds(rawIDs)
-	sort.Strings(collapsed)
-	return collapsed, nil
+	return NewModelCatalog(rawIDs), nil
 }
 
-// DeniedModel reports whether an id is a service-only entry discovery hides
-// from agents; the sync merge uses it to drop such leftovers from stored lists.
-func DeniedModel(id string) bool {
-	return discoveryDenylist[id]
-}
+func DeniedModel(id string) bool { return discoveryDenylist[id] }
 
-// discoveryDenylist holds the service-only ids discovery reports but no
-// agent should ever see; they are not selectable models.
-var discoveryDenylist = map[string]bool{
-	"chat_20706": true,
-	"chat_23310": true,
-}
+var discoveryDenylist = map[string]bool{"chat_20706": true, "chat_23310": true}
 
-// recordDiscovery replaces the presence snapshot with a fresh raw list.
-func recordDiscovery(raw []string) {
-	present := make(map[string]bool, len(raw))
-	for _, id := range raw {
-		present[id] = true
-	}
-	discoverySnapshot.Lock()
-	discoverySnapshot.present = present
-	discoverySnapshot.Unlock()
-}
+func ModelEfforts(logical string) []effort { return effortsFor(logical) }
 
-// presenceSnapshot returns a copy of the current presence map; nil when no
-// discovery has run.
-func presenceSnapshot() map[string]bool {
-	discoverySnapshot.Lock()
-	defer discoverySnapshot.Unlock()
-	if discoverySnapshot.present == nil {
-		return nil
-	}
-	out := make(map[string]bool, len(discoverySnapshot.present))
-	for id, ok := range discoverySnapshot.present {
-		out[id] = ok
-	}
-	return out
-}
-
-// RawModels exposes the raw wire ids behind a logical model id: the live
-// non-retired members of its family, resolved against the last discovery
-// snapshot. Unknown or non-family ids return nil. This is the single
-// accessor the management layer uses for the provider view's raw list.
-func RawModels(logical string) []string {
-	return rawMembersFor(logical, presenceSnapshot())
-}
-
-// ModelEfforts exposes the supported efforts behind a logical model id for
-// the provider view; nil for non-family ids.
-func ModelEfforts(logical string) []effort {
-	return effortsFor(logical)
-}
-
-// LogicalModel maps a raw wire id onto the logical model id it collapses
-// into, presence-free: concrete table members (retired included) map to
-// their family id, template-shaped member ids map to the instantiated
-// family id, and a family id maps to itself. Ids the reviewed table does
-// not own return "" — aliases pass through as their own rows under
-// collapseIds, and auto-pair variants are presence-derived, so neither is
-// statically remapped. The sync migration uses this to fold stale raw ids
-// in config state onto their logical id.
 func LogicalModel(raw string) string {
 	for _, f := range families {
 		if f.id == raw || containsString(f.members, raw) {

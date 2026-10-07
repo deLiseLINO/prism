@@ -16,6 +16,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/egress"
 	"github.com/deLiseLINO/prism/internal/execution"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
 	"github.com/deLiseLINO/prism/internal/routing"
 	"github.com/google/uuid"
 )
@@ -81,7 +82,7 @@ type Egress struct {
 
 	items   map[canon.ItemID]*openItem
 	nextOut int
-	output  []any
+	output  map[int]any
 	pending *canon.ItemFinished
 
 	done      chan struct{}
@@ -115,6 +116,7 @@ func newEgress(w io.Writer, f execution.Facts, c Clock, buffered bool, routes ma
 		client:    f.Client,
 		self:      &lifecycle{},
 		items:     make(map[canon.ItemID]*openItem),
+		output:    make(map[int]any),
 		lastWrite: c.Now(),
 		done:      make(chan struct{}),
 	}
@@ -224,6 +226,9 @@ func (e *Egress) Frame(ev canon.Event) error {
 	case canon.ItemFinished:
 		return e.itemFinishedLocked(t)
 	case canon.ItemStateAvailable:
+		if it, ok := e.items[t.ItemID]; ok && it.kind == "reasoning" && t.State.Store == canon.StoreWire {
+			it.wire["encrypted_content"] = t.State.Key
+		}
 		return nil
 	default:
 		return fmt.Errorf("egress/responses: unsupported event %T", ev)
@@ -297,7 +302,7 @@ func (e *Egress) turnFinishedLocked(t canon.TurnFinished) error {
 		reason, _ := t.Status.Reason()
 		extra = map[string]any{"incomplete_details": map[string]any{"reason": incompleteReasonWire(reason)}}
 	}
-	data := map[string]any{"response": e.snapshotLocked(status, e.output, usageWire(t.Usage))}
+	data := map[string]any{"response": e.snapshotLocked(status, e.orderedOutputLocked(), usageWire(t.Usage))}
 	for k, v := range extra {
 		data["response"].(map[string]any)[k] = v
 	}
@@ -315,7 +320,7 @@ func (e *Egress) turnFailedLocked(t canon.TurnFailed) error {
 	if e.terminal != nil {
 		return e.duplicateTerminalLocked(t)
 	}
-	snap := e.snapshotLocked("failed", e.output, usageWire(t.Usage))
+	snap := e.snapshotLocked("failed", e.orderedOutputLocked(), usageWire(t.Usage))
 	if t.Failure.HasProvider() {
 		if len(t.Failure.Provider.Error) > 0 {
 			snap["error"] = json.RawMessage(t.Failure.Provider.Error)
@@ -468,6 +473,9 @@ func (e *Egress) releasePendingLocked(phase canon.MessagePhase) error {
 }
 
 func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind string, it *openItem) error {
+	if err := e.reconcileFinalContentLocked(t, id, it); err != nil {
+		return err
+	}
 	switch kind {
 	case "message":
 		if it.partOpen {
@@ -520,14 +528,62 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 	if err != nil {
 		return err
 	}
+	if reasoning, ok := t.Item.(canon.ReasoningItem); ok && reasoning.State.IsEmpty() && reasoning.Signature == "" {
+		if encrypted, ok := it.wire["encrypted_content"]; ok {
+			wire["encrypted_content"] = encrypted
+		}
+	}
 	if err := e.writeEventLocked("response.output_item.done", map[string]any{
 		"output_index": it.index,
 		"item":         wire,
 	}); err != nil {
 		return err
 	}
-	e.output = append(e.output, wire)
+	e.output[it.index] = wire
 	delete(e.items, id)
+	return nil
+}
+
+func (e *Egress) reconcileFinalContentLocked(t canon.ItemFinished, id canon.ItemID, it *openItem) error {
+	var final string
+	switch v := t.Item.(type) {
+	case canon.Message:
+		for _, c := range v.Content {
+			if text, ok := c.(canon.TextContent); ok {
+				final += text.Text
+			}
+		}
+	case canon.ReasoningItem:
+		final = v.Content
+		if final == "" {
+			for _, part := range v.Summary {
+				final += part.Text
+			}
+		}
+	case canon.FunctionCall:
+		final = string(v.Arguments)
+	case canon.CustomToolCall:
+		final = v.Input
+	default:
+		return nil
+	}
+	if !strings.HasPrefix(final, it.text) {
+		return fmt.Errorf("egress/responses: final item conflicts with deltas")
+	}
+	rest := final[len(it.text):]
+	if rest == "" {
+		return nil
+	}
+	switch t.Item.(type) {
+	case canon.Message:
+		return e.textDeltaLocked(canon.TextDelta{ItemID: id, Text: rest})
+	case canon.ReasoningItem:
+		return e.reasoningDeltaLocked(canon.ReasoningDelta{ItemID: id, Text: rest})
+	case canon.FunctionCall:
+		return e.toolArgumentsDeltaLocked(canon.ToolArgumentsDelta{ItemID: id, Bytes: []byte(rest)})
+	case canon.CustomToolCall:
+		return e.customToolInputDeltaLocked(canon.CustomToolInputDelta{ItemID: id, Text: rest})
+	}
 	return nil
 }
 
@@ -556,7 +612,7 @@ func (e *Egress) closeOpenLocked() error {
 		}); err != nil {
 			return err
 		}
-		e.output = append(e.output, wire)
+		e.output[it.index] = wire
 	}
 	return nil
 }
@@ -576,6 +632,15 @@ func (e *Egress) commitOutputLocked() {
 	if e.commitState < provider.OutputCommitted {
 		e.commitState = provider.OutputCommitted
 	}
+}
+
+func (e *Egress) orderedOutputLocked() []any {
+	indexes := slices.Sorted(maps.Keys(e.output))
+	output := make([]any, 0, len(indexes))
+	for _, index := range indexes {
+		output = append(output, e.output[index])
+	}
+	return output
 }
 
 func (e *Egress) snapshotLocked(status string, output []any, usage any) map[string]any {
@@ -674,6 +739,15 @@ func (e *Egress) openItemWire(item canon.Item, kind, wireID, status string) (map
 		wire["summary"] = summary
 		if t.Content != "" {
 			wire["content"] = []any{map[string]any{"type": "reasoning_text", "text": t.Content}}
+		}
+		if t.State.Store == canon.StoreWire && t.State.Key != "" {
+			wire["encrypted_content"] = t.State.Key
+		} else if t.Signature != "" {
+			if _, ok := reasonenv.Decode(t.Signature); ok {
+				wire["encrypted_content"] = t.Signature
+			} else {
+				wire["encrypted_content"] = reasonenv.EncodeSignature(t.Signature, t.Content)
+			}
 		}
 	case canon.FunctionCall:
 		wire["id"] = wireID
