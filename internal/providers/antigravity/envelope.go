@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
 )
 
 type envelope struct {
@@ -103,7 +104,12 @@ type envelopeBuilder struct {
 	pendingSig string
 }
 
-func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]byte, error) {
+type ModelSelection struct {
+	Mode    config.ModelMode
+	Catalog ModelCatalog
+}
+
+func BuildEnvelope(req canon.Request, project, requestID, sessionID string, selection ModelSelection) ([]byte, error) {
 	if req.Text.Verbosity != 0 && req.Text.Verbosity != canon.VerbosityDefault {
 		return nil, invalidRequestf("text verbosity is not representable on this wire")
 	}
@@ -133,10 +139,13 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string) ([]b
 			return nil, invalidRequestf("parallel_tool_calls=false is not representable on this wire")
 		}
 	}
-	present := presenceSnapshot()
+	present := selection.Catalog.present
 	f := familyForLogical(string(req.Model), present)
 	ef := resolvedEffort(req, f)
-	wire := resolveWireModel(string(req.Model), ef, present)
+	wire := string(req.Model)
+	if selection.Mode != config.ModelModeRaw {
+		wire = resolveWireModel(wire, ef, present)
+	}
 	gc, err := generationConfig(req, f, ef, wire)
 	if err != nil {
 		return nil, err

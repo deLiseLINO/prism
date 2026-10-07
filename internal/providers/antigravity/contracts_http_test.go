@@ -17,7 +17,7 @@ func TestNativeUnsupportedToolConstraintsRejectBeforeHTTP(t *testing.T) {
 			calls := 0
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; io.WriteString(w, textStream()) }))
 			defer up.Close()
-			runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "fixture"}}, up.Client(), up.URL)
+			runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "fixture"}}, up.Client(), up.URL, nil)
 			req := testRequest()
 			req.Request.Tools = []canon.Tool{canon.FunctionTool{Name: "read"}}
 			switch scenario {

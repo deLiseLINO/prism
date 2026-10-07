@@ -607,13 +607,48 @@ type codexCatalog struct {
 
 const codexCatalogDefaultContextWindow = 128000
 
-var codexCatalogReasoningLevels = []codexReasoningLevel{
+// codexReasoningLadder is the picker ladder codex's catalog accepts, in order,
+// with the label each rung carries. ultra is codex's own top rung; the daemon
+// steers it as max, so it rides along only where max is offered.
+var codexReasoningLadder = []codexReasoningLevel{
+	{Effort: "minimal", Description: "Minimal reasoning for the quickest responses"},
 	{Effort: "low", Description: "Fast responses with lighter reasoning"},
 	{Effort: "medium", Description: "Balances speed and reasoning depth for everyday tasks"},
 	{Effort: "high", Description: "Greater reasoning depth for complex problems"},
 	{Effort: "xhigh", Description: "Extra high reasoning depth for complex problems"},
 	{Effort: "max", Description: "Maximum reasoning depth for the hardest problems"},
 	{Effort: "ultra", Description: "Maximum reasoning with automatic task delegation"},
+}
+
+// codexUndeclaredEfforts is the ladder offered for a model with no declared
+// efforts: the long-standing low..ultra range.
+var codexUndeclaredEfforts = []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+
+// codexReasoningLevelsFor projects a model's declared ladder onto codex's
+// picker so a rung the model does not support is never offered: codex sends
+// whatever is picked, and the daemon forwards it as chosen.
+func codexReasoningLevelsFor(model Model) ([]codexReasoningLevel, string) {
+	efforts := codexUndeclaredEfforts
+	if len(model.ReasoningEfforts) > 0 {
+		vocabulary := make([]string, 0, len(codexReasoningLadder))
+		for _, level := range codexReasoningLadder {
+			vocabulary = append(vocabulary, level.Effort)
+		}
+		declared := effortsFor(model, vocabulary)
+		if containsString(declared, "max") && !containsString(declared, "ultra") {
+			declared = append(declared, "ultra")
+		}
+		if len(declared) > 0 {
+			efforts = declared
+		}
+	}
+	levels := make([]codexReasoningLevel, 0, len(efforts))
+	for _, level := range codexReasoningLadder {
+		if containsString(efforts, level.Effort) {
+			levels = append(levels, level)
+		}
+	}
+	return levels, defaultEffort(efforts, model.DefaultReasoningEffort)
 }
 
 // RenderCodexCatalog renders the catalog file codex's model picker reads via
@@ -638,12 +673,13 @@ func RenderCodexCatalog(models []Model) string {
 		if routed {
 			description = fmt.Sprintf("Routed via prism → %s.", provider)
 		}
+		levels, defaultLevel := codexReasoningLevelsFor(model)
 		entries = append(entries, codexCatalogEntry{
 			Slug:                           model.ID,
 			DisplayName:                    model.ID,
 			Description:                    description,
-			DefaultReasoningLevel:          "medium",
-			SupportedReasoningLevels:       codexCatalogReasoningLevels,
+			DefaultReasoningLevel:          defaultLevel,
+			SupportedReasoningLevels:       levels,
 			ShellType:                      "shell_command",
 			Visibility:                     "list",
 			SupportedInAPI:                 true,
@@ -812,39 +848,68 @@ func WriteCodexConfigForced(options CodexOptions) WriteOutcome {
 func writeCodexConfig(options CodexOptions, force bool) WriteOutcome {
 	options = normalizeCodexOptions(options)
 	io := withLocalIO(options.IO)
+	unlock := lockMutation(options.ConfigPath)
+	defer unlock()
 	models, refusal := resolveModels(options.Models, options.ModelsSource, Codex)
 	if refusal != "" {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
 	}
 	catalogPath := ""
+	var side map[string]fileState
 	if len(models) > 0 {
 		catalogPath = CodexCatalogPath(options.ConfigPath)
-		if err := AtomicWrite(io, catalogPath, RenderCodexCatalog(models)); err != nil {
-			return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
-		}
+		side = map[string]fileState{catalogPath: {Present: true, Text: RenderCodexCatalog(models)}}
 	}
-	outcome, err := ApplyConfigTransform(io, options.ConfigPath, codexTransform(options.Port, catalogPath, force), options.CrashBeforeRename)
+	var inherited *restorationJournal
+	raw, present, err := io.ReadText(options.ConfigPath)
 	if err != nil {
-		_ = io.Remove(catalogPath)
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
 	}
-	if outcome.Kind == OutcomeRefused {
-		_ = io.Remove(catalogPath)
+	if present && FindFencedRegion(raw, CodexFence).Kind == FencedFound {
+		original := codexRollbackTransform(CodexCatalogPath(options.ConfigPath))(ApplyEol(raw, EolLF))
+		if original.Refused != "" {
+			return WriteOutcome{Kind: OutcomeRefused, Reason: original.Refused}
+		}
+		inherited = &restorationJournal{Version: 1, Target: filepath.Clean(options.ConfigPath), Files: []journalFile{{Path: options.ConfigPath, Original: fileState{Present: true, Text: ApplyEol(original.Next, DominantEol(raw))}, Written: fileState{Present: true, Text: raw}}}}
+		if catalogPath != "" {
+			cache, err := readState(io, catalogPath)
+			if err != nil {
+				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
+			}
+			inherited.Files = append(inherited.Files, journalFile{Path: catalogPath, Original: fileState{}, Written: cache})
+		}
+	}
+	outcome, err := applyRestorationUnlocked(io, options.ConfigPath, codexTransform(options.Port, catalogPath, force), side, options.CrashBeforeRename, inherited)
+	if err != nil {
+		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
 	}
 	return outcome
 }
 
 func StripCodexConfig(io FileIO, configPath string) WriteOutcome {
-	outcome, err := ApplyConfigTransform(io, configPath, codexRollbackTransform(CodexCatalogPath(configPath)), false)
+	unlock := lockMutation(configPath)
+	defer unlock()
+	journal, err := loadJournal(io, configPath)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex rollback", err)}
 	}
-	_ = io.Remove(CodexCatalogPath(configPath))
+	if _, _, err := io.ReadText(CodexCatalogPath(configPath)); err != nil {
+		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex rollback", err)}
+	}
+	outcome, err := rollbackRestorationUnlocked(io, configPath, codexRollbackTransform(CodexCatalogPath(configPath)))
+	if err != nil {
+		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex rollback", err)}
+	}
+	if journal == nil && outcome.Kind == OutcomeWritten {
+		if err := io.RemoveDurable(CodexCatalogPath(configPath)); err != nil {
+			return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex catalog cleanup", err)}
+		}
+	}
 	return outcome
 }
 
 func RecoverCodexConfig(io FileIO, configPath string) bool {
-	return io.RecoverStaged(configPath)
+	return recoverConfigStage(io, configPath)
 }
 
 type CodexOptions struct {
@@ -899,6 +964,8 @@ func (c *CodexIntegration) ApplyForced() ApplyResult {
 func (c *CodexIntegration) RefreshCatalog() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	unlock := lockMutation(c.configPath)
+	defer unlock()
 	models, refusal := resolveModels(c.models, c.modelsSrc, c.id)
 	if refusal != "" {
 		return errors.New(refusal)
@@ -906,12 +973,55 @@ func (c *CodexIntegration) RefreshCatalog() error {
 	if len(models) == 0 {
 		return nil
 	}
-	return AtomicWrite(c.io, CodexCatalogPath(c.configPath), RenderCodexCatalog(models))
+	if !codexCatalogRefreshAllowedUnlocked(c.io, c.configPath, c.port) {
+		return nil
+	}
+	_, err := applyRestorationUnlocked(c.io, c.configPath, func(raw string) ConfigTransform { return nextTransform(raw, false) }, map[string]fileState{CodexCatalogPath(c.configPath): {Present: true, Text: RenderCodexCatalog(models)}}, false, nil)
+	return err
+}
+
+func (c *CodexIntegration) ManagedBinding() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return CodexCatalogRefreshAllowed(c.io, c.configPath, c.port)
+}
+
+func CodexCatalogRefreshAllowed(io FileIO, configPath string, port int) bool {
+	unlock := lockMutation(configPath)
+	defer unlock()
+	return codexCatalogRefreshAllowedUnlocked(io, configPath, port)
+}
+
+func codexCatalogRefreshAllowedUnlocked(io FileIO, configPath string, port int) bool {
+	content, present, err := io.ReadText(configPath)
+	if err != nil || !present {
+		return false
+	}
+	managed := codexManagedRead(content)
+	if managed.Kind != ManagedPresent || managed.Endpoint == nil || *managed.Endpoint != ProviderBaseUrl(port) {
+		return false
+	}
+	lines := strings.Split(ApplyEol(content, EolLF), "\n")
+	binding := -1
+	for i := range codexRootEnd(lines) {
+		if codexRootCatalogKeyRe.MatchString(lines[i]) {
+			if binding != -1 {
+				return false
+			}
+			binding = i
+		}
+	}
+	return binding > 0 && lines[binding-1] == prismCatalogMarker && lines[binding] == "model_catalog_json = "+tomlString(CodexCatalogPath(configPath))
 }
 
 func (c *CodexIntegration) Status() Status {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return ObservedIntegrationStatus(c.io, c.id, c.configPath, []string{CodexHome(c.env, c.home)}, func(path string) ManagedRead {
-		content, ok := c.io.ReadTextIfExists(path)
+		content, ok, err := c.io.ReadText(path)
+		if err != nil {
+			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
+		}
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -920,5 +1030,7 @@ func (c *CodexIntegration) Status() Status {
 }
 
 func (c *CodexIntegration) Rollback() ApplyResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return ToRollbackResult(c.id, StripCodexConfig(c.io, c.configPath))
 }

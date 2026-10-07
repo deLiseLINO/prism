@@ -82,15 +82,23 @@ func TestPiStatusLifecycle(t *testing.T) {
 	}
 }
 
-func TestPiApplyRefusesFlowStyle(t *testing.T) {
+func TestPiCompactConfigPreservesSettingsAcrossRollback(t *testing.T) {
 	dir := tempDir(t)
-	path := tempFile(t, dir, "models.json", `{"providers": {"x": 1}}`+"\n")
+	seed := `{"providers": {"x": 1}}` + "\n"
+	path := tempFile(t, dir, "models.json", seed)
 	integration := NewPi(PiOptions{Port: testPort, Models: ompTestModels, ConfigPath: path})
-	if result := integration.Apply(); result.OK {
-		t.Fatalf("flow-style apply unexpectedly succeeded")
+	if result := integration.Apply(); !result.OK {
+		t.Fatal(result)
 	}
-	if readText(t, path) != `{"providers": {"x": 1}}`+"\n" {
-		t.Fatalf("refused apply changed bytes")
+	assertValidJSON(t, readText(t, path))
+	if read := piManagedRead(readText(t, path)); read.Kind != ManagedPresent {
+		t.Fatalf("managed provider missing: %+v", read)
+	}
+	if result := integration.Rollback(); !result.OK {
+		t.Fatal(result)
+	}
+	if readText(t, path) != seed {
+		t.Fatal("compact user settings not restored")
 	}
 }
 

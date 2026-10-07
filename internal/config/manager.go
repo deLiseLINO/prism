@@ -230,6 +230,10 @@ func cloneDocument(d Document) Document {
 		p.SyncedModels = append([]string(nil), p.SyncedModels...)
 		p.Discovered = cloneDiscovered(p.Discovered)
 		p.ModelSettings = cloneModelSettings(p.ModelSettings)
+		p.ModelCatalogs = append([]ModelCatalog(nil), p.ModelCatalogs...)
+		for i := range p.ModelCatalogs {
+			p.ModelCatalogs[i].RawModels = append([]string(nil), p.ModelCatalogs[i].RawModels...)
+		}
 		if p.Enabled != nil {
 			v := *p.Enabled
 			p.Enabled = &v

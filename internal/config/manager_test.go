@@ -403,3 +403,32 @@ func TestSetCatalogSurvivesUpdateWithoutWritingConfig(t *testing.T) {
 		t.Fatal("unexpected config before first update")
 	}
 }
+
+func TestCatalogBindingsRemainIsolatedAndDurable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	mgr, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := validDoc()
+	doc.Providers["ag"] = Provider{Wire: WireAntigravity, ModelCatalogs: []ModelCatalog{{BaseURL: "https://catalog.example", Account: "ag:a", Project: "project", RawModels: []string{"gemini-3.7-flash-low"}}}}
+	if _, err := mgr.Update(doc, 0); err != nil {
+		t.Fatal(err)
+	}
+	snap := mgr.Get()
+	p := snap.Config.Providers["ag"]
+	p.ModelCatalogs[0].RawModels[0] = "mutated"
+	p.ModelCatalogs[0].Project = "mutated"
+	stored := mgr.Get().Config.Providers["ag"].ModelCatalogs[0]
+	if stored.Project != "project" || stored.RawModels[0] != "gemini-3.7-flash-low" {
+		t.Fatalf("snapshot mutation changed catalog: %+v", stored)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored = reopened.Get().Config.Providers["ag"].ModelCatalogs[0]
+	if stored.Account != "ag:a" || stored.Project != "project" || stored.RawModels[0] != "gemini-3.7-flash-low" {
+		t.Fatalf("restart catalog=%+v", stored)
+	}
+}

@@ -1,11 +1,12 @@
 package integrations
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
-var opencodeUserSeed = "{\n  \"theme\": \"dark\",\n  \"providers\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"package\": \"@opencode-ai/ai/providers/openai-compatible\",\n      \"settings\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"
+var opencodeUserSeed = "{\n  \"theme\": \"dark\",\n  \"provider\": {\n    \"acme\": {\n      \"name\": \"ACME\",\n      \"npm\": \"@ai-sdk/openai-compatible\",\n      \"options\": {\n        \"baseURL\": \"http://localhost:8080/v1\"\n      },\n      \"models\": {}\n    }\n  }\n}\n"
 
 func TestOpencodePathResolution(t *testing.T) {
 	if got := OpencodeConfigPath(Env{}, "/home/u"); got != "/home/u/.config/opencode/opencode.json" {
@@ -36,34 +37,75 @@ func TestOpencodeApplyWritesReasoningVariants(t *testing.T) {
 	}
 	got := readText(t, path)
 	assertValidJSON(t, got)
-	// v2 merges variant bodies onto the wire verbatim, so the effort key must
-	// be in its snake_case wire spelling.
 	for _, want := range []string{
-		`"variants": [`,
-		`"id": "high"`,
-		`"reasoning_effort": "high"`,
+		`"reasoning": true`,
+		`"variants": {`,
+		`"high": {`,
+		`"reasoningEffort": "high"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("variant member %q missing:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, `"reasoningEffort"`) {
-		t.Fatalf("v2 must not emit the AI SDK camelCase spelling:\n%s", got)
-	}
+	// flash model declares no ladder: the daemon still steers the full chat
+	// vocabulary for it, so the picker must offer every rung
 	flashAt := strings.Index(got, `"router/glm-5.3-flash"`)
 	if flashAt == -1 {
 		t.Fatalf("flash model missing:\n%s", got)
 	}
-	// the undeclared model rides the daemon's full chat vocabulary too
 	tail := got[flashAt:]
 	for _, rung := range chatEffortVocabulary {
-		if !strings.Contains(tail, `"reasoning_effort": "`+rung+`"`) {
+		if !strings.Contains(tail, `"reasoningEffort": "`+rung+`"`) {
 			t.Fatalf("undeclared model must carry rung %q:\n%s", rung, tail)
 		}
 	}
 }
 
+func TestOpencodeApplyWritesPrismProvider(t *testing.T) {
+	dir := tempDir(t)
+	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: opencodeWindowModels, ConfigPath: path})
+	if result := integration.Apply(); !result.OK {
+		t.Fatalf("apply: %+v", result)
+	}
+	got := readText(t, path)
+	assertValidJSON(t, got)
+	if !strings.Contains(got, `"npm": "@ai-sdk/openai-compatible"`) {
+		t.Fatalf("npm adapter missing:\n%s", got)
+	}
+	if !strings.Contains(got, `"baseURL": "http://127.0.0.1:8787/v1"`) {
+		t.Fatalf("base url missing:\n%s", got)
+	}
+	if !strings.Contains(got, `"gpt-5.2-codex": {`) {
+		t.Fatalf("model entry missing:\n%s", got)
+	}
+	if !strings.Contains(got, `"acme"`) || !strings.Contains(got, `"theme"`) {
+		t.Fatalf("user members lost:\n%s", got)
+	}
+}
+
+// A model with a known context window renders a limit pair; the comma between
+// name and limit is load-bearing for the file to stay valid JSON.
+func TestOpencodeApplyWithContextWindowStaysValidJSON(t *testing.T) {
+	dir := tempDir(t)
+	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: []Model{
+		{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", ContextWindow: 400000},
+		{ID: "gemini-3-pro", Name: "Gemini 3 Pro"},
+	}, ConfigPath: path})
+	if result := integration.Apply(); !result.OK {
+		t.Fatalf("apply: %+v", result)
+	}
+	got := readText(t, path)
+	assertValidJSON(t, got)
+	if !strings.Contains(got, `"name": "GPT-5.2 Codex",`) {
+		t.Fatalf("name line must carry the comma before limit:\n%s", got)
+	}
+}
+
 func TestOpencodeApplyWithEffortsButNoWindowStaysValidJSON(t *testing.T) {
+	// a model with efforts but no known window must still render valid JSON:
+	// the name line carries the comma that closes onto the reasoning block
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
 	module := NewOpencode(OpencodeOptions{Port: testPort, Models: []Model{
@@ -113,7 +155,7 @@ func TestOpencodeStatusLifecycle(t *testing.T) {
 func TestOpencodeVerifierSemantics(t *testing.T) {
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
-	probe := JSONBlockProbe(Opencode, "providers", "opencode.json", "baseURL", ProviderBaseUrl(testPort),
+	probe := JSONBlockProbe(Opencode, "provider", "opencode.json", "baseURL", ProviderBaseUrl(testPort),
 		func(crash bool) WriteOutcome {
 			outcome, err := ApplyConfigTransform(LocalIO{}, path, opencodeTransform(testPort, ompTestModels), crash)
 			if err != nil {
@@ -137,47 +179,45 @@ func TestOpencodeVerifierSemantics(t *testing.T) {
 	}
 }
 
-func TestOpencodeApplyWritesPrismProvider(t *testing.T) {
+func TestOpencodeApplyWritesLoadableV1Provider(t *testing.T) {
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
-	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: opencodeWindowModels, ConfigPath: path})
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: opencodeEffortModels, ConfigPath: path})
 	if result := integration.Apply(); !result.OK {
 		t.Fatalf("apply: %+v", result)
 	}
-	got := readText(t, path)
-	assertValidJSON(t, got)
-	if !strings.Contains(got, `"gpt-5.2-codex": {`) {
-		t.Fatalf("v2 model entry missing:\n%s", got)
+	var doc struct {
+		Providers map[string]any `json:"providers"`
+		Provider  map[string]struct {
+			Npm     string            `json:"npm"`
+			Options map[string]string `json:"options"`
+		} `json:"provider"`
 	}
-	if !strings.Contains(got, `"package": "@opencode-ai/ai/providers/openai-compatible"`) {
-		t.Fatalf("package adapter missing:\n%s", got)
+	if err := json.Unmarshal([]byte(readText(t, path)), &doc); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(got, `"baseURL": "http://127.0.0.1:8787/v1"`) {
-		t.Fatalf("base url missing:\n%s", got)
+	prism, ok := doc.Provider["prism"]
+	if !ok || prism.Npm != "@ai-sdk/openai-compatible" || prism.Options["baseURL"] != ProviderBaseUrl(testPort) {
+		t.Fatalf("provider.prism not loadable: %+v", doc.Provider)
 	}
-	if !strings.Contains(got, `"settings": {`) {
-		t.Fatalf("settings block missing:\n%s", got)
-	}
-	if !strings.Contains(got, `"acme"`) || !strings.Contains(got, `"theme"`) {
-		t.Fatalf("user members lost:\n%s", got)
-	}
-	if strings.Contains(got, `"npm"`) {
-		t.Fatalf("v2 apply must not emit v1 npm wiring:\n%s", got)
+	if _, ok := doc.Provider["acme"]; !ok {
+		t.Fatalf("user provider lost: %+v", doc.Provider)
 	}
 }
 
-func TestOpencodeApplyWithContextWindowStaysValidJSON(t *testing.T) {
+func TestOutputBudgetLeavesInputRoomInSmallWindows(t *testing.T) {
+	for window, want := range map[int]int{8000: 4000, 64000: 32000, 400000: 32000} {
+		if got := maxTokensFor(window); got != want {
+			t.Errorf("maxTokensFor(%d) = %d, want %d", window, got, want)
+		}
+	}
 	dir := tempDir(t)
 	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
-	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: []Model{
-		{ID: "gpt-5.2-codex", Name: "GPT-5.2 Codex", ContextWindow: 400000},
-	}, ConfigPath: path})
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: []Model{{ID: "r/small", Name: "r/small", ContextWindow: 8000}}, ConfigPath: path})
 	if result := integration.Apply(); !result.OK {
 		t.Fatalf("apply: %+v", result)
 	}
-	got := readText(t, path)
-	assertValidJSON(t, got)
-	if !strings.Contains(got, `"name": "GPT-5.2 Codex",`) {
-		t.Fatalf("name line must carry the comma before limit:\n%s", got)
+	if got := readText(t, path); !strings.Contains(got, `"output": 4000`) || strings.Contains(got, `"output": 8000`) {
+		t.Fatalf("output cap must leave input room:\n%s", got)
 	}
 }

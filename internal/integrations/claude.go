@@ -194,70 +194,169 @@ func (c *ClaudeIntegration) ApplyForced() ApplyResult {
 }
 
 func (c *ClaudeIntegration) applyWith(force bool) ApplyResult {
-	cacheErr := c.seedGatewayCacheForced(force)
-	if cacheErr != nil {
-		return ToApplyResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", cacheErr), Retryable: !force && isForeignCacheError(cacheErr)})
-	}
-	displaced := map[string]string{}
-	outcome, err := ApplyConfigTransform(c.io, c.paths(), claudeTransformForced(c.port, c.currentModels(), force, displaced), false)
+	unlock := lockMutation(c.paths())
+	defer unlock()
+	refuse := func(err error) ApplyResult { return ApplyResult{ID: c.id, Reason: failureReason("claude apply", err)} }
+	raw, _, err := c.io.ReadText(c.paths())
 	if err != nil {
-		return ToApplyResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude apply", err)})
+		return refuse(err)
 	}
-	if outcome.Kind == OutcomeWritten && len(displaced) > 0 {
-		_ = AtomicWrite(c.io, c.envJournalPath(), renderClaudeEnvJournal(displaced))
+	cache, err := readState(c.io, c.cachePath())
+	if err != nil {
+		return refuse(err)
+	}
+	if _, _, err = c.io.ReadText(c.envJournalPath()); err != nil {
+		return refuse(err)
+	}
+	if _, _, err = c.io.ReadText(c.cacheJournalPath()); err != nil {
+		return refuse(err)
+	}
+	journal, err := c.inheritedJournal(raw, cache)
+	if err != nil {
+		return refuse(err)
+	}
+	active, err := loadJournal(c.io, c.paths())
+	if err != nil {
+		return refuse(err)
+	}
+	if active != nil {
+		journal = active
+	}
+	endpoint := ""
+	if cache.Present {
+		var value struct {
+			BaseURL string `json:"baseUrl"`
+		}
+		if json.Unmarshal([]byte(cache.Text), &value) != nil {
+			return refuse(fmt.Errorf("gateway cache is not valid JSON"))
+		}
+		endpoint = value.BaseURL
+		if endpoint != "" && endpoint != ClaudeBaseURL(c.port) && !c.cacheOwned(journal, cache) && !force {
+			result := refuse(fmt.Errorf("gateway cache belongs to endpoint %s", endpoint))
+			result.Retryable = true
+			return result
+		}
+	}
+	side := map[string]fileState{}
+	if !cache.Present || endpoint != ClaudeBaseURL(c.port) {
+		side[c.cachePath()] = fileState{Present: true, Text: RenderClaudeGatewayCache(ClaudeBaseURL(c.port), c.currentModels(), c.nowMS())}
+	}
+	outcome, err := applyRestorationUnlocked(c.io, c.paths(), claudeTransform(c.port, c.currentModels(), force), side, false, journal)
+	if err != nil {
+		return refuse(err)
 	}
 	return ToApplyResult(c.id, outcome)
 }
 
-func claudeTransformForced(port int, models []Model, force bool, displaced map[string]string) func(current string) ConfigTransform {
-	entries := ClaudeEnvEntries(port, models)
-	return func(current string) ConfigTransform {
-		result := UpsertJSONScalarKeysForced(current, "env", "settings.json", entries, force)
-		if result.Kind == "written" {
-			if force {
-				collectDisplacedEnv(current, entries, result.Next, displaced)
-			}
-			return nextTransform(result.Next, result.Changed)
-		}
-		if result.Retryable {
-			return forceableTransform(result.Reason)
-		}
-		return refusedTransform(result.Reason)
+func (c *ClaudeIntegration) cacheOwned(j *restorationJournal, cache fileState) bool {
+	if j == nil || j.Retired {
+		return false
 	}
+	for _, f := range j.Files {
+		if f.Path == c.cachePath() && (cache == f.Written || managedCacheState(f.Written, cache) || f.Pending != nil && cache == *f.Pending) {
+			return true
+		}
+	}
+	return false
 }
 
-func collectDisplacedEnv(before string, entries []JSONScalarEntry, after string, displaced map[string]string) {
-	for _, entry := range entries {
-		read := ReadJSONScalarKeys(before, "env", entry.Key, "settings.json", []string{entry.Key})
-		if read.Kind != jsonLeafPresent || read.Endpoint == nil || *read.Endpoint == entry.Value {
+func (c *ClaudeIntegration) inheritedJournal(raw string, cache fileState) (*restorationJournal, error) {
+	active, err := loadJournal(c.io, c.paths())
+	if err != nil || active != nil {
+		return active, err
+	}
+	legacy, present, err := c.io.ReadText(c.envJournalPath())
+	if err != nil {
+		return nil, err
+	}
+	backup, err := readState(c.io, c.cacheJournalPath())
+	if err != nil {
+		return nil, err
+	}
+	if !present && !backup.Present {
+		return nil, nil
+	}
+	var versioned struct {
+		Version int    `json:"version"`
+		Target  string `json:"target"`
+	}
+	if present && json.Unmarshal([]byte(legacy), &versioned) == nil && versioned.Version != 0 {
+		return c.inheritVersionedJournal(raw, cache, backup, legacy)
+	}
+	var displaced map[string]string
+	if present && json.Unmarshal([]byte(legacy), &displaced) != nil {
+		return nil, fmt.Errorf("historical env journal invalid; original bytes retained")
+	}
+	var settings map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &settings) != nil {
+		return nil, fmt.Errorf("historical settings are unreadable")
+	}
+	var env map[string]string
+	if json.Unmarshal(settings["env"], &env) != nil || env["ANTHROPIC_AUTH_TOKEN"] != prismApiKey {
+		return nil, fmt.Errorf("historical restoration journal conflicts with settings")
+	}
+	entries := ClaudeEnvEntries(c.port, c.currentModels())
+	alias := env["ANTHROPIC_MODEL"]
+	if !strings.HasPrefix(alias, "claude-") {
+		return nil, fmt.Errorf("historical written model is not managed")
+	}
+	for _, e := range entries {
+		if e.Key == "ANTHROPIC_BASE_URL" {
 			continue
 		}
-		_ = after
-		displaced[entry.Key] = *read.Endpoint
-	}
-}
-
-func renderClaudeEnvJournal(displaced map[string]string) string {
-	keys := make([]string, 0, len(displaced))
-	for key := range displaced {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	lines := []string{"{"}
-	for i, key := range keys {
-		comma := ","
-		if i == len(keys)-1 {
-			comma = ""
+		want := e.Value
+		if strings.Contains(e.Key, "MODEL") && e.Key != "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY" {
+			want = alias
 		}
-		lines = append(lines, "  "+jsonString(key)+": "+jsonString(displaced[key])+comma)
+		if env[e.Key] != want {
+			return nil, fmt.Errorf("historical restoration journal written value conflicts at %s", e.Key)
+		}
 	}
-	lines = append(lines, "}")
-	return strings.Join(lines, "\n") + "\n"
+	original := claudeRollbackTransform()(ApplyEol(raw, EolLF))
+	if original.Refused != "" {
+		return nil, fmt.Errorf("historical settings cannot be restored")
+	}
+	var restore []JSONScalarEntry
+	for key, value := range displaced {
+		allowed := false
+		for _, e := range entries {
+			allowed = allowed || e.Key == key
+		}
+		if !allowed {
+			return nil, fmt.Errorf("historical restoration journal contains an unknown key")
+		}
+		restore = append(restore, JSONScalarEntry{Key: key, Value: value})
+	}
+	sort.Slice(restore, func(i, j int) bool { return restore[i].Key < restore[j].Key })
+	if len(restore) > 0 {
+		patched := UpsertJSONScalarKeysForced(original.Next, "env", "settings.json", restore, true)
+		if patched.Kind != "written" {
+			return nil, fmt.Errorf("historical original values cannot be restored")
+		}
+		original.Next = patched.Next
+	}
+	j := &restorationJournal{Version: 1, Target: filepath.Clean(c.paths()), Files: []journalFile{{Path: c.paths(), Original: fileState{Present: true, Text: ApplyEol(original.Next, DominantEol(raw))}, Written: fileState{Present: true, Text: raw}}}}
+	if cache.Present {
+		var value struct {
+			BaseURL string `json:"baseUrl"`
+		}
+		if json.Unmarshal([]byte(cache.Text), &value) != nil || value.BaseURL != env["ANTHROPIC_BASE_URL"] {
+			return nil, fmt.Errorf("historical restoration journal conflicts with cache")
+		}
+		j.Files = append(j.Files, journalFile{Path: c.cachePath(), Original: backup, Written: cache})
+	}
+	if backup.Present && !cache.Present {
+		return nil, fmt.Errorf("historical written cache absent; originals retained")
+	}
+	return j, nil
 }
 
 func (c *ClaudeIntegration) Status() Status {
 	return ObservedIntegrationStatus(c.io, c.id, c.paths(), []string{ClaudeConfigDir(c.env, c.home)}, func(path string) ManagedRead {
-		content, ok := c.io.ReadTextIfExists(path)
+		content, ok, err := c.io.ReadText(path)
+		if err != nil {
+			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
+		}
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -266,113 +365,34 @@ func (c *ClaudeIntegration) Status() Status {
 }
 
 func (c *ClaudeIntegration) Rollback() ApplyResult {
-	outcome, err := ApplyConfigTransform(c.io, c.paths(), claudeRollbackTransformForced(c.io, c.envJournalPath()), false)
+	unlock := lockMutation(c.paths())
+	defer unlock()
+	raw, _, err := c.io.ReadText(c.paths())
 	if err != nil {
-		return ToRollbackResult(c.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("claude rollback", err)})
+		return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
 	}
-	c.removeGatewayCache()
-	_ = c.io.Remove(c.envJournalPath())
-	_ = c.io.Remove(c.cacheJournalPath())
+	cache, err := readState(c.io, c.cachePath())
+	if err != nil {
+		return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
+	}
+	j, err := c.inheritedJournal(raw, cache)
+	if err != nil {
+		return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
+	}
+	if j != nil {
+		if _, present, err := c.io.ReadText(restorationPath(c.paths())); err != nil {
+			return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
+		} else if !present {
+			if err = publishJournal(c.io, j); err != nil {
+				return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
+			}
+		}
+	}
+	outcome, err := rollbackRestorationUnlocked(c.io, c.paths(), claudeRollbackTransform())
+	if err != nil {
+		return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
+	}
 	return ToRollbackResult(c.id, outcome)
-}
-
-func claudeRollbackTransformForced(io FileIO, journalPath string) func(current string) ConfigTransform {
-	keys := claudeEnvKeyNames()
-	displaced := readClaudeEnvJournal(io, journalPath)
-	return func(current string) ConfigTransform {
-		result := RemoveJSONScalarKeys(current, "env", "settings.json", keys)
-		if result.Kind != "written" {
-			return refusedTransform(result.Reason)
-		}
-		if len(displaced) > 0 {
-			restored := restoreDisplacedEnv(result.Next, displaced)
-			return nextTransform(restored, true)
-		}
-		return nextTransform(result.Next, result.Changed)
-	}
-}
-
-func readClaudeEnvJournal(io FileIO, path string) map[string]string {
-	raw, ok := io.ReadTextIfExists(path)
-	if !ok {
-		return nil
-	}
-	var decoded map[string]string
-	if err := json.Unmarshal([]byte(raw), &decoded); err != nil || len(decoded) == 0 {
-		return nil
-	}
-	return decoded
-}
-
-func restoreDisplacedEnv(content string, displaced map[string]string) string {
-	entries := make([]JSONScalarEntry, 0, len(displaced))
-	for key, value := range displaced {
-		entries = append(entries, JSONScalarEntry{Key: key, Value: value})
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
-	result := UpsertJSONScalarKeys(content, "env", "settings.json", entries)
-	if result.Kind == "written" {
-		return result.Next
-	}
-	return content
-}
-
-// seedGatewayCache writes Claude Code's gateway model discovery cache when it
-// is absent: without it the CLI fatals on prism's claude model aliases in
-// print mode before it ever fetches /v1/models itself. A cache belonging to
-// another endpoint is a named refusal; one already pointing here is left
-// alone so the CLI's own refreshes survive re-applies.
-func (c *ClaudeIntegration) seedGatewayCache() error {
-	return c.seedGatewayCacheForced(false)
-}
-
-func isForeignCacheError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "belongs to endpoint")
-}
-
-func (c *ClaudeIntegration) seedGatewayCacheForced(force bool) error {
-	path := c.cachePath()
-	displacedPath := c.cacheJournalPath()
-	raw, exists := c.io.ReadTextIfExists(path)
-	if exists {
-		var current struct {
-			BaseURL string `json:"baseUrl"`
-		}
-		if err := json.Unmarshal([]byte(raw), &current); err != nil {
-			return fmt.Errorf("gateway cache %s is not valid JSON: %w", path, err)
-		}
-		switch {
-		case current.BaseURL == ClaudeBaseURL(c.port):
-			return nil
-		case current.BaseURL != "":
-			if !force {
-				return fmt.Errorf("gateway cache %s belongs to endpoint %s", path, current.BaseURL)
-			}
-			if err := AtomicWrite(c.io, displacedPath, raw); err != nil {
-				return fmt.Errorf("gateway cache %s belongs to endpoint %s (journal write failed: %v)", path, current.BaseURL, err)
-			}
-		}
-	}
-	return AtomicWrite(c.io, path, RenderClaudeGatewayCache(ClaudeBaseURL(c.port), c.currentModels(), c.nowMS()))
-}
-
-func (c *ClaudeIntegration) removeGatewayCache() {
-	path := c.cachePath()
-	raw, exists := c.io.ReadTextIfExists(path)
-	if !exists {
-		_ = c.io.Remove(c.cacheJournalPath())
-		return
-	}
-	var current struct {
-		BaseURL string `json:"baseUrl"`
-	}
-	if json.Unmarshal([]byte(raw), &current) == nil && current.BaseURL == ClaudeBaseURL(c.port) {
-		_ = c.io.Remove(path)
-		if journal, ok := c.io.ReadTextIfExists(c.cacheJournalPath()); ok {
-			_ = AtomicWrite(c.io, path, journal)
-		}
-		_ = c.io.Remove(c.cacheJournalPath())
-	}
 }
 
 // RenderClaudeGatewayCache renders the CLI's cache schema: epoch-ms fetchedAt
@@ -411,5 +431,5 @@ type gatewayCacheModel struct {
 }
 
 func RecoverClaudeConfig(io FileIO, configPath string) bool {
-	return io.RecoverStaged(configPath)
+	return recoverConfigStage(io, configPath)
 }

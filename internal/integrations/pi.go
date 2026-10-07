@@ -163,7 +163,7 @@ func (p *PiIntegration) Apply() ApplyResult {
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: p.id, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(p.io, configPath, piTransform(p.port, models), false)
+	outcome, err := applyRestoration(p.io, configPath, piTransform(p.port, models), nil, false)
 	if err != nil {
 		return ToApplyResult(p.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi apply", err)})
 	}
@@ -182,7 +182,10 @@ func (p *PiIntegration) Status() Status {
 		detectDirs = []string{filepath.Join(p.home, ".pi")}
 	}
 	return ObservedIntegrationStatus(p.io, p.id, configPath, detectDirs, func(path string) ManagedRead {
-		content, ok := p.io.ReadTextIfExists(path)
+		content, ok, err := p.io.ReadText(path)
+		if err != nil {
+			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
+		}
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -195,7 +198,7 @@ func (p *PiIntegration) Rollback() ApplyResult {
 	if err != nil {
 		return ApplyResult{OK: false, ID: p.id, Reason: failureReason("pi rollback", err)}
 	}
-	outcome, err := ApplyConfigTransform(p.io, configPath, piRollbackTransform(), false)
+	outcome, err := rollbackRestoration(p.io, configPath, piRollbackTransform())
 	if err != nil {
 		return ToRollbackResult(p.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi rollback", err)})
 	}
@@ -203,5 +206,5 @@ func (p *PiIntegration) Rollback() ApplyResult {
 }
 
 func RecoverPiConfig(io FileIO, configPath string) bool {
-	return io.RecoverStaged(configPath)
+	return recoverConfigStage(io, configPath)
 }

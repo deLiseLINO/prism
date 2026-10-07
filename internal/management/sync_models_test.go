@@ -167,6 +167,8 @@ func TestSyncModelsRemovesRawAntigravityFamilyState(t *testing.T) {
 				Providers: map[string]config.Provider{
 					"ag": {
 						Wire: config.WireAntigravity, ModelMode: mode,
+						BaseURL:        "https://catalog.example",
+						ModelCatalogs:  []config.ModelCatalog{{BaseURL: "https://catalog.example", Account: "ag:a", Project: "project", RawModels: []string{"gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered"}}},
 						Models:         []string{"gemini-3.6-flash-low", "gemini-3.6-flash-high", "gemini-3.7-flash-low", "gemini-3.7-flash-high", "model-manual"},
 						SyncedModels:   []string{"gemini-3.6-flash-low", "gemini-3.6-flash-high", "gemini-3.7-flash-low", "gemini-3.7-flash-high"},
 						DisabledModels: []string{"gemini-3.6-flash-low", "gemini-3.7-flash-low"},
