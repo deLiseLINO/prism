@@ -560,13 +560,17 @@ func TestStreamMalformedFrameIsTypedError(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := New(staticKey, Options{})
-	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, &collector{})
+	events := &collector{}
+	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events)
 	var runErr provider.RunError
 	if !errors.As(err, &runErr) {
 		t.Fatalf("want RunError, got %v", err)
 	}
-	if runErr.Kind != provider.TerminalOmitted || runErr.Class != provider.ClassTransport {
-		t.Fatalf("runErr = %+v", runErr)
+	if runErr.Class != provider.ClassTransport || events.TerminalCount() != 1 {
+		t.Fatalf("error=%v events=%v", runErr, events.All())
+	}
+	if _, ok := events.All()[0].(canon.TurnFailed); !ok {
+		t.Fatalf("malformed stream completed: %v", events.All())
 	}
 }
 
@@ -595,13 +599,17 @@ func TestStreamDoneWithoutFinishReason(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := New(staticKey, Options{})
-	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, &collector{})
+	events := &collector{}
+	err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events)
 	var runErr provider.RunError
 	if !errors.As(err, &runErr) {
 		t.Fatalf("want RunError, got %v", err)
 	}
-	if runErr.Kind != provider.TerminalOmitted || runErr.Class != provider.ClassTransport {
-		t.Fatalf("runErr = %+v", runErr)
+	if runErr.Class != provider.ClassTransport || events.TerminalCount() != 1 {
+		t.Fatalf("error=%v events=%v", runErr, events.All())
+	}
+	if _, ok := events.All()[len(events.All())-1].(canon.TurnFailed); !ok {
+		t.Fatalf("unfinished stream completed: %v", events.All())
 	}
 }
 

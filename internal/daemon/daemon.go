@@ -260,6 +260,8 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	return rows, nil
 }
 
+// customModelsURL is the listing endpoint beside the chat and responses
+// endpoints the runners build from the same configured base.
 func customModelsURL(base string) string {
 	return openaierr.APIBase(base) + "/models"
 }

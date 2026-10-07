@@ -717,8 +717,8 @@ func TestEmptyPlanFails(t *testing.T) {
 	if !ok {
 		t.Fatalf("terminal is %T, want Failed", res.Terminal)
 	}
-	if f.Event.Failure.Reason != canon.FailUnknown {
-		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailUnknown)
+	if f.Event.Failure.Reason != canon.FailNotFound {
+		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailNotFound)
 	}
 }
 
@@ -1077,4 +1077,32 @@ type ctxRunner func(ctx context.Context, req provider.RunRequest) error
 
 func (f ctxRunner) Run(ctx context.Context, req provider.RunRequest, _ provider.Sink) error {
 	return f(ctx, req)
+}
+
+func TestClientDisconnectReleasesLease(t *testing.T) {
+	pool := poolWith("codex", 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	runner := runnerFunc(func(_ provider.RunRequest, _ provider.Sink) error {
+		cancel()
+		return provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, Cause: context.Canceled}
+	})
+	res := NewRouter(pool, fakeRunners{"codex": runner}, singlePlan("codex", TurnPolicy{}), "default", testJournal(t)).
+		Turn(ctx, canon.Request{Model: "gpt-5.2"}, testFacts(), fakeLifecycle{}, &recordingSink{})
+	f, ok := res.Terminal.(Failed)
+	if !ok || f.Event.Failure.Reason != canon.FailClientClosed {
+		t.Fatalf("terminal = %#v, want client closed failure", res.Terminal)
+	}
+	if len(pool.records) != 1 {
+		t.Fatalf("pool records = %d, want 1 (lease release)", len(pool.records))
+	}
+}
+
+func TestTerminalRunErrorCarriesRetryAfter(t *testing.T) {
+	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second}
+	pool := poolWith("codex", 1)
+	runners := fakeRunners{"codex": failRunner(runErr)}
+	res := runTurn(t, pool, runners, singlePlan("codex", TurnPolicy{}), provider.NotStarted, &recordingSink{})
+	if res.RetryAfter != 7*time.Second {
+		t.Fatalf("RetryAfter = %v, want 7s", res.RetryAfter)
+	}
 }

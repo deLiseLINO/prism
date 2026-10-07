@@ -17,21 +17,13 @@ import (
 
 type responsePayload struct {
 	Status            string           `json:"status"`
-	Error             *errorWire       `json:"error"`
 	IncompleteDetails *incompleteWire  `json:"incomplete_details"`
 	Output            []map[string]any `json:"output"`
-	Usage             json.RawMessage  `json:"usage"`
-}
-
-type errorWire struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
 }
 
 type incompleteWire struct {
 	Reason string `json:"reason"`
 }
-
 
 func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
@@ -39,8 +31,48 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
 	}
 	var payload responsePayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, fmt.Errorf("customresponses: malformed upstream response: %w", err))
+	}
+	var fields map[string]any
+	decoder = json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&fields); err != nil || decoder.Decode(new(any)) != io.EOF || fields == nil {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: malformed upstream response"))
+	}
+	if fields["status"] == nil && fields["output"] == nil && fields["error"] == nil {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: missing terminal shape"))
+	}
+	usage, err := decodeResponseUsage(fields, canon.Usage{})
+	if err != nil {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
+	}
+	if output, supplied := fields["output"]; supplied {
+		if _, ok := output.([]any); !ok {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: output must be an array"))
+		}
+	}
+	if payload.Status != "" && payload.Status != "completed" && payload.Status != "incomplete" && payload.Status != "failed" {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: response has no terminal status"))
+	}
+	if payload.Status == "incomplete" && (payload.IncompleteDetails == nil || payload.IncompleteDetails.Reason != "max_output_tokens" && payload.IncompleteDetails.Reason != "content_filter") {
+		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: interrupted upstream completion"))
+	}
+	items := make([]canon.Item, 0, len(payload.Output))
+	for _, wire := range payload.Output {
+		if payload.Status == "incomplete" && (wire["type"] == "function_call" || wire["type"] == "custom_tool_call" || wire["type"] == "local_shell_call") && wire["status"] != "completed" {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: incomplete tool snapshot"))
+		}
+		if err := validateFinishedItem(wire); err != nil {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
+		}
+		item, _, err := itemFromWire(wire)
+		if err != nil {
+			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
+		}
+		items = append(items, item)
 	}
 	emit := func(ev canon.Event) error {
 		if err := sink.Emit(ev); err != nil {
@@ -48,19 +80,7 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		}
 		return nil
 	}
-	var usageFields map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(payload.Usage))
-	decoder.UseNumber()
-	if len(payload.Usage) > 0 {
-		if err := decoder.Decode(&usageFields); err != nil {
-			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
-		}
-	}
-	usage, err := decodeResponseUsage(map[string]any{"usage": usageFields}, canon.Usage{})
-	if err != nil {
-		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
-	}
-	if payload.Error != nil || payload.Status == "failed" {
+	if fields["error"] != nil || payload.Status == "failed" {
 		parsed, ok := openaierr.Parse(raw)
 		if !ok {
 			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, errors.New("customresponses: failed response carried no error value"))
@@ -74,17 +94,13 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		if cause == "" {
 			cause = "provider error"
 		}
-		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(cause))
+		return provider.RunError{Kind: provider.TerminalEmitted, Class: openaierr.ClassForInband(parsed, provider.ClassServer), Accepted: true, Cause: errors.New(cause), Reported: &copied}
 	}
-	for _, item := range payload.Output {
-		canonItem, _, err := itemFromWire(item)
-		if err != nil {
+	for _, item := range items {
+		if err := emit(canon.ItemStarted{Item: item}); err != nil {
 			return err
 		}
-		if err := emit(canon.ItemStarted{Item: canonItem}); err != nil {
-			return err
-		}
-		if err := emit(canon.ItemFinished{Item: canonItem}); err != nil {
+		if err := emit(canon.ItemFinished{Item: item}); err != nil {
 			return err
 		}
 	}

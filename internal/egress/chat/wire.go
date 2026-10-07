@@ -66,9 +66,10 @@ type choice struct {
 }
 
 type message struct {
-	Role      string         `json:"role"`
-	Content   string         `json:"content"`
-	ToolCalls []toolCallFull `json:"tool_calls,omitempty"`
+	Role             string         `json:"role"`
+	Content          string         `json:"content"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []toolCallFull `json:"tool_calls,omitempty"`
 }
 
 type toolCallFull struct {

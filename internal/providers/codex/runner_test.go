@@ -68,7 +68,7 @@ func TestRunErrorClassifyStatus(t *testing.T) {
 		want   provider.ErrorClass
 	}{
 		{"401", http.StatusUnauthorized, provider.ClassUnauthorized},
-		{"403", http.StatusForbidden, provider.ClassUnauthorized},
+		{"403", http.StatusForbidden, provider.ClassForbidden},
 		{"404", http.StatusNotFound, provider.ClassNotFound},
 		{"408", http.StatusRequestTimeout, provider.ClassTimeout},
 		{"429", http.StatusTooManyRequests, provider.ClassRateLimited},
@@ -132,7 +132,7 @@ func (errCreds) Credential(ctx context.Context, lease account.Lease) (Credential
 func TestClassForStatus(t *testing.T) {
 	cases := map[int]provider.ErrorClass{
 		http.StatusUnauthorized:        provider.ClassUnauthorized,
-		http.StatusForbidden:           provider.ClassUnauthorized,
+		http.StatusForbidden:           provider.ClassForbidden,
 		http.StatusTooManyRequests:     provider.ClassRateLimited,
 		http.StatusPaymentRequired:     provider.ClassQuotaExhausted,
 		http.StatusNotFound:            provider.ClassNotFound,
@@ -143,7 +143,7 @@ func TestClassForStatus(t *testing.T) {
 		http.StatusBadRequest:          provider.ClassInvalidRequest,
 	}
 	for status, want := range cases {
-		if got := classForStatus(status); got != want {
+		if got := classForStatus(status, ""); got != want {
 			t.Fatalf("status %d: got %d want %d", status, got, want)
 		}
 	}

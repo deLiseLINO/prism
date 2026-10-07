@@ -28,7 +28,7 @@ Management family (`internal/management/server.go`):
 
 Inference family (`internal/server/server.go`):
 
-- `POST /v1/responses` — OpenAI Responses; SSE out; codex CLI (originator `codex`), grok CLI (`x-prism-grok: 1`), and generic clients.
+- `POST /v1/responses` supports SSE and buffered JSON. Buffered failures use an HTTP error status and preserve the provider error in the response object. Native completed, incomplete, and failed terminals retain their status.
 - `POST /v1/chat/completions` — OpenAI Chat; streaming deltas with `reasoning_content`, or a single aggregate; always classified as the OMP client.
 - `POST /v1/messages` (+ `POST /v1/messages/count_tokens`) — Anthropic Messages. Accepts plain `<provider>/<model>` (omp) and `claude-<provider>--<model>` aliases (Claude Code). The decoder requires only `model`, `max_tokens`, and `messages`; it does not check the model form.
 - `POST /v1/responses/compact` — compaction; JSON out; falls back to a local summary.
@@ -66,6 +66,12 @@ Both messages model forms work. `claude -p --model claude-codex--gpt-5.6-luna` n
 
 - Loopback-or-bearer: from a non-loopback address without a bearer header, every `/v1/*` call 401s (`missing bearer token`). Verification always runs loopback, so it never needs a token — a token-asserting probe must bind a non-loopback source deliberately.
 - The management API admits loopback freely and demands the management token from remote callers: never expose the port beyond loopback, and never write a probe that assumes no auth header works remotely. Verification runs loopback.
-- A 5-second stall watchdog cancels an inference stream with no frames: a "hang" test will terminate, not block forever.
+- Streaming first-progress and idle waits are independently configurable; their default is 300 seconds. Cancellation releases the selected account lease. Failure can move to another target only before output or state has been exposed; post-output failure remains the selected attempt's failure.
 - Error envelopes differ per family — management `{error:{code,message}}`, chat `{error:{message,type,code}}`, responses SSE `response.failed`, messages an `error` event. Match the family, not a generic shape.
-- `previous_response_id` is accepted but warned unmapped on `/v1/responses`; conversation continuity is the client's responsibility, not the daemon's.
+- Requests must carry explicit replay history. Unsupported server-stored continuation controls are rejected rather than silently ignored. Function and response-format schemas and tool replay preserve exact JSON numeric lexemes. Freeform tools lowered to function wires use a required string `input` parameter and return the raw input on custom-tool output and replay.
+- Supported tool restrictions, structured output, reasoning effort, text verbosity, sampling, output ordering, and encrypted reasoning state are carried through the relevant wire. Native usage must contain exact nonnegative integral counts with valid sums and cache accounting; malformed observations cannot publish successful usage. Buffered throttle failures retain valid `Retry-After` guidance.
+- The supported Antigravity generation wire sends function schemas as exact `parametersJsonSchema`. Alternate model families retain supported legacy parameters and refuse numeric bounds, non-string enums, and other unrepresentable constraints before dispatch. That refusal is not proof that an external model supports those keywords.
+- A freeform tool lowered to a function-only wire preserves its raw input string, but the bridge does not enforce grammar syntax. Native custom-tool declarations retain their grammar format. An HTTP delivery check does not prove that a model obeyed the grammar.
+- Native targets that cannot represent an explicitly requested verbosity or sampling combination refuse that request before dispatch. Supported no-thinking sampling remains forwarded. The proxy does not silently remove a user-selected output control to make the request succeed.
+- Native completed messages preserve refusal text. Completed custom-tool calls require a present string input; an explicit empty string remains valid. Final snapshots and receipts cannot contradict received text or tool-input deltas. Invalid completion produces a failed response in both buffered and streaming modes.
+- Custom Responses and Chat usage distinguishes missing fields from explicit null, accepts exact integral decimal and exponent forms, checks overflow and inclusive totals, and retains the last valid snapshot on failure. Streaming errors may retain HTTP 200 after headers are sent; the terminal status still reports failure.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +27,13 @@ type Egress interface {
 	Begin(h ResponseHeader) error
 	Frame(ev canon.Event) error
 	Lifecycle() routing.ResponseLifecycle
+	ResponseFailure(canon.Event) (canon.Failure, bool)
 	Flush() error
 	Close()
 }
 
 func New(w io.Writer, stream bool) Egress {
-	return &streamEncoder{w: w, streaming: stream, blocks: map[canon.ItemID]*openBlock{}, stopPing: make(chan struct{})}
+	return &streamEncoder{w: w, streaming: stream, content: []any{}, blocks: map[canon.ItemID]*openBlock{}, stopPing: make(chan struct{})}
 }
 
 type blockKind uint8
@@ -50,8 +52,9 @@ var (
 type openBlock struct {
 	index  int
 	kind   blockKind
-	custom bool
 	text   strings.Builder
+	args   strings.Builder
+	custom bool
 }
 
 type streamEncoder struct {
@@ -65,10 +68,11 @@ type streamEncoder struct {
 	toolUse   bool
 	terminal  canon.Event
 
-	id      string
-	model   string
-	content []any
-	usage   usageWire
+	id       string
+	model    string
+	content  []any
+	usage    usageWire
+	finished map[int]any
 
 	writeMu   sync.Mutex
 	lastWrite time.Time
@@ -132,6 +136,7 @@ func (e *streamEncoder) Frame(ev canon.Event) error {
 		if b.kind != blockText {
 			return &FrameError{Reason: ReasonBlockMismatch, Event: "text_delta", ItemID: tev.ItemID}
 		}
+		b.text.WriteString(tev.Text)
 		return e.write("content_block_delta", blockDeltaWire{
 			Type:  "content_block_delta",
 			Index: b.index,
@@ -145,6 +150,7 @@ func (e *streamEncoder) Frame(ev canon.Event) error {
 		if b.kind != blockThinking {
 			return &FrameError{Reason: ReasonBlockMismatch, Event: "thinking_delta", ItemID: tev.ItemID}
 		}
+		b.text.WriteString(tev.Text)
 		return e.write("content_block_delta", blockDeltaWire{
 			Type:  "content_block_delta",
 			Index: b.index,
@@ -158,6 +164,7 @@ func (e *streamEncoder) Frame(ev canon.Event) error {
 		if b.kind != blockToolUse {
 			return &FrameError{Reason: ReasonBlockMismatch, Event: "input_json_delta", ItemID: tev.ItemID}
 		}
+		b.args.Write(tev.Bytes)
 		return e.write("content_block_delta", blockDeltaWire{
 			Type:  "content_block_delta",
 			Index: b.index,
@@ -184,6 +191,24 @@ func (e *streamEncoder) Lifecycle() routing.ResponseLifecycle { return e }
 
 func (e *streamEncoder) CommitState() provider.CommitState { return e.commit }
 
+func (e *streamEncoder) ResponseFailure(terminal canon.Event) (canon.Failure, bool) {
+	switch t := terminal.(type) {
+	case canon.TurnFailed:
+		return t.Failure, true
+	case canon.TurnFinished:
+		if reason, incomplete := t.Status.Reason(); incomplete {
+			unsafe := reason != canon.IncompleteMaxOutputTokens && reason != canon.IncompleteContentFilter
+			for _, block := range e.blocks {
+				unsafe = unsafe || block.kind != blockText
+			}
+			if unsafe {
+				return canon.Failure{Reason: canon.FailUpstreamTransport, Message: "upstream response interrupted before completion"}, true
+			}
+		}
+	}
+	return canon.Failure{}, false
+}
+
 func (e *streamEncoder) Flush() error {
 	if !e.begun {
 		return &FrameError{Reason: ReasonNotBegun, Event: "message_delta"}
@@ -194,11 +219,21 @@ func (e *streamEncoder) Flush() error {
 	if e.terminal == nil {
 		return &FrameError{Reason: ReasonNoTerminal, Event: "message_delta"}
 	}
-	if len(e.blocks) > 0 {
-		return &FrameError{Reason: ReasonOpenBlocks, Event: "message_delta"}
-	}
 	e.flushed = true
 	e.Close()
+	if failure, failed := e.ResponseFailure(e.terminal); failed {
+		if err := e.closeOpenBlocks(); err != nil {
+			return err
+		}
+		wire := messagesErrorWire(failure)
+		if !e.streaming {
+			return e.writeJSON(wire)
+		}
+		return e.write("error", wire)
+	}
+	if err := e.closeOpenBlocks(); err != nil {
+		return err
+	}
 	switch t := e.terminal.(type) {
 	case canon.TurnFinished:
 		e.usage = usageWire{
@@ -211,6 +246,11 @@ func (e *streamEncoder) Flush() error {
 		}
 		if !e.streaming {
 			stop := stopReason(t.Status, e.toolUse)
+			for index := range e.next {
+				if block, ok := e.finished[index]; ok {
+					e.content = append(e.content, block)
+				}
+			}
 			return e.writeJSON(messageWire{
 				ID:         e.id,
 				Type:       "message",
@@ -239,6 +279,41 @@ func (e *streamEncoder) Flush() error {
 		return e.write("error", wire)
 	}
 	return &FrameError{Reason: ReasonNoTerminal, Event: "message_delta"}
+}
+
+// closeOpenBlocks ends the blocks a truncated turn left open, in index order,
+// so the terminal stop or error that follows is preceded by a well-formed
+// stream (or, without streaming, by a complete body).
+func (e *streamEncoder) closeOpenBlocks() error {
+	open := make([]*openBlock, 0, len(e.blocks))
+	for _, b := range e.blocks {
+		open = append(open, b)
+	}
+	sort.Slice(open, func(i, j int) bool { return open[i].index < open[j].index })
+	clear(e.blocks)
+	for _, b := range open {
+		if !e.streaming {
+			if e.finished == nil {
+				e.finished = make(map[int]any)
+			}
+			e.finished[b.index] = partialBlockWire(b)
+			continue
+		}
+		if err := e.write("content_block_stop", blockStopWire{Type: "content_block_stop", Index: b.index}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func partialBlockWire(b *openBlock) any {
+	switch b.kind {
+	case blockThinking:
+		return thinkingBlockWire{Type: "thinking", Thinking: b.text.String()}
+	case blockToolUse:
+		return toolUseBlockWire{Type: "tool_use", Input: json.RawMessage(`{}`)}
+	}
+	return textBlockWire{Type: "text", Text: b.text.String()}
 }
 
 func (e *streamEncoder) itemStarted(item canon.Item) error {
@@ -292,6 +367,30 @@ func (e *streamEncoder) itemFinished(item canon.Item) error {
 	if !ok {
 		return &FrameError{Reason: ReasonUnknownItem, Event: "content_block_stop", ItemID: id}
 	}
+	if call, ok := item.(canon.CustomToolCall); ok {
+		if !b.custom || !strings.HasPrefix(call.Input, b.text.String()) {
+			return fmt.Errorf("messages egress: custom tool completion conflicts with deltas")
+		}
+		args, err := json.Marshal(struct {
+			Input string `json:"input"`
+		}{Input: call.Input})
+		if err != nil {
+			return err
+		}
+		item = canon.FunctionCall{ID: call.ID, CallID: call.CallID, Name: call.Name, Arguments: args}
+	}
+	if call, ok := item.(canon.FunctionCall); ok && len(call.Arguments) > 0 && !json.Valid(call.Arguments) {
+		return fmt.Errorf("messages egress: malformed final tool arguments")
+	}
+	if !e.streaming {
+		if e.finished == nil {
+			e.finished = make(map[int]any)
+		}
+		e.finished[b.index] = finishedBlockWire(item)
+	}
+	if err := e.reconcileFinalContent(b, item); err != nil {
+		return err
+	}
 	if b.kind == blockThinking {
 		if r, isReasoning := item.(canon.ReasoningItem); isReasoning && r.Signature != "" {
 			if env, isEnv := reasonenv.Decode(r.Signature); !isEnv || len(env.Red) == 0 {
@@ -305,26 +404,63 @@ func (e *streamEncoder) itemFinished(item canon.Item) error {
 			}
 		}
 	}
-	if call, ok := item.(canon.CustomToolCall); ok {
-		if !b.custom || !strings.HasPrefix(call.Input, b.text.String()) {
-			return fmt.Errorf("messages egress: custom tool completion conflicts with deltas")
-		}
-		args, err := json.Marshal(struct {
-			Input string `json:"input"`
-		}{Input: call.Input})
-		if err != nil {
-			return err
-		}
-		item = canon.FunctionCall{ID: call.ID, CallID: call.CallID, Name: call.Name, Arguments: args}
-		if err := e.write("content_block_delta", blockDeltaWire{Type: "content_block_delta", Index: b.index, Delta: inputJSONDeltaWire{Type: "input_json_delta", PartialJSON: string(args)}}); err != nil {
-			return err
-		}
-	}
-	if !e.streaming {
-		e.content = append(e.content, finishedBlockWire(item))
-	}
 	delete(e.blocks, id)
 	return e.write("content_block_stop", blockStopWire{Type: "content_block_stop", Index: b.index})
+}
+
+func (e *streamEncoder) reconcileFinalContent(b *openBlock, item canon.Item) error {
+	if !e.streaming {
+		return nil
+	}
+	var delta any
+	switch it := item.(type) {
+	case canon.Message:
+		var sb strings.Builder
+		for _, c := range it.Content {
+			if t, ok := c.(canon.TextContent); ok {
+				sb.WriteString(t.Text)
+			}
+		}
+		if sb.Len() > 0 {
+			final, seen := sb.String(), b.text.String()
+			if !strings.HasPrefix(final, seen) {
+				return fmt.Errorf("messages egress: final text conflicts with deltas")
+			}
+			if len(final) > len(seen) {
+				delta = textDeltaWire{Type: "text_delta", Text: final[len(seen):]}
+			}
+		}
+	case canon.ReasoningItem:
+		if _, redacted := redactedData(it); !redacted && it.Content != "" {
+			final, seen := it.Content, b.text.String()
+			if !strings.HasPrefix(final, seen) {
+				return fmt.Errorf("messages egress: final reasoning conflicts with deltas")
+			}
+			if len(final) > len(seen) {
+				delta = thinkingDeltaWire{Type: "thinking_delta", Thinking: final[len(seen):]}
+			}
+		}
+	case canon.FunctionCall:
+		seen := b.args.String()
+		final := string(it.Arguments)
+		if !strings.HasPrefix(final, seen) {
+			return fmt.Errorf("messages egress: final arguments conflict with deltas")
+		}
+		if len(final) > len(seen) {
+			delta = inputJSONDeltaWire{Type: "input_json_delta", PartialJSON: final[len(seen):]}
+		}
+	}
+	if delta == nil {
+		return nil
+	}
+	return e.write("content_block_delta", blockDeltaWire{Type: "content_block_delta", Index: b.index, Delta: delta})
+}
+
+func redactedData(r canon.ReasoningItem) (string, bool) {
+	if env, ok := reasonenv.Decode(r.Signature); ok && len(env.Red) > 0 {
+		return env.Red[0], true
+	}
+	return "", false
 }
 
 func finishedBlockWire(item canon.Item) any {
@@ -638,7 +774,6 @@ const (
 	ReasonUnknownItem
 	ReasonBlockMismatch
 	ReasonUnsupportedItem
-	ReasonOpenBlocks
 	ReasonNoTerminal
 	ReasonAlreadyFlushed
 )
@@ -657,8 +792,6 @@ func (r FrameReason) String() string {
 		return "block_mismatch"
 	case ReasonUnsupportedItem:
 		return "unsupported_item"
-	case ReasonOpenBlocks:
-		return "open_blocks"
 	case ReasonNoTerminal:
 		return "no_terminal"
 	case ReasonAlreadyFlushed:

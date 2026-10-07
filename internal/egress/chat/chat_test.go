@@ -682,3 +682,55 @@ func TestPrismFailureStillEmitsOurCode(t *testing.T) {
 		t.Fatalf("prism failure = %v", body)
 	}
 }
+
+func TestFinishOnlyContentReachesTheClient(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		var buf bytes.Buffer
+		c := New(&buf, stream)
+		if err := c.Begin(header()); err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range []canon.Event{
+			canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1"}},
+			canon.ItemFinished{Item: canon.ReasoningItem{ID: "r1", Content: "deep"}},
+			canon.ItemStarted{Item: canon.Message{ID: "m1", Role: canon.RoleAssistant}},
+			canon.ItemFinished{Item: canon.Message{ID: "m1", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "whole answer"}}}},
+			canon.TurnFinished{Status: canon.Completed()},
+		} {
+			if err := c.Frame(ev); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := c.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		for _, want := range []string{`"content":"whole answer"`, `"reasoning_content":"deep"`} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("stream=%v: output lacks %s:\n%s", stream, want, out)
+			}
+		}
+	}
+}
+
+func TestStreamedContentIsNotRepeatedOnFinish(t *testing.T) {
+	var buf bytes.Buffer
+	c := New(&buf, false)
+	if err := c.Begin(header()); err != nil {
+		t.Fatal(err)
+	}
+	msg := canon.Message{ID: "m1", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "hi"}}}
+	for _, ev := range []canon.Event{
+		canon.ItemStarted{Item: msg},
+		canon.TextDelta{ItemID: "m1", Text: "hi"},
+		canon.ItemFinished{Item: msg},
+		canon.TurnFinished{Status: canon.Completed()},
+	} {
+		if err := c.Frame(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := decode(t, buf.String())["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["content"]; got != "hi" {
+		t.Fatalf("content = %v, want hi", got)
+	}
+}

@@ -567,7 +567,7 @@ func journalWithEntries(t *testing.T, count int) *requestlog.Journal {
 		turn := j.Open(execution.Facts{RequestID: execution.RequestID(fmt.Sprintf("r%d", i)), Client: execution.ClientCodex, Session: "s1"}, canon.ModelID(fmt.Sprintf("m%d", i)))
 		started := turn.Now()
 		if i%2 == 0 {
-			turn.Attempt(requestlog.AttemptInfo{Provider: "codex", AccountID: "codex:a", Model: "m", StartedAt: started, Outcome: requestlog.AttemptServer, Error: "upstream 500"})
+			turn.Attempt(requestlog.AttemptInfo{Provider: "codex", AccountID: "codex:a", CredGen: 4, Version: 7, Model: "m", StartedAt: started, Outcome: requestlog.AttemptServer, Error: "upstream 500", NetworkAttempts: []requestlog.NetworkAttemptInfo{{StartedAt: started, FinishedAt: started.Add(125 * time.Millisecond), StatusCode: 503, Outcome: requestlog.AttemptServer, Error: "upstream overloaded"}}, NetworkAttemptsDropped: 2})
 			turn.Close(requestlog.Terminal{Status: requestlog.StatusFailed, Failed: true, Reason: canon.FailServerOverloaded})
 			continue
 		}
@@ -607,6 +607,10 @@ func TestRequestsNewestFirstWithAttempts(t *testing.T) {
 	}
 	if newest.Attempts[0].Error != "upstream 500" {
 		t.Fatalf("attempt error = %q, want classified error message", newest.Attempts[0].Error)
+	}
+	a := newest.Attempts[0]
+	if a.CredentialGeneration != 4 || a.Version != 7 || a.NetworkAttemptsDropped != 2 || len(a.NetworkAttempts) != 1 || a.NetworkAttempts[0].StatusCode != 503 || a.NetworkAttempts[0].DurationMS != 125 || a.NetworkAttempts[0].Outcome != "server" {
+		t.Fatalf("physical attempt evidence=%+v", a)
 	}
 	middle := body.Requests[1]
 	if middle.Status != "completed" || middle.Reason != "" {

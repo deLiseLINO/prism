@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/provider"
@@ -36,6 +37,9 @@ func HTTPError(resp *http.Response, runner string) error {
 			msg = text
 		}
 		code = stringCode(providerErr.Error)
+		if code == "" && ContextOverflow(msg) {
+			code = codeContextLength
+		}
 	} else if json.Unmarshal(payload, &parsed) == nil && parsed.Message != "" {
 		msg = parsed.Message
 	}
@@ -44,9 +48,28 @@ func HTTPError(resp *http.Response, runner string) error {
 		Class:      ClassForStatus(resp.StatusCode, code),
 		Accepted:   accepted,
 		ReplaySafe: true,
+		RetryAfter: provider.HTTPRetryAfterDelay(resp),
 		Cause:      fmt.Errorf("%s: %s", runner, msg),
 		Reported:   reported,
 	}
+}
+
+// Code returns the string error code of a provider error value, or "".
+func Code(p canon.ProviderError) string { return stringCode(p.Error) }
+
+const (
+	codeContextLength = "context_length_exceeded"
+	codeInsufficient  = "insufficient_quota"
+)
+
+// Compatible servers rarely set the OpenAI error code; the message is the
+// only signal that the prompt did not fit.
+var contextOverflowText = regexp.MustCompile(`(?i)maximum context length|context[_ ](length|window)[^.]*(exceed|too long|overflow)|exceeds? the context (window|length|size)|prompt is too long|input is too long|reduce the length of the messages`)
+
+// ContextOverflow reports whether an upstream error message says the prompt
+// did not fit the model's context window.
+func ContextOverflow(message string) bool {
+	return contextOverflowText.MatchString(message)
 }
 
 func stringCode(raw []byte) string {
@@ -69,10 +92,14 @@ func ClassForStatus(status int, code string) provider.ErrorClass {
 		return provider.ClassNotFound
 	case status == 408:
 		return provider.ClassTimeout
+	case status == 402:
+		return provider.ClassQuotaExhausted
+	case status == 413 || code == codeContextLength:
+		return provider.ClassContextLength
+	case status == 429 && code == codeInsufficient:
+		return provider.ClassQuotaExhausted
 	case status == 429:
 		return provider.ClassRateLimited
-	case status == 400 && code == "context_length_exceeded":
-		return provider.ClassContextLength
 	case status >= 500:
 		return provider.ClassServer
 	default:

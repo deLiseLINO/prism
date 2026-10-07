@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -87,7 +88,7 @@ func (r *Runner) buildUpstream(target provider.Target, key string, req canon.Req
 	}, nil
 }
 
-func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
+func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) (result error) {
 	if err := validateTarget(req.Target); err != nil {
 		return runError(provider.TerminalOmitted, provider.ClassInvalidRequest, false, false, 0, err)
 	}
@@ -123,7 +124,17 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if client == nil {
 		client = http.DefaultClient
 	}
+	started := time.Now()
 	resp, err := client.Do(httpReq)
+	if req.AttemptObserver != nil {
+		defer func() {
+			attempt := provider.NetworkAttempt{StartedAt: started, FinishedAt: time.Now(), Err: result}
+			if resp != nil {
+				attempt.StatusCode = resp.StatusCode
+			}
+			req.AttemptObserver(attempt)
+		}()
+	}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return runError(provider.Retryable, provider.ClassTimeout, false, true, 0, err)
@@ -134,7 +145,7 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if resp.StatusCode >= 300 {
 		return r.httpError(resp)
 	}
-	if req.Request.Stream {
+	if req.Request.Stream && !isJSONBody(resp.Header.Get("Content-Type")) {
 		return r.runStream(resp.Body, sink)
 	}
 	return r.runAggregate(resp.Body, sink)
@@ -165,3 +176,9 @@ func runError(kind provider.RunErrorKind, class provider.ErrorClass, accepted, r
 	}
 }
 
+// Some gateways ignore stream:true and answer with one JSON document; the
+// aggregate decoder turns it into the same canonical events.
+func isJSONBody(contentType string) bool {
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	return mediaType == "application/json"
+}

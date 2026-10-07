@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/execution"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 const (
@@ -136,7 +139,7 @@ type outbound struct {
 	body    []byte
 }
 
-func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
+func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) (runErr error) {
 	r.notePromptCacheKey()
 	out, err := r.buildRequest(req)
 	if err != nil {
@@ -154,13 +157,27 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	for _, h := range out.headers {
 		httpReq.Header.Add(h.name, h.value)
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	startedAt := time.Now()
+	statusCode := 0
+	defer func() {
+		if req.AttemptObserver != nil {
+			req.AttemptObserver(provider.NetworkAttempt{StartedAt: startedAt, FinishedAt: time.Now(), StatusCode: statusCode, Err: runErr})
+		}
+	}()
 	resp, err := r.http.Do(httpReq)
 	if err != nil {
 		return &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassTransport, Cause: err}
 	}
+	statusCode = resp.StatusCode
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return upstreamError(resp)
+	}
+	if mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mediaType == "application/json" {
+		return r.streamDocument(resp.Body, sink, customToolNames(req.Request.Tools))
 	}
 	return r.stream(resp.Body, sink, customToolNames(req.Request.Tools))
 }
@@ -189,12 +206,11 @@ func upstreamError(resp *http.Response) *provider.RunError {
 		message = fmt.Sprintf("upstream status %d", resp.StatusCode)
 	}
 	cause := fmt.Errorf("anthropic: %s (type=%s status=%d)", message, errType, resp.StatusCode)
-	re := &provider.RunError{
-		Kind:  provider.TerminalOmitted,
-		Class: errorClassForStatus(resp.StatusCode),
-		Cause: cause,
+	class := errorClassForStatus(resp.StatusCode)
+	if class == provider.ClassInvalidRequest && openaierr.ContextOverflow(message) {
+		class = provider.ClassContextLength
 	}
-	return re
+	return &provider.RunError{Kind: provider.TerminalOmitted, Class: class, RetryAfter: provider.HTTPRetryAfterDelay(resp), Cause: cause}
 }
 
 func parseErrorBody(body []byte) (string, string) {

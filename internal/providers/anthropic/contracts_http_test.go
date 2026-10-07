@@ -7,10 +7,60 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/provider"
 )
+
+func TestNativeTerminalReturnsBeforeHTTPBodyEOF(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "completed", true: "failed"}[failed], func(t *testing.T) {
+			release, closed := make(chan struct{}), make(chan struct{})
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				payload := fullStreamPayload()
+				if failed {
+					payload = strings.TrimSuffix(payload, ssePart("message_stop", `{"type":"message_stop"}`)) + ssePart("error", `{"type":"error","error":{"type":"permission_error","message":"not allowed"}}`)
+				}
+				io.WriteString(w, payload)
+				w.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+					close(closed)
+				case <-release:
+				}
+			}))
+			defer up.Close()
+			defer close(release)
+			sink := &collectingSink{}
+			done := make(chan error, 1)
+			go func() {
+				done <- New(Options{HTTP: up.Client()}).Run(t.Context(), provider.RunRequest{Request: baseRequest(), Target: provider.Target{BaseURL: up.URL}}, sink)
+			}()
+			select {
+			case err := <-done:
+				if failed {
+					var re *provider.RunError
+					if !errors.As(err, &re) || re.Kind != provider.TerminalEmitted || re.Class != provider.ClassForbidden || re.Reported == nil {
+						t.Fatalf("failure = %v", err)
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("terminal waits for HTTP EOF")
+			}
+			select {
+			case <-closed:
+			case <-time.After(time.Second):
+				t.Fatal("body not closed")
+			}
+			if terminalEvents(sink.events) != 1 {
+				t.Fatalf("events = %v", sink.events)
+			}
+		})
+	}
+}
 
 func TestNativeUsageRetainsLastValidObservation(t *testing.T) {
 	for _, invalid := range []string{`-1`, `1.5`, `"2"`, `9223372036854775808`, `null`} {
@@ -42,6 +92,7 @@ func TestNativeUsageRetainsLastValidObservation(t *testing.T) {
 			t.Fatalf("error=%v events=%v", err, sink.events)
 		}
 	})
+
 }
 
 func TestNativeStructuredSchemaAndForcedThinkingHTTP(t *testing.T) {

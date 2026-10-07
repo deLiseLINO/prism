@@ -130,6 +130,7 @@ type RunRequest struct {
 	Lease              account.Lease
 	Facts              execution.Facts
 	Progress           Progress
+	AttemptObserver    func(NetworkAttempt)
 	CredentialObserver func(account.CredentialGeneration)
 }
 

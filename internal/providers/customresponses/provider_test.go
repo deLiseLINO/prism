@@ -754,3 +754,53 @@ func TestForwardHeadersReachResponsesUpstream(t *testing.T) {
 		}
 	}
 }
+
+func TestTextFormatAndVerbosityReachTheUpstream(t *testing.T) {
+	req := testRequest(false)
+	strict := true
+	req.Text = canon.TextOutput{
+		Verbosity: canon.VerbosityLow,
+		Format:    &canon.TextFormat{Type: "json_schema", Name: "out", Schema: []byte(`{"type":"object"}`), Strict: &strict},
+	}
+	raw, err := buildBody(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Text struct {
+			Verbosity string `json:"verbosity"`
+			Format    struct {
+				Type   string          `json:"type"`
+				Name   string          `json:"name"`
+				Schema json.RawMessage `json:"schema"`
+				Strict bool            `json:"strict"`
+			} `json:"format"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	f := got.Text.Format
+	if got.Text.Verbosity != "low" || f.Type != "json_schema" || f.Name != "out" || string(f.Schema) != `{"type":"object"}` || !f.Strict {
+		t.Fatalf("text = %s", raw)
+	}
+	if plain, _ := buildBody(testRequest(false)); strings.Contains(string(plain), `"text":{`) {
+		t.Fatalf("a request without text options must not send text: %s", plain)
+	}
+}
+
+func TestStopSequencesAreNotSentToAResponsesUpstream(t *testing.T) {
+	req := testRequest(false)
+	req.Sampling.Stop = []string{"END"}
+	raw, err := buildBody(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := got["stop"]; present {
+		t.Fatalf("the Responses wire has no stop parameter and strict upstreams reject it: %s", raw)
+	}
+}
