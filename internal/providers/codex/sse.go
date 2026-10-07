@@ -413,6 +413,14 @@ func (d *Decoder) terminal(raw json.RawMessage, completed bool) error {
 			if err != nil || item == nil {
 				return d.protocolError(errors.New("malformed terminal output item"))
 			}
+			if old := d.items[outputItemID(item)]; old != nil && old.finished {
+				if old.index != i || reflect.TypeOf(old.item) != reflect.TypeOf(item) || seen[outputItemID(item)] {
+					return d.protocolError(errors.New("terminal output conflicts with emitted item"))
+				}
+				seen[outputItemID(item)] = true
+				snapshot[i] = old.item
+				continue
+			}
 			if err := validateCustomInput(raw, d.items[outputItemID(item)]); err != nil {
 				return d.protocolError(err)
 			}
@@ -441,7 +449,7 @@ func (d *Decoder) terminal(raw json.RawMessage, completed bool) error {
 				}
 			}
 			if old := d.items[id]; old != nil {
-				if old.index != i || reflect.TypeOf(old.item) != reflect.TypeOf(item) || old.finished && !reflect.DeepEqual(old.item, item) {
+				if old.index != i || reflect.TypeOf(old.item) != reflect.TypeOf(item) {
 					return d.protocolError(errors.New("terminal output conflicts with emitted item"))
 				}
 				if err := old.reconcile(item); err != nil {

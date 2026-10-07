@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
@@ -452,6 +451,17 @@ func (s *streamer) reconcileTerminal(response map[string]any, status string) err
 		if !ok {
 			return s.protocolError("terminal output item must be an object")
 		}
+		if id, _ := wire["id"].(string); id != "" {
+			if open := s.open[canon.ItemID(id)]; open != nil && open.finished != nil {
+				kind, err := itemKind(wire)
+				if err != nil || kind != open.kind || open.index != index || seen[canon.ItemID(id)] {
+					return s.protocolError("terminal conflicts with emitted output")
+				}
+				seen[canon.ItemID(id)] = true
+				items[index] = open.finished
+				continue
+			}
+		}
 		if err := validateFinishedItem(wire); err != nil {
 			return err
 		}
@@ -467,7 +477,7 @@ func (s *streamer) reconcileTerminal(response map[string]any, status string) err
 		}
 		seen[id] = true
 		if open := s.open[id]; open != nil {
-			if open.index != index || open.finished != nil && !reflect.DeepEqual(open.finished, item) {
+			if open.index != index {
 				return s.protocolError("terminal conflicts with emitted output")
 			}
 			if err := reconcileItem(item, open); err != nil {
