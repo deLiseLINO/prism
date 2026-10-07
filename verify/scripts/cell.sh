@@ -36,6 +36,19 @@ job_state() { jq -r '.job.state // "none"' "$1" 2>/dev/null || echo none; }
 
 fail() { printf 'cell=%s verdict=fail reason=%s\n' "$CELL" "$*" > "$EV/outcome.txt"; exit 1; }
 
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [ -n "${DAEMON_PID:-}" ]; then
+    kill "$DAEMON_PID" 2>/dev/null || true
+    wait "$DAEMON_PID" 2>/dev/null || true
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 if [ -n "${PRE:-}" ]; then
   log "PRE: $PRE"
   bash -c "$PRE" || fail "pre-daemon setup failed"
@@ -88,26 +101,26 @@ if [ -n "${AGENT:-}" ]; then
   log "install $AGENT via API"
   prism agents install "$AGENT" --json > "$EV/install-job-initial.json" \
     || fail "install POST failed"
-  wait_job "$AGENT" "$EV/install-job.json" || true
+  wait_job "$AGENT" "$EV/install-job.json" || fail "install job did not finish"
   inst_state=$(job_state "$EV/install-job.json")
-  prism agents status "$AGENT" --json > "$EV/status-after-install.json" || true
+  prism agents status "$AGENT" --json > "$EV/status-after-install.json" || fail "status after install failed"
 fi
 
 upd_state=skipped
 if [ -n "${UPDATE_AGENT:-}" ]; then
   log "update $UPDATE_AGENT via API"
   if prism agents update "$UPDATE_AGENT" --json > "$EV/update-job-initial.json"; then
-    wait_job "$UPDATE_AGENT" "$EV/update-job.json" || true
+    wait_job "$UPDATE_AGENT" "$EV/update-job.json" || fail "update job did not finish"
     upd_state=$(job_state "$EV/update-job.json")
-    prism agents status "$UPDATE_AGENT" --json > "$EV/status-after-update.json" || true
+    prism agents status "$UPDATE_AGENT" --json > "$EV/status-after-update.json" || fail "status after update failed"
   else
     upd_state=refused
     log "update POST refused"
   fi
 fi
 
-prism agents status --json > "$EV/agents-after.json" || true
-prism agents status > "$EV/agents-table.txt" 2>/dev/null || true
+prism agents status --json > "$EV/agents-after.json" || fail "final agents status failed"
+prism agents status > "$EV/agents-table.txt" 2> "$EV/agents-table.stderr" || fail "final agents table failed"
 
 src=none
 if [ -n "${AGENT:-${UPDATE_AGENT:-}}" ]; then
@@ -115,13 +128,20 @@ if [ -n "${AGENT:-${UPDATE_AGENT:-}}" ]; then
     '.agents[]? | select(.key == $a) | .source // "none"' "$EV/agents-after.json")
 fi
 
-kill "$DAEMON_PID" 2>/dev/null
-wait "$DAEMON_PID" 2>/dev/null
 
 verdict=pass
-case "$inst_state" in succeeded|skipped|unsupported) ;; *) verdict=fail ;; esac
-case "$upd_state" in succeeded|skipped|unsupported) ;; *) verdict=fail ;; esac
+for state in "$inst_state" "$upd_state"; do
+  case "$state" in
+    succeeded|skipped) ;;
+    unsupported) [ "$verdict" = fail ] || verdict=unavailable ;;
+    *) verdict=fail ;;
+  esac
+done
 printf 'cell=%s install=%s update=%s source=%s verdict=%s\n' \
   "$CELL" "$inst_state" "$upd_state" "$src" "$verdict" > "$EV/outcome.txt"
 log "cell done: install=$inst_state update=$upd_state source=$src verdict=$verdict"
-[ "$verdict" = pass ]
+case "$verdict" in
+  pass) exit 0 ;;
+  unavailable) exit 3 ;;
+  *) exit 1 ;;
+esac

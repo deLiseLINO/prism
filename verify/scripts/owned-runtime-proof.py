@@ -114,6 +114,11 @@ if sys.platform == "linux":
     print("owned child proof passed: live identity, unreaped zombie, reaped exit")
 
 
+def module_digest(path):
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -168,6 +173,24 @@ assert result.returncode == 0, result.stderr
 sandbox = Path((work / "daemon.sandbox").read_text().strip())
 assert not sandbox.exists(), "successful cleanup retained sandbox"
 assert (work / "daemon/probe.txt").read_text() == "durable evidence\n"
+
+result = drive("assertion-failure", "exit 23")
+assert result.returncode == 23, result.stdout + result.stderr
+sandbox = Path((work / "assertion-failure.sandbox").read_text().strip())
+receipt = json.loads((work / "assertion-failure/runtime-teardown.json").read_text())
+assert receipt["assertionStatus"] == 23 and receipt["sandboxRemoved"] is False, receipt
+assert sandbox.is_dir(), "failed assertion discarded its sandbox"
+shutil.rmtree(sandbox)
+for name in ("daemon", "assertion-failure"):
+    destination = work / name
+    entries = (destination / "manifest.sha256").read_text().splitlines()
+    observed = set()
+    for entry in entries:
+        expected, relative = entry.split("  ", 1)
+        observed.add(relative)
+        assert module_digest(destination / relative) == expected
+    expected_files = {path.relative_to(destination).as_posix() for path in destination.rglob("*") if path.is_file() and path.name != "manifest.sha256"}
+    assert observed == expected_files, "published manifest omitted evidence"
 
 result = drive("identity", """verify_start_daemon
 cp "$VERIFY_HOME/.prism/daemon.json" "$RUNDIR/registration.saved"

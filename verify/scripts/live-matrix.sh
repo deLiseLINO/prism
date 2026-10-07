@@ -9,7 +9,7 @@ fail() {
 run_with_timeout() {
   seconds=$1
   shift
-  env -i "${_VERIFY_ENV[@]}" perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "$seconds" "$@"
+  env -i "${_VERIFY_ENV[@]}" perl -e '$seconds = shift; alarm $seconds; exec @ARGV; die "cannot execute $ARGV[0]: $!\n"' "$seconds" "$@"
 }
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)

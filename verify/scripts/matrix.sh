@@ -55,31 +55,56 @@ image_for() {
   esac
 }
 
-run_cell() {
+run_cell() (
   local name=$1 image=$2 port=$3 daemon_path=${4:-} pre=${5:-} mid=${6:-} agent=${7:-} upd=${8:-}
-  local img out rc user_args=()
+  local img out rc timer container_id user_args=()
   img=$(image_for "$image")
   if [ "$image" = brew ]; then
     user_args=(--user "$(id -u):$(id -g)")
     daemon_path=/home/linuxbrew/.linuxbrew/bin:$FULL_PATH
   fi
   out=$EVID/$name
-  rm -rf "$out"
-  mkdir -p "$out"
+  [ ! -e "$out" ] && [ ! -L "$out" ] || { echo "evidence directory already exists: $out" >&2; return 1; }
+  mkdir -p "$out" || return 1
+  timer=$(command -v timeout || command -v gtimeout) || {
+    printf 'cell=%s verdict=unavailable reason=timeout-command-unavailable\n' "$name" > "$out/outcome.txt"
+    cat "$out/outcome.txt"
+    return 3
+  }
+  cleanup_container() {
+    local status=$?
+    trap - EXIT
+    if [ -f "$out/container.id" ]; then
+      container_id=$(cat "$out/container.id")
+      if [[ "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+        docker rm -f "$container_id" > "$out/container-cleanup.log" 2>&1 || {
+          [ "$status" -ne 0 ] || status=1
+        }
+      else
+        [ "$status" -ne 0 ] || status=1
+      fi
+    fi
+    exit "$status"
+  }
+  trap cleanup_container EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   echo "== cell $name (image $image, port $port)"
   rc=0
-  /opt/homebrew/opt/coreutils/libexec/gnubin/timeout 1800 docker run --rm \
-    --name "prism-agenttest-$name" \
+  "$timer" 1800 docker run --cidfile "$out/container.id" \
+    --name "prism-agenttest-$name-$$" \
     -v "$REPO":/repo:ro -v "$DIST":/dist:ro -v "$out":/evidence \
     "${user_args[@]}" \
     -e CELL="$name" -e PORT="$port" -e DAEMON_PATH="$daemon_path" \
     -e PRE="$pre" -e MID="$mid" -e AGENT="$agent" -e UPDATE_AGENT="$upd" \
     "$img" bash /repo/verify/scripts/cell.sh || rc=$?
-  if [ $rc -ne 0 ] && ! [ -s "$out/outcome.txt" ]; then
+  if ! [ -s "$out/outcome.txt" ]; then
+    [ "$rc" -ne 0 ] || rc=1
     printf 'cell=%s verdict=fail reason=container-exit-%s\n' "$name" "$rc" > "$out/outcome.txt"
   fi
-  cat "$out/outcome.txt"
-}
+  cat "$out/outcome.txt" || { [ "$rc" -ne 0 ] || rc=1; }
+  return "$rc"
+)
 
 find_cell() {
   local want=$1 line
@@ -107,10 +132,21 @@ case ${1:-} in
     run_cell "$name" "$image" "$port" "$daemon_path" "$pre" "$mid" "$agent" "$upd"
     ;;
   all)
+    rc=0
     while IFS='|' read -r name image port daemon_path pre mid agent upd; do
-      run_cell "$name" "$image" "$port" "$daemon_path" "$pre" "$mid" "$agent" "$upd"
+      if run_cell "$name" "$image" "$port" "$daemon_path" "$pre" "$mid" "$agent" "$upd"; then
+        :
+      else
+        cell_rc=$?
+        if [ "$cell_rc" -ne 3 ]; then
+          [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ] || rc=$cell_rc
+        elif [ "$rc" -eq 0 ]; then
+          rc=3
+        fi
+      fi
     done < <(cells)
     summary
+    exit "$rc"
     ;;
   summary) summary ;;
   *)

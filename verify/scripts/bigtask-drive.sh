@@ -9,7 +9,7 @@ fail() {
 run_with_timeout() {
   seconds=$1
   shift
-  perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "$seconds" "$@"
+  env -i "${_VERIFY_ENV[@]}" perl -e '$seconds = shift; alarm $seconds; exec @ARGV; die "cannot execute $ARGV[0]: $!\n"' "$seconds" "$@"
 }
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
@@ -17,67 +17,23 @@ GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
 PORT="${PRISM_BIGTASK_PORT:-18814}"
 CDP_PORT="${PRISM_BIGTASK_CDP_PORT:-19244}"
 REAL_HOME=$HOME
-if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
-  fail "a daemon is already bound to port $PORT"
-fi
+source "$REPO_ROOT/verify/scripts/owned-runtime.sh"
+verify_init bigtask "$PORT" "$CDP_PORT"
 SOURCE_STATE="${PRISM_VERIFY_STATE_DIR:-$REAL_HOME/.prism}"
-[ -f "$SOURCE_STATE/prism.json" ] || fail "needs $SOURCE_STATE/prism.json"
-[ -d "$SOURCE_STATE/credentials" ] || fail "needs $SOURCE_STATE/credentials"
-
-RUN_ID="$(date +%Y%m%d-%H%M%S).$$"
-RUNDIR=$(mktemp -d /tmp/prism-bigtask.XXXXXX)
-EVID_FINAL="${PRISM_VERIFY_EVIDENCE_DIR:-$REPO_ROOT/verify/evidence/bigtask/$RUN_ID}"
-EVID_WORK="$RUNDIR/evidence"
-mkdir -p "$EVID_WORK" "$RUNDIR/.prism" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent" \
+verify_stage_state "$SOURCE_STATE" || fail "could not stage verification state"
+PROOF_WORK="$RUNDIR/private-proof"
+mkdir -p "$PROOF_WORK" "$RUNDIR/.codex" "$RUNDIR/.grok" "$RUNDIR/.omp/agent" \
   "$RUNDIR/.claude" "$RUNDIR/.pi/agent" "$RUNDIR/.config/opencode" "$RUNDIR/.hermes" "$RUNDIR/work"
-
-cleanup() {
-  status=$?
-  trap - EXIT INT TERM
-  set +e
-  if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    kill -TERM "$APP_PID" 2>/dev/null
-    wait "$APP_PID" 2>/dev/null
-  fi
-  mkdir -p "$EVID_FINAL"
-  cp -R "$EVID_WORK"/. "$EVID_FINAL"/
-  [ -f "$RUNDIR/app.log" ] && cp "$RUNDIR/app.log" "$EVID_FINAL"/
-  rm -rf "$RUNDIR"
-  echo "evidence: $EVID_FINAL"
-  exit "$status"
-}
-trap cleanup EXIT INT TERM
-
-cp "$SOURCE_STATE/prism.json" "$RUNDIR/.prism/prism.json"
-cp -R "$SOURCE_STATE/credentials" "$RUNDIR/.prism/credentials"
-chmod -R go-rwx "$RUNDIR/.prism"
+EVID_WORK="$PROOF_WORK"
 
 echo "==> building prism and desktop"
-(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) || fail "go build cmd/prism"
-npm run build --prefix "$REPO_ROOT" > "$RUNDIR/build.log" 2>&1 || fail "npm run build"
+(cd "$GO_ROOT" && go build -o "$RUNDIR/prism" ./cmd/prism) > "$RUNDIR/build.log" 2>&1 || fail "go build cmd/prism"
+npm run build --prefix "$REPO_ROOT" >> "$RUNDIR/build.log" 2>&1 || fail "npm run build"
 
 echo "==> launching isolated Electron app"
-PRISMD_PATH="$RUNDIR/prism" \
-PRISM_PORT="$PORT" \
-PRISM_DAEMON_CONFIG="$RUNDIR/.prism/prism.json" \
-PRISM_HEADLESS=1 \
-CODEX_HOME="$RUNDIR/.codex" \
-HOME="$RUNDIR" \
-"$REPO_ROOT/node_modules/.bin/electron" "$REPO_ROOT/apps/desktop" \
-  --user-data-dir="$RUNDIR/electron" \
-  --remote-debugging-port="$CDP_PORT" > "$RUNDIR/app.log" 2>&1 &
-APP_PID=$!
-for _ in $(seq 1 80); do
-  kill -0 "$APP_PID" 2>/dev/null || { cat "$RUNDIR/app.log" 2>/dev/null; fail "electron exited during startup"; }
-  curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break
-  sleep 0.25
-done
+verify_start_electron || fail "owned Electron runtime failed"
 curl -sf "http://127.0.0.1:$PORT/api/v1/health" > "$EVID_WORK/health.json" || fail "daemon health failed"
-for _ in $(seq 1 80); do
-  curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && break
-  sleep 0.25
-done
-WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
+cd "$RUNDIR/work"
 
 node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -121,6 +77,7 @@ CEIL=900
 record_result() {
   client=$1; ok=$2; note=$3
   printf '%s\t%s\t%s\n' "$client" "$ok" "$note" >> "$EVID_WORK/results.tsv"
+  printf '%s\t%s\t%s\n' "$client" "$ok" "$note" >> "$RUNDIR/evidence/results.tsv"
 }
 
 echo "==> grok big task ($MODEL_LABEL)"
@@ -131,28 +88,37 @@ HOME="$RUNDIR" run_with_timeout "$CEIL" grok -m "$GROK_SEL" --reasoning-effort l
   > "$EVID_WORK/grok-game.ndjson" 2> "$EVID_WORK/grok-game.stderr"
 rc=$?
 set -e
-final_len=$(python3 - "$EVID_WORK/grok-game.ndjson" "$GAMETASK_MARKER" <<'EOF'
-import json, sys
-marker = sys.argv[2]
-streamed = []
-last_message = ''
-for line in open(sys.argv[1]):
-    line = line.strip()
-    if not line: continue
-    try: obj = json.loads(line)
-    except Exception: continue
-    if obj.get('type') == 'text':
-        streamed.append(obj.get('data', ''))
-    if obj.get('type') == 'message_end':
-        for c in obj.get('message', {}).get('content', []):
-            if c.get('type') == 'text': last_message = c.get('text', '')
-body = last_message if last_message else ''.join(streamed)
-print(len(body), 1 if marker in body else 0)
+final_len=$(node --input-type=module - "$REPO_ROOT/verify/scripts/omp-transcript.mjs" "$EVID_WORK/grok-game.ndjson" "$GAMETASK_MARKER" <<'EOF'
+import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+const { parseNdjson } = await import(pathToFileURL(process.argv[2]))
+try {
+  let pending = ''
+  let final = ''
+  let ended = false
+  for (const { record } of parseNdjson(readFileSync(process.argv[3], 'utf8'), 'grok')) {
+    if (ended) throw new Error('records after terminal')
+    if (record.type === 'error' || record.status === 'failed') throw new Error('failed record')
+    if (record.type === 'text') {
+      if (typeof record.data !== 'string') throw new Error('invalid text')
+      pending += record.data
+    }
+    if (record.type === 'usage') { final = pending; pending = '' }
+    if (record.type === 'end') {
+      if (record.stopReason !== 'end_turn') throw new Error('unsuccessful terminal')
+      if (pending !== '') final = pending
+      ended = true
+    }
+  }
+  if (!ended) throw new Error('missing terminal')
+  console.log([...final].length, Number(final.includes(process.argv[4])))
+} catch {
+  console.log('0 0')
+}
 EOF
 )
 final_chars=$(echo "$final_len" | cut -d' ' -f1)
 final_marker=$(echo "$final_len" | cut -d' ' -f2)
-rm -f "$REPO_ROOT/brick-breaker.html" "$REPO_ROOT/brick_breaker.html" "$REPO_ROOT/prism-breaker.html"
 if [ "$rc" -eq 0 ] && [ "$final_chars" -ge 2000 ] && [ "$final_marker" = "1" ]; then
   record_result grok pass "chars=$final_chars"
 else
@@ -167,26 +133,17 @@ HOME="$RUNDIR" run_with_timeout "$CEIL" omp --mode json --print --no-session --n
   > "$EVID_WORK/omp-game.ndjson" 2> "$EVID_WORK/omp-game.stderr"
 rc=$?
 set -e
-omp_total=$(python3 - "$EVID_WORK/omp-game.ndjson" "$GAMETASK_MARKER" <<'OMPEOF'
-import json, sys
-marker = sys.argv[2]
-total = 0
-has_marker = False
-errors = 0
-with open(sys.argv[1]) as f:
-    for line in f:
-        line = line.strip()
-        if not line: continue
-        try: obj = json.loads(line)
-        except Exception: continue
-        if obj.get('type') == 'message_end' and obj.get('message', {}).get('role') == 'assistant':
-            for c in obj.get('message', {}).get('content', []):
-                if c.get('type') == 'text':
-                    total += len(c.get('text', ''))
-                    if marker in c.get('text', ''): has_marker = True
-        if obj.get('type') == 'error' or obj.get('type') == 'agent_error' or obj.get('stopReason') == 'error':
-            errors += 1
-print(f"{total} {int(has_marker)} {errors}")
+omp_total=$(node --input-type=module - "$REPO_ROOT/verify/scripts/omp-transcript.mjs" "$EVID_WORK/omp-game.ndjson" "$GAMETASK_MARKER" <<'OMPEOF'
+import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+const { parseOmpTranscript } = await import(pathToFileURL(process.argv[2]))
+try {
+  const facts = parseOmpTranscript(readFileSync(process.argv[3], 'utf8'))
+  const body = facts.final?.text ?? ''
+  console.log([...body].length, Number(body.includes(process.argv[4])), facts.errors.length + Number(facts.final === null))
+} catch {
+  console.log('0 0 1')
+}
 OMPEOF
 )
 omp_total_chars=$(echo "$omp_total" | cut -d' ' -f1)
@@ -250,6 +207,7 @@ set +e
 HOME="$RUNDIR" run_with_timeout "$CEIL" hermes chat --provider prism -m "$BARE_MODEL" --ignore-user-config \
   -q "$MODEL_TASK Final line must be exactly: $GAMETASK_MARKER" \
   > "$EVID_WORK/hermes-game.txt" 2> "$EVID_WORK/hermes-game.stderr"
+rc=$?
 set -e
 chars=$(wc -c < "$EVID_WORK/hermes-game.txt" | tr -d ' ')
 if [ "$rc" -eq 0 ] && [ "$chars" -ge 2000 ] && grep -q "$GAMETASK_MARKER" "$EVID_WORK/hermes-game.txt"; then
@@ -260,9 +218,10 @@ fi
 
 echo "==> codex big task ($MODEL_LABEL through prism provider)"
 set +e
-OPENAI_API_KEY=dummy HOME="$RUNDIR" run_with_timeout "$CEIL" codex exec --skip-git-repo-check -s read-only \
+HOME="$RUNDIR" run_with_timeout "$CEIL" env OPENAI_API_KEY=dummy codex exec --skip-git-repo-check -s read-only \
   -m "$BARE_MODEL" "$MODEL_TASK Final line must be exactly: $GAMETASK_MARKER" \
   > "$EVID_WORK/codex-game.txt" 2> "$EVID_WORK/codex-game.stderr"
+rc=$?
 set -e
 chars=$(wc -c < "$EVID_WORK/codex-game.txt" | tr -d ' ')
 if [ "$rc" -eq 0 ] && [ "$chars" -ge 2000 ] && grep -q "$GAMETASK_MARKER" "$EVID_WORK/codex-game.txt"; then
@@ -279,4 +238,5 @@ fi
 
 curl -sf "http://127.0.0.1:$PORT/api/v1/requests" > "$EVID_WORK/requests.json" || true
 curl -sf "http://127.0.0.1:$PORT/api/v1/usage" > "$EVID_WORK/usage-after.json" || true
+verify_finish 0 || fail "owned runtime cleanup failed"
 echo "big task verification passed"
