@@ -4,8 +4,8 @@ A generated config must work in the real client. Parsing a file does not prove i
 
 ## Sub-features
 
-- клиент grok loads aliases written by Integrations and completes a real request through the selected model.
-- клиент omp loads generated provider entries and completes a real request. Its tool probe requires a read call and result before the final answer.
+- Client grok loads aliases written by Integrations and completes a real request through the selected model.
+- Client omp loads generated provider entries and completes a real request. Its tool probe requires a read call and result before the final answer.
 - A thinking assertion requires a displayed thinking block. Reasoning token usage alone is not that proof.
 - The repeated-request matrix exercises selected client and model pairs over an aggregate duration. Each command invocation is fresh.
 - Other supported clients need separate real inference runs. A structural config loader or two-client matrix does not cover them.
@@ -21,7 +21,7 @@ PRISM_VERIFY_LIVE=1 bash verify/scripts/integration-drive.sh
 bash verify/scripts/live-matrix.sh
 ```
 
-The integration driver sends a marker request with клиент grok. It asks клиент omp to read a sandbox file, then checks the final response and tool result. The single-model tool probe permits missing thinking and records that limitation.
+The integration driver sends a marker request with client grok. It asks client omp to read a sandbox file, then checks the final response and tool result. The single-model tool probe permits missing thinking and records that limitation.
 
 The matrix takes requested selectors from `PRISM_MATRIX_GROK_MODELS` and `PRISM_MATRIX_OMP_MODELS`, or uses its default application-model pairs. It runs fresh commands until the aggregate duration reaches `PRISM_MATRIX_MIN_SECONDS`, default 300, and finishes with a marker request. Its ceiling bounds each client invocation, including retries. The request-count limit bounds the number of invocations; there is no total pair deadline.
 

@@ -84,7 +84,7 @@ PRISM_VERIFY_LIVE=1 bash verify/scripts/integration-drive.sh
 bash verify/scripts/live-matrix.sh
 ```
 
-Live integration runs one real request for клиент grok and one tool round trip for клиент omp using configs written by the UI. A final answer, a tool result, and displayed thinking are separate assertions.
+Live integration runs one real request for client grok and one tool round trip for client omp using configs written by the UI. A final answer, a tool result, and displayed thinking are separate assertions.
 
 The matrix is repeated-request stress across requested client and model pairs. Each invocation starts a fresh command. Aggregate elapsed time of 300 seconds does not prove one uninterrupted 300-second session. Preserve failed attempts and do not describe a retry-normalized result as zero transport failures.
 
