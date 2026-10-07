@@ -10,6 +10,7 @@ The desktop starts or reuses the registered background service and polls its hea
 - The Overview card renders the supervisor state and endpoint. Its chip maps `ready` to `operational`. The desktop status does not expose a daemon PID; read the registration and health response for ownership checks.
 - App quit calls `release()`, which cancels supervision timers. `prism service stop` is the explicit command that stops the registered service.
 - Detached daemon output goes to `$HOME/.prism/prism.log`, not the Electron profile directory.
+- On Linux, CLI startup closes inherited files and sockets without `FD_CLOEXEC`, except stdin, stdout and stderr. The descriptor proof checks a file, a connected socket and a listener in real service and daemon processes while preserving the parent handles.
 
 ## How to get to it
 
