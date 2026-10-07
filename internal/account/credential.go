@@ -9,12 +9,13 @@ import (
 const CredentialVersion = 1
 
 type Credential struct {
-	Access    string
-	Refresh   string
-	ExpiresAt time.Time
-	AccountID string
-	Email     string
-	ProjectID string
+	Access     string
+	Refresh    string
+	ExpiresAt  time.Time
+	AccountID  string
+	Email      string
+	ProjectID  string
+	Generation CredentialGeneration
 }
 
 type credentialBlob struct {

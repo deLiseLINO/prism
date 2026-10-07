@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/store"
 )
 
 type Snapshot struct {
@@ -18,10 +21,11 @@ type Snapshot struct {
 }
 
 type Manager struct {
-	mu     sync.Mutex
-	path   string
-	snap   Snapshot
-	notify chan struct{}
+	mu         sync.Mutex
+	path       string
+	snap       Snapshot
+	configJSON []byte
+	notify     chan struct{}
 }
 
 type fileFormat struct {
@@ -31,12 +35,21 @@ type fileFormat struct {
 }
 
 func Open(path string) (*Manager, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	path = absolute
 	m := &Manager{path: path, notify: make(chan struct{}, 1)}
 	snap, err := loadSnapshot(path)
 	if err != nil {
 		return nil, err
 	}
 	m.snap = snap
+	m.configJSON, err = json.Marshal(snap.Config)
+	if err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -59,25 +72,34 @@ func loadSnapshot(path string) (Snapshot, error) {
 	if err := f.Config.validate(); err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{Config: cloneDocument(f.Config), Generation: f.Generation}, nil
-}
-
-func readGeneration(path string) (uint64, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	var f fileFormat
-	if err := json.Unmarshal(b, &f); err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrCorrupt, err)
-	}
-	return f.Generation, nil
+	return Snapshot{Config: f.Config, Generation: f.Generation}, nil
 }
 
 func (m *Manager) Get() Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return cloneSnapshot(m.snap)
+}
+
+func (m *Manager) Current() (Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snap, err := loadSnapshot(m.path)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if snap.Generation != m.snap.Generation {
+		return Snapshot{}, ErrStaleGeneration
+	}
+	diskConfig, err := json.Marshal(snap.Config)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !bytes.Equal(diskConfig, m.configJSON) {
+		return Snapshot{}, ErrStaleGeneration
+	}
+	snap.Config.catalog = m.snap.Config.catalog
+	return snap, nil
 }
 
 func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
@@ -89,12 +111,35 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 	if err := next.validate(); err != nil {
 		return Snapshot{}, err
 	}
-	if disk, err := readGeneration(m.path); err == nil && disk != m.snap.Generation {
-		if snap, err := loadSnapshot(m.path); err == nil {
-			m.snap = snap
-			m.notifyChanged()
+	lock, err := store.NewFileCredentialStore(filepath.Dir(m.path)).AcquireRefreshLock(context.Background(), []byte("config:"+m.path))
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer lock.Release()
+	disk, err := loadSnapshot(m.path)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if disk.Generation != m.snap.Generation {
+		encoded, err := json.Marshal(disk.Config)
+		if err != nil {
+			return Snapshot{}, err
 		}
-		return Snapshot{}, fmt.Errorf("%w: file advanced to %d", ErrStaleGeneration, disk)
+		disk.Config.catalog = m.snap.Config.catalog
+		m.snap, m.configJSON = disk, encoded
+		m.notifyChanged()
+		return Snapshot{}, fmt.Errorf("%w: file advanced to %d", ErrStaleGeneration, disk.Generation)
+	}
+	encodedDisk, err := json.Marshal(disk.Config)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !bytes.Equal(encodedDisk, m.configJSON) {
+		return Snapshot{}, ErrStaleGeneration
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return Snapshot{}, err
 	}
 	gen := m.snap.Generation + 1
 	if err := writeAtomic(m.path, fileFormat{Version: SchemaVersion, Generation: gen, Config: next}); err != nil {
@@ -103,6 +148,7 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 	stored := cloneDocument(next)
 	stored.catalog = m.snap.Config.catalog
 	m.snap = Snapshot{Config: stored, Generation: gen}
+	m.configJSON = encoded
 	m.notifyChanged()
 	return cloneSnapshot(m.snap), nil
 }

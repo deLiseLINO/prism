@@ -125,11 +125,12 @@ type Sink interface {
 }
 
 type RunRequest struct {
-	Request  canon.Request
-	Target   Target
-	Lease    account.Lease
-	Facts    execution.Facts
-	Progress Progress
+	Request            canon.Request
+	Target             Target
+	Lease              account.Lease
+	Facts              execution.Facts
+	Progress           Progress
+	CredentialObserver func(account.CredentialGeneration)
 }
 
 type Runner interface {

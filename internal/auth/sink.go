@@ -48,22 +48,21 @@ func (s *FileSink) Persist(ctx context.Context, provider account.ProviderID, cre
 		return account.Account{}, fmt.Errorf("auth: no account repository configured for %s", provider)
 	}
 	id := AccountRowID(provider, cred.AccountID)
-	// Re-login serializes with refresh by stable provider/account identity so
-	// a concurrent refresh can never interleave with the generation bump.
-	release, err := withRefreshLock(ctx, s.file, provider, id, refreshWait)
+	publication, err := lockPublication(ctx, s.file, provider, id, refreshWait)
 	if err != nil {
 		return account.Account{}, err
 	}
-	defer release()
+	defer publication.lock.Release()
 	current, err := repo.CurrentGeneration(provider, id)
 	if err != nil {
 		return account.Account{}, err
 	}
 	gen := current + 1
-	if err := writeGeneration(ctx, s.file, repo, provider, id, current, gen, cred.Encode(), cred.Email); err != nil {
+	if err := publication.write(ctx, repo, current, gen, cred.Encode(), cred.Email, true); err != nil {
 		return account.Account{}, err
 	}
-	if err := repo.SetState(provider, id, account.Active); err != nil {
+	rows, err := repo.Load(provider)
+	if err != nil {
 		return account.Account{}, err
 	}
 	if provider == "cline" {
@@ -74,14 +73,12 @@ func (s *FileSink) Persist(ctx context.Context, provider account.ProviderID, cre
 	if s.onStored != nil {
 		s.onStored(provider)
 	}
-	return account.Account{
-		ID:       id,
-		Provider: provider,
-		State:    account.Active,
-		Email:    cred.Email,
-		CredGen:  gen,
-		Version:  1,
-	}, nil
+	for _, row := range rows {
+		if row.ID == id {
+			return row, nil
+		}
+	}
+	return account.Account{}, account.ErrNotFound
 }
 
 func (s *FileSink) replaceProviderAccounts(ctx context.Context, provider account.ProviderID, keep account.AccountID) error {

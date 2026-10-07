@@ -207,3 +207,30 @@ func TestClinePersistReplacesThePreviousAccount(t *testing.T) {
 		}
 	}
 }
+
+func TestReloginPreservesUserPauseAndPriority(t *testing.T) {
+	provider := account.ProviderID("codex")
+	sink, _, repo, _, path := newTestSink(t, provider)
+	ctx := context.Background()
+	a, err := sink.Persist(ctx, provider, testCredential())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.State, a.Priority = account.Paused, 7
+	if err := repo.SavePolicy(a); err != nil {
+		t.Fatal(err)
+	}
+	cred := testCredential()
+	cred.Access = "replacement-token"
+	a, err = sink.Persist(ctx, provider, cred)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.State != account.Paused || a.Priority != 7 || a.CredGen != 2 {
+		t.Fatalf("relogin policy=%+v", a)
+	}
+	rows, err := account.OpenMeta(path).Load(provider)
+	if err != nil || len(rows) != 1 || rows[0].State != account.Paused || rows[0].Priority != 7 || rows[0].CredGen != 2 {
+		t.Fatalf("restart rows=%+v err=%v", rows, err)
+	}
+}

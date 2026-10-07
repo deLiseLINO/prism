@@ -287,8 +287,11 @@ func (f *clineFlow) Refresh(ctx context.Context, prev account.Credential) (accou
 		return account.Credential{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return account.Credential{}, fmt.Errorf("%w: cline token refresh returned status %d", account.ErrNeedsReauth, resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return account.Credential{}, fmt.Errorf("cline token refresh returned status %d", resp.StatusCode)
+		return account.Credential{}, &TokenError{Status: resp.StatusCode}
 	}
 	var out clineRefreshResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {

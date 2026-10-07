@@ -57,6 +57,9 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		return provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: err}
 	}
 	applyHeaders(httpReq.Header, fp.Headers)
+	if req.CredentialObserver != nil {
+		req.CredentialObserver(cred.Generation)
+	}
 	resp, err := r.httpClient().Do(httpReq)
 	if err != nil {
 		class := provider.ClassTransport

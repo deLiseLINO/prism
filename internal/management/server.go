@@ -36,9 +36,10 @@ type ModelSyncer interface {
 }
 
 type CredentialStore interface {
-	Put(ctx context.Context, id string, secret []byte) error
+	Stage(ctx context.Context, id, currentRef string, secret []byte) (string, error)
+	Committed(ctx context.Context, id string, previous, next config.Provider) error
 	Delete(ctx context.Context, id string) error
-	Configured(ctx context.Context, id string) (bool, error)
+	Configured(ctx context.Context, id, ref string) (bool, error)
 }
 
 type Auth interface {
@@ -411,17 +412,40 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 			next.Wait = body.Wait
 		}
 	}
+	previous := snap.Config.Providers[id]
+	if body.Credential != "" {
+		ref, err := s.creds.Stage(r.Context(), id, previous.APIKeyRef, []byte(body.Credential))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "credential_store", err.Error())
+			return
+		}
+		next.APIKeyRef = ref
+	} else if body.APIKeyRef != nil {
+		if next.APIKeyRef != previous.APIKeyRef && !(previous.APIKeyRef == "" && next.APIKeyRef == id+":default") {
+			if next.APIKeyRef == "" {
+				writeError(w, http.StatusBadRequest, "invalid_document", "cannot clear a published credential reference")
+				return
+			}
+			writeError(w, http.StatusBadRequest, "invalid_document", "supply credential to publish a new credential reference")
+			return
+		}
+		if next.APIKeyRef != "" {
+			set, err := s.creds.Configured(r.Context(), id, next.APIKeyRef)
+			if err != nil || !set {
+				writeError(w, http.StatusBadRequest, "invalid_document", "credential reference is not available for provider")
+				return
+			}
+		}
+	}
 	doc.Providers[id] = next
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
 		writeConfigError(w, err)
 		return
 	}
-	if body.Credential != "" {
-		if err := s.creds.Put(r.Context(), id, []byte(body.Credential)); err != nil {
-			writeError(w, http.StatusInternalServerError, "credential_store", err.Error())
-			return
-		}
+	if err := s.creds.Committed(context.Background(), id, previous, next); err != nil {
+		writeError(w, http.StatusInternalServerError, "credential_publication", err.Error())
+		return
 	}
 	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
 	if err != nil {
@@ -773,7 +797,7 @@ func fillUnknown(base, overlay config.DiscoveredFacts) config.DiscoveredFacts {
 
 func (s *Server) providerView(ctx context.Context, doc config.Document, id string, p config.Provider) (Provider, error) {
 	state := "unset"
-	set, err := s.creds.Configured(ctx, id)
+	set, err := s.creds.Configured(ctx, id, p.APIKeyRef)
 	if err != nil {
 		return Provider{}, err
 	}
