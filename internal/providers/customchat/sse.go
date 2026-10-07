@@ -193,7 +193,7 @@ func (s *streamer) handleFrame(f sseFrame) error {
 	}
 	delta, _ := choice["delta"].(map[string]any)
 	if s.finished {
-		if len(delta) > 0 {
+		if deltaCarriesOutput(delta) {
 			return s.protocolError("upstream emitted output after finish reason")
 		}
 		if reason, ok := choice["finish_reason"].(string); ok && reason != "" && reason != s.finishReason {
@@ -320,6 +320,26 @@ func announcesNewCall(open *openTool, call map[string]any) bool {
 		return false
 	}
 	return name != open.name || json.Valid([]byte(open.args.String()))
+}
+
+// deltaCarriesOutput reports whether a delta holds text, thinking text or tool
+// call data. Gateways send frames after the finish reason that keep keys such
+// as role or an empty content, and those frames carry nothing to lose.
+func deltaCarriesOutput(delta map[string]any) bool {
+	if text, ok := delta["content"].(string); ok && text != "" {
+		return true
+	}
+	if reasoningDelta(delta) != "" {
+		return true
+	}
+	switch calls := delta["tool_calls"].(type) {
+	case nil:
+	case []any:
+		return len(calls) > 0
+	default:
+		return true
+	}
+	return false
 }
 
 // Gateways name the thinking text differently; a chunk may carry several
