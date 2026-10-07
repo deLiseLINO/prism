@@ -32,7 +32,12 @@ type Catalog interface {
 }
 
 type ModelSyncer interface {
-	RemoteModels(ctx context.Context, id string, p config.Provider) ([]ListedModel, error)
+	RemoteModels(ctx context.Context, id string, p config.Provider) (ModelListing, error)
+}
+
+type ModelListing struct {
+	Models  []ListedModel
+	Catalog *config.ModelCatalog
 }
 
 type CredentialStore interface {
@@ -572,16 +577,45 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "provider "+id+" not found")
 		return
 	}
-	remote, err := s.syncer.RemoteModels(r.Context(), id, p)
+	listing, err := s.syncer.RemoteModels(r.Context(), id, p)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "upstream", err.Error())
 		return
 	}
 	doc := snap.Config
 	next := doc.Providers[id]
+	if next.Wire == config.WireAntigravity && listing.Catalog != nil {
+		c := *listing.Catalog
+		c.RawModels = slices.Clone(c.RawModels)
+		replaced := false
+		for i, previous := range next.ModelCatalogs {
+			if previous.BaseURL == c.BaseURL && previous.Account == c.Account && previous.Project == c.Project {
+				next.ModelCatalogs[i] = c
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			next.ModelCatalogs = append(next.ModelCatalogs, c)
+		}
+	}
+	remote := listing.Models
+	mergeMode := config.ModelModeLogical
+	rawNative := next.Wire == config.WireAntigravity && next.ModelMode == config.ModelModeRaw && listing.Catalog != nil
+	if rawNative {
+		mergeMode = config.ModelModeRaw
+		remote = make([]ListedModel, len(listing.Catalog.RawModels))
+		for i, model := range listing.Catalog.RawModels {
+			remote[i] = ListedModel{ID: model}
+		}
+	}
+	catalog := providerModelCatalog(next)
 	modelRows := func(model string, mode config.ModelMode) []string {
+		if rawNative && mode == config.ModelModeRaw {
+			return []string{model}
+		}
 		if next.Wire == config.WireAntigravity {
-			return modeRow(model, mode)
+			return modeRow(model, mode, catalog)
 		}
 		return []string{model}
 	}
@@ -590,7 +624,7 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		if slices.Contains(next.SyncedModels, m) || antigravity.DeniedModel(m) {
 			continue
 		}
-		for _, id := range modelRows(m, config.ModelModeLogical) {
+		for _, id := range modelRows(m, mergeMode) {
 			if !slices.Contains(merged, id) {
 				merged = append(merged, id)
 			}
@@ -600,7 +634,7 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		if antigravity.DeniedModel(row.ID) {
 			continue
 		}
-		for _, model := range modelRows(row.ID, config.ModelModeLogical) {
+		for _, model := range modelRows(row.ID, mergeMode) {
 			if !slices.Contains(merged, model) {
 				merged = append(merged, model)
 			}
@@ -622,9 +656,11 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	next.SyncedModels = synced
 	next.Discovered = discoveredFromList(remote)
 	doc.Providers[id] = next
-	foldRawModelSettings(&doc, id)
-	foldDiscovered(&doc, id)
-	if next.ModelMode == config.ModelModeRaw {
+	if !rawNative {
+		foldRawModelSettings(&doc, id)
+		foldDiscovered(&doc, id)
+	}
+	if next.ModelMode == config.ModelModeRaw && !rawNative {
 		next = switchModelMode(doc.Providers[id], config.ModelModeRaw)
 		doc.Providers[id] = next
 	}
@@ -883,22 +919,14 @@ func (s *Server) providersModelMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
 }
 
-// switchModelMode rewrites a provider's model list for the target mode.
-// Logical→raw replaces each family id with its live wire members (presence
-// from the last discovery; the table default covers pre-sync providers).
-// Raw→logical folds member ids onto their family id. Non-family ids pass
-// through both ways. Disabled entries and per-model settings travel with
-// their model: family state fans out onto every member in raw mode and folds
-// back onto the family id in logical mode, so a round trip loses nothing.
-// SyncedModels travel the same way, so the manual badge keeps meaning "the
-// last sync did not report this id" in both vocabularies.
 func switchModelMode(p config.Provider, mode config.ModelMode) config.Provider {
 	next := p
 	next.ModelMode = mode
+	catalog := providerModelCatalog(p)
 	models := make([]string, 0, len(p.Models))
 	disabled := make([]string, 0, len(p.DisabledModels))
 	for _, m := range p.Models {
-		row := modeRow(m, mode)
+		row := modeRow(m, mode, catalog)
 		for _, id := range row {
 			if !slices.Contains(models, id) {
 				models = append(models, id)
@@ -918,7 +946,7 @@ func switchModelMode(p config.Provider, mode config.ModelMode) config.Provider {
 	next.DisabledModels = disabled
 	synced := make([]string, 0, len(p.SyncedModels))
 	for _, m := range p.SyncedModels {
-		for _, id := range modeRow(m, mode) {
+		for _, id := range modeRow(m, mode, catalog) {
 			if slices.Contains(models, id) && !slices.Contains(synced, id) {
 				synced = append(synced, id)
 			}
@@ -932,7 +960,7 @@ func switchModelMode(p config.Provider, mode config.ModelMode) config.Provider {
 	}
 	settings := make(map[string]config.ModelSettings, len(p.ModelSettings))
 	for m, s := range p.ModelSettings {
-		for _, id := range modeRow(m, mode) {
+		for _, id := range modeRow(m, mode, catalog) {
 			if slices.Contains(models, id) {
 				if _, exists := settings[id]; !exists {
 					settings[id] = s
@@ -947,7 +975,7 @@ func switchModelMode(p config.Provider, mode config.ModelMode) config.Provider {
 	}
 	discovered := make(map[string]config.DiscoveredFacts, len(p.Discovered))
 	for m, facts := range p.Discovered {
-		for _, id := range modeRow(m, mode) {
+		for _, id := range modeRow(m, mode, catalog) {
 			if slices.Contains(models, id) {
 				if _, exists := discovered[id]; !exists {
 					discovered[id] = facts
@@ -963,12 +991,9 @@ func switchModelMode(p config.Provider, mode config.ModelMode) config.Provider {
 	return next
 }
 
-// modeRow maps one model id onto the row ids it occupies in the target mode:
-// a family id expands onto its live wire members going raw, a family member
-// folds onto its family id going logical, and every other id stays itself.
-func modeRow(m string, mode config.ModelMode) []string {
+func modeRow(m string, mode config.ModelMode, catalog antigravity.ModelCatalog) []string {
 	if mode == config.ModelModeRaw {
-		if raws := antigravity.RawModels(m); len(raws) > 0 {
+		if raws := catalog.RawModels(m); len(raws) > 0 {
 			return raws
 		}
 		return []string{m}
@@ -979,10 +1004,22 @@ func modeRow(m string, mode config.ModelMode) []string {
 	return []string{m}
 }
 
-// rawModelsForProvider flattens the raw wire ids behind a provider's logical
-// models. Only the antigravity wire carries families; every other wire leaves
-// the field empty so old clients see no change. In raw mode the stored list
-// already carries the wire ids, so it echoes the list unchanged.
+func providerModelCatalog(p config.Provider) antigravity.ModelCatalog {
+	var raw []string
+	known := false
+	for _, c := range p.ModelCatalogs {
+		if c.BaseURL != antigravity.EndpointKey(p.BaseURL) || p.Pool != nil && p.Pool.PinnedAccount != "" && c.Account != p.Pool.PinnedAccount {
+			continue
+		}
+		known = true
+		raw = append(raw, c.RawModels...)
+	}
+	if !known {
+		return antigravity.ModelCatalog{}
+	}
+	return antigravity.NewModelCatalog(raw)
+}
+
 func rawModelsForProvider(p config.Provider) []string {
 	if p.Wire != config.WireAntigravity {
 		return nil
@@ -991,8 +1028,13 @@ func rawModelsForProvider(p config.Provider) []string {
 		return p.Models
 	}
 	var out []string
+	catalog := providerModelCatalog(p)
 	for _, m := range p.Models {
-		for _, raw := range antigravity.RawModels(m) {
+		raws := catalog.RawModels(m)
+		if len(raws) == 0 && antigravity.LogicalModel(m) == "" {
+			raws = []string{m}
+		}
+		for _, raw := range raws {
 			if !slices.Contains(out, raw) {
 				out = append(out, raw)
 			}

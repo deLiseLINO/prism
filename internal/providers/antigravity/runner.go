@@ -13,6 +13,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/provider"
 )
 
@@ -33,15 +34,16 @@ type CredentialRenewer interface {
 }
 
 type Runner struct {
-	creds   CredentialSource
-	client  *http.Client
-	baseURL string
-	rand    func() float64
-	sleep   func(time.Duration)
-	newID   func() string
+	creds           CredentialSource
+	client          *http.Client
+	baseURL         string
+	currentProvider func() config.Provider
+	rand            func() float64
+	sleep           func(time.Duration)
+	newID           func() string
 }
 
-func NewRunner(creds CredentialSource, client *http.Client, baseURL string) (*Runner, error) {
+func NewRunner(creds CredentialSource, client *http.Client, baseURL string, currentProvider func() config.Provider) (*Runner, error) {
 	if creds == nil {
 		return nil, fmt.Errorf("antigravity: credential source is required")
 	}
@@ -52,10 +54,11 @@ func NewRunner(creds CredentialSource, client *http.Client, baseURL string) (*Ru
 		baseURL = DefaultBaseURL
 	}
 	return &Runner{
-		creds:   creds,
-		client:  client,
-		baseURL: baseURL,
-		rand:    rand.Float64,
+		creds:           creds,
+		client:          client,
+		baseURL:         baseURL,
+		currentProvider: currentProvider,
+		rand:            rand.Float64,
 		sleep: func(d time.Duration) {
 			timer := time.NewTimer(d)
 			defer timer.Stop()
@@ -93,7 +96,22 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		return provider.CredentialRunError(err)
 	}
 	sessionID := SessionID(string(req.Facts.Thread), firstUserText(req.Request.Input))
-	body, err := BuildEnvelope(req.Request, creds.ProjectID, r.newID(), sessionID)
+	var p config.Provider
+	if r.currentProvider != nil {
+		p = r.currentProvider()
+	}
+	baseURL := req.Target.BaseURL
+	if baseURL == "" {
+		baseURL = r.baseURL
+	}
+	selection := ModelSelection{Mode: p.ModelMode}
+	for _, c := range p.ModelCatalogs {
+		if c.BaseURL == EndpointKey(baseURL) && c.Account == string(req.Lease.Account) && c.Project == creds.ProjectID {
+			selection.Catalog = NewModelCatalog(c.RawModels)
+			break
+		}
+	}
+	body, err := BuildEnvelope(req.Request, creds.ProjectID, r.newID(), sessionID, selection)
 	if err != nil {
 		return provider.RunError{
 			Kind:       provider.TerminalOmitted,

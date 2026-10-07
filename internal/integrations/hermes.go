@@ -99,7 +99,7 @@ func (h *HermesIntegration) Apply() ApplyResult {
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: h.id, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(h.io, h.paths(), hermesTransform(h.port, models), false)
+	outcome, err := applyRestoration(h.io, h.paths(), hermesTransform(h.port, models), nil, false)
 	if err != nil {
 		return ToApplyResult(h.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("hermes apply", err)})
 	}
@@ -108,7 +108,10 @@ func (h *HermesIntegration) Apply() ApplyResult {
 
 func (h *HermesIntegration) Status() Status {
 	return ObservedIntegrationStatus(h.io, h.id, h.paths(), []string{HermesHome(h.env, h.home)}, func(path string) ManagedRead {
-		content, ok := h.io.ReadTextIfExists(path)
+		content, ok, err := h.io.ReadText(path)
+		if err != nil {
+			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
+		}
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}
@@ -117,7 +120,7 @@ func (h *HermesIntegration) Status() Status {
 }
 
 func (h *HermesIntegration) Rollback() ApplyResult {
-	outcome, err := ApplyConfigTransform(h.io, h.paths(), hermesRollbackTransform(), false)
+	outcome, err := rollbackRestoration(h.io, h.paths(), hermesRollbackTransform())
 	if err != nil {
 		return ToRollbackResult(h.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("hermes rollback", err)})
 	}
@@ -125,5 +128,5 @@ func (h *HermesIntegration) Rollback() ApplyResult {
 }
 
 func RecoverHermesConfig(io FileIO, configPath string) bool {
-	return io.RecoverStaged(configPath)
+	return recoverConfigStage(io, configPath)
 }

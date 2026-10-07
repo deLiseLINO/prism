@@ -13,7 +13,8 @@ import (
 	"github.com/deLiseLINO/prism/internal/store"
 )
 
-func idsOf(rows []management.ListedModel) []string {
+func idsOf(listing management.ModelListing) []string {
+	rows := listing.Models
 	out := make([]string, len(rows))
 	for i, row := range rows {
 		out[i] = row.ID
@@ -123,11 +124,14 @@ func TestModelSyncerListsAntigravityModelsFromUpstream(t *testing.T) {
 	if ids := idsOf(models); len(ids) != 1 || ids[0] != "gemini-3.7-flash" {
 		t.Fatalf("models = %v, want gemini-3.7-flash", ids)
 	}
-	if models[0].ContextWindow != nil || models[0].Image != nil {
-		t.Fatalf("antigravity listing must stay id-only: %+v", models[0])
+	if models.Models[0].ContextWindow != nil || models.Models[0].Image != nil {
+		t.Fatalf("antigravity listing must stay id-only: %+v", models.Models[0])
 	}
 	if creds.gotLease.Account != "ag:a" || creds.gotLease.CredGen != 3 {
 		t.Fatalf("refresher lease = %+v, want ag:a gen 3", creds.gotLease)
+	}
+	if models.Catalog == nil || models.Catalog.BaseURL != server.URL || models.Catalog.Account != "ag:a" || models.Catalog.Project != "proj-1" || len(models.Catalog.RawModels) != 1 {
+		t.Fatalf("catalog binding = %+v", models.Catalog)
 	}
 }
 

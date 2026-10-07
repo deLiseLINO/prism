@@ -37,6 +37,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/providers/antigravity"
 	"github.com/deLiseLINO/prism/internal/providers/cline"
 	"github.com/deLiseLINO/prism/internal/providers/codex"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 	"github.com/deLiseLINO/prism/internal/quota"
 	"github.com/deLiseLINO/prism/internal/requestlog"
 	"github.com/deLiseLINO/prism/internal/server"
@@ -114,16 +115,36 @@ type listedModel struct {
 	Image         *bool
 }
 
-func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]management.ListedModel, error) {
+func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) (management.ModelListing, error) {
+	if p.Wire == config.WireAntigravity {
+		lease, ok := m.leaseFor(id, p)
+		if !ok || m.refresher == nil {
+			return management.ModelListing{}, fmt.Errorf("provider %s has no active account to list models for", id)
+		}
+		cred, err := m.refresher.Credential(ctx, lease)
+		if err != nil {
+			return management.ModelListing{}, err
+		}
+		catalog, err := antigravity.FetchModels(ctx, m.client, p.BaseURL, antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID, Generation: cred.Generation})
+		if err != nil {
+			return management.ModelListing{}, err
+		}
+		ids := catalog.Models()
+		rows := make([]management.ListedModel, len(ids))
+		for i, model := range ids {
+			rows[i] = management.ListedModel{ID: model}
+		}
+		return management.ModelListing{Models: rows, Catalog: &config.ModelCatalog{BaseURL: antigravity.EndpointKey(p.BaseURL), Account: string(lease.Account), Project: cred.ProjectID, RawModels: catalog.RawIDs()}}, nil
+	}
 	rows, err := m.remoteModels(ctx, id, p)
 	if err != nil {
-		return nil, err
+		return management.ModelListing{}, err
 	}
 	out := make([]management.ListedModel, len(rows))
 	for i, row := range rows {
 		out[i] = management.ListedModel{ID: row.ID, ContextWindow: row.ContextWindow, Image: row.Image}
 	}
-	return out, nil
+	return management.ModelListing{Models: out}, nil
 }
 
 func (m modelSyncer) remoteModels(ctx context.Context, id string, p config.Provider) ([]listedModel, error) {
@@ -159,12 +180,6 @@ func (m modelSyncer) remoteModelsPooled(ctx context.Context, id string, p config
 			out[i] = listedModel{ID: row.ID, ContextWindow: row.ContextWindow, Image: row.Image}
 		}
 		return out, nil
-	case config.WireAntigravity:
-		ids, err := antigravity.FetchModels(ctx, m.client, p.BaseURL, antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID})
-		if err != nil {
-			return nil, err
-		}
-		return idsToListed(ids), nil
 	case config.WireCline:
 		ids, err := cline.FetchModels(ctx, m.client, p.BaseURL, cline.EnsureWorkosPrefix(cred.Access))
 		if err != nil {
@@ -217,19 +232,13 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	if p.BaseURL == "" {
 		return nil, fmt.Errorf("provider %s has no baseURL to list models from", id)
 	}
-	blob, ok, err := m.creds.file.GetCustomDefaultSecret(ctx, account.ProviderID(id), p.APIKeyRef)
+	blob, _, err := m.creds.file.GetCustomDefaultSecret(ctx, account.ProviderID(id), p.APIKeyRef)
 	if err != nil {
 		return nil, err
 	}
-	base := strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
-	base = strings.TrimSuffix(base, "/responses")
-	base = strings.TrimSuffix(base, "/v1")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models", nil)
+	req, err := modelsRequest(ctx, p, string(blob))
 	if err != nil {
 		return nil, err
-	}
-	if ok {
-		req.Header.Set("Authorization", "Bearer "+string(blob))
 	}
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -249,6 +258,10 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 		return nil, fmt.Errorf("%w from %s", err, p.BaseURL)
 	}
 	return rows, nil
+}
+
+func customModelsURL(base string) string {
+	return openaierr.APIBase(base) + "/models"
 }
 
 func (s credentialStore) Stage(ctx context.Context, id, currentRef string, secret []byte) (string, error) {

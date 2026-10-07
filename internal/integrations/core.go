@@ -41,13 +41,23 @@ type WriteOutcome struct {
 	Reason    string
 	Retryable bool
 }
+
 // ApplyConfigTransform is one apply pass over a config file: read, normalize
 // EOL, transform (fail-closed via Refused), restore the dominant EOL, then a
 // staged atomic write through io. crashBeforeRename stops after the temp file
 // is durable and skips the rename, leaving the target at its last complete
 // state — the seam the crash-safety verifier drives.
 func ApplyConfigTransform(io FileIO, path string, transform func(currentLf string) ConfigTransform, crashBeforeRename bool) (WriteOutcome, error) {
-	raw, _ := io.ReadTextIfExists(path)
+	unlock := lockMutation(path)
+	defer unlock()
+	return applyConfigTransformUnlocked(io, path, transform, crashBeforeRename)
+}
+
+func applyConfigTransformUnlocked(io FileIO, path string, transform func(currentLf string) ConfigTransform, crashBeforeRename bool) (WriteOutcome, error) {
+	raw, _, err := io.ReadText(path)
+	if err != nil {
+		return WriteOutcome{}, err
+	}
 	eol := DominantEol(raw)
 	result := transform(ApplyEol(raw, EolLF))
 	if result.Refused != "" {
@@ -160,6 +170,11 @@ type ManagedRead struct {
 // from Prism-owned bytes actually found in the target, endpoint from the
 // managed bytes, and drift from comparing that endpoint with the requested one.
 func ObservedIntegrationStatus(io FileIO, id ID, targetPath string, detectDirs []string, read func(path string) ManagedRead, requestedEndpoint string) Status {
+	unlock := lockMutation(targetPath)
+	defer unlock()
+	if _, _, err := io.ReadText(targetPath); err != nil {
+		return Status{ID: id, Installed: true, TargetPath: strPtr(targetPath), Detail: failureReason("status read", err)}
+	}
 	configPresent := io.FileExists(targetPath)
 	installed := configPresent
 	for _, dir := range detectDirs {

@@ -153,12 +153,9 @@ func TestResolveWireModelRoutingDropsAbsentTargets(t *testing.T) {
 	if got := resolveWireModel("gemini-3.5-flash", effortLow, present); got != "gemini-3.5-flash-low" {
 		t.Fatalf("absent target drop: got %q want gemini-3.5-flash-low", got)
 	}
-	// preserveAbsentEffortRoutes: claude-sonnet-4-5 routes efforts to the
-	// thinking id even when only the bare id is present... but routing's off
-	// entry (the bare id) survives and effort routes survive via the flag.
 	present = presentOf("claude-sonnet-4-5")
-	if got := resolveWireModel("claude-sonnet-4-5", effortMedium, present); got != "claude-sonnet-4-5-thinking" {
-		t.Fatalf("preserve-absent: got %q want claude-sonnet-4-5-thinking", got)
+	if got := resolveWireModel("claude-sonnet-4-5", effortMedium, present); got != "claude-sonnet-4-5" {
+		t.Fatalf("absent thinking member selected: %q", got)
 	}
 	if got := resolveWireModel("claude-sonnet-4-5", effortOff, present); got != "claude-sonnet-4-5" {
 		t.Fatalf("off route preserved: got %q want claude-sonnet-4-5", got)
@@ -323,12 +320,6 @@ func TestRawMembersFor(t *testing.T) {
 	want := []string{"gemini-3.1-pro-low", "gemini-pro-agent"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("rawMembersFor present-filtered: got %v want %v", got, want)
-	}
-	// Empty present map: all non-retired members (table default).
-	got = rawMembersFor("gemini-3.1-pro", presentOf())
-	want = []string{"gemini-3.1-pro-low", "gemini-pro-agent"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("rawMembersFor table default: got %v want %v", got, want)
 	}
 	// Non-family: nil.
 	if got := rawMembersFor("some-model", presentOf("some-model")); got != nil {

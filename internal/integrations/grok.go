@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -300,6 +301,12 @@ func grokTransform(models []Model, port int, force bool) func(current string) Co
 				return forceableTransform("prism: grok apply refused — emitted " + strings.Join(parts, ", ") + " collides with a user-owned model table outside the prism fence")
 			}
 		}
+		historical := parseGrokRenamesJournal(current)
+		for from, to := range historical {
+			if _, exists := renames[from]; !exists {
+				renames[from] = to
+			}
+		}
 		result := UpsertFencedBlock(migrated, GrokFence, GrokManagedBlock(port, models)+renderGrokRenamesJournal(renames))
 		if result.Kind == "written" {
 			return nextTransform(result.Next, result.Changed || migratedChanged || len(renames) > 0)
@@ -448,7 +455,22 @@ func writeGrokConfig(options GrokOptions, force bool) WriteOutcome {
 	if refusal != "" {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
 	}
-	outcome, err := ApplyConfigTransform(withLocalIO(options.IO), options.ConfigPath, grokTransform(models, options.Port, force), options.CrashBeforeRename)
+	io := withLocalIO(options.IO)
+	unlock := lockMutation(options.ConfigPath)
+	defer unlock()
+	var inherited *restorationJournal
+	raw, present, err := io.ReadText(options.ConfigPath)
+	if err != nil {
+		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok apply", err)}
+	}
+	if present && FindFencedRegion(raw, GrokFence).Kind == FencedFound {
+		original := grokRollbackTransform()(ApplyEol(raw, EolLF))
+		if original.Refused != "" {
+			return WriteOutcome{Kind: OutcomeRefused, Reason: original.Refused}
+		}
+		inherited = &restorationJournal{Version: 1, Target: filepath.Clean(options.ConfigPath), Files: []journalFile{{Path: options.ConfigPath, Original: fileState{Present: true, Text: ApplyEol(original.Next, DominantEol(raw))}, Written: fileState{Present: true, Text: raw}}}}
+	}
+	outcome, err := applyRestorationUnlocked(io, options.ConfigPath, grokTransform(models, options.Port, force), nil, options.CrashBeforeRename, inherited)
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok apply", err)}
 	}
@@ -456,7 +478,7 @@ func writeGrokConfig(options GrokOptions, force bool) WriteOutcome {
 }
 
 func StripGrokConfig(io FileIO, configPath string) WriteOutcome {
-	outcome, err := ApplyConfigTransform(io, configPath, grokRollbackTransform(), false)
+	outcome, err := rollbackRestoration(io, configPath, grokRollbackTransform())
 	if err != nil {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok rollback", err)}
 	}
@@ -464,7 +486,7 @@ func StripGrokConfig(io FileIO, configPath string) WriteOutcome {
 }
 
 func RecoverGrokConfig(io FileIO, configPath string) bool {
-	return io.RecoverStaged(configPath)
+	return recoverConfigStage(io, configPath)
 }
 
 type GrokIntegration struct {
@@ -497,7 +519,10 @@ func (g *GrokIntegration) ID() ID { return g.id }
 
 func (g *GrokIntegration) Status() Status {
 	return ObservedIntegrationStatus(g.io, g.id, g.configPath, []string{GrokHome(g.env, g.home)}, func(path string) ManagedRead {
-		content, ok := g.io.ReadTextIfExists(path)
+		content, ok, err := g.io.ReadText(path)
+		if err != nil {
+			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
+		}
 		if !ok {
 			return ManagedRead{Kind: ManagedAbsent}
 		}

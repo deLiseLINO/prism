@@ -40,19 +40,28 @@ func VerifyCrashRecovery(probe Probe, configPath string, seed string) Check {
 	if err := AtomicWrite(LocalIO{}, configPath, seed); err != nil {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "seed write failed"}
 	}
-	before, _ := LocalIO{}.ReadTextIfExists(configPath)
+	before, _, err := LocalIO{}.ReadText(configPath)
+	if err != nil {
+		return Check{Semantic: "crash-recovery", Detail: failureReason("read", err)}
+	}
 	crashed := probe.Apply(true)
 	if crashed.Kind != OutcomeCrashed {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "crashing apply reported " + crashed.Kind}
 	}
-	midCrash, _ := LocalIO{}.ReadTextIfExists(configPath)
+	midCrash, _, err := LocalIO{}.ReadText(configPath)
+	if err != nil {
+		return Check{Semantic: "crash-recovery", Detail: failureReason("read", err)}
+	}
 	if midCrash != before {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "target changed before the rename — atomicity broken"}
 	}
 	if !probe.Recover() {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "recovery pass found no staged temp to discard"}
 	}
-	afterRecovery, _ := LocalIO{}.ReadTextIfExists(configPath)
+	afterRecovery, _, err := LocalIO{}.ReadText(configPath)
+	if err != nil {
+		return Check{Semantic: "crash-recovery", Detail: failureReason("read", err)}
+	}
 	if afterRecovery != before {
 		return Check{Semantic: "crash-recovery", OK: false, Detail: "recovery pass altered the last complete state"}
 	}
@@ -63,9 +72,6 @@ func VerifyCrashRecovery(probe Probe, configPath string, seed string) Check {
 	return Check{Semantic: "crash-recovery", OK: true, Detail: "crash left the last complete state; recovery discarded the staged temp"}
 }
 
-// VerifyManagedRegionOwnership checks that the managed region is prism-owned:
-// re-apply rewrites its content in place (whatever the difference), user bytes
-// outside the region are untouched, and rollback removes exactly the region.
 func VerifyManagedRegionOwnership(probe Probe, configPath string, seed string) Check {
 	if err := AtomicWrite(LocalIO{}, configPath, seed); err != nil {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "seed write failed"}
@@ -74,16 +80,30 @@ func VerifyManagedRegionOwnership(probe Probe, configPath string, seed string) C
 	if applied.Kind != OutcomeWritten {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "first apply reported " + applied.Kind}
 	}
-	edited, _ := LocalIO{}.ReadTextIfExists(configPath)
-	edited = probe.MutateManagedRegion(edited)
+	edited, _, err := LocalIO{}.ReadText(configPath)
+	if err != nil {
+		return Check{Semantic: "managed-region-ownership", Detail: failureReason("read", err)}
+	}
+	mutated := probe.MutateManagedRegion(edited)
+	if mutated == edited {
+		return Check{Semantic: "managed-region-ownership", Detail: "probe did not change any managed bytes"}
+	}
+	edited = mutated
 	if err := AtomicWrite(LocalIO{}, configPath, edited); err != nil {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "edit write failed"}
 	}
 	reapplied := probe.Apply(false)
+	if reapplied.Kind == OutcomeRefused {
+		current, _, err := LocalIO{}.ReadText(configPath)
+		return Check{Semantic: "managed-region-ownership", OK: err == nil && current == edited, Detail: "edited managed values refused without mutation"}
+	}
 	if reapplied.Kind != OutcomeWritten {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "apply over a region difference reported " + reapplied.Kind}
 	}
-	current, _ := LocalIO{}.ReadTextIfExists(configPath)
+	current, _, err := LocalIO{}.ReadText(configPath)
+	if err != nil {
+		return Check{Semantic: "managed-region-ownership", Detail: failureReason("read", err)}
+	}
 	if current == edited {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "re-apply left the region content unchanged"}
 	}
@@ -94,7 +114,10 @@ func VerifyManagedRegionOwnership(probe Probe, configPath string, seed string) C
 	if rolledBack.Kind != OutcomeWritten {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "rollback reported " + rolledBack.Kind}
 	}
-	restored, _ := LocalIO{}.ReadTextIfExists(configPath)
+	restored, _, err := LocalIO{}.ReadText(configPath)
+	if err != nil {
+		return Check{Semantic: "managed-region-ownership", Detail: failureReason("read", err)}
+	}
 	if restored != probe.Strip(seed) {
 		return Check{Semantic: "managed-region-ownership", OK: false, Detail: "rollback changed user bytes outside the managed region"}
 	}
@@ -115,7 +138,10 @@ func VerifyRollbackPreservesUserBytes(probe Probe, configPath string, seed strin
 	if rolledBack.Kind != OutcomeWritten {
 		return Check{Semantic: "rollback-exact", OK: false, Detail: "rollback reported " + rolledBack.Kind}
 	}
-	restored, _ := LocalIO{}.ReadTextIfExists(configPath)
+	restored, _, err := LocalIO{}.ReadText(configPath)
+	if err != nil {
+		return Check{Semantic: "rollback-exact", Detail: failureReason("read", err)}
+	}
 	if restored != seed {
 		return Check{Semantic: "rollback-exact", OK: false, Detail: "rollback did not restore the user bytes verbatim"}
 	}
@@ -130,12 +156,14 @@ func VerifyRollbackPreservesUserBytes(probe Probe, configPath string, seed strin
 }
 
 func VerifyIntegration(probe Probe, configPath string, seed string) []Check {
-	return []Check{
-		VerifyReapplyIsStable(probe, configPath, seed),
-		VerifyCrashRecovery(probe, configPath, seed),
-		VerifyManagedRegionOwnership(probe, configPath, seed),
-		VerifyRollbackPreservesUserBytes(probe, configPath, seed),
+	checks := make([]Check, 0, 4)
+	for _, run := range []func(Probe, string, string) Check{VerifyReapplyIsStable, VerifyCrashRecovery, VerifyManagedRegionOwnership, VerifyRollbackPreservesUserBytes} {
+		if err := (LocalIO{}).RemoveDurable(restorationPath(configPath)); err != nil {
+			return []Check{{Semantic: "fixture-reset", Detail: failureReason("reset", err)}}
+		}
+		checks = append(checks, run(probe, configPath, seed))
 	}
+	return checks
 }
 
 type fencedProbe struct {

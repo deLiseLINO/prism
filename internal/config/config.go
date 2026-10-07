@@ -97,12 +97,20 @@ const (
 
 func (m ModelMode) Valid() bool { return m == "" || m == ModelModeLogical || m == ModelModeRaw }
 
+type ModelCatalog struct {
+	BaseURL   string   `json:"baseURL"`
+	Account   string   `json:"account"`
+	Project   string   `json:"project"`
+	RawModels []string `json:"rawModels"`
+}
+
 type Provider struct {
 	Wire           Wire                       `json:"wire"`
 	BaseURL        string                     `json:"baseURL,omitempty"`
 	APIKeyRef      string                     `json:"apiKeyRef,omitempty"`
 	DefaultModel   string                     `json:"defaultModel,omitempty"`
 	ModelMode      ModelMode                  `json:"modelMode,omitempty"`
+	ModelCatalogs  []ModelCatalog             `json:"modelCatalogs,omitempty"`
 	Models         []string                   `json:"models,omitempty"`
 	DisabledModels []string                   `json:"disabledModels,omitempty"`
 	SyncedModels   []string                   `json:"syncedModels,omitempty"`

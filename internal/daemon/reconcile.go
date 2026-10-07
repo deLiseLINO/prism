@@ -222,7 +222,7 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 			WarningSink: func(w string) { log.Printf("prism: codex %s warning: %s", id, w) },
 		}, nil
 	case config.WireAntigravity:
-		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.streamClient, p.BaseURL)
+		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.streamClient, p.BaseURL, func() config.Provider { return e.cfg.Get().Config.Providers[id] })
 	case config.WireOpenAIResponses, config.WireOpenAIChat, config.WireAnthropicMessages:
 		return wireDispatcher{
 			creds:     &e.creds,
@@ -288,7 +288,7 @@ func (r clineAuthRunner) Run(ctx context.Context, req provider.RunRequest, sink 
 
 func (e *daemonEnv) reconcileOnce(ctx context.Context) {
 	snap := e.cfg.Get()
-	if e.codex != nil {
+	if e.codex != nil && snap.Config.Integrations["codex"].Enabled && e.codex.ManagedBinding() {
 		if err := e.codex.RefreshCatalog(); err != nil {
 			log.Printf("prism: reconcile codex catalog: %v", err)
 		}

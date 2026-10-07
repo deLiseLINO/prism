@@ -1095,15 +1095,16 @@ func TestStatsJSONFieldsSnakeCase(t *testing.T) {
 func boolPtr(v bool) *bool { return &v }
 
 type fakeSyncer struct {
-	models map[string][]ListedModel
-	err    error
+	models   map[string][]ListedModel
+	err      error
+	catalogs map[string]*config.ModelCatalog
 }
 
-func (f *fakeSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) ([]ListedModel, error) {
+func (f *fakeSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) (ModelListing, error) {
 	if f.err != nil {
-		return nil, f.err
+		return ModelListing{}, f.err
 	}
-	return f.models[id], nil
+	return ModelListing{Models: f.models[id], Catalog: f.catalogs[id]}, nil
 }
 
 func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
@@ -1118,6 +1119,8 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 			"ag": {
 				Wire:           config.WireAntigravity,
 				Enabled:        &enabled,
+				ModelCatalogs:  []config.ModelCatalog{{BaseURL: "https://catalog.example", Account: "ag:a", Project: "project", RawModels: []string{"gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered"}}},
+				BaseURL:        "https://catalog.example",
 				Models:         []string{"gemini-3.7-flash-low", "gemini-3.7-flash-high", "claude-opus-4", "chat_20706"},
 				DisabledModels: []string{"gemini-3.7-flash-low"},
 				ModelSettings: map[string]config.ModelSettings{
@@ -1167,7 +1170,7 @@ func TestSyncModelsFoldsRawStateOntoLogicalIds(t *testing.T) {
 	if s, ok := p.ModelSettings["claude-opus-4"]; !ok || s.ImageInput == nil || !*s.ImageInput {
 		t.Fatalf("non-family settings entry must survive: %+v", p.ModelSettings)
 	}
-	wantRaw := []string{"gemini-3.7-flash-high", "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-tiered"}
+	wantRaw := []string{"claude-opus-4", "gemini-3.7-flash-high", "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-tiered"}
 	if !reflect.DeepEqual(p.RawModels, wantRaw) {
 		t.Fatalf("rawModels = %v, want %v", p.RawModels, wantRaw)
 	}
@@ -1251,6 +1254,8 @@ func TestModelModeSwitchRoundTripsModelList(t *testing.T) {
 			"ag": {
 				Wire:           config.WireAntigravity,
 				Enabled:        &enabled,
+				ModelCatalogs:  []config.ModelCatalog{{BaseURL: "https://catalog.example", Account: "ag:a", Project: "project", RawModels: []string{"gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered"}}},
+				BaseURL:        "https://catalog.example",
 				Models:         []string{"gemini-3.7-flash", "chat_20706"},
 				DisabledModels: []string{"gemini-3.7-flash"},
 				SyncedModels:   []string{"gemini-3.7-flash", "chat_20706"},

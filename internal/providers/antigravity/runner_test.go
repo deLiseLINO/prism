@@ -92,7 +92,7 @@ func TestRunnerSendsFingerprintHeaders(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "tok-1", ProjectID: "proj-1"}}, server.Client(), server.URL)
+	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "tok-1", ProjectID: "proj-1"}}, server.Client(), server.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRunnerEnvelopeCarriesProjectAndSession(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t", ProjectID: "proj-9"}}, server.Client(), server.URL)
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t", ProjectID: "proj-9"}}, server.Client(), server.URL, nil)
 	req := testRequest()
 	req.Facts.Thread = "thread-42"
 	var sink recordingSink
@@ -153,7 +153,7 @@ func TestRunnerRetryThenSuccess(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 	runner.SetSleep(clock.Sleep)
 	runner.SetRand(func() float64 { return 0.5 })
 	var sink recordingSink
@@ -178,7 +178,7 @@ func TestRunner429BodyPeek(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"Quota exceeded for the day"}}`))
 		}))
 		defer server.Close()
-		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 		runner.SetSleep(clock.Sleep)
 		var sink recordingSink
 		err := runner.Run(context.Background(), testRequest(), &sink)
@@ -201,7 +201,7 @@ func TestRunner429BodyPeek(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"Too many requests"}}`))
 		}))
 		defer server.Close()
-		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 		runner.SetSleep(clock.Sleep)
 		runner.SetRand(func() float64 { return 0 })
 		var sink recordingSink
@@ -232,7 +232,7 @@ func TestRunnerRepairAndReplay(t *testing.T) {
 		fixedSSE(textStream())(w, r)
 	}))
 	defer server.Close()
-	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 	runner.SetSleep(clock.Sleep)
 	req := testRequest()
 	req.Request.Model = "claude-edge"
@@ -275,7 +275,7 @@ func TestRunnerRunErrorClassification(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(tc.status)
 		}))
-		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
+		runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL, nil)
 		runner.SetSleep(func(time.Duration) {})
 		runner.SetRand(func() float64 { return 0 })
 		var sink recordingSink
@@ -304,7 +304,7 @@ func TestRunnerCredentialFailureClassification(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			runner, err := NewRunner(stubCreds{err: tc.err}, http.DefaultClient, DefaultBaseURL)
+			runner, err := NewRunner(stubCreds{err: tc.err}, http.DefaultClient, DefaultBaseURL, nil)
 			if err != nil {
 				t.Fatalf("NewRunner: %v", err)
 			}
@@ -325,7 +325,7 @@ func TestRunnerCredentialFailureClassification(t *testing.T) {
 }
 
 func TestRunnerRegister(t *testing.T) {
-	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, http.DefaultClient, DefaultBaseURL)
+	runner, err := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, http.DefaultClient, DefaultBaseURL, nil)
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
@@ -342,13 +342,13 @@ func TestRunnerRegister(t *testing.T) {
 }
 
 func TestNewRunnerGuards(t *testing.T) {
-	if _, err := NewRunner(nil, http.DefaultClient, ""); err == nil {
+	if _, err := NewRunner(nil, http.DefaultClient, "", nil); err == nil {
 		t.Fatal("nil credential source must be rejected")
 	}
-	if _, err := NewRunner(stubCreds{}, nil, ""); err == nil {
+	if _, err := NewRunner(stubCreds{}, nil, "", nil); err == nil {
 		t.Fatal("nil http client must be rejected")
 	}
-	if _, err := NewRunner(stubCreds{}, http.DefaultClient, ""); err != nil {
+	if _, err := NewRunner(stubCreds{}, http.DefaultClient, "", nil); err != nil {
 		t.Fatalf("default base URL path failed: %v", err)
 	}
 }

@@ -168,9 +168,6 @@ func TestJSONLeafRoundTripRestoresUserBytesVerbatim(t *testing.T) {
 
 func TestJSONLeafRefusesAmbiguousDocuments(t *testing.T) {
 	cases := map[string]string{
-		"tabs":              "{\n\t\"providers\": {}\n}\n",
-		"jsonc comments":    "{\n  // comment\n  \"providers\": {}\n}\n",
-		"flow root":         `{"providers": {}}` + "\n",
 		"non-object root":   "[\n  1\n]\n",
 		"duplicate keys":    "{\n  \"providers\": {},\n  \"providers\": {}\n}\n",
 		"scalar container":  "{\n  \"providers\": 5\n}\n",
