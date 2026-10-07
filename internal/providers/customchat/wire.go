@@ -233,7 +233,12 @@ func messagesFrom(req canon.Request) ([]message, error) {
 				}
 			}
 			out = append(out, message{Role: "tool", Content: text, ToolCallID: string(output.CallID)})
-		case canon.ReasoningItem, canon.CompactionMarker, canon.LocalShellCall, canon.LocalShellOutput, canon.ToolSearchCall, canon.ToolSearchOutput:
+		case canon.CompactionMarker:
+			marker := req.Input[i].(canon.CompactionMarker)
+			if !marker.State.IsEmpty() {
+				return nil, fmt.Errorf("customchat input: opaque compaction cannot be represented on this wire")
+			}
+		case canon.ReasoningItem, canon.LocalShellCall, canon.LocalShellOutput, canon.ToolSearchCall, canon.ToolSearchOutput:
 			continue
 		default:
 			return nil, fmt.Errorf("customchat input: unsupported canonical item %T", req.Input[i])

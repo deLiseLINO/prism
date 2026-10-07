@@ -169,8 +169,10 @@ type ToolSearchResult struct {
 }
 
 type CompactionMarker struct {
-	ID   ItemID
-	Kind CompactionKind
+	ID    ItemID
+	Kind  CompactionKind
+	Type  string
+	State OpaqueRef
 }
 
 func (Message) item()          {}

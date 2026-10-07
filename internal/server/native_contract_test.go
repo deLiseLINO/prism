@@ -194,7 +194,10 @@ func TestNativeEmptyCompletionOverHTTP(t *testing.T) {
 			if streaming {
 				terminals := 0
 				for _, line := range strings.Split(string(body), "\n") {
-					if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+					if !strings.HasPrefix(line, "data: ") {
+						continue
+					}
+					if strings.TrimSpace(line[6:]) == "[DONE]" {
 						continue
 					}
 					var event struct {

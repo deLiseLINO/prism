@@ -158,23 +158,16 @@ func TestParseExoticItems(t *testing.T) {
 		t.Fatalf("input[2]: %#v", req.Input[2])
 	}
 	for i, item := range req.Input[3:] {
-		msg, ok := item.(canon.Message)
-		if !ok || msg.Role != canon.RoleUser || len(msg.Content) != 1 {
+		marker, ok := item.(canon.CompactionMarker)
+		if !ok || marker.State.Store != canon.StoreWire || marker.State.Key == "" {
 			t.Fatalf("input[%d]: %#v", i+3, item)
-		}
-		text, ok := msg.Content[0].(canon.TextContent)
-		if !ok || text.Text != opaqueCompactionNote {
-			t.Fatalf("input[%d] content: %#v", i+3, msg.Content[0])
-		}
-		if msg.ID != "" {
-			t.Fatalf("input[%d] synthesized id %q", i+3, msg.ID)
 		}
 	}
 	kinds := map[string]int{}
 	for _, w := range sink.warnings {
 		kinds[w.Kind]++
 	}
-	if kinds[WarnOpaquePayload] != 2 {
+	if kinds[WarnOpaquePayload] != 0 {
 		t.Fatalf("opaque payload warnings: %+v", sink.warnings)
 	}
 	if kinds[WarnExoticItem] != 1 {

@@ -272,6 +272,14 @@ func inputFrom(items []canon.Item) ([]inputItem, error) {
 				output = parts
 			}
 			out = append(out, inputItem{Type: "custom_tool_call_output", CallID: string(m.CallID), Output: output})
+		case canon.CompactionMarker:
+			if m.State.Store == canon.StoreWire && m.State.Key != "" {
+				typ := m.Type
+				if typ == "" {
+					typ = "compaction"
+				}
+				out = append(out, inputItem{Type: typ, EncryptedContent: m.State.Key})
+			}
 		case canon.LocalShellCall, canon.LocalShellOutput, canon.ToolSearchCall, canon.ToolSearchOutput:
 			continue
 		default:
