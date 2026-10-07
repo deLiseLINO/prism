@@ -157,7 +157,13 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 		wireReq := req
 		wireReq.Model = target.Model
 		started := j.Now()
-		err = provider.Waiting(runner).Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f}, capture)
+		observeCredential := func(gen account.CredentialGeneration) {
+			if gen == 0 || gen == lease.CredGen {
+				return
+			}
+			lease.CredGen = gen
+		}
+		err = provider.Waiting(runner).Run(ctx, provider.RunRequest{Request: wireReq, Target: target, Lease: lease, Facts: f, CredentialObserver: observeCredential}, capture)
 		logAttempt := func(outcome requestlog.Outcome, msg string) {
 			j.Attempt(requestlog.AttemptInfo{
 				Provider:  target.Provider,

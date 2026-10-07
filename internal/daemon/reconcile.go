@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/account"
@@ -43,6 +44,7 @@ type daemonEnv struct {
 	client         *http.Client
 	streamClient   *http.Client
 	repos          map[account.ProviderID]*account.Repository
+	reposMu        sync.Mutex
 	flows          map[account.ProviderID]auth.Flow
 	refresher      *auth.Refresher
 	wires          map[account.ProviderID]config.Wire
@@ -79,12 +81,26 @@ func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Prov
 	if err != nil {
 		return fmt.Errorf("prism: provider %s: %w", id, err)
 	}
-	if len(accounts) == 0 && p.Wire.Custom() {
+	if p.Wire.Custom() {
 		defaultID := account.AccountID(id + ":default")
-		e.pool.Register(account.Account{ID: defaultID, Provider: providerID, State: account.Active, CredGen: 1, Version: 1})
-	}
-	for _, a := range accounts {
-		e.pool.Register(a)
+		gen, err := e.creds.file.CustomDefaultGeneration(ctx, providerID, p.APIKeyRef)
+		if err != nil {
+			return err
+		}
+		if len(accounts) == 0 {
+			e.pool.Register(account.Account{ID: defaultID, Provider: providerID, State: account.Active, CredGen: gen, Version: 1})
+		} else {
+			for _, a := range accounts {
+				if a.ID == defaultID {
+					a.CredGen = gen
+				}
+				e.pool.Register(a)
+			}
+		}
+	} else {
+		for _, a := range accounts {
+			e.pool.Register(a)
+		}
 	}
 	e.ensureFlows(providerID, p.Wire)
 	runner, err := e.buildRunner(id, p)
@@ -95,10 +111,17 @@ func (e *daemonEnv) ensureProvider(ctx context.Context, id string, p config.Prov
 		return err
 	}
 	e.wires[providerID] = p.Wire
+	if e.creds.publication != nil && p.Wire.Custom() {
+		e.creds.publication.mu.Lock()
+		e.creds.publication.refs[id] = p.APIKeyRef
+		e.creds.publication.mu.Unlock()
+	}
 	return nil
 }
 
 func (e *daemonEnv) ensureRepo(providerID account.ProviderID, pool *config.PoolSettings) *account.Repository {
+	e.reposMu.Lock()
+	defer e.reposMu.Unlock()
 	if repo, ok := e.repos[providerID]; ok {
 		return repo
 	}
@@ -202,6 +225,7 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 		return antigravity.NewRunner(antigravityCreds{ref: e.refresher}, e.streamClient, p.BaseURL)
 	case config.WireOpenAIResponses, config.WireOpenAIChat, config.WireAnthropicMessages:
 		return wireDispatcher{
+			creds:     &e.creds,
 			responses: customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}),
 			chat:      customchat.New(customKey{e.creds}.Resolve, customchat.Options{}),
 			messages:  anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.streamClient}), creds: e.creds, provider: providerID},
@@ -218,28 +242,46 @@ func clineRunner(e *daemonEnv, p config.Provider) provider.Runner {
 	for name, value := range cline.ProductHeaders() {
 		extra = append(extra, customchat.Header{Name: name, Value: value})
 	}
-	resolve := func(ctx context.Context, target provider.Target, lease account.Lease) (string, error) {
-		cred, err := e.refresher.Credential(ctx, lease)
-		if err != nil {
-			return "", err
-		}
-		return cred.Access, nil
+	resolve := func(_ context.Context, target provider.Target, _ account.Lease) (string, error) {
+		return target.APIKeyRef, nil
 	}
 	inner := customchat.New(resolve, customchat.Options{ExtraHeaders: extra, Client: &http.Client{Transport: cline.UnwrapTransport{}}})
-	return clineAuthRunner{inner: inner, chatBase: cline.GatewayBase(p.BaseURL)}
+	return clineAuthRunner{inner: inner, chatBase: cline.GatewayBase(p.BaseURL), env: e}
 }
 
 type clineAuthRunner struct {
 	inner    provider.Runner
 	chatBase string
+	env      *daemonEnv
 }
 
 func (r clineAuthRunner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
-	if req.Target.APIKeyRef == "" {
-		req.Target.APIKeyRef = "lease"
+	if r.env.refresher == nil {
+		return provider.CredentialRunError(fmt.Errorf("credential refresher is not configured"))
 	}
+	cred, err := r.env.refresher.Credential(ctx, req.Lease)
+	if err != nil {
+		return provider.CredentialRunError(err)
+	}
+	req.Target.APIKeyRef = cred.Access
 	if r.chatBase != "" {
 		req.Target.BaseURL = r.chatBase + "/api/v1"
+	}
+	if req.CredentialObserver != nil {
+		req.CredentialObserver(cred.Generation)
+	}
+	err = r.inner.Run(ctx, req, sink)
+	var runErr provider.RunError
+	if !errors.As(err, &runErr) || runErr.Class != provider.ClassUnauthorized || runErr.Kind == provider.TerminalEmitted || runErr.Kind == provider.UnsafeReplay {
+		return err
+	}
+	cred, err = r.env.refresher.RefreshRejected(ctx, req.Lease, cred.Access)
+	if err != nil {
+		return provider.CredentialRunError(err)
+	}
+	req.Target.APIKeyRef = cred.Access
+	if req.CredentialObserver != nil {
+		req.CredentialObserver(cred.Generation)
 	}
 	return r.inner.Run(ctx, req, sink)
 }
@@ -276,6 +318,10 @@ func (e *daemonEnv) reconcileOnce(ctx context.Context) {
 			log.Printf("prism: provider %s wire %q applied without restart", id, p.Wire)
 		}
 		if p.Wire.Custom() && p.BaseURL != "" {
+			if err := e.creds.Committed(context.Background(), id, p, p); err != nil {
+				log.Printf("prism: provider %s credential publication: %v", id, err)
+				continue
+			}
 			e.syncCustomProvider(ctx, id, p)
 		}
 	}
@@ -289,7 +335,7 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 		return
 	}
 	doc := snap.Config
-	if current.APIKeyRef == "" && e.storedKey(ctx, pid) != "" {
+	if current.APIKeyRef == "" && e.storedKey(ctx, pid, current.APIKeyRef) != "" {
 		current.APIKeyRef = id + ":default"
 		doc.Providers[id] = current
 	}
@@ -299,7 +345,7 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 			return
 		}
 		e.lastDiscover[pid] = e.now()
-		models, err := fetchModels(ctx, e.client, current.BaseURL, e.storedKey(ctx, pid))
+		models, err := fetchModels(ctx, e.client, current.BaseURL, e.storedKey(ctx, pid, current.APIKeyRef))
 		if err != nil {
 			log.Printf("prism: discover models for %s: %v", id, err)
 			e.saveDoc(id, p, doc, snap.Generation)
@@ -318,15 +364,20 @@ func (e *daemonEnv) saveDoc(id string, prev config.Provider, doc config.Document
 	if current.APIKeyRef == prev.APIKeyRef && len(current.Models) == len(prev.Models) {
 		return
 	}
-	if _, err := e.cfg.Update(doc, generation); err != nil {
+	updated, err := e.cfg.Update(doc, generation)
+	if err != nil {
 		if !errors.Is(err, config.ErrStaleGeneration) {
 			log.Printf("prism: provider %s sync: %v", id, err)
 		}
+		return
+	}
+	if err := e.creds.Committed(context.Background(), id, prev, updated.Config.Providers[id]); err != nil {
+		log.Printf("prism: provider %s credential publication: %v", id, err)
 	}
 }
 
-func (e *daemonEnv) storedKey(ctx context.Context, providerID account.ProviderID) string {
-	b, err := e.creds.blob(ctx, providerID, account.AccountID(string(providerID)+":default"), 1)
+func (e *daemonEnv) storedKey(ctx context.Context, providerID account.ProviderID, ref string) string {
+	b, _, err := e.creds.file.GetCustomDefaultSecret(ctx, providerID, ref)
 	if err != nil {
 		return ""
 	}

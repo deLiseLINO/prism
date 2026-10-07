@@ -101,8 +101,9 @@ func TestRecordStaleOutcomeNeverMutatesState(t *testing.T) {
 	if restored.State != NeedsReauth || restored.Version != 2 {
 		t.Fatalf("auth rejected: got state %d version %d, want NeedsReauth/2", restored.State, restored.Version)
 	}
-	restored.State = Active
-	p.Register(restored)
+	if err := p.Resume(ctx, restored.ID, restored.Version); err != nil {
+		t.Fatal(err)
+	}
 	l2, err := p.Acquire(ctx, req("s2"))
 	if err != nil {
 		t.Fatalf("acquire restored: %v", err)
@@ -111,8 +112,8 @@ func TestRecordStaleOutcomeNeverMutatesState(t *testing.T) {
 		t.Fatalf("stale record: %v", err)
 	}
 	snap := p.Snapshot().Accounts[0]
-	if snap.State != Active || snap.Version != 2 {
-		t.Fatalf("stale outcome mutated state: got %d/%d, want Active/2", snap.State, snap.Version)
+	if snap.State != Active || snap.Version != 3 {
+		t.Fatalf("stale outcome mutated state: got %d/%d, want Active/3", snap.State, snap.Version)
 	}
 	if snap.InFlight != 0 {
 		t.Fatalf("stale outcome did not release in-flight lease: got %d", snap.InFlight)
@@ -121,8 +122,8 @@ func TestRecordStaleOutcomeNeverMutatesState(t *testing.T) {
 		t.Fatalf("current record: %v", err)
 	}
 	snap = p.Snapshot().Accounts[0]
-	if snap.State != Active || snap.Version != 2 || snap.InFlight != 0 {
-		t.Fatalf("success on active account: got state %d version %d in-flight %d, want Active/2/0", snap.State, snap.Version, snap.InFlight)
+	if snap.State != Active || snap.Version != 3 || snap.InFlight != 0 {
+		t.Fatalf("success on active account: got state %d version %d in-flight %d, want Active/3/0", snap.State, snap.Version, snap.InFlight)
 	}
 }
 
@@ -499,5 +500,39 @@ func TestUpdateQuotaStoresDeepCopy(t *testing.T) {
 	}
 	if err := p.UpdateQuota("ghost", snap); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update quota ghost: got %v, want ErrNotFound", err)
+	}
+}
+
+func TestPolicyPersistenceFailureLeavesRuntimeUnchanged(t *testing.T) {
+	p := New()
+	p.Register(acct("a", 1, Active, 200, 0))
+	p.SetPolicyWriter(func(Account) error { return errors.New("disk unavailable") })
+	before := p.Snapshot().Accounts[0]
+	if err := p.Pause(context.Background(), before.ID, before.Version); err == nil {
+		t.Fatal("pause ignored persistence failure")
+	}
+	after := p.Snapshot().Accounts[0]
+	if after.State != before.State || after.Version != before.Version || after.CredGen != before.CredGen {
+		t.Fatalf("failed pause mutated account: %+v", after)
+	}
+}
+
+func TestRejectionOfRefreshedGenerationReleasesStaleLease(t *testing.T) {
+	p := New()
+	p.Register(acct("a", 1, Active, 200, 0))
+	ctx := context.Background()
+	old, err := p.Acquire(ctx, pin("old", "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AdvanceGeneration("a", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Record(ctx, old, AuthRejected{}); err != nil {
+		t.Fatal(err)
+	}
+	a := p.Snapshot().Accounts[0]
+	if a.State != Active || a.InFlight != 0 || a.CredGen != 2 {
+		t.Fatalf("stale rejection=%+v", a)
 	}
 }

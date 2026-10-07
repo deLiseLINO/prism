@@ -19,10 +19,17 @@ import (
 type CredentialPair struct {
 	AccessToken string
 	ProjectID   string
+	Generation  account.CredentialGeneration
 }
 
 type CredentialSource interface {
 	Credential(ctx context.Context, lease account.Lease) (CredentialPair, error)
+}
+
+// CredentialRenewer is an optional CredentialSource capability: it replaces
+// an access token the upstream rejected even though it had not expired.
+type CredentialRenewer interface {
+	RefreshRejected(ctx context.Context, lease account.Lease, rejected string) (CredentialPair, error)
 }
 
 type Runner struct {
@@ -137,6 +144,9 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("User-Agent", RequestUserAgent())
 		httpReq.Header.Set("Authorization", "Bearer "+creds.AccessToken)
+		if req.CredentialObserver != nil {
+			req.CredentialObserver(creds.Generation)
+		}
 		resp, err := r.client.Do(httpReq)
 		if err != nil {
 			cancel()

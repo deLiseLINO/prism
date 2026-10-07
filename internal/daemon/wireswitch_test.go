@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/provider"
@@ -33,7 +34,13 @@ func runRouterTurn(t *testing.T, env *daemonEnv, wire provider.Wire, baseURL str
 		t.Fatalf("router runner not registered")
 	}
 	sink := &countSink{}
+	lease, err := env.pool.Acquire(context.Background(), account.AcquireRequest{Provider: "router"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.pool.Record(context.Background(), lease, account.RequestRejected{})
 	return runner.Run(context.Background(), provider.RunRequest{
+		Lease: lease,
 		Request: canon.Request{
 			Model:  "glm-5.3",
 			Stream: true,
@@ -138,11 +145,17 @@ func TestModelWireOverrideDispatchesPerModel(t *testing.T) {
 	}
 	planner := mgr.Get().Config
 	run := func(model string) error {
+		lease, err := env.pool.Acquire(context.Background(), account.AcquireRequest{Provider: "router"})
+		if err != nil {
+			return err
+		}
+		defer env.pool.Record(context.Background(), lease, account.RequestRejected{})
 		wire := provider.WireResponses
 		if planner.ResolveWire("router", model) == config.WireOpenAIChat {
 			wire = provider.WireChat
 		}
 		return runner.Run(context.Background(), provider.RunRequest{
+			Lease: lease,
 			Request: canon.Request{
 				Model:  canon.ModelID(model),
 				Stream: true,

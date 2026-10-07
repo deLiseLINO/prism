@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/quota"
@@ -82,6 +83,7 @@ func (q metaQuota) snapshot() (quota.Snapshot, error) {
 // Repository owns the durable non-secret account metadata file for one provider.
 type Repository struct {
 	path string
+	mu   sync.Mutex
 	now  func() time.Time
 }
 
@@ -122,6 +124,16 @@ func (r *Repository) CurrentGeneration(providerID ProviderID, id AccountID) (Cre
 // The row must currently reference fromGen; anything else is a stale writer.
 // fromGen 0 with no existing row inserts a fresh record.
 func (r *Repository) CASGeneration(providerID ProviderID, id AccountID, fromGen, toGen CredentialGeneration, email string) error {
+	return r.casGeneration(providerID, id, fromGen, toGen, email, false)
+}
+
+func (r *Repository) CASLoginGeneration(providerID ProviderID, id AccountID, fromGen, toGen CredentialGeneration, email string) error {
+	return r.casGeneration(providerID, id, fromGen, toGen, email, true)
+}
+
+func (r *Repository) casGeneration(providerID ProviderID, id AccountID, fromGen, toGen CredentialGeneration, email string, login bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if toGen == 0 {
 		return fmt.Errorf("accounts %s: credential generation must be positive", r.path)
 	}
@@ -138,6 +150,9 @@ func (r *Repository) CASGeneration(providerID ProviderID, id AccountID, fromGen,
 			return ErrStale
 		}
 		records[i].CredGen = uint64(toGen)
+		if login && records[i].State == metaStateNeedsReauth {
+			records[i].State = metaStateActive
+		}
 		if email != "" {
 			records[i].Email = email
 		}
@@ -163,6 +178,8 @@ func (r *Repository) CASGeneration(providerID ProviderID, id AccountID, fromGen,
 // generation, creating the row when absent. Priority, state, quota, email, and
 // creation time of an existing row are preserved.
 func (r *Repository) Ensure(providerID ProviderID, id AccountID, gen CredentialGeneration, email string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if gen == 0 {
 		return fmt.Errorf("accounts %s: credential generation must be positive", r.path)
 	}
@@ -198,6 +215,8 @@ func (r *Repository) Ensure(providerID ProviderID, id AccountID, gen CredentialG
 // ErrNotFound; credential blobs are owned by the credential store and are
 // cleaned up by the management deletion path.
 func (r *Repository) Delete(providerID ProviderID, id AccountID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	records, err := r.read(providerID)
 	if err != nil {
 		return err
@@ -220,6 +239,8 @@ func (r *Repository) Delete(providerID ProviderID, id AccountID) error {
 // SetState updates the durable state of an existing account row. The row must
 // already exist; credential generations and metadata are untouched.
 func (r *Repository) SetState(providerID ProviderID, id AccountID, state State) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	records, err := r.read(providerID)
 	if err != nil {
 		return err
@@ -229,6 +250,9 @@ func (r *Repository) SetState(providerID ProviderID, id AccountID, state State) 
 		if records[i].ID != string(id) {
 			continue
 		}
+		if state == NeedsReauth && records[i].State == metaStatePaused {
+			return nil
+		}
 		records[i].State = metaStateFor(state)
 		records[i].UpdatedAt = r.now().UTC().Format(time.RFC3339)
 		found = true
@@ -236,6 +260,29 @@ func (r *Repository) SetState(providerID ProviderID, id AccountID, state State) 
 	if !found {
 		return fmt.Errorf("accounts %s: account %s not found", r.path, id)
 	}
+	return r.write(metaFile{Version: metaSchemaVersion, Accounts: records})
+}
+
+func (r *Repository) SavePolicy(a Account) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	records, err := r.read(a.Provider)
+	if err != nil {
+		return err
+	}
+	now := r.now().UTC().Format(time.RFC3339)
+	for i := range records {
+		if records[i].ID == string(a.ID) {
+			records[i].Priority = a.Priority
+			records[i].State = metaStateFor(a.State)
+			records[i].UpdatedAt = now
+			return r.write(metaFile{Version: metaSchemaVersion, Accounts: records})
+		}
+	}
+	if a.CredGen == 0 {
+		return ErrNotFound
+	}
+	records = append(records, metaRecord{ID: string(a.ID), Provider: string(a.Provider), Priority: a.Priority, State: metaStateFor(a.State), CredGen: uint64(a.CredGen), Email: a.Email, CreatedAt: now, UpdatedAt: now})
 	return r.write(metaFile{Version: metaSchemaVersion, Accounts: records})
 }
 

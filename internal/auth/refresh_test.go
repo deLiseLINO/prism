@@ -481,7 +481,7 @@ func TestStaleRefreshAdoptsReLoginGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
-	if got.Access != "relogin-access-token" {
+	if got.Access != "relogin-access-token" || got.Generation != 2 {
 		t.Fatalf("stale refresh returned %+v", got)
 	}
 	if h.tokens.requests() != 0 || h.repoGen() != 2 {
@@ -618,7 +618,7 @@ func TestOrphanedGenerationIgnoredOnRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
-	if got.Access != cred.Access {
+	if got.Access != cred.Access || got.Generation != 1 {
 		t.Fatalf("restart must use the repository-referenced generation, got %+v", got)
 	}
 	if h.tokens.requests() != 0 || h.repoGen() != 1 {
@@ -666,7 +666,7 @@ func TestPoolLaggingBehindRepositoryAligned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credential: %v", err)
 	}
-	if got.Access != "recovered-token" {
+	if got.Access != "recovered-token" || got.Generation != 2 {
 		t.Fatalf("credential = %+v", got)
 	}
 	if h.poolAccount().CredGen != 2 {
@@ -712,5 +712,65 @@ func TestRefreshUsesContextOnHTTPRequest(t *testing.T) {
 	cancel()
 	if _, err := h.ref.Credential(ctx, h.lease); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func freshCodex() account.Credential {
+	c := expiringCodex()
+	c.ExpiresAt = testNow().Add(time.Hour)
+	return c
+}
+
+func TestRefreshRejectedExchangesFreshLookingCredentialOnce(t *testing.T) {
+	h := newRefreshHarness(t, "codex")
+	h.seed(freshCodex())
+	h.tokens.respond(http.StatusOK, `{"access_token":"new-access-token","refresh_token":"new-refresh-grant","expires_in":3600}`)
+	ctx := context.Background()
+
+	if got, err := h.ref.Credential(ctx, h.lease); err != nil || got.Access != "old-access-token" {
+		t.Fatalf("plain Credential = %+v, %v; want the stored fresh token", got, err)
+	}
+	var wg sync.WaitGroup
+	results := make([]account.Credential, 4)
+	errs := make([]error, 4)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = h.ref.RefreshRejected(ctx, h.lease, "old-access-token")
+		}()
+	}
+	wg.Wait()
+	for i := range results {
+		if errs[i] != nil || results[i].Access != "new-access-token" {
+			t.Fatalf("caller %d: %+v, %v; want the renewed token", i, results[i], errs[i])
+		}
+	}
+	if h.tokens.requests() != 1 || h.repoGen() != 2 || h.poolAccount().CredGen != 2 {
+		t.Fatalf("requests=%d gen=%d poolGen=%d, want one exchange and generation 2", h.tokens.requests(), h.repoGen(), h.poolAccount().CredGen)
+	}
+}
+
+func TestStaleGenerationPublicationDoesNotTouchReferencedBlob(t *testing.T) {
+	h := newRefreshHarness(t, "codex")
+	h.seed(freshCodex())
+	if err := h.file.Put(context.Background(), h.provider, h.acc, 2, account.Credential{Access: "replacement"}.Encode()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.repo.CASGeneration(h.provider, h.acc, 1, 2, ""); err != nil {
+		t.Fatal(err)
+	}
+	publication, err := lockPublication(context.Background(), h.file, h.provider, h.acc, refreshWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publication.lock.Release()
+	err = publication.write(context.Background(), h.repo, 1, 2, account.Credential{Access: "stale"}.Encode(), "", false)
+	if !errors.Is(err, account.ErrStale) {
+		t.Fatalf("stale write=%v", err)
+	}
+	cred, ok := h.blobAt(2)
+	if !ok || cred.Access != "replacement" || h.repoGen() != 2 {
+		t.Fatalf("stale write changed active credential=%+v", cred)
 	}
 }

@@ -89,6 +89,19 @@ func NewRefresher(opts RefresherOptions) (*Refresher, error) {
 // expiring outside the provider's skew window is returned unchanged; an
 // expiring one is refreshed at most once per account across processes.
 func (r *Refresher) Credential(ctx context.Context, lease account.Lease) (account.Credential, error) {
+	return r.credential(ctx, lease, "")
+}
+
+// RefreshRejected renews the credential after the upstream refused rejected
+// (an access token the expiry check still considered fresh, e.g. revoked or
+// rotated server-side). A newer credential another actor already stored is
+// returned as is; otherwise the refresh grant is exchanged regardless of the
+// recorded expiry, at most once per account across processes.
+func (r *Refresher) RefreshRejected(ctx context.Context, lease account.Lease, rejected string) (account.Credential, error) {
+	return r.credential(ctx, lease, rejected)
+}
+
+func (r *Refresher) credential(ctx context.Context, lease account.Lease, rejected string) (account.Credential, error) {
 	if err := ctx.Err(); err != nil {
 		return account.Credential{}, err
 	}
@@ -110,6 +123,22 @@ func (r *Refresher) Credential(ctx context.Context, lease account.Lease) (accoun
 	} else {
 		return account.Credential{}, fmt.Errorf("auth: unknown provider %s", lease.Provider)
 	}
+	current, err := repo.CurrentGeneration(lease.Provider, lease.Account)
+	if err != nil {
+		return account.Credential{}, err
+	}
+	if current == 0 {
+		return account.Credential{}, account.ErrNotFound
+	}
+	if current < lease.CredGen {
+		return account.Credential{}, account.ErrStale
+	}
+	if current > lease.CredGen {
+		lease.CredGen = current
+		if err := r.pool.AdvanceGeneration(lease.Account, current); err != nil {
+			return account.Credential{}, err
+		}
+	}
 	if blob, ok, err := r.file.Get(ctx, lease.Provider, lease.Account, lease.CredGen); err != nil {
 		return account.Credential{}, err
 	} else if ok {
@@ -117,16 +146,17 @@ func (r *Refresher) Credential(ctx context.Context, lease account.Lease) (accoun
 		if err != nil {
 			return account.Credential{}, err
 		}
-		if fresh(cred, rf, r.now) {
+		cred.Generation = lease.CredGen
+		if usable(cred, rf, r.now, rejected) {
 			return cred, nil
 		}
 	}
-	release, err := withRefreshLock(ctx, r.file, lease.Provider, lease.Account, r.wait)
+	publication, err := lockPublication(ctx, r.file, lease.Provider, lease.Account, r.wait)
 	if err != nil {
 		return account.Credential{}, err
 	}
-	defer release()
-	return r.refreshLocked(ctx, lease, repo, rf)
+	defer publication.lock.Release()
+	return r.refreshLocked(ctx, lease, repo, rf, rejected, publication)
 }
 
 // fresh reports whether the credential may be dispatched: legacy tokens
@@ -136,21 +166,29 @@ func fresh(cred account.Credential, rf RefreshFlow, now func() time.Time) bool {
 	return cred.ExpiresAt.IsZero() || now().Before(cred.ExpiresAt.Add(-rf.RefreshSkew()))
 }
 
-// withRefreshLock holds the store's account refresh lock, retrying past the
-// store's bounded budget until the holder finishes or ctx ends. The lock is
-// the only serialization point: no in-process mutex complements it.
-func withRefreshLock(ctx context.Context, file *store.FileCredentialStore, p account.ProviderID, id account.AccountID, wait time.Duration) (func(), error) {
+func usable(cred account.Credential, rf RefreshFlow, now func() time.Time, rejected string) bool {
+	return fresh(cred, rf, now) && (rejected == "" || cred.Access != rejected)
+}
+
+type credentialPublication struct {
+	file     *store.FileCredentialStore
+	provider account.ProviderID
+	account  account.AccountID
+	lock     *store.RefreshLock
+}
+
+func lockPublication(ctx context.Context, file *store.FileCredentialStore, p account.ProviderID, id account.AccountID, wait time.Duration) (credentialPublication, error) {
 	fp := refreshFingerprint(p, id)
 	for {
 		lock, err := file.AcquireRefreshLock(ctx, fp)
 		if err == nil {
-			return func() { _ = lock.Release() }, nil
+			return credentialPublication{file: file, provider: p, account: id, lock: lock}, nil
 		}
 		if !errors.Is(err, store.ErrLockUnavailable) {
-			return nil, err
+			return credentialPublication{}, err
 		}
 		if err := waitRefresh(ctx, wait); err != nil {
-			return nil, err
+			return credentialPublication{}, err
 		}
 	}
 }
@@ -169,8 +207,7 @@ func waitRefresh(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// refreshLocked runs under the account refresh lock.
-func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo *account.Repository, rf RefreshFlow) (account.Credential, error) {
+func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo *account.Repository, rf RefreshFlow, rejected string, publication credentialPublication) (account.Credential, error) {
 	p, id := lease.Provider, lease.Account
 	gen, err := repo.CurrentGeneration(p, id)
 	if err != nil {
@@ -188,7 +225,7 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 		if err := r.pool.AdvanceGeneration(id, gen); err != nil {
 			return account.Credential{}, err
 		}
-		if fresh(cred, rf, r.now) {
+		if usable(cred, rf, r.now, rejected) {
 			return cred, nil
 		}
 		lease.CredGen = gen
@@ -197,10 +234,13 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 	if err != nil {
 		return account.Credential{}, err
 	}
-	if fresh(prev, rf, r.now) {
+	if usable(prev, rf, r.now, rejected) {
 		return prev, nil
 	}
 	if prev.Refresh == "" {
+		if rejected != "" {
+			return account.Credential{}, fmt.Errorf("%w: access token rejected and no refresh grant is stored", account.ErrNeedsReauth)
+		}
 		return account.Credential{}, fmt.Errorf("auth: credential for %s/%s has no refresh grant; reauthenticate", p, id)
 	}
 	next, err := rf.Refresh(ctx, prev)
@@ -217,12 +257,13 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 		next.AccountID = prev.AccountID
 	}
 	nextGen := gen + 1
-	if err := writeGeneration(ctx, r.file, repo, p, id, gen, nextGen, next.Encode(), next.Email); err != nil {
+	if err := publication.write(ctx, repo, gen, nextGen, next.Encode(), next.Email, false); err != nil {
 		return account.Credential{}, err
 	}
 	if err := r.pool.AdvanceGeneration(id, nextGen); err != nil {
 		return account.Credential{}, err
 	}
+	next.Generation = nextGen
 	return next, nil
 }
 
@@ -240,7 +281,9 @@ func (r *Refresher) load(ctx context.Context, p account.ProviderID, id account.A
 	if !ok {
 		return account.Credential{}, fmt.Errorf("auth: credential generation %d for %s/%s is missing", gen, p, id)
 	}
-	return account.ParseCredential(blob)
+	cred, err := account.ParseCredential(blob)
+	cred.Generation = gen
+	return cred, err
 }
 
 // classifyRefreshError maps a failed refresh to typed errors. Invalid grants
@@ -285,11 +328,18 @@ func (r *Refresher) invalidate(ctx context.Context, p account.ProviderID, id acc
 	return r.pool.MarkNeedsReauth(id)
 }
 
-// writeGeneration stores blob as gen and points the repository row at it. Any
-// blob already occupying gen is an unreferenced orphan from a crash between
-// the blob write and the repository update; the caller holds the account
-// refresh lock, so clearing it cannot race a concurrent writer.
-func writeGeneration(ctx context.Context, file *store.FileCredentialStore, repo *account.Repository, p account.ProviderID, id account.AccountID, prevGen, gen account.CredentialGeneration, blob []byte, email string) error {
+func (publication credentialPublication) write(ctx context.Context, repo *account.Repository, prevGen, gen account.CredentialGeneration, blob []byte, email string, login bool) error {
+	if publication.lock == nil {
+		return errors.New("auth: credential publication requires account lock")
+	}
+	file, p, id := publication.file, publication.provider, publication.account
+	current, err := repo.CurrentGeneration(p, id)
+	if err != nil {
+		return err
+	}
+	if current != prevGen {
+		return account.ErrStale
+	}
 	if _, ok, err := file.Get(ctx, p, id, gen); err != nil {
 		return err
 	} else if ok {
@@ -299,6 +349,9 @@ func writeGeneration(ctx context.Context, file *store.FileCredentialStore, repo 
 	}
 	if err := file.PutIdempotent(ctx, p, id, gen, blob); err != nil {
 		return err
+	}
+	if login {
+		return repo.CASLoginGeneration(p, id, prevGen, gen, email)
 	}
 	return repo.CASGeneration(p, id, prevGen, gen, email)
 }

@@ -95,13 +95,25 @@ type fakeCreds struct {
 	store     map[string][]byte
 	putErr    error
 	deleteErr error
+	staged    map[string][]byte
 }
 
-func (c *fakeCreds) Put(ctx context.Context, id string, secret []byte) error {
+func (c *fakeCreds) Stage(ctx context.Context, id, currentRef string, secret []byte) (string, error) {
 	if c.putErr != nil {
-		return c.putErr
+		return "", c.putErr
 	}
-	c.store[id] = secret
+	if c.staged == nil {
+		c.staged = map[string][]byte{}
+	}
+	c.staged[id] = append([]byte(nil), secret...)
+	return id + ":default", nil
+}
+
+func (c *fakeCreds) Committed(_ context.Context, id string, _, _ config.Provider) error {
+	if secret, ok := c.staged[id]; ok {
+		c.store[id] = secret
+		delete(c.staged, id)
+	}
 	return nil
 }
 
@@ -113,7 +125,7 @@ func (c *fakeCreds) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (c *fakeCreds) Configured(ctx context.Context, id string) (bool, error) {
+func (c *fakeCreds) Configured(ctx context.Context, id, ref string) (bool, error) {
 	_, ok := c.store[id]
 	return ok, nil
 }

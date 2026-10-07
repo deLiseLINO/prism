@@ -37,7 +37,7 @@ func testEnv(t *testing.T, doc config.Document) (*daemonEnv, *config.Manager) {
 		pool,
 		newQuotaTable(pool, nil, nil),
 		provider.NewRegistry(),
-		credentialStore{file: store.NewFileCredentialStore(filepath.Join(dir, "credentials"))},
+		credentialStore{file: store.NewFileCredentialStore(filepath.Join(dir, "credentials")), pool: pool, publication: &credentialPublication{cfg: mgr, refs: map[string]string{}}},
 		http.DefaultClient,
 		http.DefaultClient,
 	)
@@ -162,7 +162,7 @@ func TestReconcileSetsKeyRefFromStoredCredential(t *testing.T) {
 			"edge": {Wire: config.WireOpenAIResponses, BaseURL: srv.URL + "/v1"},
 		},
 	})
-	if err := env.creds.Put(context.Background(), "edge", []byte("test-key")); err != nil {
+	if err := env.creds.file.Put(context.Background(), "edge", "edge:default", 1, []byte("test-key")); err != nil {
 		t.Fatalf("store credential: %v", err)
 	}
 
@@ -174,6 +174,14 @@ func TestReconcileSetsKeyRefFromStoredCredential(t *testing.T) {
 	}
 	if len(got.Models) != 1 || got.Models[0] != "m1" {
 		t.Fatalf("models not discovered: %v", got.Models)
+	}
+	lease, err := env.pool.Acquire(context.Background(), account.AcquireRequest{Provider: "edge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := env.creds.resolve(context.Background(), provider.Target{Provider: "edge", APIKeyRef: got.APIKeyRef}, lease)
+	if err != nil || string(key) != "test-key" || lease.CredGen != 1 {
+		t.Fatalf("legacy key did not activate immediately: key=%q lease=%+v err=%v", key, lease, err)
 	}
 }
 

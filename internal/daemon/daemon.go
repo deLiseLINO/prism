@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -55,7 +56,17 @@ type options struct {
 	showVersion    bool
 }
 
-type credentialStore struct{ file *store.FileCredentialStore }
+type credentialStore struct {
+	file        *store.FileCredentialStore
+	pool        account.Pool
+	publication *credentialPublication
+}
+
+type credentialPublication struct {
+	mu   sync.Mutex
+	cfg  *config.Manager
+	refs map[string]string
+}
 
 type durableAccountStore struct {
 	pool  account.Pool
@@ -206,7 +217,7 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	if p.BaseURL == "" {
 		return nil, fmt.Errorf("provider %s has no baseURL to list models from", id)
 	}
-	blob, ok, err := m.creds.file.Get(ctx, account.ProviderID(id), account.AccountID(id+":default"), 1)
+	blob, ok, err := m.creds.file.GetCustomDefaultSecret(ctx, account.ProviderID(id), p.APIKeyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -240,24 +251,113 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	return rows, nil
 }
 
-func (s credentialStore) blob(ctx context.Context, p account.ProviderID, a account.AccountID, g account.CredentialGeneration) ([]byte, error) {
-	b, ok, err := s.file.Get(ctx, p, a, g)
+func (s credentialStore) Stage(ctx context.Context, id, currentRef string, secret []byte) (string, error) {
+	return s.file.StageCustomDefaultSecret(ctx, account.ProviderID(id), currentRef, secret)
+}
+
+func (s credentialStore) Committed(ctx context.Context, id string, previous, next config.Provider) error {
+	if s.publication == nil || !next.Wire.Custom() {
+		return nil
+	}
+	s.publication.mu.Lock()
+	defer s.publication.mu.Unlock()
+	current, exists := s.publication.cfg.Get().Config.Providers[id]
+	if !exists || current.APIKeyRef != next.APIKeyRef {
+		return account.ErrStale
+	}
+	ref, known := s.publication.refs[id]
+	if !known {
+		ref = previous.APIKeyRef
+	}
+	if current.APIKeyRef == "" && ref == "" {
+		s.publication.refs[id] = ""
+		return nil
+	}
+	old, oldExists, err := s.file.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
+	secret, present, readErr := s.file.GetCustomDefaultSecret(ctx, account.ProviderID(id), current.APIKeyRef)
+	gen, genErr := s.file.CustomDefaultGeneration(ctx, account.ProviderID(id), current.APIKeyRef)
+	if err != nil || readErr != nil || genErr != nil || !present {
+		return errors.Join(err, readErr, genErr, account.ErrRefreshTransient)
+	}
+	if publisher, ok := s.pool.(interface {
+		PublishCredential(account.AccountID, account.CredentialGeneration, bool) error
+	}); ok {
+		if err := publisher.PublishCredential(account.AccountID(id+":default"), gen, ref != current.APIKeyRef && (!oldExists || !bytes.Equal(old, secret))); err != nil {
+			return err
+		}
+	}
+	s.publication.refs[id] = current.APIKeyRef
+	return nil
+}
+
+func (s credentialStore) resolve(ctx context.Context, target provider.Target, lease account.Lease) ([]byte, error) {
+	if s.publication != nil {
+		s.publication.mu.Lock()
+		defer s.publication.mu.Unlock()
+		id := string(target.Provider)
+		snap, err := s.publication.cfg.Current()
+		if err != nil {
+			return nil, account.ErrRefreshTransient
+		}
+		current, exists := snap.Config.Providers[id]
+		ref, known := s.publication.refs[id]
+		if !exists || !known || target.APIKeyRef != current.APIKeyRef || ref != current.APIKeyRef {
+			return nil, account.ErrRefreshTransient
+		}
+		found := false
+		for _, a := range s.pool.Snapshot().Accounts {
+			if a.ID == lease.Account && a.Provider == lease.Provider {
+				found = a.Version == lease.Version && a.CredGen == lease.CredGen && a.State != account.Paused && a.State != account.NeedsReauth
+			}
+		}
+		gen, err := s.file.CustomDefaultGeneration(ctx, target.Provider, target.APIKeyRef)
+		if err != nil {
+			return nil, err
+		}
+		if !found || gen != lease.CredGen {
+			return nil, account.ErrRefreshTransient
+		}
+	}
+	b, ok, err := s.file.GetCustomDefaultSecret(ctx, target.Provider, target.APIKeyRef)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("credential not configured for %s/%s", p, a)
+		return nil, fmt.Errorf("credential not configured for %s", target.Provider)
 	}
 	return b, nil
 }
-func (s credentialStore) Put(ctx context.Context, id string, secret []byte) error {
-	return s.file.PutIdempotent(ctx, account.ProviderID(id), account.AccountID(id+":default"), 1, secret)
+
+func (s credentialStore) checkAnonymous(req provider.RunRequest) error {
+	if s.publication == nil {
+		return nil
+	}
+	s.publication.mu.Lock()
+	defer s.publication.mu.Unlock()
+	snap, err := s.publication.cfg.Current()
+	if err != nil {
+		return account.ErrRefreshTransient
+	}
+	id := string(req.Target.Provider)
+	p, exists := snap.Config.Providers[id]
+	ref, known := s.publication.refs[id]
+	if !exists || !known || p.APIKeyRef != "" || ref != "" {
+		return account.ErrRefreshTransient
+	}
+	for _, a := range s.pool.Snapshot().Accounts {
+		if a.ID == req.Lease.Account && a.CredGen == req.Lease.CredGen && a.Version == req.Lease.Version && a.Provider == req.Lease.Provider {
+			return nil
+		}
+	}
+	return account.ErrRefreshTransient
 }
+
 func (s credentialStore) Delete(ctx context.Context, id string) error {
 	return s.file.Delete(ctx, account.ProviderID(id), account.AccountID(id+":default"))
 }
-func (s credentialStore) Configured(ctx context.Context, id string) (bool, error) {
-	_, ok, err := s.file.Get(ctx, account.ProviderID(id), account.AccountID(id+":default"), 1)
+
+func (s credentialStore) Configured(ctx context.Context, id, ref string) (bool, error) {
+	_, ok, err := s.file.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
 	return ok, err
 }
 
@@ -268,19 +368,33 @@ func (c codexCreds) Credential(ctx context.Context, lease account.Lease) (codex.
 	if err != nil {
 		return codex.Credential{}, err
 	}
-	// Only the dispatch surface leaves the coordinator: no refresh grant or
-	// expiry metadata is exposed to the runner.
-	return codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID}, nil
+	return codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID, Generation: cred.Generation}, nil
+}
+
+func (c codexCreds) RefreshRejected(ctx context.Context, lease account.Lease, rejected string) (codex.Credential, error) {
+	cred, err := c.ref.RefreshRejected(ctx, lease, rejected)
+	if err != nil {
+		return codex.Credential{}, err
+	}
+	return codex.Credential{AccessToken: cred.Access, ChatGPTAccountID: cred.AccountID, Generation: cred.Generation}, nil
 }
 
 type antigravityCreds struct{ ref *auth.Refresher }
+
+func (c antigravityCreds) RefreshRejected(ctx context.Context, lease account.Lease, rejected string) (antigravity.CredentialPair, error) {
+	cred, err := c.ref.RefreshRejected(ctx, lease, rejected)
+	if err != nil {
+		return antigravity.CredentialPair{}, err
+	}
+	return antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID, Generation: cred.Generation}, nil
+}
 
 func (c antigravityCreds) Credential(ctx context.Context, lease account.Lease) (antigravity.CredentialPair, error) {
 	cred, err := c.ref.Credential(ctx, lease)
 	if err != nil {
 		return antigravity.CredentialPair{}, err
 	}
-	return antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID}, nil
+	return antigravity.CredentialPair{AccessToken: cred.Access, ProjectID: cred.ProjectID, Generation: cred.Generation}, nil
 }
 
 type catalog struct{ cfg *config.Manager }
@@ -360,9 +474,9 @@ type anthropicRunner struct {
 }
 
 func (r anthropicRunner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
-	b, err := r.creds.blob(ctx, r.provider, req.Lease.Account, req.Lease.CredGen)
+	b, err := r.creds.resolve(ctx, req.Target, req.Lease)
 	if err != nil {
-		return provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassUnauthorized, Cause: err}
+		return provider.CredentialRunError(err)
 	}
 	req.Target.APIKeyRef = string(b)
 	return r.runner.Run(ctx, req, sink)
@@ -373,7 +487,7 @@ type customKey struct {
 }
 
 func (c customKey) Resolve(ctx context.Context, target provider.Target, lease account.Lease) (string, error) {
-	b, err := c.store.blob(ctx, target.Provider, lease.Account, lease.CredGen)
+	b, err := c.store.resolve(ctx, target, lease)
 	return string(b), err
 }
 
@@ -615,12 +729,21 @@ func run(opts options) error {
 	}
 	cfg.SetCatalog(modelCatalog)
 	d := cfg.Get().Config
-	creds := credentialStore{file: store.NewFileCredentialStore(opts.credentialPath)}
 	pool := account.New()
+	creds := credentialStore{file: store.NewFileCredentialStore(opts.credentialPath), pool: pool, publication: &credentialPublication{cfg: cfg, refs: map[string]string{}}}
 	registry := provider.NewRegistry()
 	client := &http.Client{Timeout: 30 * time.Second}
 	quotas := newQuotaTable(pool, cfg, client)
 	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client, &http.Client{})
+	pool.SetPolicyWriter(func(a account.Account) error {
+		env.reposMu.Lock()
+		repo := env.repos[a.Provider]
+		env.reposMu.Unlock()
+		if repo == nil {
+			return account.ErrNotFound
+		}
+		return repo.SavePolicy(a)
+	})
 	refresher, err := auth.NewRefresher(auth.RefresherOptions{File: creds.file, Repos: env.repos, Pool: pool, Flows: env.flows})
 	if err != nil {
 		return err
@@ -712,6 +835,7 @@ func run(opts options) error {
 	}
 	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, WebUI: webUI, Usage: usageStore, RequestLog: rlog}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
+	env.reconcileOnce(ctx)
 	go env.loop(ctx)
 	go watchIntegrations(ctx, cfg, intg)
 	go refreshModelCatalog(ctx, modelCatalog, client)

@@ -50,8 +50,15 @@ var forwardHeaders = []string{
 type Credential struct {
 	AccessToken      string
 	ChatGPTAccountID string
+	Generation       account.CredentialGeneration
 }
 
 type CredentialSource interface {
 	Credential(ctx context.Context, lease account.Lease) (Credential, error)
+}
+
+// CredentialRenewer is an optional CredentialSource capability: it replaces
+// an access token the upstream rejected even though it had not expired.
+type CredentialRenewer interface {
+	RefreshRejected(ctx context.Context, lease account.Lease, rejected string) (Credential, error)
 }

@@ -57,6 +57,7 @@ type Account struct {
 	CooldownUntil  time.Time
 	SoftAvoidUntil time.Time
 	InFlight       int
+	rejectedGen    CredentialGeneration
 }
 
 type Lease struct {
@@ -125,19 +126,44 @@ var (
 )
 
 type pool struct {
-	mu       sync.Mutex
-	accounts map[AccountID]*Account
+	mu           sync.Mutex
+	accounts     map[AccountID]*Account
+	policyWriter func(Account) error
 }
 
 func New() *pool {
 	return &pool{accounts: make(map[AccountID]*Account)}
 }
 
+func (p *pool) SetPolicyWriter(fn func(Account) error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.policyWriter = fn
+}
+
 func (p *pool) Register(a Account) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	a.rejectedGen = 0
 	if prev, ok := p.accounts[a.ID]; ok {
+		if a.CredGen < prev.CredGen {
+			return
+		}
+		if prev.State == NeedsReauth && prev.rejectedGen >= a.CredGen {
+			a.State = NeedsReauth
+			a.rejectedGen = prev.rejectedGen
+		}
 		a.InFlight = prev.InFlight
+		a.Priority = prev.Priority
+		a.Version = prev.Version
+		if prev.State == Paused || a.State == Paused {
+			a.State = prev.State
+		}
+	}
+	if a.State != NeedsReauth {
+		a.rejectedGen = 0
+	} else if a.rejectedGen == 0 {
+		a.rejectedGen = a.CredGen
 	}
 	p.accounts[a.ID] = &a
 }
@@ -182,7 +208,7 @@ func (p *pool) Record(_ context.Context, l Lease, o Outcome) error {
 	if a.InFlight > 0 {
 		a.InFlight--
 	}
-	if l.Version != a.Version {
+	if l.Version != a.Version || l.CredGen != a.CredGen || l.Provider != a.Provider {
 		return nil
 	}
 	p.apply(a, o)
@@ -199,6 +225,7 @@ func (p *pool) Pause(ctx context.Context, id AccountID, ifVersion StateVersion) 
 func (p *pool) Resume(ctx context.Context, id AccountID, ifVersion StateVersion) error {
 	return p.mutate(ctx, id, ifVersion, func(a *Account) {
 		a.State = Active
+		a.rejectedGen = 0
 		a.CooldownUntil = time.Time{}
 		a.SoftAvoidUntil = time.Time{}
 		a.Version++
@@ -228,15 +255,44 @@ func (p *pool) AdvanceGeneration(id AccountID, gen CredentialGeneration) error {
 	return nil
 }
 
+func (p *pool) PublishCredential(id AccountID, gen CredentialGeneration, changed bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a := p.accounts[id]
+	if a == nil || gen < a.CredGen {
+		return nil
+	}
+	next := *a
+	if next.CredGen != gen || changed {
+		next.CredGen = gen
+		next.Version++
+	}
+	if changed && next.State == NeedsReauth {
+		next.State = Active
+		next.rejectedGen = 0
+		next.CooldownUntil = time.Time{}
+		next.SoftAvoidUntil = time.Time{}
+		next.Version++
+		if p.policyWriter != nil {
+			if err := p.policyWriter(next); err != nil {
+				return err
+			}
+		}
+	}
+	*a = next
+	return nil
+}
+
 // MarkNeedsReauth moves the account to NeedsReauth without requiring a lease.
 func (p *pool) MarkNeedsReauth(id AccountID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a := p.accounts[id]
-	if a == nil {
+	if a == nil || a.State == Paused {
 		return nil
 	}
 	a.State = NeedsReauth
+	a.rejectedGen = a.CredGen
 	a.CooldownUntil = time.Time{}
 	a.SoftAvoidUntil = time.Time{}
 	a.Version++
@@ -305,14 +361,25 @@ func (p *pool) mutate(ctx context.Context, id AccountID, ifVersion StateVersion,
 	if a.Version != ifVersion {
 		return ErrStale
 	}
-	fn(a)
+	next := *a
+	fn(&next)
+	if p.policyWriter != nil {
+		if err := p.policyWriter(next); err != nil {
+			return err
+		}
+	}
+	*a = next
 	return nil
 }
 
 func (p *pool) apply(a *Account, o Outcome) {
 	switch o.(type) {
 	case AuthRejected:
+		if a.State == Paused {
+			return
+		}
 		a.State = NeedsReauth
+		a.rejectedGen = a.CredGen
 		a.CooldownUntil = time.Time{}
 		a.SoftAvoidUntil = time.Time{}
 		a.Version++
