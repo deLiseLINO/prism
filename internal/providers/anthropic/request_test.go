@@ -450,6 +450,7 @@ func TestEffortOffOmitsThinking(t *testing.T) {
 func TestThinkingRequestShape(t *testing.T) {
 	request := baseRequest()
 	request.Reasoning.Effort = canon.EffortHigh
+	request.Sampling.Temperature, request.Sampling.TopP = nil, nil
 	runner := New(Options{})
 	out, err := runner.buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k"}})
 	if err != nil {
@@ -477,6 +478,7 @@ func TestThinkingRequestShape(t *testing.T) {
 func TestThinkingBudgetCappedAtCeiling(t *testing.T) {
 	request := baseRequest()
 	request.Reasoning.Effort = canon.EffortXHigh
+	request.Sampling.Temperature, request.Sampling.TopP = nil, nil
 	runner := New(Options{})
 	out, err := runner.buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k"}})
 	if err != nil {

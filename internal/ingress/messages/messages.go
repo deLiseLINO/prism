@@ -120,6 +120,7 @@ type wireRequest struct {
 	Tools         []json.RawMessage `json:"tools"`
 	ToolChoice    json.RawMessage   `json:"tool_choice"`
 	Thinking      json.RawMessage   `json:"thinking"`
+	OutputConfig  json.RawMessage   `json:"output_config"`
 }
 
 func decodeRequest(raw []byte) (canon.Request, error) {
@@ -192,7 +193,62 @@ func decodeRequest(raw []byte) (canon.Request, error) {
 		return canon.Request{}, err
 	}
 	req.Reasoning = reasoning
+	if err := applyOutputConfig(wire.OutputConfig, &req); err != nil {
+		return canon.Request{}, err
+	}
 	return req, nil
+}
+
+// applyOutputConfig reads the adaptive-thinking effort and the structured
+// output schema, both of which clients send under output_config.
+func applyOutputConfig(raw json.RawMessage, req *canon.Request) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var oc struct {
+		Effort string `json:"effort"`
+		Format *struct {
+			Type   string          `json:"type"`
+			Schema json.RawMessage `json:"schema"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(raw, &oc); err != nil {
+		return &ParseError{Reason: ReasonInvalidJSON, Field: "output_config", Err: err}
+	}
+	if req.Reasoning.Effort != canon.EffortOff {
+		if effort, ok := effortFromName(oc.Effort); ok {
+			req.Reasoning.Effort = effort
+			if req.Reasoning.Summary == 0 {
+				req.Reasoning.Summary = canon.SummaryAuto
+			}
+		}
+	}
+	if oc.Format != nil {
+		var schema map[string]json.RawMessage
+		if oc.Format.Type != "json_schema" || json.Unmarshal(oc.Format.Schema, &schema) != nil || schema == nil {
+			return &ParseError{Reason: ReasonInvalidField, Field: "output_config.format"}
+		}
+		req.Text.Format = &canon.TextFormat{Type: "json_schema", Name: "response", Schema: oc.Format.Schema}
+	}
+	return nil
+}
+
+func effortFromName(name string) (canon.ReasoningEffort, bool) {
+	switch name {
+	case "minimal":
+		return canon.EffortMinimal, true
+	case "low":
+		return canon.EffortLow, true
+	case "medium":
+		return canon.EffortMedium, true
+	case "high":
+		return canon.EffortHigh, true
+	case "xhigh":
+		return canon.EffortXHigh, true
+	case "max":
+		return canon.EffortMax, true
+	}
+	return 0, false
 }
 
 func systemText(raw json.RawMessage) (string, bool) {
@@ -234,7 +290,6 @@ type contentBlock struct {
 	MediaType string          `json:"media_type"`
 	Data      string          `json:"data"`
 	Source    json.RawMessage `json:"source"`
-	Title     string          `json:"title"`
 	Thinking  string          `json:"thinking"`
 	Signature string          `json:"signature"`
 	URL       string          `json:"url"`
@@ -265,21 +320,23 @@ func userItems(raw json.RawMessage) ([]canon.Item, error) {
 		case "text":
 			pending = append(pending, canon.TextContent{Text: b.Text})
 		case "image":
-			if img := imageContent(b.Source, b.MediaType, b.Data); img != nil {
-				pending = append(pending, img)
+			img, err := imageContent(b.Source, b.MediaType, b.Data)
+			if err != nil {
+				return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.image", Err: err}
 			}
+			pending = append(pending, img)
 		case "document":
-			title := ""
-			if b.Title != "" {
-				title = ": " + b.Title
-			}
-			pending = append(pending, canon.TextContent{Text: "[document" + title + "]"})
+			return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.document", Err: fmt.Errorf("document payloads are unsupported")}
 		case "tool_result":
 			flush()
 			if b.ToolUseID == "" {
-				continue
+				return nil, &ParseError{Reason: ReasonMissingField, Field: "messages.content.tool_result.tool_use_id"}
 			}
-			items = append(items, canon.FunctionOutput{CallID: canon.CallID(b.ToolUseID), Output: toolResultContent(b)})
+			output, err := toolResultContent(b)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, canon.FunctionOutput{CallID: canon.CallID(b.ToolUseID), Output: output})
 		case "web_search_tool_result":
 			var results []string
 			if len(b.Content) > 0 {
@@ -301,72 +358,85 @@ func userItems(raw json.RawMessage) ([]canon.Item, error) {
 	return items, nil
 }
 
-func toolResultContent(b contentBlock) []canon.Content {
-	var s string
-	if err := json.Unmarshal(b.Content, &s); err == nil {
+func toolResultContent(b contentBlock) ([]canon.Content, error) {
+	if len(b.Content) == 0 {
 		if b.IsError {
-			return []canon.Content{canon.TextContent{Text: "[tool error] " + s}}
+			return []canon.Content{canon.TextContent{Text: "[tool error]"}}, nil
 		}
-		return []canon.Content{canon.TextContent{Text: s}}
+		return nil, nil
 	}
-	var out []canon.Content
-	if len(b.Content) > 0 {
-		var parts []contentBlock
-		if err := json.Unmarshal(b.Content, &parts); err != nil {
-			return out
-		}
-		for _, p := range parts {
-			switch p.Type {
-			case "text":
-				out = append(out, canon.TextContent{Text: p.Text})
-			case "image":
-				if img := imageContent(p.Source, p.MediaType, p.Data); img != nil {
-					out = append(out, img)
-				}
-			case "document":
-				title := ""
-				if p.Title != "" {
-					title = ": " + p.Title
-				}
-				out = append(out, canon.TextContent{Text: "[document" + title + "]"})
-			}
-		}
+	if string(b.Content) == "null" {
+		return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content"}
 	}
+	var text string
+	if err := json.Unmarshal(b.Content, &text); err == nil {
+		if b.IsError {
+			text = "[tool error] " + text
+		}
+		return []canon.Content{canon.TextContent{Text: text}}, nil
+	}
+	var parts []struct {
+		Type      string          `json:"type"`
+		Text      *string         `json:"text"`
+		Source    json.RawMessage `json:"source"`
+		MediaType string          `json:"media_type"`
+		Data      string          `json:"data"`
+	}
+	if err := json.Unmarshal(b.Content, &parts); err != nil {
+		return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content", Err: err}
+	}
+	var output []canon.Content
 	if b.IsError {
-		out = append([]canon.Content{canon.TextContent{Text: "[tool error]"}}, out...)
+		output = append(output, canon.TextContent{Text: "[tool error]"})
 	}
-	return out
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+			if part.Text == nil {
+				return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content.text"}
+			}
+			output = append(output, canon.TextContent{Text: *part.Text})
+		case "image":
+			image, err := imageContent(part.Source, part.MediaType, part.Data)
+			if err != nil {
+				return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content.image", Err: err}
+			}
+			output = append(output, image)
+		default:
+			return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content.type", Err: fmt.Errorf("unsupported block type %q", part.Type)}
+		}
+	}
+	return output, nil
 }
 
-func imageContent(source json.RawMessage, mediaType, data string) canon.Content {
-	if len(source) > 0 && string(source) != "null" {
+func imageContent(source json.RawMessage, mediaType, data string) (canon.ImageContent, error) {
+	if len(source) > 0 {
 		var src struct {
 			Type      string `json:"type"`
 			MediaType string `json:"media_type"`
 			Data      string `json:"data"`
 		}
-		if err := json.Unmarshal(source, &src); err == nil && src.Type == "base64" {
-			raw, err := base64.StdEncoding.DecodeString(src.Data)
-			if err != nil {
-				return nil
-			}
-			mt := src.MediaType
-			if mt == "" {
-				mt = "image/png"
-			}
-			return canon.ImageContent{MIMEType: mt, Data: raw}
+		if err := json.Unmarshal(source, &src); err != nil {
+			return canon.ImageContent{}, err
 		}
-		return nil
+		if src.Type != "base64" {
+			return canon.ImageContent{}, fmt.Errorf("unsupported image source %q", src.Type)
+		}
+		mediaType, data = src.MediaType, src.Data
 	}
-	raw, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return nil
+	if mediaType == "" {
+		mediaType = "image/png"
 	}
-	mt := mediaType
-	if mt == "" {
-		mt = "image/png"
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		return canon.ImageContent{}, fmt.Errorf("unsupported image media type %q", mediaType)
 	}
-	return canon.ImageContent{MIMEType: mt, Data: raw}
+	raw, err := base64.StdEncoding.Strict().DecodeString(data)
+	if err != nil || len(raw) == 0 {
+		return canon.ImageContent{}, fmt.Errorf("invalid or empty image data")
+	}
+	return canon.ImageContent{MIMEType: mediaType, Data: raw}, nil
 }
 
 func assistantItems(raw json.RawMessage) ([]canon.Item, error) {
@@ -515,7 +585,7 @@ func decodeThinking(raw json.RawMessage) (canon.ReasoningConfig, error) {
 	}
 	switch t.Type {
 	case "disabled":
-		return canon.ReasoningConfig{}, nil
+		return canon.ReasoningConfig{Effort: canon.EffortOff}, nil
 	case "enabled":
 		if t.BudgetTokens == nil {
 			return canon.ReasoningConfig{Summary: canon.SummaryAuto}, nil

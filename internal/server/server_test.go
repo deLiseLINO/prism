@@ -221,3 +221,27 @@ func TestConfigPlanner(t *testing.T) {
 		t.Fatal("unknown model resolved")
 	}
 }
+
+func TestConfigPlannerResolvesListedAliasForProviderIDWithSeparator(t *testing.T) {
+	h := newTestServer(t, nil, nil, nil)
+	doc := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"my":       {Wire: config.WireOpenAIResponses, BaseURL: "http://example.invalid", Models: []string{"x"}},
+			"my--prov": {Wire: config.WireOpenAIResponses, BaseURL: "http://example.invalid", Models: []string{"m2", "a--b"}},
+		},
+	}
+	if _, err := h.cfg.Update(doc, 0); err != nil {
+		t.Fatalf("update config: %v", err)
+	}
+	planner := NewConfigPlanner(h.cfg)
+	for _, tc := range []struct{ model, provider, name string }{
+		{"claude-my--prov--m2", "my--prov", "m2"},
+		{"claude-my--prov--a--b", "my--prov", "a--b"},
+	} {
+		plan, ok := planner.Plan(canon.ModelID(tc.model))
+		if !ok || len(plan.Targets) != 1 || string(plan.Targets[0].Provider) != tc.provider || string(plan.Targets[0].Model) != tc.name {
+			t.Fatalf("Plan(%q) = %+v ok=%t, want %s/%s", tc.model, plan, ok, tc.provider, tc.name)
+		}
+	}
+}

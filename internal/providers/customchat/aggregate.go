@@ -82,7 +82,7 @@ func (u *usageJSON) canon() canon.Usage {
 	return out
 }
 
-func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
+func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customTools) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
 	if err != nil {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
@@ -123,6 +123,13 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 			fmt.Errorf("customchat: upstream response carries %d choices; only one is representable", len(payload.Choices)))
 	}
 	choice := payload.Choices[0]
+	for _, tc := range choice.Message.ToolCalls {
+		if custom.has(tc.Function.Name) {
+			if _, err := unwrapCustomInput(tc.Function.Arguments); err != nil {
+				return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
+			}
+		}
+	}
 	status, known := finishStatus(choice.FinishReason)
 	if !known {
 		message := fmt.Sprintf("upstream finish reason %q is not representable", choice.FinishReason)
@@ -172,6 +179,23 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink) error {
 		callID := tc.ID
 		if callID == "" {
 			callID = mintCallID()
+		}
+		if custom.has(tc.Function.Name) {
+			input, _ := unwrapCustomInput(tc.Function.Arguments)
+			call := canon.CustomToolCall{ID: canon.ItemID(callID), CallID: canon.CallID(callID), Name: canon.ToolName(tc.Function.Name)}
+			if err := emit(canon.ItemStarted{Item: call}); err != nil {
+				return err
+			}
+			if input != "" {
+				if err := emit(canon.CustomToolInputDelta{ItemID: call.ID, Text: input}); err != nil {
+					return err
+				}
+			}
+			call.Input = input
+			if err := emit(canon.ItemFinished{Item: call}); err != nil {
+				return err
+			}
+			continue
 		}
 		fc := canon.FunctionCall{
 			ID:     canon.ItemID(callID),

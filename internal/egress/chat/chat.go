@@ -56,6 +56,8 @@ type toolState struct {
 	argsSeen  bool
 	argsFinal string
 	finished  bool
+	custom bool
+	input strings.Builder
 }
 
 type Chat struct {
@@ -133,7 +135,11 @@ func (c *Chat) Frame(ev canon.Event) error {
 	case canon.ToolArgumentsDelta:
 		return c.toolArguments(e)
 	case canon.CustomToolInputDelta:
-		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool input for item %q has no chat wire shape; omitted", e.ItemID))
+		tool := c.tools[e.ItemID]
+		if tool == nil || !tool.custom {
+			return fmt.Errorf("egress/chat: custom input for unknown item %q", e.ItemID)
+		}
+		tool.input.WriteString(e.Text)
 		c.commit()
 		return nil
 	case canon.ItemStateAvailable:
@@ -209,7 +215,10 @@ func (c *Chat) itemStarted(item canon.Item) error {
 			Index: st.index, ID: &id, Type: &ftyp, Function: &funcDelta{Name: &name},
 		}}}))
 	case canon.CustomToolCall:
-		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool call %q has no chat wire shape", it.ID))
+		if err := c.itemStarted(canon.FunctionCall{ID: it.ID, CallID: it.CallID, Name: it.Name}); err != nil {
+			return err
+		}
+		c.tools[it.ID].custom = true
 		return nil
 	default:
 		return nil
@@ -255,8 +264,17 @@ func (c *Chat) itemFinished(item canon.Item) error {
 	case canon.ReasoningItem:
 		return nil
 	case canon.CustomToolCall:
-		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool call %q has no chat wire shape", it.ID))
-		return nil
+		tool := c.tools[it.ID]
+		if tool == nil || !tool.custom || !strings.HasPrefix(it.Input, tool.input.String()) {
+			return fmt.Errorf("egress/chat: custom tool completion conflicts with deltas")
+		}
+		arguments, err := json.Marshal(struct {
+			Input string `json:"input"`
+		}{Input: it.Input})
+		if err != nil {
+			return err
+		}
+		return c.itemFinished(canon.FunctionCall{ID: it.ID, CallID: it.CallID, Name: it.Name, Arguments: arguments})
 	case canon.CustomToolOutput:
 		c.warnOnce(WarnCustomToolOmitted, fmt.Sprintf("custom tool output for call %q has no chat wire shape", it.CallID))
 		return nil

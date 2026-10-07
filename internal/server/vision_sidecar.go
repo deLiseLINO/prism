@@ -175,6 +175,15 @@ func applyImageDescriptions(req canon.Request, descriptions []string) canon.Requ
 				output[j] = replace(c)
 			}
 			input[i] = canon.FunctionOutput{ID: it.ID, CallID: it.CallID, Output: output}
+		case canon.CustomToolOutput:
+			if it.Content != nil {
+				content := make([]canon.Content, len(it.Content))
+				for j, c := range it.Content {
+					content[j] = replace(c)
+				}
+				it.Content = content
+			}
+			input[i] = it
 		default:
 			input[i] = item
 		}

@@ -235,6 +235,7 @@ func TestRunnerRepairAndReplay(t *testing.T) {
 	runner, _ := NewRunner(stubCreds{pair: CredentialPair{AccessToken: "t"}}, server.Client(), server.URL)
 	runner.SetSleep(clock.Sleep)
 	req := testRequest()
+	req.Request.Model = "claude-edge"
 	req.Request.Tools = []canon.Tool{canon.FunctionTool{
 		Name:       "get_weather",
 		Parameters: []byte(`{"type":"object","properties":{"broken":{"type":"not-a-type"}}}`),

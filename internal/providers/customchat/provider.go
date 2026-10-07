@@ -137,10 +137,11 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if resp.StatusCode >= 300 {
 		return openaierr.HTTPError(resp, "customchat")
 	}
+	custom := customToolNames(req.Request.Tools)
 	if req.Request.Stream {
-		return r.runStream(resp.Body, sink)
+		return r.runStream(resp.Body, sink, custom)
 	}
-	return r.runAggregate(resp.Body, sink)
+	return r.runAggregate(resp.Body, sink, custom)
 }
 
 func validateTarget(target provider.Target) error {

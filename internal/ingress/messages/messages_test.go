@@ -172,7 +172,7 @@ func TestThinkingConfig(t *testing.T) {
 		{name: "high budget", thinking: `{"type":"enabled","budget_tokens":32768}`, wantEffort: canon.EffortHigh, wantSum: canon.SummaryAuto},
 		{name: "enabled without budget", thinking: `{"type":"enabled"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
 		{name: "adaptive", thinking: `{"type":"adaptive"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
-		{name: "disabled", thinking: `{"type":"disabled"}`, wantEffort: 0, wantSum: 0},
+		{name: "disabled", thinking: `{"type":"disabled"}`, wantEffort: canon.EffortOff, wantSum: 0},
 		{name: "absent", thinking: "", wantEffort: 0, wantSum: 0},
 	}
 	for _, tt := range tests {
@@ -475,5 +475,24 @@ func TestParseErrorUnwrap(t *testing.T) {
 	}
 	if !strings.Contains(pe.Error(), "boom") {
 		t.Fatalf("Error() = %q", pe.Error())
+	}
+}
+
+func TestOutputConfigCarriesEffortAndSchema(t *testing.T) {
+	req := mustParse(t, `{"model":"claude-x","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"},"output_config":{"effort":"xhigh","format":{"type":"json_schema","schema":{"type":"object","properties":{"a":{"type":"string"}}}}}}`)
+	if req.Reasoning.Effort != canon.EffortXHigh {
+		t.Fatalf("effort = %v, want xhigh", req.Reasoning.Effort)
+	}
+	f := req.Text.Format
+	if f == nil || f.Type != "json_schema" || !strings.Contains(string(f.Schema), `"properties"`) {
+		t.Fatalf("format = %+v", f)
+	}
+	req = mustParse(t, `{"model":"claude-x","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"disabled"},"output_config":{"effort":"high"}}`)
+	if req.Reasoning.Effort != canon.EffortOff {
+		t.Fatalf("disabled thinking must win over output_config.effort, got %v", req.Reasoning.Effort)
+	}
+	req = mustParse(t, `{"model":"claude-x","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"output_config":{"effort":"bogus"}}`)
+	if req.Reasoning.Effort != 0 {
+		t.Fatalf("unknown effort must be ignored, got %v", req.Reasoning.Effort)
 	}
 }

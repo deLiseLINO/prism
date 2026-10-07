@@ -148,7 +148,7 @@ func TestEnvelopeToolsAndToolChoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildEnvelope: %v", err)
 	}
-	want := `"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get weather","parameters":{"type":"object","properties":{}}}]}],` +
+	want := `"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get weather","parametersJsonSchema":{"type":"object"}}]}],` +
 		`"toolConfig":{"functionCallingConfig":{"mode":"ANY","allowedFunctionNames":["get_weather"]}}`
 	if !strings.Contains(string(body), want) {
 		t.Fatalf("tools mapping mismatch: %s", body)
@@ -541,5 +541,67 @@ func TestEnvelopeUnsetEffortOnNonFamilyModelUnchanged(t *testing.T) {
 	}
 	if strings.Contains(got, "generationConfig") {
 		t.Fatalf("no sampling and no thinking means no generationConfig: %s", got)
+	}
+}
+
+func TestEnvelopeReplayedThinkingStaysInItsOwnTurn(t *testing.T) {
+	const sig = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/AbCdEf=="
+	for _, model := range []canon.ModelID{"gemini-3-pro", "claude-sonnet-4-5"} {
+		req := baseRequest()
+		req.Model = model
+		req.Instructions = nil
+		req.MaxOutputTokens = 0
+		req.Sampling = canon.Sampling{}
+		req.Input = []canon.Item{
+			textMessage(canon.RoleUser, "u1"),
+			canon.ReasoningItem{ID: "r1", Content: "think1", Signature: sig},
+			textMessage(canon.RoleAssistant, "a1"),
+			textMessage(canon.RoleUser, "u2"),
+			canon.ReasoningItem{ID: "r2", Content: "think2", Signature: sig},
+			textMessage(canon.RoleAssistant, "a2"),
+			textMessage(canon.RoleUser, "u3"),
+		}
+		body, err := BuildEnvelope(req, "p", "r", "-1")
+		if err != nil {
+			t.Fatalf("%s: BuildEnvelope: %v", model, err)
+		}
+		var env struct {
+			Request struct {
+				Contents []struct {
+					Role  string
+					Parts []struct {
+						Text    string
+						Thought bool
+					}
+				}
+			}
+		}
+		if err := json.Unmarshal(body, &env); err != nil {
+			t.Fatal(err)
+		}
+		// Walk the contents: a thought part may only sit in a model turn
+		// that lies after the last user turn seen before its assistant text.
+		userTurns := 0
+		thoughtUserTurns := map[string]int{}
+		textUserTurns := map[string]int{}
+		for _, c := range env.Request.Contents {
+			if c.Role == "user" {
+				userTurns++
+				continue
+			}
+			for _, p := range c.Parts {
+				if p.Thought {
+					thoughtUserTurns[p.Text] = userTurns
+				} else {
+					textUserTurns[p.Text] = userTurns
+				}
+			}
+		}
+		if thoughtUserTurns["think2"] != textUserTurns["a2"] {
+			t.Fatalf("%s: think2 replayed after %d user turns, its answer after %d: %s", model, thoughtUserTurns["think2"], textUserTurns["a2"], body)
+		}
+		if thoughtUserTurns["think1"] != textUserTurns["a1"] {
+			t.Fatalf("%s: think1 replayed after %d user turns, its answer after %d: %s", model, thoughtUserTurns["think1"], textUserTurns["a1"], body)
+		}
 	}
 }

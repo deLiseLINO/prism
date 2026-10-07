@@ -84,7 +84,7 @@ func TestEffortWireSendsExtendedRungs(t *testing.T) {
 	for effort, want := range map[canon.ReasoningEffort]string{
 		canon.EffortXHigh: "xhigh",
 		canon.EffortMax:   "max",
-		canon.EffortOff:   "off",
+		canon.EffortOff:   "none",
 	} {
 		req := canon.Request{
 			Model:     "gpt-5.2-codex",
@@ -406,3 +406,34 @@ func TestCustomToolFormatsAndToolSearchRender(t *testing.T) {
 
 func ptrFloat(v float64) *float64 { return &v }
 func ptrBool(v bool) *bool        { return &v }
+
+func TestReplayedReasoningNeedsItsEncryptedPayload(t *testing.T) {
+	req := canon.Request{
+		Model: "gpt-5.2-codex",
+		Input: []canon.Item{
+			canon.ReasoningItem{ID: "rs_unknown"},
+			canon.ReasoningItem{ID: "rs_known", State: canon.OpaqueRef{Store: canon.StoreWire, Key: "blob"}},
+			canon.ReasoningItem{ID: "rs_other", State: canon.OpaqueRef{Store: "anthropic", Key: "k"}},
+		},
+	}
+	result, err := BuildRequestBody(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(result.Body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Input) != 1 {
+		t.Fatalf("with storage off only the item carrying an encrypted payload can be replayed, got %s", result.Body)
+	}
+	item := got.Input[0]
+	if item["encrypted_content"] != "blob" {
+		t.Fatalf("item = %v", item)
+	}
+	if s, ok := item["summary"].([]any); !ok || len(s) != 0 {
+		t.Fatalf("summary must be present and empty, got %v", item["summary"])
+	}
+}
