@@ -12,5 +12,8 @@ fi
 WORK=$(cd "$WORK" && pwd -P)
 (cd "$REPO_ROOT" && go build -o "$WORK/prism" ./cmd/prism)
 python3 "$REPO_ROOT/verify/scripts/owned-runtime-proof.py" "$REPO_ROOT" "$WORK" | tee "$WORK/proof.log"
+if [ "$(uname -s)" = Linux ]; then
+  python3 "$REPO_ROOT/verify/scripts/inherited-fds-proof.py" "$WORK/prism" | tee "$WORK/inherited-fds-proof.log"
+fi
 rm "$WORK/prism"
 printf 'evidence: %s\n' "$WORK"

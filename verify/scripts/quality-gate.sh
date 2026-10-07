@@ -35,11 +35,13 @@ run_step() {
 run_local_steps() {
   run_step "owned-runtime-proof.sh" bash "$repo/verify/scripts/owned-runtime-proof.sh"
   run_step "cdp-ws-proof.mjs" node "$repo/verify/scripts/cdp-ws-proof.mjs"
+  run_step "transcript verifier tests" node --test "$repo/verify/scripts/assert-verifiers.test.mjs"
+  run_step "wirecheck" go run ./cmd/prism-wirecheck
   run_step "go test ./..." go test ./...
   run_step "go test -race ./..." go test -race ./...
   run_step "go vet ./..." go vet ./...
   run_step "npm run typecheck" npm run typecheck
-  run_step "vitest desktop" node_modules/.bin/vitest run --root "$repo" --dir apps/desktop/test
+  run_step "vitest desktop" npm run test:desktop
   run_step "prismd-smoke.sh" bash "$repo/verify/scripts/prismd-smoke.sh"
   run_step "prismctl-proof.sh" bash "$repo/verify/scripts/prismctl-proof.sh"
   run_step "desktop-controls.sh" bash "$repo/verify/scripts/desktop-controls.sh"
@@ -48,8 +50,9 @@ run_local_steps() {
 }
 
 live_accounts_available() {
-  [ -f "$HOME/.prism/prism.json" ] || return 1
-  [ -d "$HOME/.prism/credentials" ] || return 1
+  local source_state="${PRISM_VERIFY_STATE_DIR:-$HOME/.prism}"
+  [ -f "$source_state/prism.json" ] || return 1
+  [ -d "$source_state/credentials" ] || return 1
   return 0
 }
 

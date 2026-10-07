@@ -9,7 +9,7 @@ fail() {
 run_with_timeout() {
   seconds=$1
   shift
-  env -i "${_VERIFY_ENV[@]}" perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "$seconds" "$@"
+  env -i "${_VERIFY_ENV[@]}" perl -e '$seconds = shift; alarm $seconds; exec @ARGV; die "cannot execute $ARGV[0]: $!\n"' "$seconds" "$@"
 }
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
@@ -193,7 +193,29 @@ grep -q "\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:$PORT\"" "$RUNDIR/.claude/se
 grep -q "\"CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY\": \"1\"" "$RUNDIR/.claude/settings.json" || fail "Claude settings has no gateway model discovery switch after UI Apply"
 grep -q "\"baseUrl\":\"http://127.0.0.1:$PORT\"" "$RUNDIR/.claude/cache/gateway-models.json" || fail "Claude gateway model cache missing or pointing elsewhere after UI Apply"
 grep -q "\"baseUrl\": \"http://127.0.0.1:$PORT/v1\"" "$RUNDIR/.pi/agent/models.json" || fail "Pi models.json has no Prism baseUrl after UI Apply"
-grep -q "\"package\": \"@opencode-ai/ai/providers/openai-compatible\"" "$RUNDIR/.config/opencode/opencode.json" || fail "opencode providers block missing after UI Apply"
+node - "$RUNDIR/.config/opencode/opencode.json" "$PORT" <<'OPENCODE_CONFIG'
+const fs = require('node:fs')
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+const endpoint = `http://127.0.0.1:${process.argv[3]}/v1`
+const legacy = config.provider?.prism
+const modern = config.providers?.prism
+if (legacy?.npm !== '@ai-sdk/openai-compatible' || legacy.options?.baseURL !== endpoint) throw new Error('opencode legacy provider endpoint missing')
+if (modern?.package !== '@opencode/ai/providers/openai-compatible' || modern.settings?.baseURL !== endpoint) throw new Error('opencode modern provider endpoint missing')
+if (!legacy.options.apiKey || !modern.settings.apiKey) throw new Error('opencode provider key missing')
+const ids = Object.keys(legacy.models ?? {})
+if (ids.length === 0 || ids.length !== Object.keys(modern.models ?? {}).length) throw new Error('opencode model catalogs are empty or differ')
+for (const id of ids) {
+  const oldModel = legacy.models[id]
+  const newModel = modern.models[id]
+  if (!newModel) throw new Error(`opencode model missing: ${id}`)
+  if (JSON.stringify(oldModel.limit) !== JSON.stringify(newModel.limit)) throw new Error(`opencode model limits differ: ${id}`)
+  if (oldModel.limit && (!Number.isFinite(oldModel.limit.context) || !Number.isFinite(oldModel.limit.output) || oldModel.limit.output >= oldModel.limit.context)) throw new Error(`opencode output limit leaves no input room: ${id}`)
+  const oldEfforts = Object.values(oldModel.variants ?? {}).map((variant) => variant.reasoningEffort).sort()
+  const newEfforts = (newModel.variants ?? []).map((variant) => variant.body?.reasoning_effort).sort()
+  if (JSON.stringify(oldEfforts) !== JSON.stringify(newEfforts)) throw new Error(`opencode reasoning variants differ: ${id}`)
+  if (oldModel.options?.reasoningEffort !== newModel.settings?.reasoningEffort) throw new Error(`opencode default reasoning differs: ${id}`)
+}
+OPENCODE_CONFIG
 grep -q "api: http://127.0.0.1:$PORT/v1" "$RUNDIR/.hermes/config.yaml" || fail "Hermes config has no Prism api URL after UI Apply"
 grep -q "Managed by prism: Codex routes through the local prism proxy." "$RUNDIR/.codex/config.toml" || fail "Codex config has no prism routing marker after UI Apply"
 grep -q "openai_base_url = \"http://127.0.0.1:$PORT/v1\"" "$RUNDIR/.codex/config.toml" || fail "Codex config does not route the built-in openai provider at the daemon after UI Apply"

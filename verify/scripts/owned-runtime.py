@@ -256,6 +256,17 @@ def sync_directories(destination):
             os.close(fd)
 
 
+def manifest(destination):
+    paths = list(tree(destination))
+    target = destination / "manifest.sha256"
+    with target.open("w") as stream:
+        for path in paths:
+            if path.is_file() and path != target:
+                stream.write(digest(path) + "  " + path.relative_to(destination).as_posix() + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def publish(root, destination, live):
     destination = Path(os.path.abspath(destination))
     require(not destination.exists() and not destination.is_symlink(), "evidence destination must be new")
@@ -325,6 +336,7 @@ def finalize(root, destination, live, status, cleanup, app_stopped, service_stop
                             dst.flush()
                             os.fsync(dst.fileno())
                         require(digest(path) == digest(target), "private evidence digest mismatch")
+            manifest(private_destination)
             sync_directories(private_destination)
             receipt["privateEvidence"] = str(private_destination)
         if status == 0 and cleanup == 0:
@@ -332,6 +344,7 @@ def finalize(root, destination, live, status, cleanup, app_stopped, service_stop
             receipt["sandboxRemoved"] = True
         receipt["finalization"] = "complete" if cleanup == 0 else "failed"
         write(published / "runtime-teardown.json", receipt)
+        manifest(published)
         sync_directories(published)
         print("evidence: " + str(published))
         return cleanup
@@ -349,6 +362,8 @@ def finalize(root, destination, live, status, cleanup, app_stopped, service_stop
         for failure_path in candidates:
             try:
                 write(failure_path, receipt)
+                if failure_path == external_receipt:
+                    manifest(destination)
                 sync_directories(failure_path.parent)
             except OSError:
                 print("owned runtime: failed receipt could not be persisted", file=sys.stderr)

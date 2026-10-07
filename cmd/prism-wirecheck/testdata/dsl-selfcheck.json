@@ -1309,8 +1309,12 @@
       "mediaType": "application/vnd.prism.adapter-vector+json",
       "digest": "d1",
       "byteLength": 3,
-      "syntheticMarker": "prism-lab-synthetic-v1"
-      
+      "syntheticMarker": "prism-lab-synthetic-v1",
+      "provenance": {
+       "kind": "lab_authored",
+       "authority": "022_protocol_v1_cases.json",
+       "sourceCommit": "abc123"
+      }
      }
     ],
     "executionLimits": {
