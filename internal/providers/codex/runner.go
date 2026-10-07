@@ -239,7 +239,7 @@ func applyHeaders(h http.Header, headers []Header) {
 	}
 }
 
-func (r *Runner) Compact(ctx context.Context, req provider.CompactRequest) (provider.CompactResult, error) {
+func (r *Runner) Compact(ctx context.Context, req provider.CompactRequest) (result provider.CompactResult, runErr error) {
 	cred, err := r.Creds.Credential(ctx, req.Lease)
 	if err != nil {
 		return provider.CompactResult{}, provider.CredentialRunError(err)
@@ -248,24 +248,28 @@ func (r *Runner) Compact(ctx context.Context, req provider.CompactRequest) (prov
 	if err != nil {
 		return provider.CompactResult{}, provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: err}
 	}
-	headers, err := BuildFingerprint(fingerprintInput{Target: req.Target, Facts: req.Facts, Credential: cred, Body: body})
-	if err != nil {
-		return provider.CompactResult{}, provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, Cause: err}
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, compactURL(req.Target.BaseURL), strings.NewReader(string(body)))
-	if err != nil {
-		return provider.CompactResult{}, provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: err}
-	}
-	applyHeaders(httpReq.Header, headers.Headers)
-	resp, err := r.httpClient().Do(httpReq)
-	if err != nil {
-		class := provider.ClassTransport
-		if ctx.Err() != nil {
-			class = provider.ClassTimeout
+	renewed := false
+	resp, err := r.send(ctx, req.Lease, &cred, &renewed, req.AttemptObserver, req.CredentialObserver, func(c Credential) (*http.Request, error) {
+		headers, err := BuildFingerprint(fingerprintInput{Target: req.Target, Facts: req.Facts, Credential: c, Body: body})
+		if err != nil {
+			return nil, provider.RunError{Kind: provider.Retryable, Class: provider.ClassTransport, Cause: err}
 		}
-		return provider.CompactResult{}, provider.RunError{Kind: provider.Retryable, Class: class, Cause: err}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, compactURL(req.Target.BaseURL), bytes.NewReader(body))
+		if err != nil {
+			return nil, provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassInvalidRequest, Cause: err}
+		}
+		applyHeaders(httpReq.Header, headers.Headers)
+		return httpReq, nil
+	})
+	if err != nil {
+		return provider.CompactResult{}, err
 	}
-	defer drainClose(resp)
+	defer func() {
+		if body, ok := resp.Body.(*attemptBody); ok && runErr != nil {
+			body.err = runErr
+		}
+		resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return provider.CompactResult{}, classifyStatus(resp)
 	}
@@ -297,73 +301,70 @@ func compactBody(req provider.CompactRequest) ([]byte, error) {
 }
 
 func decodeCompact(payload []byte) (provider.CompactResult, error) {
-	var resp struct {
-		Status string `json:"status"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-		IncompleteDetails *struct {
-			Reason string `json:"reason"`
-		} `json:"incomplete_details"`
-		Output []struct {
-			Type    string `json:"type"`
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"output"`
-		Usage *struct {
-			InputTokens  int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
-			TotalTokens  int64 `json:"total_tokens"`
-		} `json:"usage"`
+	fail := func(cause error) (provider.CompactResult, error) {
+		return provider.CompactResult{}, provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Accepted: true, Cause: fmt.Errorf("codex compact: %w", cause)}
 	}
-	if err := json.Unmarshal(payload, &resp); err != nil {
-		return provider.CompactResult{}, provider.RunError{
-			Kind: provider.Retryable, Class: provider.ClassServer, Accepted: true,
-			Cause: errors.New("codex compact: malformed response"),
-		}
+	fields, err := wireObject(payload)
+	if err != nil {
+		return fail(errors.New("malformed response"))
 	}
-	if resp.Error != nil {
-		return provider.CompactResult{}, provider.RunError{
-			Kind: provider.Retryable, Class: provider.ClassServer, Accepted: true,
-			Cause: fmt.Errorf("codex compact: %s", resp.Error.Message),
-		}
+	if raw := fields["error"]; len(raw) > 0 && string(raw) != "null" {
+		return fail(errors.New("upstream compaction failed"))
 	}
-	if resp.Status == "failed" {
-		return provider.CompactResult{}, provider.RunError{
-			Kind: provider.Retryable, Class: provider.ClassServer, Accepted: true,
-			Cause: errors.New("codex compact: upstream compaction failed"),
-		}
+	var status string
+	if json.Unmarshal(fields["status"], &status) != nil || status != "completed" {
+		return fail(errors.New("upstream compaction is not completed"))
+	}
+	usage, err := decodeUsage(fields["usage"], canon.Usage{})
+	if err != nil {
+		return fail(err)
+	}
+	var output []json.RawMessage
+	if json.Unmarshal(fields["output"], &output) != nil || len(output) == 0 {
+		return fail(errors.New("upstream compaction returned no output"))
 	}
 	var text strings.Builder
-	for _, item := range resp.Output {
-		if item.Type != "message" {
+	opaque := false
+	for _, raw := range output {
+		f, err := wireObject(raw)
+		if err != nil {
+			return fail(errors.New("malformed output item"))
+		}
+		var kind string
+		if json.Unmarshal(f["type"], &kind) != nil || kind == "" {
+			return fail(errors.New("output item missing type"))
+		}
+		if kind == "compaction" || kind == "compaction_summary" || kind == "context_compaction" {
+			var encrypted string
+			if json.Unmarshal(f["encrypted_content"], &encrypted) != nil || encrypted == "" {
+				return fail(errors.New("compaction item lacks opaque state"))
+			}
+			opaque = true
 			continue
 		}
-		for _, part := range item.Content {
-			if part.Type == "output_text" {
-				text.WriteString(part.Text)
+		item, err := decodeItem(raw)
+		if err != nil || item == nil {
+			return fail(errors.New("malformed compaction output"))
+		}
+		if err := validateCustomInput(raw, nil); err != nil {
+			return fail(err)
+		}
+		if call, ok := item.(canon.FunctionCall); ok && !json.Valid(call.Arguments) {
+			return fail(errors.New("unfinished compaction tool arguments"))
+		}
+		if msg, ok := item.(canon.Message); ok {
+			for _, part := range msg.Content {
+				if t, ok := part.(canon.TextContent); ok {
+					text.WriteString(t.Text)
+				}
 			}
 		}
 	}
-	if text.Len() == 0 {
-		return provider.CompactResult{}, provider.RunError{
-			Kind: provider.Retryable, Class: provider.ClassServer, Accepted: true,
-			Cause: errors.New("codex compact: upstream compaction returned no summary text"),
-		}
-	}
-	usage := canon.Usage{}
-	if resp.Usage != nil {
-		usage = canon.Usage{
-			InputTokens:  resp.Usage.InputTokens,
-			OutputTokens: resp.Usage.OutputTokens,
-			TotalTokens:  resp.Usage.TotalTokens,
-		}
+	if !opaque && text.Len() == 0 {
+		return fail(errors.New("upstream compaction returned no summary or opaque state"))
 	}
 	summary := canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: text.String()}}}
-	return provider.CompactResult{Summary: summary, Usage: usage}, nil
+	return provider.CompactResult{Summary: summary, Usage: usage, Output: output}, nil
 }
 
 func (r *Runner) httpClient() *http.Client {
@@ -371,11 +372,6 @@ func (r *Runner) httpClient() *http.Client {
 		return r.Client
 	}
 	return http.DefaultClient
-}
-
-func drainClose(resp *http.Response) {
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-	resp.Body.Close()
 }
 
 func classifyStatus(resp *http.Response) error {

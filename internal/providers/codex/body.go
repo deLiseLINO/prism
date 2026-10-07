@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -316,6 +317,21 @@ func inputFrom(items []canon.Item) (inputItems, error) {
 			out.items = append(out.items, wireItem{Type: "local_shell_call", ID: string(m.ID), CallID: string(m.CallID), Input: m.Command})
 		case canon.LocalShellOutput:
 			out.items = append(out.items, wireItem{Type: "local_shell_output", ID: string(m.ID), CallID: string(m.CallID), Output: shellOutputWire(m)})
+		case canon.CompactionMarker:
+			if m.State.Store != canon.StoreWire || m.State.Key == "" {
+				return inputItems{}, errors.New("codex: compaction replay requires opaque wire state")
+			}
+			key := m.State.Key
+			kind := m.Type
+			if kind == "" {
+				kind = "compaction"
+			}
+			switch kind {
+			case "compaction", "compaction_summary", "context_compaction":
+			default:
+				return inputItems{}, fmt.Errorf("codex: unsupported compaction replay type %q", kind)
+			}
+			out.items = append(out.items, wireItem{Type: kind, ID: string(m.ID), EncryptedContent: &key})
 		default:
 			return inputItems{}, fmt.Errorf("unsupported canonical item %T", item)
 		}

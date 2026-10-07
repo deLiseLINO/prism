@@ -31,7 +31,7 @@ Inference family (`internal/server/server.go`):
 - `POST /v1/responses` supports SSE and buffered JSON. Buffered failures use an HTTP error status and preserve the provider error in the response object. Native completed, incomplete, and failed terminals retain their status.
 - `POST /v1/chat/completions` — OpenAI Chat; streaming deltas with `reasoning_content`, or a single aggregate; always classified as the OMP client.
 - `POST /v1/messages` (+ `POST /v1/messages/count_tokens`) — Anthropic Messages. Accepts plain `<provider>/<model>` (omp) and `claude-<provider>--<model>` aliases (Claude Code). The decoder requires only `model`, `max_tokens`, and `messages`; it does not check the model form.
-- `POST /v1/responses/compact` — compaction; JSON out; falls back to a local summary.
+- `POST /v1/responses/compact` returns replacement history as `{output:[...]}`. Supported native compactors preserve opaque output unchanged and refuse incomplete results. Other targets run a real tool-free summary turn through normal routing and accounting. Failures retain their HTTP status and valid `Retry-After` guidance without installing a partial summary. A Chat target refuses encrypted compaction history before dispatch because that wire cannot represent the opaque state.
 - `GET /v1/models` — routes, aliases, and combos minus blocked, plus one `claude-<provider>--<model>` entry per enabled provider/model pair, in OpenAI list shape (`type:"model"`, `id`, `display_name`, `object`). Claude Code's gateway model discovery populates its model picker from this list.
 
 Model resolution (`internal/server/planner.go`), first match wins:

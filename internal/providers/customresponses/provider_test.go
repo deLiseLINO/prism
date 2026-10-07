@@ -621,13 +621,20 @@ func TestTargetValidation(t *testing.T) {
 	}
 }
 
-func TestUnsupportedItemIsTypedError(t *testing.T) {
-	r := New(staticKey, Options{})
-	_, err := buildBody(canon.Request{Input: []canon.Item{canon.CompactionMarker{ID: "c1"}}})
-	if err == nil || !strings.Contains(err.Error(), "unsupported canonical item") {
-		t.Fatalf("err = %v", err)
+func TestSessionHistoryItemsAreSkipped(t *testing.T) {
+	raw, err := buildBody(canon.Request{Input: []canon.Item{
+		canon.CompactionMarker{ID: "c1"},
+		canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}},
+	}})
+	if err != nil {
+		t.Fatalf("buildBody: %v", err)
 	}
-	_ = r
+	var got struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil || len(got.Input) != 1 || got.Input[0]["type"] != "message" {
+		t.Fatalf("input = %v (%v)", got.Input, err)
+	}
 }
 
 type collector struct {

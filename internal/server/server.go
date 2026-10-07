@@ -51,6 +51,7 @@ type Options struct {
 
 type Server struct {
 	router    routing.Router
+	rlog      *requestlog.Journal
 	planner   routing.Planner
 	registry  *provider.Registry
 	pool      account.Pool
@@ -102,6 +103,7 @@ func New(opts Options) *Server {
 	if rlog == nil {
 		rlog = requestlog.New(0, clock.Now)
 	}
+	s.rlog = rlog
 	s.router = routing.NewRouter(opts.Pool, opts.Registry, opts.Planner, group, rlog)
 	s.ingressResponses = responses.New(func(warn responses.Warning) { s.onWarn(warn) })
 	return s
