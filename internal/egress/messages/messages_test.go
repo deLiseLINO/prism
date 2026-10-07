@@ -475,15 +475,15 @@ func TestFrameContractErrors(t *testing.T) {
 			t.Fatalf("reason = %v, want block_mismatch", err.Reason)
 		}
 	})
-	t.Run("custom tool input unsupported", func(t *testing.T) {
+	t.Run("custom tool input requires open call", func(t *testing.T) {
 		var buf bytes.Buffer
 		eg := New(&buf, true)
 		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
 			t.Fatalf("Begin: %v", err)
 		}
 		err := mustFrameErr(t, eg.Frame(canon.CustomToolInputDelta{ItemID: "c1", Text: "x"}))
-		if err.Reason != ReasonUnsupportedItem {
-			t.Fatalf("reason = %v, want unsupported_item", err.Reason)
+		if err.Reason != ReasonUnknownItem {
+			t.Fatalf("reason = %v, want unknown_item", err.Reason)
 		}
 	})
 	t.Run("unsupported item started", func(t *testing.T) {
@@ -588,6 +588,8 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 	if err := eg.Begin(ResponseHeader{ID: "msg_9", Model: "claude-codex--gpt-5"}); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
+	rawInput := "*** Begin Patch\n+value = 9007199254740993\n*** End Patch\n"
+	arguments := `{"large":9007199254740993,"fraction":1.2300,"exponent":1e+09}`
 	evs := []canon.Event{
 		canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1", Content: ""}},
 		canon.ReasoningDelta{ItemID: "r1", Text: "thinking"},
@@ -596,6 +598,12 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 		canon.TextDelta{ItemID: "t1", Text: "Hello"},
 		canon.TextDelta{ItemID: "t1", Text: " world"},
 		canon.ItemFinished{Item: canon.Message{ID: "t1", Role: canon.RoleAssistant, Content: []canon.Content{canon.TextContent{Text: "Hello world"}}}},
+		canon.ItemStarted{Item: canon.CustomToolCall{ID: "c1", CallID: "call_c1", Name: "patch"}},
+		canon.CustomToolInputDelta{ItemID: "c1", Text: rawInput},
+		canon.ItemFinished{Item: canon.CustomToolCall{ID: "c1", CallID: "call_c1", Name: "patch", Input: rawInput}},
+		canon.ItemStarted{Item: canon.FunctionCall{ID: "f1", CallID: "call_f1", Name: "measure"}},
+		canon.ToolArgumentsDelta{ItemID: "f1", Bytes: []byte(arguments)},
+		canon.ItemFinished{Item: canon.FunctionCall{ID: "f1", CallID: "call_f1", Name: "measure", Arguments: []byte(arguments)}},
 		canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 3, OutputTokens: 5}},
 	}
 	for i, ev := range evs {
@@ -615,6 +623,9 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 			Text      string `json:"text"`
 			Thinking  string `json:"thinking"`
 			Signature string `json:"signature"`
+			ID        string          `json:"id"`
+			Name      string          `json:"name"`
+			Input     json.RawMessage `json:"input"`
 		} `json:"content"`
 		StopReason string `json:"stop_reason"`
 		Usage      struct {
@@ -628,7 +639,7 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 	if msg.ID != "msg_9" || msg.Type != "message" || msg.Role != "assistant" {
 		t.Fatalf("envelope wrong: %+v", msg)
 	}
-	if len(msg.Content) != 2 {
+	if len(msg.Content) != 4 {
 		t.Fatalf("content blocks: %+v", msg.Content)
 	}
 	if msg.Content[0].Type != "thinking" || msg.Content[0].Thinking != "thinking" || msg.Content[0].Signature != "sig1" {
@@ -637,7 +648,21 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 	if msg.Content[1].Type != "text" || msg.Content[1].Text != "Hello world" {
 		t.Fatalf("text block: %+v", msg.Content[1])
 	}
-	if msg.StopReason != "end_turn" {
+	custom := msg.Content[2]
+	if custom.Type != "tool_use" || custom.ID != "call_c1" || custom.Name != "patch" {
+		t.Fatalf("custom tool block: %+v", custom)
+	}
+	var wrapper struct {
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal(custom.Input, &wrapper); err != nil || wrapper.Input != rawInput {
+		t.Fatalf("custom input = %s, decoded = %q, err = %v", custom.Input, wrapper.Input, err)
+	}
+	function := msg.Content[3]
+	if function.Type != "tool_use" || function.ID != "call_f1" || function.Name != "measure" || string(function.Input) != arguments {
+		t.Fatalf("numeric tool block: %+v", function)
+	}
+	if msg.StopReason != "tool_use" {
 		t.Fatalf("stop reason: %q", msg.StopReason)
 	}
 	if msg.Usage.InputTokens != 3 || msg.Usage.OutputTokens != 5 {

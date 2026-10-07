@@ -15,6 +15,7 @@ const Prefix = "prismr1:"
 type Envelope struct {
 	Txt string   `json:"txt,omitempty"`
 	Red []string `json:"red,omitempty"`
+	Sig string   `json:"sig,omitempty"`
 }
 
 func Encode(txt string) string {
@@ -33,6 +34,11 @@ func EncodeRedacted(data []string) string {
 	if err != nil {
 		return Prefix + base64.StdEncoding.EncodeToString([]byte(`{"red":[""]}`))
 	}
+	return Prefix + base64.StdEncoding.EncodeToString(raw)
+}
+
+func EncodeSignature(signature, text string) string {
+	raw, _ := json.Marshal(Envelope{Sig: signature, Txt: text})
 	return Prefix + base64.StdEncoding.EncodeToString(raw)
 }
 

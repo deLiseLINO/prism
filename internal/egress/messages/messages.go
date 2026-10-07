@@ -50,6 +50,8 @@ var (
 type openBlock struct {
 	index int
 	kind  blockKind
+	custom bool
+	text strings.Builder
 }
 
 type streamEncoder struct {
@@ -162,7 +164,15 @@ func (e *streamEncoder) Frame(ev canon.Event) error {
 			Delta: inputJSONDeltaWire{Type: "input_json_delta", PartialJSON: string(tev.Bytes)},
 		})
 	case canon.CustomToolInputDelta:
-		return &FrameError{Reason: ReasonUnsupportedItem, Event: "custom_tool_input_delta", ItemID: tev.ItemID}
+		b, err := e.blockFor(tev.ItemID, "custom_tool_input_delta")
+		if err != nil {
+			return err
+		}
+		if !b.custom {
+			return &FrameError{Reason: ReasonBlockMismatch, Event: "custom_tool_input_delta", ItemID: tev.ItemID}
+		}
+		b.text.WriteString(tev.Text)
+		return nil
 	case canon.ItemStateAvailable:
 		return nil
 	default:
@@ -248,8 +258,14 @@ func (e *streamEncoder) itemStarted(item canon.Item) error {
 			Type:  "tool_use",
 			ID:    string(it.CallID),
 			Name:  string(it.Name),
-			Input: map[string]any{},
+			Input: json.RawMessage(`{}`),
 		}
+	case canon.CustomToolCall:
+		if err := e.itemStarted(canon.FunctionCall{ID: it.ID, CallID: it.CallID, Name: it.Name}); err != nil {
+			return err
+		}
+		e.blocks[it.ID].custom = true
+		return nil
 	default:
 		return &FrameError{Reason: ReasonUnsupportedItem, Event: "content_block_start"}
 	}
@@ -273,9 +289,6 @@ func (e *streamEncoder) itemFinished(item canon.Item) error {
 	if !ok {
 		return &FrameError{Reason: ReasonUnknownItem, Event: "content_block_stop", ItemID: id}
 	}
-	if !e.streaming {
-		e.content = append(e.content, finishedBlockWire(item))
-	}
 	if b.kind == blockThinking {
 		if r, isReasoning := item.(canon.ReasoningItem); isReasoning && r.Signature != "" {
 			if env, isEnv := reasonenv.Decode(r.Signature); !isEnv || len(env.Red) == 0 {
@@ -288,6 +301,24 @@ func (e *streamEncoder) itemFinished(item canon.Item) error {
 				}
 			}
 		}
+	}
+	if call, ok := item.(canon.CustomToolCall); ok {
+		if !b.custom || !strings.HasPrefix(call.Input, b.text.String()) {
+			return fmt.Errorf("messages egress: custom tool completion conflicts with deltas")
+		}
+		args, err := json.Marshal(struct {
+			Input string `json:"input"`
+		}{Input: call.Input})
+		if err != nil {
+			return err
+		}
+		item = canon.FunctionCall{ID: call.ID, CallID: call.CallID, Name: call.Name, Arguments: args}
+		if err := e.write("content_block_delta", blockDeltaWire{Type: "content_block_delta", Index: b.index, Delta: inputJSONDeltaWire{Type: "input_json_delta", PartialJSON: string(args)}}); err != nil {
+			return err
+		}
+	}
+	if !e.streaming {
+		e.content = append(e.content, finishedBlockWire(item))
 	}
 	delete(e.blocks, id)
 	return e.write("content_block_stop", blockStopWire{Type: "content_block_stop", Index: b.index})
@@ -309,11 +340,9 @@ func finishedBlockWire(item canon.Item) any {
 		}
 		return thinkingBlockWire{Type: "thinking", Thinking: it.Content, Signature: it.Signature}
 	case canon.FunctionCall:
-		input := map[string]any{}
-		if len(it.Arguments) > 0 {
-			if err := json.Unmarshal(it.Arguments, &input); err != nil {
-				input = map[string]any{}
-			}
+		input := json.RawMessage(`{}`)
+		if json.Valid(it.Arguments) {
+			input = json.RawMessage(it.Arguments)
 		}
 		return toolUseBlockWire{Type: "tool_use", ID: string(it.CallID), Name: string(it.Name), Input: input}
 	}
@@ -571,10 +600,10 @@ type redactedBlockWire struct {
 }
 
 type toolUseBlockWire struct {
-	Type  string         `json:"type"`
-	ID    string         `json:"id"`
-	Name  string         `json:"name"`
-	Input map[string]any `json:"input"`
+	Type  string          `json:"type"`
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
 }
 
 type textDeltaWire struct {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 type body struct {
@@ -100,6 +101,37 @@ func buildBody(req canon.Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if allowed, ok := req.ToolChoice.(canon.ToolAllowed); ok {
+		selected := make([]canon.Tool, 0, len(allowed.Tools))
+		for _, name := range allowed.Tools {
+			found := false
+			for _, tool := range req.Tools {
+				var toolName canon.ToolName
+				switch tool := tool.(type) {
+				case canon.FunctionTool:
+					toolName = tool.Name
+				case canon.CustomToolDef:
+					toolName = tool.Name
+				}
+				if toolName == name {
+					selected = append(selected, tool)
+					found = true
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("customchat tool_choice: allowed tool %q is not declared", name)
+			}
+		}
+		if len(selected) == 0 {
+			return nil, fmt.Errorf("customchat tool_choice: allowed tools are not declared")
+		}
+		req.Tools = selected
+		if allowed.Mode == canon.AllowedRequired {
+			req.ToolChoice = canon.ToolRequired{}
+		} else {
+			req.ToolChoice = canon.ToolAuto{}
+		}
+	}
 	out := body{Model: string(req.Model), Messages: messages, Stream: req.Stream}
 	if req.Stream {
 		out.StreamOptions = &streamOptions{IncludeUsage: true}
@@ -115,6 +147,9 @@ func buildBody(req canon.Request) ([]byte, error) {
 	out.PresencePenalty = req.Sampling.PresencePenalty
 	out.FrequencyPenalty = req.Sampling.FrequencyPenalty
 	switch req.Sampling.ServiceTier {
+	case canon.TierDefault:
+		tier := "default"
+		out.ServiceTier = &tier
 	case canon.TierFlex:
 		tier := "flex"
 		out.ServiceTier = &tier
@@ -160,7 +195,7 @@ func messagesFrom(req canon.Request) ([]message, error) {
 	}
 	for i := 0; i < len(req.Input); i++ {
 		switch req.Input[i].(type) {
-		case canon.FunctionCall:
+		case canon.FunctionCall, canon.CustomToolCall:
 			calls, advanced, err := standaloneCalls(req.Input, i)
 			if err != nil {
 				return nil, err
@@ -184,26 +219,20 @@ func messagesFrom(req canon.Request) ([]message, error) {
 				return nil, fmt.Errorf("customchat input: tool result is missing call id")
 			}
 			out = append(out, message{Role: "tool", Content: text, ToolCallID: string(output.CallID)})
-		case canon.CustomToolCall:
-			call := req.Input[i].(canon.CustomToolCall)
-			if call.CallID == "" {
-				return nil, fmt.Errorf("customchat input: custom tool call is missing call id")
-			}
-			arguments, err := json.Marshal(call.Input)
-			if err != nil {
-				return nil, fmt.Errorf("customchat input: custom tool call arguments: %w", err)
-			}
-			out = append(out, message{Role: "assistant", ToolCalls: []toolCall{{
-				ID:       string(call.CallID),
-				Type:     "function",
-				Function: funcCallWire{Name: string(call.Name), Arguments: string(arguments)},
-			}}})
 		case canon.CustomToolOutput:
 			output := req.Input[i].(canon.CustomToolOutput)
 			if output.CallID == "" {
 				return nil, fmt.Errorf("customchat input: custom tool result is missing call id")
 			}
-			out = append(out, message{Role: "tool", Content: output.Output, ToolCallID: string(output.CallID)})
+			text := output.Output
+			if output.Content != nil {
+				var err error
+				text, err = toolOutputText(output.Content)
+				if err != nil {
+					return nil, err
+				}
+			}
+			out = append(out, message{Role: "tool", Content: text, ToolCallID: string(output.CallID)})
 		case canon.ReasoningItem, canon.CompactionMarker, canon.LocalShellCall, canon.LocalShellOutput, canon.ToolSearchCall, canon.ToolSearchOutput:
 			continue
 		default:
@@ -217,21 +246,23 @@ func standaloneCalls(items []canon.Item, i int) ([]toolCall, int, error) {
 	var calls []toolCall
 	j := i
 	for ; j < len(items); j++ {
-		call, ok := items[j].(canon.FunctionCall)
-		if !ok {
-			break
+		var call toolCall
+		switch item := items[j].(type) {
+		case canon.FunctionCall:
+			call = toolCall{ID: string(item.CallID), Type: "function", Function: funcCallWire{Name: string(item.Name), Arguments: string(item.Arguments)}}
+		case canon.CustomToolCall:
+			arguments, err := json.Marshal(customToolInput{Input: item.Input})
+			if err != nil {
+				return nil, 0, err
+			}
+			call = toolCall{ID: string(item.CallID), Type: "function", Function: funcCallWire{Name: string(item.Name), Arguments: string(arguments)}}
+		default:
+			return calls, j - i - 1, nil
 		}
-		if call.CallID == "" {
-			return nil, 0, fmt.Errorf("customchat input: function call is missing call id")
+		if call.ID == "" {
+			return nil, 0, fmt.Errorf("customchat input: tool call is missing call id")
 		}
-		calls = append(calls, toolCall{
-			ID:       string(call.CallID),
-			Type:     "function",
-			Function: funcCallWire{Name: string(call.Name), Arguments: string(call.Arguments)},
-		})
-	}
-	if len(calls) == 0 {
-		return nil, 0, fmt.Errorf("customchat input: unsupported canonical item %T", items[i])
+		calls = append(calls, call)
 	}
 	return calls, j - i - 1, nil
 }
@@ -249,21 +280,9 @@ func messageFrom(items []canon.Item, i int) (message, int, error) {
 	if err != nil {
 		return message{}, 0, err
 	}
-	var calls []toolCall
-	j := i + 1
-	for ; j < len(items); j++ {
-		call, ok := items[j].(canon.FunctionCall)
-		if !ok {
-			break
-		}
-		if call.CallID == "" {
-			return message{}, 0, fmt.Errorf("customchat input: function call is missing call id")
-		}
-		calls = append(calls, toolCall{
-			ID:       string(call.CallID),
-			Type:     "function",
-			Function: funcCallWire{Name: string(call.Name), Arguments: string(call.Arguments)},
-		})
+	calls, advanced, err := standaloneCalls(items, i+1)
+	if err != nil {
+		return message{}, 0, err
 	}
 	msg := message{Role: "assistant"}
 	if text != "" {
@@ -271,7 +290,7 @@ func messageFrom(items []canon.Item, i int) (message, int, error) {
 	}
 	if len(calls) > 0 {
 		msg.ToolCalls = calls
-		return msg, j - i - 1, nil
+		return msg, advanced + 1, nil
 	}
 	return msg, 0, nil
 }
@@ -334,7 +353,9 @@ func roleWire(r canon.Role) string {
 	case canon.RoleSystem:
 		return "system"
 	case canon.RoleDeveloper:
-		return "developer"
+		// Compatible servers often reject "developer"; "system" is accepted
+		// everywhere, including by the models that would take "developer".
+		return "system"
 	default:
 		return "user"
 	}
@@ -345,7 +366,7 @@ func effortWire(e canon.ReasoningEffort) string {
 	case canon.EffortMinimal:
 		return "minimal"
 	case canon.EffortOff:
-		return "off"
+		return "none"
 	case canon.EffortLow:
 		return "low"
 	case canon.EffortMedium:
@@ -408,13 +429,53 @@ func toolsFrom(tools []canon.Tool) ([]tool, error) {
 				def.Strict = &strict
 			}
 		case canon.CustomToolDef:
-			def = functionDef{Name: string(tt.Name), Description: tt.Description}
+			def = functionDef{Name: string(tt.Name), Description: tt.Description, Parameters: json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`)}
 		default:
 			continue
 		}
 		out = append(out, tool{Type: "function", Function: def})
 	}
 	return out, nil
+}
+
+type customToolInput struct {
+	Input string `json:"input"`
+}
+
+type customTools map[canon.ToolName]struct{}
+
+func customToolNames(tools []canon.Tool) customTools {
+	var names customTools
+	for _, tool := range tools {
+		if def, ok := tool.(canon.CustomToolDef); ok {
+			if names == nil {
+				names = make(customTools)
+			}
+			names[def.Name] = struct{}{}
+		}
+	}
+	return names
+}
+
+func (c customTools) has(name string) bool {
+	_, ok := c[canon.ToolName(name)]
+	return ok
+}
+
+func unwrapCustomInput(arguments string) (string, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(arguments), &fields); err != nil {
+		return "", fmt.Errorf("customchat: malformed custom tool arguments: %w", err)
+	}
+	raw := fields["input"]
+	if len(fields) != 1 || len(raw) == 0 || raw[0] != '"' {
+		return "", fmt.Errorf("customchat: custom tool arguments require an object containing only string input")
+	}
+	var input string
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", fmt.Errorf("customchat: malformed custom tool input: %w", err)
+	}
+	return input, nil
 }
 
 func toolChoiceFrom(tc canon.ToolChoice) (json.RawMessage, bool, error) {
@@ -439,12 +500,5 @@ func toolChoiceFrom(tc canon.ToolChoice) (json.RawMessage, bool, error) {
 }
 
 func chatURL(base string) string {
-	return chatBase(base) + "/v1/chat/completions"
-}
-
-func chatBase(base string) string {
-	u := strings.TrimRight(strings.TrimSpace(base), "/")
-	u = strings.TrimSuffix(u, "/chat/completions")
-	u = strings.TrimSuffix(u, "/v1")
-	return u
+	return openaierr.APIBase(base) + "/chat/completions"
 }

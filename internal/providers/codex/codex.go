@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
 )
 
 const ProviderID = "codex"
@@ -25,7 +26,7 @@ const (
 	ContentTypeJSON         = "application/json"
 )
 
-const reasoningStoreNative = "codex"
+const reasoningStoreNative = canon.StoreWire
 
 var forwardHeaders = []string{
 	"authorization",

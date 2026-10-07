@@ -78,6 +78,7 @@ type openTool struct {
 
 type streamer struct {
 	sink provider.Sink
+	custom customTools
 
 	respID  string
 	msgID   canon.ItemID
@@ -97,8 +98,8 @@ type streamer struct {
 	terminalEmitted bool
 }
 
-func (r *Runner) runStream(body io.Reader, sink provider.Sink) error {
-	st := &streamer{sink: sink, tools: make(map[int]*openTool)}
+func (r *Runner) runStream(body io.Reader, sink provider.Sink, custom customTools) error {
+	st := &streamer{sink: sink, custom: custom, tools: make(map[int]*openTool)}
 	err := readFrames(body, st.handleFrame)
 	if err != nil && !errors.Is(err, errTerminalDone) {
 		var runErr provider.RunError
@@ -260,11 +261,11 @@ func (s *streamer) handleToolCallDelta(call map[string]any) error {
 		open = &openTool{canonID: canon.ItemID(callID), callID: callID, name: name}
 		s.tools[index] = open
 		s.toolSeq = append(s.toolSeq, index)
-		if err := s.emit(canon.ItemStarted{Item: canon.FunctionCall{
-			ID:     canon.ItemID(callID),
-			CallID: canon.CallID(callID),
-			Name:   canon.ToolName(name),
-		}}); err != nil {
+		var item canon.Item = canon.FunctionCall{ID: canon.ItemID(callID), CallID: canon.CallID(callID), Name: canon.ToolName(name)}
+		if s.custom.has(name) {
+			item = canon.CustomToolCall{ID: canon.ItemID(callID), CallID: canon.CallID(callID), Name: canon.ToolName(name)}
+		}
+		if err := s.emit(canon.ItemStarted{Item: item}); err != nil {
 			return err
 		}
 	}
@@ -275,8 +276,10 @@ func (s *streamer) handleToolCallDelta(call map[string]any) error {
 		}
 		if args, ok := fn["arguments"].(string); ok && args != "" {
 			open.args.WriteString(args)
+			if !s.custom.has(open.name) {
 			if err := s.emit(canon.ToolArgumentsDelta{ItemID: open.canonID, Bytes: []byte(args)}); err != nil {
 				return err
+			}
 			}
 		}
 	}
@@ -331,6 +334,21 @@ func (s *streamer) finishItems() error {
 		open := s.tools[index]
 		if open.name == "" {
 			return s.protocolError(fmt.Sprintf("upstream tool call %d finished without a function name", index))
+		}
+		if s.custom.has(open.name) {
+			input, err := unwrapCustomInput(open.args.String())
+			if err != nil {
+				return s.protocolError(err.Error())
+			}
+			if input != "" {
+				if err := s.emit(canon.CustomToolInputDelta{ItemID: open.canonID, Text: input}); err != nil {
+					return err
+				}
+			}
+			if err := s.emit(canon.ItemFinished{Item: canon.CustomToolCall{ID: open.canonID, CallID: canon.CallID(open.callID), Name: canon.ToolName(open.name), Input: input}}); err != nil {
+				return err
+			}
+			continue
 		}
 		fc := canon.FunctionCall{
 			ID:     open.canonID,

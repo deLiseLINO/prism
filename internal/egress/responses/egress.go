@@ -16,6 +16,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/egress"
 	"github.com/deLiseLINO/prism/internal/execution"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/reasonenv"
 	"github.com/deLiseLINO/prism/internal/routing"
 	"github.com/google/uuid"
 )
@@ -224,6 +225,9 @@ func (e *Egress) Frame(ev canon.Event) error {
 	case canon.ItemFinished:
 		return e.itemFinishedLocked(t)
 	case canon.ItemStateAvailable:
+		if it, ok := e.items[t.ItemID]; ok && it.kind == "reasoning" && t.State.Store == canon.StoreWire {
+			it.wire["encrypted_content"] = t.State.Key
+		}
 		return nil
 	default:
 		return fmt.Errorf("egress/responses: unsupported event %T", ev)
@@ -520,6 +524,11 @@ func (e *Egress) emitFinishedLocked(t canon.ItemFinished, id canon.ItemID, kind 
 	if err != nil {
 		return err
 	}
+	if reasoning, ok := t.Item.(canon.ReasoningItem); ok && reasoning.State.IsEmpty() && reasoning.Signature == "" {
+		if encrypted, ok := it.wire["encrypted_content"]; ok {
+			wire["encrypted_content"] = encrypted
+		}
+	}
 	if err := e.writeEventLocked("response.output_item.done", map[string]any{
 		"output_index": it.index,
 		"item":         wire,
@@ -674,6 +683,15 @@ func (e *Egress) openItemWire(item canon.Item, kind, wireID, status string) (map
 		wire["summary"] = summary
 		if t.Content != "" {
 			wire["content"] = []any{map[string]any{"type": "reasoning_text", "text": t.Content}}
+		}
+		if t.State.Store == canon.StoreWire && t.State.Key != "" {
+			wire["encrypted_content"] = t.State.Key
+		} else if t.Signature != "" {
+			if _, ok := reasonenv.Decode(t.Signature); ok {
+				wire["encrypted_content"] = t.Signature
+			} else {
+				wire["encrypted_content"] = reasonenv.EncodeSignature(t.Signature, t.Content)
+			}
 		}
 	case canon.FunctionCall:
 		wire["id"] = wireID

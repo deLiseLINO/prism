@@ -56,7 +56,7 @@ func TestExtendedEffortsReachResponsesWire(t *testing.T) {
 	for effort, want := range map[canon.ReasoningEffort]string{
 		canon.EffortXHigh: "xhigh",
 		canon.EffortMax:   "max",
-		canon.EffortOff:   "off",
+		canon.EffortOff:   "none",
 	} {
 		req := testRequest(false)
 		req.Reasoning = canon.ReasoningConfig{Effort: effort}
@@ -142,21 +142,19 @@ func TestReasoningReplayIncludesSummary(t *testing.T) {
 		reasoning canon.ReasoningItem
 		want      string
 	}{
-		{name: "empty", reasoning: canon.ReasoningItem{ID: "rs_1"}, want: `{"type":"reasoning","id":"rs_1","summary":[]}`},
+		{name: "empty", reasoning: canon.ReasoningItem{ID: "rs_1"}},
 		{
 			name:      "present",
-			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}},
-			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}]}`,
+			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}, State: canon.OpaqueRef{Store: canon.StoreWire, Key: "opaque"}},
+			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}],"encrypted_content":"opaque"}`,
 		},
 		{
 			name:      "foreign signature",
 			reasoning: canon.ReasoningItem{ID: "rs_1", Signature: "EuYBCkQYAiJA-anthropic-signature"},
-			want:      `{"type":"reasoning","id":"rs_1","summary":[]}`,
 		},
 		{
 			name:      "proxy envelope",
 			reasoning: canon.ReasoningItem{ID: "rs_1", Summary: []canon.TextContent{{Text: "thinking"}}, Signature: reasonenv.Encode("x")},
-			want:      `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"thinking"}]}`,
 		},
 		{name: "nothing to replay", reasoning: canon.ReasoningItem{}},
 		{name: "only signature", reasoning: canon.ReasoningItem{Signature: reasonenv.Encode("x")}},
@@ -248,7 +246,7 @@ func TestReplayDropsItemIDsTheUpstreamCannotResolve(t *testing.T) {
 		id, _ := item["id"].(string)
 		ids = append(ids, fmt.Sprintf("%s=%s", item["type"], id))
 	}
-	want := "message=,reasoning=,reasoning=rs_1,function_call=,function_call=fc_2,custom_tool_call=,custom_tool_call=ctc_4"
+	want := "message=,function_call=,function_call=fc_2,custom_tool_call=,custom_tool_call=ctc_4"
 	if gotIDs := strings.Join(ids, ","); gotIDs != want {
 		t.Fatalf("ids = %s, want %s", gotIDs, want)
 	}

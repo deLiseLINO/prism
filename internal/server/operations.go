@@ -139,7 +139,7 @@ func (s *Server) handleCountTokens(w http.ResponseWriter, r *http.Request) {
 		}})
 		return
 	}
-	if _, ok := s.planner.Plan(counted.model); !ok {
+	if plan, ok := s.planner.Plan(counted.model); !ok || len(plan.Targets) == 0 {
 		writeJSON(w, http.StatusNotFound, messagesErrorEnvelope{Type: "error", Error: messagesErrorBody{
 			Type:    "not_found_error",
 			Message: fmt.Sprintf("no route for model %q", counted.model),

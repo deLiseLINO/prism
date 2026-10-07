@@ -367,9 +367,7 @@ func TestParseErrors(t *testing.T) {
 		{"tool call without name", `{"model":"a/b","messages":[{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"arguments":"{}"}}]}]}`, ReasonMissingField, "messages[0].tool_calls[0].function.name"},
 		{"tool without function name", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"tools":[{"type":"function","function":{}}]}`, ReasonMissingField, "tools[0].function.name"},
 		{"unknown role", `{"model":"a/b","messages":[{"role":"root","content":"x"}]}`, ReasonInvalidField, "messages[0].role"},
-		{"invalid model slug", `{"model":"just-a-name","messages":[{"role":"user","content":"x"}]}`, ReasonInvalidField, "model"},
 		{"unsupported tool type", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"tools":[{"type":"custom"}]}`, ReasonInvalidField, "tools[0].type"},
-		{"bad tool choice", `{"model":"a/b","messages":[{"role":"user","content":"x"}],"tool_choice":{"type":"allowed_tools"}}`, ReasonInvalidField, "tool_choice"},
 		{"bad image url", `{"model":"a/b","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`, ReasonInvalidField, "messages[0].content[0].image_url.url"},
 		{"unknown content part", `{"model":"a/b","messages":[{"role":"user","content":[{"type":"audio"}]}]}`, ReasonInvalidField, "messages[0].content[0].type"},
 	}
@@ -393,6 +391,14 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
+func TestIncompleteAllowedToolChoiceIsRejected(t *testing.T) {
+	_, _, err := parseBody(t, `{"model":"a/b","messages":[{"role":"user","content":"x"}],"tool_choice":{"type":"allowed_tools"}}`, nil)
+	var rejected *ParseError
+	if !errors.As(err, &rejected) || rejected.Reason != ReasonInvalidField {
+		t.Fatalf("incomplete allowed tool choice must be rejected: %v", err)
+	}
+}
+
 func TestParseErrorReasonsAreDistinct(t *testing.T) {
 	if ReasonInvalidJSON == ReasonMissingField || ReasonMissingField == ReasonInvalidField || ReasonInvalidJSON == ReasonInvalidField {
 		t.Fatal("parse reasons must be distinct")
@@ -402,37 +408,61 @@ func TestParseErrorReasonsAreDistinct(t *testing.T) {
 	}
 }
 
-func TestModelSlugGrammar(t *testing.T) {
-	valid := []string{
+func TestModelIDsPassThroughUnchanged(t *testing.T) {
+	for _, model := range []string{
 		"antigravity/gemini-3.7-flash",
 		"openrouter/minimax/minimax-m3",
 		"github.com/deLiseLINO/prism/auto",
-	}
-	for _, model := range valid {
-		t.Run("valid "+model, func(t *testing.T) {
+		"my-combo",
+		"claude-p1--m1",
+	} {
+		t.Run(model, func(t *testing.T) {
 			req := mustParse(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"x"}]}`, model))
 			if req.Model != canon.ModelID(model) {
 				t.Errorf("Model = %q, want %q without loss", req.Model, model)
 			}
 		})
 	}
-	invalid := []string{
-		"just-a-name",
-		"prefix-gpt-5-6-luna",
-		"prefix-GPT",
-		"/model",
-		"provider/",
+}
+
+func TestStopAcceptsStringAndList(t *testing.T) {
+	for body, want := range map[string]string{
+		`"stop":"END"`:     "END",
+		`"stop":["a","b"]`: "a,b",
+		`"stop":null`:      "",
+		`"stop":[]`:        "",
+		`"stop":""`:        "",
+		`"stop":["a",""]`:  "a",
+	} {
+		req := mustParse(t, `{"model":"p/m","messages":[{"role":"user","content":"x"}],`+body+`}`)
+		if got := strings.Join(req.Sampling.Stop, ","); got != want {
+			t.Fatalf("%s: stop = %q, want %q", body, got, want)
+		}
 	}
-	for _, model := range invalid {
-		t.Run("invalid "+model, func(t *testing.T) {
-			_, _, err := parseBody(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"x"}]}`, model), nil)
-			var perr *ParseError
-			if !errors.As(err, &perr) {
-				t.Fatalf("model %q: err = %v, want *ParseError", model, err)
-			}
-			if perr.Reason != ReasonInvalidField {
-				t.Errorf("model %q: Reason = %s, want invalid_field", model, perr.Reason)
-			}
-		})
+	if _, _, err := parseBody(t, `{"model":"p/m","messages":[{"role":"user","content":"x"}],"stop":5}`, nil); err == nil {
+		t.Fatal("stop:5 must be rejected")
+	}
+}
+
+func TestResponseFormatReachesCanon(t *testing.T) {
+	req := mustParse(t, `{"model":"p/m","messages":[{"role":"user","content":"x"}],"response_format":{"type":"json_schema","json_schema":{"name":"out","description":"d","schema":{"type":"object"},"strict":true}}}`)
+	f := req.Text.Format
+	if f == nil || f.Type != "json_schema" || f.Name != "out" || f.Description != "d" || string(f.Schema) != `{"type":"object"}` || f.Strict == nil || !*f.Strict {
+		t.Fatalf("format = %+v", f)
+	}
+	req = mustParse(t, `{"model":"p/m","messages":[{"role":"user","content":"x"}],"response_format":{"type":"json_object"}}`)
+	if req.Text.Format == nil || req.Text.Format.Type != "json_object" {
+		t.Fatalf("format = %+v", req.Text.Format)
+	}
+	if mustParse(t, `{"model":"p/m","messages":[{"role":"user","content":"x"}]}`).Text.Format != nil {
+		t.Fatal("no response_format must leave the format unset")
+	}
+}
+
+func TestAssistantRefusalPartReplaysAsText(t *testing.T) {
+	req := mustParse(t, `{"model":"p/m","messages":[{"role":"assistant","content":[{"type":"text","text":"a"},{"type":"refusal","refusal":"no"}]},{"role":"user","content":"x"}]}`)
+	got := contentOf(req.Input[0])
+	if len(got) != 2 || got[1].(canon.TextContent).Text != "no" {
+		t.Fatalf("content = %+v", got)
 	}
 }
