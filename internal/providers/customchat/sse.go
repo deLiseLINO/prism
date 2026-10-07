@@ -152,7 +152,9 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		return s.emitTerminal()
 	}
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(f.data), &payload); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(f.data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
 		return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0,
 			fmt.Errorf("customchat: malformed upstream stream frame: %w", err))
 	}
@@ -165,9 +167,14 @@ func (s *streamer) handleFrame(f sseFrame) error {
 	if id, ok := payload["id"].(string); ok && id != "" {
 		s.respID = id
 	}
-	if usage, ok := usageFromChat(payload["usage"]); ok {
-		s.usage = usage
+	usage, err := mergeChatUsage(payload["usage"], s.usage)
+	if err != nil {
+		if emitErr := s.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: err.Error()}, Usage: s.usage}); emitErr != nil {
+			return emitErr
+		}
+		return runError(provider.TerminalEmitted, provider.ClassTransport, true, false, 0, err)
 	}
+	s.usage = usage
 	choices, _ := payload["choices"].([]any)
 	if len(choices) > 1 {
 		return s.protocolError(fmt.Sprintf("upstream chunk carries %d choices; only one is representable", len(choices)))
@@ -179,8 +186,8 @@ func (s *streamer) handleFrame(f sseFrame) error {
 	if !ok {
 		return s.protocolError("upstream chunk choice is not an object")
 	}
-	if index, ok := choice["index"].(float64); ok && int(index) != 0 {
-		return s.protocolError(fmt.Sprintf("upstream choice index %d is not representable", int(index)))
+	if index, ok := choice["index"].(json.Number); ok && index != "0" {
+		return s.protocolError(fmt.Sprintf("upstream choice index %s is not representable", index))
 	}
 	delta, _ := choice["delta"].(map[string]any)
 	if delta == nil {
@@ -240,11 +247,15 @@ func (s *streamer) handleDelta(delta map[string]any) error {
 }
 
 func (s *streamer) handleToolCallDelta(call map[string]any) error {
-	rawIndex, ok := call["index"].(float64)
+	rawIndex, ok := call["index"].(json.Number)
 	if !ok {
 		return s.protocolError("upstream tool call delta is missing index")
 	}
-	index := int(rawIndex)
+	value, err := rawIndex.Int64()
+	if err != nil {
+		return s.protocolError("upstream tool call delta has invalid index")
+	}
+	index := int(value)
 	open, exists := s.tools[index]
 	if !exists {
 		id, _ := call["id"].(string)
@@ -402,32 +413,6 @@ func (s *streamer) protocolError(message string) error {
 	return runError(provider.TerminalOmitted, provider.ClassTransport, true, false, 0, errors.New("customchat: "+message))
 }
 
-func usageFromChat(v any) (canon.Usage, bool) {
-	u, ok := v.(map[string]any)
-	if !ok {
-		return canon.Usage{}, false
-	}
-	usage := canon.Usage{
-		InputTokens:  numberOf(u["prompt_tokens"]),
-		OutputTokens: numberOf(u["completion_tokens"]),
-		TotalTokens:  numberOf(u["total_tokens"]),
-	}
-	if d, ok := u["prompt_tokens_details"].(map[string]any); ok {
-		usage.CachedInputTokens = numberOf(d["cached_tokens"])
-	}
-	if d, ok := u["completion_tokens_details"].(map[string]any); ok {
-		usage.ReasoningTokens = numberOf(d["reasoning_tokens"])
-	}
-	return usage, true
-}
-
-func numberOf(v any) int64 {
-	f, ok := v.(float64)
-	if !ok {
-		return 0
-	}
-	return int64(f)
-}
 
 func finishStatus(reason string) (canon.Status, bool) {
 	switch reason {

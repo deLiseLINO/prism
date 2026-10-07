@@ -45,7 +45,7 @@ func (s *Server) recordUsage(facts execution.Facts, req canon.Request, proto pro
 		rec.Usage = usage.Usage(t.Event.Usage)
 	}
 	if rec.Usage.TotalTokens > 0 || rec.Usage.InputTokens > 0 || rec.Usage.OutputTokens > 0 ||
-		rec.Usage.CachedInputTokens > 0 || rec.Usage.ReasoningTokens > 0 {
+		rec.Usage.CachedInputTokens > 0 || rec.Usage.CacheWriteInputTokens > 0 || rec.Usage.ReasoningTokens > 0 {
 		rec.UsageKind = usage.StatusReported
 	} else {
 		rec.UsageKind = usage.StatusZero

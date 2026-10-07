@@ -84,6 +84,7 @@ func (s *messagesSink) Close()                               { s.e.Close() }
 
 type pipeline struct {
 	sink            streamSink
+	buffered        bool
 	tracker         *stream.Tracker
 	mu              sync.Mutex
 	terminalWritten bool
@@ -130,12 +131,12 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 	}
 	start := s.clock.Now()
 	sink := s.newSink(w, proto, req, facts)
-	p := &pipeline{sink: sink, tracker: stream.NewTracker()}
+	p := &pipeline{sink: sink, tracker: stream.NewTracker(), buffered: !req.Stream}
 	if err := sink.Begin(); err != nil {
 		return
 	}
 	res := s.router.Turn(r.Context(), req, facts, sink.Lifecycle(), p)
-	if f, failed := res.Terminal.(routing.Failed); failed && !req.Stream && proto != protocolResponses {
+	if f, failed := res.Terminal.(routing.Failed); failed && !req.Stream {
 		w.WriteHeader(failureStatus(f.Event.Failure.Reason))
 	}
 	p.finish(res)
@@ -211,6 +212,12 @@ func (p *pipeline) Emit(ev canon.Event) error {
 	}
 	if err := p.tracker.Apply(ev); err != nil {
 		return err
+	}
+	if p.buffered {
+		switch ev.(type) {
+		case canon.TurnFailed, canon.TurnFinished:
+			return nil
+		}
 	}
 	if err := p.sink.Frame(ev); err != nil {
 		return err

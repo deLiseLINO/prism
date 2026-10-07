@@ -48,10 +48,10 @@ var (
 )
 
 type openBlock struct {
-	index int
-	kind  blockKind
+	index  int
+	kind   blockKind
 	custom bool
-	text strings.Builder
+	text   strings.Builder
 }
 
 type streamEncoder struct {
@@ -202,9 +202,12 @@ func (e *streamEncoder) Flush() error {
 	switch t := e.terminal.(type) {
 	case canon.TurnFinished:
 		e.usage = usageWire{
-			InputTokens:          t.Usage.InputTokens,
-			CacheReadInputTokens: t.Usage.CachedInputTokens,
-			OutputTokens:         t.Usage.OutputTokens,
+			// Canon input counts cached tokens; the Messages wire reports them
+			// separately, and clients add cache_read back to input_tokens.
+			InputTokens:              max(t.Usage.InputTokens-t.Usage.CachedInputTokens-t.Usage.CacheWriteInputTokens, 0),
+			CacheReadInputTokens:     t.Usage.CachedInputTokens,
+			CacheCreationInputTokens: t.Usage.CacheWriteInputTokens,
+			OutputTokens:             t.Usage.OutputTokens,
 		}
 		if !e.streaming {
 			stop := stopReason(t.Status, e.toolUse)

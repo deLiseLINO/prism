@@ -5,12 +5,16 @@ import (
 	"bytes"
 
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/providers/usagewire"
 )
 
 type sseEnvelope struct {
@@ -92,8 +96,18 @@ func (d *Decoder) frame(data []byte) error {
 		return nil
 	}
 	switch raw.Type {
-	case "response.created", "response.in_progress", "response.queued",
-		"response.content_part.added", "response.content_part.done",
+	case "response.created", "response.in_progress", "response.queued":
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw.Response, &fields); err != nil {
+			return d.protocolError(err)
+		}
+		usage, err := decodeUsage(fields["usage"], d.sawUsage)
+		if err != nil {
+			return d.protocolError(err)
+		}
+		d.sawUsage = usage
+		return nil
+	case "response.content_part.added", "response.content_part.done",
 		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
 		"response.output_text.done", "response.function_call_arguments.done",
 		"response.custom_tool_call_input.done",
@@ -190,17 +204,7 @@ func (d *Decoder) terminal(response json.RawMessage, completed bool) error {
 	}
 	d.done = true
 	var resp struct {
-		Usage *struct {
-			InputTokens  int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
-			TotalTokens  int64 `json:"total_tokens"`
-			InputDetails *struct {
-				CachedTokens int64 `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
-			OutputDetails *struct {
-				ReasoningTokens int64 `json:"reasoning_tokens"`
-			} `json:"output_tokens_details"`
-		} `json:"usage"`
+		Usage json.RawMessage `json:"usage"`
 		IncompleteDetails *struct {
 			Reason string `json:"reason"`
 		} `json:"incomplete_details"`
@@ -210,19 +214,9 @@ func (d *Decoder) terminal(response json.RawMessage, completed bool) error {
 			d.warn("malformed_terminal_response")
 		}
 	}
-	usage := canon.Usage{}
-	if resp.Usage != nil {
-		usage = canon.Usage{
-			InputTokens:  resp.Usage.InputTokens,
-			OutputTokens: resp.Usage.OutputTokens,
-			TotalTokens:  resp.Usage.TotalTokens,
-		}
-		if resp.Usage.InputDetails != nil {
-			usage.CachedInputTokens = resp.Usage.InputDetails.CachedTokens
-		}
-		if resp.Usage.OutputDetails != nil {
-			usage.ReasoningTokens = resp.Usage.OutputDetails.ReasoningTokens
-		}
+	usage, err := decodeUsage(resp.Usage, d.sawUsage)
+	if err != nil {
+		return d.protocolError(err)
 	}
 	d.sawUsage = usage
 	if completed {
@@ -254,7 +248,7 @@ func (d *Decoder) failed(payload []byte) error {
 	}
 	d.done = true
 	copied := parsed
-	return d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: openaierr.Text(parsed), Provider: &copied}})
+	return d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: openaierr.Text(parsed), Provider: &copied}, Usage: d.sawUsage})
 }
 
 func (d *Decoder) emit(ev canon.Event) error {
@@ -392,4 +386,80 @@ func roleFromWire(r string) canon.Role {
 
 func reasoningState(encrypted string) canon.OpaqueRef {
 	return canon.OpaqueRef{Store: reasoningStoreNative, Key: encrypted}
+}
+
+func (d *Decoder) protocolError(cause error) error {
+	cause = fmt.Errorf("codex sse: %w", cause)
+	d.done = true
+	if err := d.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: cause.Error()}, Usage: d.sawUsage}); err != nil {
+		return err
+	}
+	return provider.RunError{Kind: provider.TerminalEmitted, Class: provider.ClassTransport, Accepted: true, Cause: cause}
+}
+func wireObject(raw json.RawMessage) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, errors.New("expected object")
+	}
+	return fields, nil
+}
+
+func decodeUsage(raw json.RawMessage, previous canon.Usage) (canon.Usage, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return previous, nil
+	}
+	fields, err := wireObject(raw)
+	if err != nil {
+		return previous, fmt.Errorf("usage: %w", err)
+	}
+	next := previous
+	for _, field := range []struct {
+		name   string
+		target *int64
+	}{{"input_tokens", &next.InputTokens}, {"output_tokens", &next.OutputTokens}, {"total_tokens", &next.TotalTokens}} {
+		if value, ok := fields[field.name]; ok {
+			count, err := usagewire.Exact(string(bytes.TrimSpace(value)))
+			if err != nil {
+				return previous, fmt.Errorf("usage.%s: %w", field.name, err)
+			}
+			*field.target = count
+		}
+	}
+	for _, detail := range []struct {
+		name, count string
+		target      *int64
+	}{{"input_tokens_details", "cached_tokens", &next.CachedInputTokens}, {"output_tokens_details", "reasoning_tokens", &next.ReasoningTokens}} {
+		if value, ok := fields[detail.name]; ok && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			f, err := wireObject(value)
+			if err != nil {
+				return previous, err
+			}
+			if value, ok := f[detail.count]; ok {
+				count, err := usagewire.Exact(string(bytes.TrimSpace(value)))
+				if err != nil {
+					return previous, fmt.Errorf("usage.%s.%s: %w", detail.name, detail.count, err)
+				}
+				*detail.target = count
+			}
+		}
+	}
+	if next.InputTokens > math.MaxInt64-next.OutputTokens {
+		return previous, errors.New("usage token sum exceeds int64")
+	}
+	if _, supplied := fields["total_tokens"]; !supplied {
+		next.TotalTokens = next.InputTokens + next.OutputTokens
+	}
+	if next.TotalTokens != next.InputTokens+next.OutputTokens {
+		return previous, errors.New("usage total does not equal input plus output")
+	}
+	if next.CachedInputTokens > next.InputTokens {
+		return previous, errors.New("usage cached tokens exceed input")
+	}
+	if next.ReasoningTokens > next.OutputTokens {
+		return previous, errors.New("usage reasoning tokens exceed output")
+	}
+	return next, nil
 }

@@ -92,6 +92,10 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		if errors.As(err, &wrapped) {
 			return wrapped.cause
 		}
+		var runErr provider.RunError
+		if errors.As(err, &runErr) {
+			return runErr
+		}
 		return provider.RunError{Kind: provider.UnsafeReplay, Class: provider.ClassTransport, Accepted: true, Cause: err}
 	}
 	usage := decoder.Usage()

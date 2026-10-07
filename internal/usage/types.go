@@ -3,11 +3,12 @@ package usage
 import "time"
 
 type Usage struct {
-	InputTokens       int64
-	OutputTokens      int64
-	CachedInputTokens int64
-	ReasoningTokens   int64
-	TotalTokens       int64
+	InputTokens           int64
+	OutputTokens          int64
+	CachedInputTokens     int64
+	CacheWriteInputTokens int64
+	ReasoningTokens       int64
+	TotalTokens           int64
 }
 
 type Status uint8

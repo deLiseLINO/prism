@@ -2,13 +2,18 @@ package antigravity
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/providers/usagewire"
 )
 
 const maxSSEFrameBytes = 100 * 1024 * 1024
@@ -24,7 +29,7 @@ type frameError struct {
 
 type frameResponse struct {
 	Candidates    []frameCandidate `json:"candidates"`
-	UsageMetadata *usageMetadata   `json:"usageMetadata"`
+	UsageMetadata json.RawMessage  `json:"usageMetadata"`
 }
 
 type frameCandidate struct {
@@ -70,12 +75,6 @@ type frameExtraContent struct {
 	} `json:"google"`
 }
 
-type usageMetadata struct {
-	PromptTokenCount        int64 `json:"promptTokenCount"`
-	CandidatesTokenCount    int64 `json:"candidatesTokenCount"`
-	CachedContentTokenCount int64 `json:"cachedContentTokenCount"`
-	ThoughtsTokenCount      int64 `json:"thoughtsTokenCount"`
-}
 
 type streamDecoder struct {
 	emit             func(canon.Event) error
@@ -147,6 +146,13 @@ func (d *streamDecoder) failProvider(reason canon.FailureReason, payload []byte)
 }
 
 func (d *streamDecoder) frame(payload []byte) error {
+	usage, err := decodeNativeUsage(payload, d.usage)
+	if err != nil {
+		if emitErr := d.fail(canon.FailUpstreamTransport, "antigravity: invalid upstream usage: "+err.Error()); emitErr != nil {
+			return emitErr
+		}
+		return provider.RunError{Kind: provider.TerminalEmitted, Class: provider.ClassTransport, Accepted: true, Cause: err}
+	}
 	var chunk streamFrame
 	if err := json.Unmarshal(payload, &chunk); err != nil {
 		return d.fail(canon.FailOriginRejected, "antigravity: malformed upstream SSE data frame")
@@ -159,12 +165,8 @@ func (d *streamDecoder) frame(payload []byte) error {
 	}
 	d.sawFrame = true
 	root := chunk.Response
-	if root.UsageMetadata != nil {
-		d.usage.InputTokens = root.UsageMetadata.PromptTokenCount
-		d.usage.OutputTokens = root.UsageMetadata.CandidatesTokenCount
-		d.usage.CachedInputTokens = root.UsageMetadata.CachedContentTokenCount
-		d.usage.ReasoningTokens = root.UsageMetadata.ThoughtsTokenCount
-		d.usage.TotalTokens = root.UsageMetadata.PromptTokenCount + root.UsageMetadata.CandidatesTokenCount
+	if len(root.UsageMetadata) > 0 && string(root.UsageMetadata) != "null" {
+		d.usage = usage
 		d.sawTerminal = true
 	}
 	if len(root.Candidates) == 0 {
@@ -366,4 +368,48 @@ func (d *streamDecoder) toolCallsComplete() bool {
 		}
 	}
 	return true
+}
+
+func decodeNativeUsage(payload []byte, previous canon.Usage) (canon.Usage, error) {
+	var frame struct {
+		Response struct {
+			Usage json.RawMessage `json:"usageMetadata"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		return previous, err
+	}
+	if len(frame.Response.Usage) == 0 || bytes.Equal(bytes.TrimSpace(frame.Response.Usage), []byte("null")) {
+		return previous, nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(frame.Response.Usage, &fields) != nil || fields == nil {
+		return previous, errors.New("usageMetadata must be an object")
+	}
+	next := previous
+	for _, field := range []struct {
+		name   string
+		target *int64
+	}{
+		{"promptTokenCount", &next.InputTokens}, {"candidatesTokenCount", &next.OutputTokens},
+		{"cachedContentTokenCount", &next.CachedInputTokens}, {"thoughtsTokenCount", &next.ReasoningTokens},
+	} {
+		raw, supplied := fields[field.name]
+		if !supplied {
+			continue
+		}
+		count, err := usagewire.Exact(string(bytes.TrimSpace(raw)))
+		if err != nil {
+			return previous, fmt.Errorf("%s: %w", field.name, err)
+		}
+		*field.target = count
+	}
+	if next.CachedInputTokens > next.InputTokens {
+		return previous, errors.New("cached token count exceeds prompt count")
+	}
+	if next.InputTokens > math.MaxInt64-next.OutputTokens {
+		return previous, errors.New("token sum exceeds int64")
+	}
+	next.TotalTokens = next.InputTokens + next.OutputTokens
+	return next, nil
 }

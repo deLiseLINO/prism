@@ -30,7 +30,7 @@ func TestSSEVocabularyToCanonEvents(t *testing.T) {
 		`{"type":"response.output_text.delta","item_id":"msg-1","delta":"Hello "}`,
 		`{"type":"response.output_text.delta","item_id":"msg-1","delta":"world"}`,
 		`{"type":"response.output_item.done","item":{"type":"message","id":"msg-1","role":"assistant","content":[{"type":"output_text","text":"Hello world"}]}}`,
-		`{"type":"response.completed","response":{"id":"r-1","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7,"input_tokens_details":{"cached_tokens":1},"output_tokens_details":{"reasoning_tokens":3}}}}`,
+		`{"type":"response.completed","response":{"id":"r-1","usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7,"input_tokens_details":{"cached_tokens":1},"output_tokens_details":{"reasoning_tokens":2}}}}`,
 	)
 	events, dec := decodeStream(t, sse)
 	if !dec.Done() {
@@ -59,7 +59,7 @@ func TestSSEVocabularyToCanonEvents(t *testing.T) {
 	if terminal.Status.Kind() != canon.StatusCompleted {
 		t.Fatalf("status = %v", terminal.Status.Kind())
 	}
-	wantUsage := canon.Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7, CachedInputTokens: 1, ReasoningTokens: 3}
+	wantUsage := canon.Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7, CachedInputTokens: 1, ReasoningTokens: 2}
 	if terminal.Usage != wantUsage {
 		t.Fatalf("usage = %+v want %+v", terminal.Usage, wantUsage)
 	}

@@ -9,13 +9,16 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/usagewire"
 	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
@@ -110,19 +113,32 @@ type wireUsage struct {
 func (s *streamState) emit(ev canon.Event) error {
 	return s.sink.Emit(ev)
 }
-func (u *wireUsage) merge(next wireUsage) {
+func (u *wireUsage) merge(next wireUsage) error {
+	merged := *u
 	if next.input != nil {
-		u.input = next.input
+		merged.input = next.input
 	}
 	if next.output != nil {
-		u.output = next.output
+		merged.output = next.output
 	}
 	if next.cacheRead != nil {
-		u.cacheRead = next.cacheRead
+		merged.cacheRead = next.cacheRead
 	}
 	if next.cacheWrE != nil {
-		u.cacheWrE = next.cacheWrE
+		merged.cacheWrE = next.cacheWrE
 	}
+	var total int64
+	for _, count := range []*int64{merged.input, merged.cacheRead, merged.cacheWrE, merged.output} {
+		if count == nil {
+			continue
+		}
+		if *count < 0 || *count > math.MaxInt64-total {
+			return errors.New("token sum exceeds int64")
+		}
+		total += *count
+	}
+	*u = merged
+	return nil
 }
 
 func (u *wireUsage) canonUsage() canon.Usage {
@@ -142,6 +158,7 @@ func (u *wireUsage) canonUsage() canon.Usage {
 	}
 	out.InputTokens += read + write
 	out.CachedInputTokens = read
+	out.CacheWriteInputTokens = write
 	out.TotalTokens = out.InputTokens + out.OutputTokens
 	return out
 }
@@ -169,7 +186,7 @@ func (r *Runner) stream(body io.Reader, sink provider.Sink, custom customTools) 
 }
 
 func (s *streamState) handle(frame sseFrame) error {
-	payload, err := decodeJSON(frame.data)
+	payload, err := decodeStreamJSON(frame.data)
 	if err != nil {
 		s.log.Warn("anthropic: dropped unparseable SSE frame", slog.String("error", err.Error()))
 		return nil
@@ -204,37 +221,84 @@ func (s *streamState) messageStart(payload map[string]any) error {
 	if message == nil {
 		return nil
 	}
-	s.usage.merge(usageFromMap(message["usage"]))
+	if err := s.mergeUsage(message["usage"], false); err != nil {
+		return err
+	}
 	if id, _ := message["id"].(string); id != "" {
 		s.msgID = id
 	}
 	return nil
 }
 
-func usageFromMap(value any) wireUsage {
-	m, ok := value.(map[string]any)
-	if !ok {
-		return wireUsage{}
+func decodeStreamJSON(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
 	}
-	return wireUsage{
-		input:     int64Field(m, "input_tokens"),
-		output:    int64Field(m, "output_tokens"),
-		cacheRead: int64Field(m, "cache_read_input_tokens"),
-		cacheWrE:  int64Field(m, "cache_creation_input_tokens"),
+	if payload == nil {
+		return nil, errors.New("expected JSON object")
 	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return nil, errors.New("trailing JSON data")
+	}
+	return payload, nil
 }
 
-func int64Field(m map[string]any, key string) *int64 {
-	if v, ok := m[key].(float64); ok {
-		n := int64(v)
-		return &n
+func (s *streamState) protocolFailure(cause error) error {
+	s.terminal = true
+	if err := s.emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUpstreamTransport, Message: cause.Error()}, Usage: s.usage.canonUsage()}); err != nil {
+		return err
+	}
+	return &provider.RunError{Kind: provider.TerminalEmitted, Class: provider.ClassTransport, Accepted: true, Cause: cause}
+}
+
+func (s *streamState) mergeUsage(value any, delta bool) error {
+	next, err := usageFromMap(value, delta)
+	if err == nil {
+		err = s.usage.merge(next)
+	}
+	if err != nil {
+		return s.protocolFailure(fmt.Errorf("anthropic: invalid upstream usage: %w", err))
 	}
 	return nil
 }
 
+func usageFromMap(value any, delta bool) (wireUsage, error) {
+	if value == nil {
+		return wireUsage{}, nil
+	}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return wireUsage{}, errors.New("usage must be an object or null")
+	}
+	var out wireUsage
+	for _, field := range []struct {
+		key      string
+		count    **int64
+		nullable bool
+	}{
+		{"input_tokens", &out.input, delta}, {"output_tokens", &out.output, false},
+		{"cache_read_input_tokens", &out.cacheRead, true}, {"cache_creation_input_tokens", &out.cacheWrE, true},
+	} {
+		raw, present := m[field.key]
+		if !present || raw == nil && field.nullable {
+			continue
+		}
+		count, err := usagewire.Number(raw)
+		if err != nil {
+			return wireUsage{}, fmt.Errorf("%s: %w", field.key, err)
+		}
+		*field.count = &count
+	}
+	return out, nil
+}
+
 func (s *streamState) blockKey(payload map[string]any) string {
-	if index, ok := payload["index"].(float64); ok {
-		return fmt.Sprintf("%d", int(index))
+	if index, err := usagewire.Number(payload["index"]); err == nil {
+		return strconv.FormatInt(index, 10)
 	}
 	return ""
 }
@@ -496,7 +560,9 @@ func (s *streamState) finishCustomCall(open *openBlock) error {
 }
 
 func (s *streamState) messageDelta(payload map[string]any) error {
-	s.usage.merge(usageFromMap(payload["usage"]))
+	if err := s.mergeUsage(payload["usage"], true); err != nil {
+		return err
+	}
 	delta, _ := payload["delta"].(map[string]any)
 	if delta == nil {
 		return nil
@@ -587,13 +653,13 @@ func (r *Runner) CountTokens(ctx context.Context, req provider.CountTokensReques
 	if err != nil {
 		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassTransport, Cause: err}
 	}
-	parsed, err := decodeJSON(payload)
+	parsed, err := decodeStreamJSON(payload)
 	if err != nil {
 		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Cause: err}
 	}
-	tokens, ok := parsed["input_tokens"].(float64)
-	if !ok {
-		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Cause: errors.New("anthropic: count_tokens response missing input_tokens")}
+	tokens, err := usagewire.Number(parsed["input_tokens"])
+	if err != nil {
+		return provider.TokenCount{}, &provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassServer, Cause: fmt.Errorf("anthropic: invalid count_tokens input_tokens: %w", err)}
 	}
-	return provider.TokenCount{InputTokens: int64(tokens)}, nil
+	return provider.TokenCount{InputTokens: tokens}, nil
 }

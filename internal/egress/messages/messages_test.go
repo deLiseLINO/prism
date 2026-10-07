@@ -375,7 +375,7 @@ func TestUsageCarriesValues(t *testing.T) {
 		}})
 	frames := parseFrames(t, out)
 	usage := frames[len(frames)-2].data["usage"].(map[string]any)
-	if usage["input_tokens"].(float64) != 12 || usage["cache_read_input_tokens"].(float64) != 4 || usage["output_tokens"].(float64) != 34 {
+	if usage["input_tokens"].(float64) != 8 || usage["cache_read_input_tokens"].(float64) != 4 || usage["output_tokens"].(float64) != 34 {
 		t.Fatalf("message_delta usage = %v", usage)
 	}
 }

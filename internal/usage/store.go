@@ -67,6 +67,37 @@ func Open(path string) (Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("usage: apply schema: %w", err)
 	}
+	for _, table := range []string{"requests", "attempts"} {
+		rows, err := db.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("usage: inspect schema: %w", err)
+		}
+		found := false
+		for rows.Next() {
+			var cid, notNull, primary int
+			var name, kind string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primary); err != nil {
+				rows.Close()
+				db.Close()
+				return nil, fmt.Errorf("usage: inspect column: %w", err)
+			}
+			found = found || name == "cache_write_tokens"
+		}
+		iterationErr := rows.Err()
+		rows.Close()
+		if iterationErr != nil {
+			db.Close()
+			return nil, fmt.Errorf("usage: inspect columns: %w", iterationErr)
+		}
+		if !found {
+			if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0"); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("usage: migrate cache writes: %w", err)
+			}
+		}
+	}
 	return &dbStore{db: db}, nil
 }
 
@@ -87,12 +118,12 @@ func (s *dbStore) Insert(ctx context.Context, rec Record) error {
 	res, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO requests
   (request_id, ts, model, protocol, status, reason, usage_kind,
-   input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens, duration_ms)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+   input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens, duration_ms, cache_write_tokens)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.RequestID, rec.Timestamp.UnixNano(), rec.Model, rec.Protocol, rec.Status, rec.Reason,
 		rec.UsageKind.String(),
 		rec.Usage.InputTokens, rec.Usage.OutputTokens, rec.Usage.CachedInputTokens,
-		rec.Usage.ReasoningTokens, rec.Usage.TotalTokens, rec.Duration.Milliseconds())
+		rec.Usage.ReasoningTokens, rec.Usage.TotalTokens, rec.Duration.Milliseconds(), rec.Usage.CacheWriteInputTokens)
 	if err != nil {
 		return fmt.Errorf("usage: insert request: %w", err)
 	}
@@ -111,11 +142,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO attempts
   (request_row, ordinal, provider, model, outcome,
-   input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+   input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens, cache_write_tokens)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, i+1, at.Provider, at.Model, at.Outcome,
 			at.Usage.InputTokens, at.Usage.OutputTokens, at.Usage.CachedInputTokens,
-			at.Usage.ReasoningTokens, at.Usage.TotalTokens); err != nil {
+			at.Usage.ReasoningTokens, at.Usage.TotalTokens, at.Usage.CacheWriteInputTokens); err != nil {
 			return fmt.Errorf("usage: insert attempt: %w", err)
 		}
 	}
