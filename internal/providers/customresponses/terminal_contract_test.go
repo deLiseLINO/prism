@@ -113,3 +113,106 @@ func TestEmptyCustomInputReplaysAsPresentString(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTerminalSparserThanClosedItemKeepsServedOutput(t *testing.T) {
+	cases := map[string]struct {
+		frames []string
+		check  func(t *testing.T, item canon.Item)
+	}{
+		"message": {
+			frames: []string{
+				`{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[]}}`,
+				`{"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"hi"}`,
+				`{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[{"type":"output_text","text":"hi"}]}}`,
+				`{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","id":"m","role":"assistant","content":[]}]}}`,
+			},
+			check: func(t *testing.T, item canon.Item) {
+				if text := item.(canon.Message).Content[0].(canon.TextContent).Text; text != "hi" {
+					t.Fatalf("text=%q", text)
+				}
+			},
+		},
+		"function call": {
+			frames: []string{
+				`{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"f","call_id":"c","name":"n","arguments":""}}`,
+				`{"type":"response.function_call_arguments.delta","output_index":0,"item_id":"f","delta":"{}"}`,
+				`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"f","call_id":"c","name":"n","arguments":"{}"}}`,
+				`{"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","id":"f","call_id":"c","name":"n","arguments":""}]}}`,
+			},
+			check: func(t *testing.T, item canon.Item) {
+				if args := string(item.(canon.FunctionCall).Arguments); args != "{}" {
+					t.Fatalf("arguments=%q", args)
+				}
+			},
+		},
+		"reasoning": {
+			frames: []string{
+				`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"r","summary":[]}}`,
+				`{"type":"response.reasoning_summary_text.delta","output_index":0,"item_id":"r","delta":"think"}`,
+				`{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"r","summary":[{"type":"summary_text","text":"think"}],"encrypted_content":"x"}}`,
+				`{"type":"response.completed","response":{"status":"completed","output":[{"type":"reasoning","id":"r","summary":[],"encrypted_content":"x"}]}}`,
+			},
+			check: func(t *testing.T, item canon.Item) {
+				got := item.(canon.ReasoningItem)
+				if got.Content != "think" || got.State.Key != "x" {
+					t.Fatalf("reasoning=%+v", got)
+				}
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, frame := range tc.frames {
+					fmt.Fprint(w, "data: "+frame+"\n\n")
+				}
+			}))
+			defer upstream.Close()
+			sink := &collector{}
+			err := New(nil, Options{}).Run(t.Context(), provider.RunRequest{Target: provider.Target{Provider: "edge", Wire: provider.WireResponses, BaseURL: upstream.URL}, Request: canon.Request{Model: "m", Stream: true}}, sink)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var finished []canon.Item
+			for _, event := range sink.All() {
+				if f, ok := event.(canon.ItemFinished); ok {
+					finished = append(finished, f.Item)
+				}
+			}
+			if len(finished) != 1 {
+				t.Fatalf("finished=%+v", finished)
+			}
+			tc.check(t, finished[0])
+			if _, ok := sink.All()[len(sink.All())-1].(canon.TurnFinished); !ok {
+				t.Fatalf("last=%T", sink.All()[len(sink.All())-1])
+			}
+		})
+	}
+}
+
+func TestTerminalMovingClosedItemIsRejected(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, frame := range []string{
+			`{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"a","role":"assistant","content":[]}}`,
+			`{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"a","role":"assistant","content":[{"type":"output_text","text":"x"}]}}`,
+			`{"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"b","role":"assistant","content":[]}}`,
+			`{"type":"response.output_item.done","output_index":1,"item":{"type":"message","id":"b","role":"assistant","content":[{"type":"output_text","text":"y"}]}}`,
+			`{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","id":"b","role":"assistant","content":[]},{"type":"message","id":"a","role":"assistant","content":[]}]}}`,
+		} {
+			fmt.Fprint(w, "data: "+frame+"\n\n")
+		}
+	}))
+	defer upstream.Close()
+	sink := &collector{}
+	err := New(nil, Options{}).Run(t.Context(), provider.RunRequest{Target: provider.Target{Provider: "edge", Wire: provider.WireResponses, BaseURL: upstream.URL}, Request: canon.Request{Model: "m", Stream: true}}, sink)
+	if err == nil {
+		t.Fatal("reordered terminal accepted")
+	}
+	for _, event := range sink.All() {
+		if _, ok := event.(canon.TurnFinished); ok {
+			t.Fatal("reordered terminal published success")
+		}
+	}
+}
