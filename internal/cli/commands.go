@@ -780,7 +780,7 @@ func (c *command) runIntegrationsAction(ctx context.Context, rt *cliRuntime, p p
 	if action == "apply" {
 		res, err = rt.client.integrationApply(ctx, c.clientID, c.force)
 	} else {
-		res, err = rt.client.integrationRollback(ctx, c.clientID)
+		res, err = rt.client.integrationRollback(ctx, c.clientID, c.force)
 	}
 	if err != nil {
 		return err
@@ -791,7 +791,7 @@ func (c *command) runIntegrationsAction(ctx context.Context, rt *cliRuntime, p p
 		if perr := p.integrationApply(res, action); perr != nil {
 			return perr
 		}
-		if action == "apply" && res.Retryable && !c.force {
+		if res.Retryable && !c.force {
 			return exitErr(exitRefused, "%s refused: %s (re-run with --force to take over after confirmation)", action, res.Reason)
 		}
 		return exitErr(exitRefused, "%s refused: %s", action, res.Reason)

@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,14 @@ func lockMutation(path string) func() {
 	lock := &mutationLocks[hash%uint64(len(mutationLocks))]
 	lock.Lock()
 	return lock.Unlock
+}
+
+type journalConflictError struct{ message string }
+
+func (e *journalConflictError) Error() string { return e.message }
+
+func journalConflict(format string, args ...any) error {
+	return &journalConflictError{message: fmt.Sprintf(format, args...)}
 }
 
 type fileState struct {
@@ -57,18 +66,18 @@ func loadJournal(io FileIO, path string) (*restorationJournal, error) {
 	}
 	root, parseErr := parseJSONObject(raw)
 	if parseErr != nil || root == nil || !json.Valid([]byte(raw)) {
-		return nil, fmt.Errorf("restoration journal invalid; originals retained")
+		return nil, journalConflict("restoration journal invalid; originals retained")
 	}
 	var j restorationJournal
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&j) != nil || j.Version != 1 || j.Target != filepath.Clean(path) || len(j.Files) == 0 {
-		return nil, fmt.Errorf("restoration journal invalid; original bytes retained at %s", restorationPath(path))
+		return nil, journalConflict("restoration journal invalid; original bytes retained at %s", restorationPath(path))
 	}
 	seen := make(map[string]bool, len(j.Files))
 	for _, f := range j.Files {
 		if !journalPathAllowed(path, f.Path) || seen[f.Path] || (!f.Original.Present && f.Original.Text != "") || (!f.Written.Present && f.Written.Text != "") || (f.Pending != nil && !f.Pending.Present && f.Pending.Text != "") {
-			return nil, fmt.Errorf("restoration journal invalid at %s", restorationPath(path))
+			return nil, journalConflict("restoration journal invalid at %s", restorationPath(path))
 		}
 		seen[f.Path] = true
 	}
@@ -133,7 +142,7 @@ func resumeJournal(io FileIO, j *restorationJournal) error {
 			return err
 		}
 		if current != f.Written && current != *f.Pending {
-			return fmt.Errorf("restoration journal conflict at %s; original bytes retained", f.Path)
+			return journalConflict("restoration journal conflict at %s; original bytes retained", f.Path)
 		}
 	}
 	pending := false
@@ -199,7 +208,7 @@ func applyRestorationUnlocked(io FileIO, path string, transform func(string) Con
 			}
 			if !j.Retired && f.Pending == nil {
 				if _, err := mergeJournalFile(f, observed); err != nil {
-					return WriteOutcome{}, fmt.Errorf("restoration journal conflict at %s; original bytes retained", f.Path)
+					return WriteOutcome{}, journalConflict("restoration journal conflict at %s; original bytes retained", f.Path)
 				}
 			}
 		}
@@ -256,14 +265,14 @@ func applyRestorationUnlocked(io FileIO, path string, transform func(string) Con
 		f := &j.Files[index]
 		original, err := mergeJournalFile(*f, current[p])
 		if err != nil {
-			return WriteOutcome{}, fmt.Errorf("restoration journal conflict at %s: %w", p, err)
+			return WriteOutcome{}, journalConflict("restoration journal conflict at %s: %v", p, err)
 		}
 		f.Original = original
 		if p == path && current[p] != f.Written {
 			if root, err := parseJSONObject(f.Written.Text); err == nil && root != nil {
 				preserved, err := mergeJSONValues(f.Written.Text, current[p].Text, next.Text)
 				if err != nil {
-					return WriteOutcome{}, fmt.Errorf("restoration journal conflict at %s; settings retained", p)
+					return WriteOutcome{}, journalConflict("restoration journal conflict at %s; settings retained", p)
 				}
 				next.Text = preserved
 			}
@@ -332,7 +341,7 @@ func rollbackRestorationUnlocked(io FileIO, path string, fallback func(string) C
 		}
 		next, err := mergeJournalFile(*f, current)
 		if err != nil {
-			return WriteOutcome{}, fmt.Errorf("restoration journal conflict at %s; original bytes retained", f.Path)
+			return WriteOutcome{}, journalConflict("restoration journal conflict at %s; original bytes retained", f.Path)
 		}
 		f.Written = current
 		f.Pending = &next
@@ -453,4 +462,71 @@ func mergeRestoration(written, current, original fileState) (fileState, error) {
 		i++
 	}
 	return fileState{Present: true, Text: strings.Join(result, "\n")}, nil
+}
+
+func retireJournal(io FileIO, path string) (string, error) {
+	unlock := lockMutation(path)
+	defer unlock()
+	journalPath := restorationPath(path)
+	raw, present, err := io.ReadText(journalPath)
+	if err != nil || !present {
+		return "", err
+	}
+	if !journalConflictsUnlocked(io, path) {
+		return "", nil
+	}
+	backup := journalPath + ".bak"
+	for n := 1; io.FileExists(backup); n++ {
+		backup = fmt.Sprintf("%s.bak.%d", journalPath, n)
+	}
+	if err := AtomicWrite(io, backup, raw); err != nil {
+		return "", err
+	}
+	saved, err := readState(io, backup)
+	if err != nil {
+		return "", err
+	}
+	if !saved.Present || saved.Text != raw {
+		return "", fmt.Errorf("journal backup readback failed for %s", backup)
+	}
+	if err := io.RemoveDurable(journalPath); err != nil {
+		return "", err
+	}
+	return backup, nil
+}
+
+func journalConflicts(io FileIO, path string) bool {
+	unlock := lockMutation(path)
+	defer unlock()
+	return journalConflictsUnlocked(io, path)
+}
+
+func journalConflictsUnlocked(io FileIO, path string) bool {
+	j, err := loadJournal(io, path)
+	if err != nil {
+		var conflict *journalConflictError
+		return errors.As(err, &conflict)
+	}
+	if j == nil {
+		return false
+	}
+	for _, f := range j.Files {
+		observed, err := readState(io, f.Path)
+		if err != nil {
+			return false
+		}
+		if f.Pending != nil {
+			if observed != f.Written && observed != *f.Pending {
+				return true
+			}
+			continue
+		}
+		if j.Retired {
+			continue
+		}
+		if _, err := mergeJournalFile(f, observed); err != nil {
+			return true
+		}
+	}
+	return false
 }
