@@ -124,6 +124,19 @@ func ReadProviderLeafBody(text, providerID, fileLabel, endpointKey string) Provi
 	return ProviderLeafRead{Kind: LeafPresent, BaseURL: &m[1]}
 }
 
+func adoptWrittenLeaf(written, current string) (string, bool) {
+	w, refused := scanProviderLeaf(written, "prism", "models.yml", false)
+	if refused != "" || w.leafStart == -1 {
+		return "", false
+	}
+	c, refused := scanProviderLeaf(current, "prism", "models.yml", false)
+	if refused != "" || c.leafStart == -1 {
+		return "", false
+	}
+	lines := append(append(append([]sourceLine{}, c.lines[:c.leafStart]...), w.lines[w.leafStart:w.leafEnd]...), c.lines[c.leafEnd:]...)
+	return joinLines(lines), true
+}
+
 var yamlEndpointPatterns = map[string]*regexp.Regexp{}
 
 func yamlEndpointRe(key string) *regexp.Regexp {
