@@ -121,8 +121,8 @@ func modelFamily(model canon.ModelID) string {
 	return m[1]
 }
 
-func (r *Runner) render(request canon.Request, streaming bool) (*outbound, error) {
-	wr, err := r.buildWireRequest(request, streaming)
+func (r *Runner) render(request canon.Request, outputLimit int, streaming bool) (*outbound, error) {
+	wr, err := r.buildWireRequest(request, outputLimit, streaming)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (r *Runner) render(request canon.Request, streaming bool) (*outbound, error
 	return &outbound{body: body}, nil
 }
 
-func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireRequest, error) {
+func (r *Runner) buildWireRequest(request canon.Request, outputLimit int, streaming bool) (*wireRequest, error) {
 	if request.Text.Verbosity != 0 && request.Text.Verbosity != canon.VerbosityDefault {
 		return nil, errors.New("anthropic: text verbosity is not representable on this wire")
 	}
@@ -193,9 +193,12 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 	if err != nil {
 		return nil, err
 	}
+	if outputLimit <= 0 {
+		outputLimit = unknownModelMaxTokens
+	}
 	maxTokens := request.MaxOutputTokens
 	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = outputLimit
 	}
 	wr := &wireRequest{
 		Model:         string(request.Model),
@@ -218,14 +221,15 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 		if !ok {
 			return nil, fmt.Errorf("anthropic: no thinking budget for model %q effort %d", request.Model, request.Reasoning.Effort)
 		}
-		if budget < minThinkingBudget {
-			return nil, fmt.Errorf("anthropic: thinking budget %d below minimum %d", budget, minThinkingBudget)
-		}
-		wr.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget}
 		// Only a value prism raises is capped; the client's own limit stands.
-		if floor := min(budget+thinkingHeadroom, maxTokensCeiling); maxTokens < floor {
+		if floor := min(budget+thinkingHeadroom, outputLimit); maxTokens < floor {
 			maxTokens = floor
 		}
+		budget = min(budget, maxTokens-thinkingHeadroom)
+		if budget < minThinkingBudget {
+			return nil, fmt.Errorf("anthropic: thinking budget %d below minimum %d for max_tokens %d", budget, minThinkingBudget, maxTokens)
+		}
+		wr.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget}
 		wr.MaxTokens = maxTokens
 		wr.Temperature = nil
 		wr.TopP = nil

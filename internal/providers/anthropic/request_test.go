@@ -475,18 +475,18 @@ func TestThinkingRequestShape(t *testing.T) {
 	}
 }
 
-func TestThinkingBudgetCappedAtCeiling(t *testing.T) {
+func TestThinkingMaxTokensCappedAtModelLimit(t *testing.T) {
 	request := baseRequest()
 	request.Reasoning.Effort = canon.EffortXHigh
 	request.Sampling.Temperature, request.Sampling.TopP = nil, nil
 	runner := New(Options{})
-	out, err := runner.buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k"}})
+	out, err := runner.buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k", MaxOutputTokens: 30000}})
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
 	body := decodeBody(t, out.body)
-	if body["max_tokens"] != float64(maxTokensCeiling) {
-		t.Fatalf("max_tokens = %v, want ceiling %d", body["max_tokens"], maxTokensCeiling)
+	if body["max_tokens"] != float64(30000) {
+		t.Fatalf("max_tokens = %v, want model limit 30000", body["max_tokens"])
 	}
 }
 

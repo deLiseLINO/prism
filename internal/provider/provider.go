@@ -25,15 +25,16 @@ const (
 )
 
 type Target struct {
-	Provider   account.ProviderID
-	Wire       Wire
-	BaseURL    string
-	APIKeyRef  string
-	Model      canon.ModelID
-	ImageInput bool
-	Timeout    time.Duration
-	Policy     account.SelectionPolicy
-	Wait       WaitPolicy
+	Provider        account.ProviderID
+	Wire            Wire
+	BaseURL         string
+	APIKeyRef       string
+	Model           canon.ModelID
+	ImageInput      bool
+	MaxOutputTokens int
+	Timeout         time.Duration
+	Policy          account.SelectionPolicy
+	Wait            WaitPolicy
 }
 
 type CommitState uint8
