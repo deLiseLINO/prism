@@ -21,7 +21,7 @@ func TestForcedToolChoiceDropsThinking(t *testing.T) {
 			req.Tools = []canon.Tool{tool("get")}
 			req.ToolChoice = choice
 			req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortHigh}
-			wr, err := New(Options{}).buildWireRequest(req, true)
+			wr, err := New(Options{}).buildWireRequest(req, 0, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +41,7 @@ func TestAutoToolChoiceKeepsThinking(t *testing.T) {
 	req.ToolChoice = canon.ToolAuto{}
 	req.Reasoning = canon.ReasoningConfig{Effort: canon.EffortHigh}
 	req.Sampling.Temperature, req.Sampling.TopP = nil, nil
-	wr, err := New(Options{}).buildWireRequest(req, true)
+	wr, err := New(Options{}).buildWireRequest(req, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestParallelToolCallsFalseReachesMessagesWire(t *testing.T) {
 	req.Tools = []canon.Tool{tool("get")}
 	off := false
 	req.Sampling.ParallelToolCalls = &off
-	wr, err := New(Options{}).buildWireRequest(req, true)
+	wr, err := New(Options{}).buildWireRequest(req, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -429,3 +429,40 @@ func TestParseEffortsIgnoresBoolReasoningAndMissingOptions(t *testing.T) {
 		t.Fatalf("y = %+v", got)
 	}
 }
+
+func TestParseMaxOutputMajorityAndAbsent(t *testing.T) {
+	body := `{
+	  "a": {"models": {"m": {"id": "sonnet-x", "limit": {"context": 200000, "output": 64000}}}},
+	  "b": {"models": {"m": {"id": "sonnet-x", "limit": {"context": 200000, "output": 64000}}}},
+	  "c": {"models": {"m": {"id": "sonnet-x", "limit": {"context": 200000, "output": 8192}}}},
+	  "d": {"models": {"m": {"id": "no-output", "limit": {"context": 100000}}}}
+	}`
+	rows, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows["sonnet-x"].MaxOutput; got != 64000 {
+		t.Fatalf("max output = %d, want 64000", got)
+	}
+	if got := rows["no-output"].MaxOutput; got != 0 {
+		t.Fatalf("max output = %d, want unknown", got)
+	}
+}
+
+func TestParseKeepsOutputOnlyEntryAndDropsTie(t *testing.T) {
+	body := `{
+	  "a": {"models": {"m": {"id": "out-only", "limit": {"output": 4096}}}},
+	  "b": {"models": {"m": {"id": "tied", "limit": {"context": 1000, "output": 4096}}}},
+	  "c": {"models": {"m": {"id": "tied", "limit": {"context": 1000, "output": 8192}}}}
+	}`
+	rows, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows["out-only"].MaxOutput; got != 4096 {
+		t.Fatalf("out-only max output = %d, want 4096", got)
+	}
+	if got := rows["tied"]; got.MaxOutput != 0 || got.ContextWindow != 1000 {
+		t.Fatalf("tied = %+v, want unknown output and window 1000", got)
+	}
+}

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/catalog"
 	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/provider"
 )
@@ -93,6 +95,30 @@ func TestTargetPicksModelWireOverride(t *testing.T) {
 		}
 		if got := plan.Targets[0].Wire; got != want {
 			t.Fatalf("%s: wire = %d, want %d", ref, got, want)
+		}
+	}
+}
+
+type outputCatalog map[string]catalog.Facts
+
+func (c outputCatalog) Lookup(id string) catalog.Facts { return c[id] }
+
+func TestTargetCarriesCatalogMaxOutput(t *testing.T) {
+	m, err := config.Open(filepath.Join(t.TempDir(), "prism.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetCatalog(outputCatalog{"sonnet-x": {MaxOutput: 64000}})
+	doc := m.Get().Config
+	doc.Providers = map[string]config.Provider{"p": {Wire: config.WireOpenAIChat, BaseURL: "http://localhost"}}
+	p := &ConfigPlanner{get: func() config.Document { return doc }}
+	for model, want := range map[string]int{"sonnet-x": 64000, "unlisted": 0} {
+		plan, ok := p.Plan(canon.ModelID("p/" + model))
+		if !ok {
+			t.Fatalf("%s: plan not found", model)
+		}
+		if got := plan.Targets[0].MaxOutputTokens; got != want {
+			t.Fatalf("%s: MaxOutputTokens = %d, want %d", model, got, want)
 		}
 	}
 }

@@ -19,15 +19,14 @@ import (
 )
 
 const (
-	DefaultBaseURL     = "https://api.anthropic.com"
-	DefaultAPIVersion  = "2023-06-01"
-	defaultMaxTokens   = 8192
-	maxTokensCeiling   = 32000
-	thinkingHeadroom   = 8192
-	minThinkingBudget  = 1024
-	maxErrorBodyBytes  = 1 << 20
-	stateStoreName     = "anthropic"
-	promptCacheKeyNote = "anthropic: prompt_cache_key accepted but not forwarded; client x-session-id forwarded on the messages run path when non-empty; no cache_control synthesis"
+	DefaultBaseURL        = "https://api.anthropic.com"
+	DefaultAPIVersion     = "2023-06-01"
+	unknownModelMaxTokens = 64000
+	thinkingHeadroom      = 8192
+	minThinkingBudget     = 1024
+	maxErrorBodyBytes     = 1 << 20
+	stateStoreName        = "anthropic"
+	promptCacheKeyNote    = "anthropic: prompt_cache_key accepted but not forwarded; client x-session-id forwarded on the messages run path when non-empty; no cache_control synthesis"
 )
 
 type Options struct {
@@ -183,7 +182,7 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 }
 
 func (r *Runner) buildRequest(req provider.RunRequest) (*outbound, error) {
-	out, err := r.render(req.Request, true)
+	out, err := r.render(req.Request, req.Target.MaxOutputTokens, true)
 	if err != nil {
 		return nil, err
 	}
