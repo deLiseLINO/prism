@@ -1,5 +1,5 @@
 import type { ThemeMode } from '../useTheme'
-import { cloneElement, Component, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react'
+import { cloneElement, Component, Fragment, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ReportActions } from './ReportActions'
 
@@ -109,7 +109,7 @@ export interface ButtonProps {
   readonly children: ReactNode
   readonly onClick: () => void
   readonly disabled?: boolean
-  readonly tone?: 'primary' | 'ghost' | 'danger'
+  readonly tone?: 'primary' | 'ghost' | 'danger' | 'warn'
   readonly size?: 'md' | 'sm'
   readonly type?: 'button' | 'submit'
   readonly busy?: boolean
@@ -368,6 +368,11 @@ export function Empty({ title, children, action }: EmptyProps): JSX.Element {
   )
 }
 
+export interface ConfirmDetail {
+  readonly label: string
+  readonly value: string
+}
+
 export interface ConfirmProps {
   readonly title: string
   readonly detail: string
@@ -375,9 +380,22 @@ export interface ConfirmProps {
   readonly onConfirm: () => void
   readonly onCancel: () => void
   readonly busy?: boolean
+  readonly tone?: 'danger' | 'warn'
+  readonly note?: string
+  readonly details?: readonly ConfirmDetail[]
 }
 
-export function Confirm({ title, detail, confirmLabel, onConfirm, onCancel, busy }: ConfirmProps): JSX.Element {
+export function Confirm({
+  title,
+  detail,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+  busy,
+  tone = 'danger',
+  note,
+  details,
+}: ConfirmProps): JSX.Element {
   const detailId = useId()
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -388,7 +406,7 @@ export function Confirm({ title, detail, confirmLabel, onConfirm, onCancel, busy
   }, [onCancel])
   return (
     <div
-      className="confirm"
+      className={tone === 'warn' ? 'confirm confirm--warn' : 'confirm'}
       role="alertdialog"
       aria-modal="false"
       aria-label={title}
@@ -396,15 +414,33 @@ export function Confirm({ title, detail, confirmLabel, onConfirm, onCancel, busy
     >
       <p className="confirm__title">{title}</p>
       <p className="confirm__detail" id={detailId}>{detail}</p>
+      {note !== undefined ? <p className="confirm__note">{note}</p> : null}
+      {details !== undefined ? <DetailsList rows={details} /> : null}
       <div className="confirm__actions">
         <Button tone="ghost" size="sm" autoFocus onClick={onCancel} disabled={busy === true}>
           Cancel
         </Button>
-        <Button tone="danger" size="sm" onClick={onConfirm} busy={busy === true}>
+        <Button tone={tone} size="sm" onClick={onConfirm} busy={busy === true}>
           {confirmLabel}
         </Button>
       </div>
     </div>
+  )
+}
+
+export function DetailsList({ rows }: { readonly rows: readonly ConfirmDetail[] }): JSX.Element {
+  return (
+    <details className="more">
+      <summary>Details</summary>
+      <dl>
+        {rows.map((row) => (
+          <Fragment key={row.label}>
+            <dt>{row.label}</dt>
+            <dd>{row.value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </details>
   )
 }
 

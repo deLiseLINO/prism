@@ -442,6 +442,20 @@ describe('renderer api wrapper', () => {
     expect(recorded[0]).toMatchObject({ method: 'GET', path: '/api/v1/integrations' })
   })
 
+  it('sends force on apply and rollback only when asked and returns the conflict and backup fields', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { ok: false, id: 'omp', reason: 'journal', retryable: true, conflict: 'journal' } })
+    expect(await api.integrationRollback('omp', false)).toEqual({ ok: false, id: 'omp', reason: 'journal', retryable: true, conflict: 'journal' })
+    setReply({ ok: true, status: 200, body: { ok: true, id: 'omp', backup: '/h/.models.yml.prism-journal.json.bak' } })
+    expect(await api.integrationRollback('omp', true)).toEqual({ ok: true, id: 'omp', backup: '/h/.models.yml.prism-journal.json.bak' })
+    await api.integrationApply('omp', true)
+    expect(recorded.map((call) => call.path)).toEqual([
+      '/api/v1/integrations/omp/rollback',
+      '/api/v1/integrations/omp/rollback?force=true',
+      '/api/v1/integrations/omp/apply?force=true',
+    ])
+  })
+
   it('treats an unexpected 200 reply to account delete as an error, not empty success', async () => {
     const { api, ApiError } = await loadApi()
     setReply({ ok: true, status: 200, body: { account: 'codex:abc' } })

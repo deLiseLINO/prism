@@ -53,6 +53,20 @@ describe('integration api over the management seam', () => {
     ])
   })
 
+  it('sends force on rollback and passes conflict and backup fields through', async () => {
+    const conflict = { ok: false, id: 'omp', reason: 'journal', retryable: true, conflict: 'journal' }
+    const proxy = fakeProxy({ ok: true, status: 200, body: conflict })
+    const api = new IntegrationApi(proxy)
+    expect(await api.rollback({ id: 'omp' })).toEqual(conflict)
+    await api.rollback({ id: 'omp', force: true, host: 'box' })
+    expect(proxy.calls).toEqual([
+      { method: 'POST', path: '/api/v1/integrations/omp/rollback' },
+      { method: 'POST', path: '/api/v1/hosts/box/integrations/omp/rollback?force=true' },
+    ])
+    const done = { ok: true, id: 'omp', backup: '/h/.models.yml.prism-journal.json.bak' }
+    expect(await new IntegrationApi(fakeProxy({ ok: true, status: 200, body: done })).apply({ id: 'omp', force: true })).toEqual(done)
+  })
+
   it('surfaces transport failures as failed results with the daemon reason', async () => {
     const proxy = fakeProxy({ ok: false, status: 0, error: 'connect ECONNREFUSED' })
     const api = new IntegrationApi(proxy)

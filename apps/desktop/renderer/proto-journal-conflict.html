@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prototype: config journal conflict</title>
+<link rel="stylesheet" href="./styles.css" />
+<style>
+  .proto { max-width: 1180px; margin: 0 auto; padding: 28px 24px 60px; display: flex; flex-direction: column; gap: 22px; }
+  .proto-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .proto-head h1 { font-size: 22px; font-weight: 620; letter-spacing: -0.015em; }
+  .proto-head p { color: var(--fg-subtle); font-size: 12.5px; margin-top: 4px; max-width: 70ch; }
+  .scenario { display: flex; flex-direction: column; gap: 8px; }
+  .scenario__tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+  .scenario__title { font-weight: 600; font-size: 13px; }
+  .scenario__hint { font-size: 12px; color: var(--fg-subtle); min-height: 32px; }
+  .int-grid { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .int-card:hover { transform: none; }
+
+  .confirm--warn { border-color: color-mix(in oklab, var(--warn) 50%, transparent); background: color-mix(in oklab, var(--warn) 8%, transparent); }
+  .confirm--warn .confirm__title { color: var(--warn); }
+  .confirm__note { font-size: 12px; color: var(--fg-muted); margin-top: 8px; padding-left: 10px; border-left: 2px solid color-mix(in oklab, var(--warn) 55%, transparent); }
+  .btn--warn { background: transparent; border-color: color-mix(in oklab, var(--warn) 60%, transparent); color: var(--warn); }
+  .btn--warn:hover { background: color-mix(in oklab, var(--warn) 12%, transparent); }
+
+  .int-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; font-size: 12px; }
+  .int-note--warn { background: color-mix(in oklab, var(--warn) 9%, transparent); color: var(--fg-muted); border: 1px solid color-mix(in oklab, var(--warn) 35%, transparent); }
+  .int-note--ok { background: color-mix(in oklab, var(--ok) 9%, transparent); color: var(--fg-muted); border: 1px solid color-mix(in oklab, var(--ok) 35%, transparent); }
+  .int-note__body { flex: 1; min-width: 0; }
+  .int-note__title { font-weight: 600; font-size: 12.5px; }
+  .int-note--warn .int-note__title { color: var(--warn); }
+  .int-note--ok .int-note__title { color: var(--ok); }
+  .int-note__actions { margin-top: 8px; display: flex; gap: 8px; }
+  .int-note .int-refusal__close { color: var(--fg-subtle); }
+
+  details.more { margin-top: 8px; font-size: 11.5px; color: var(--fg-subtle); }
+  details.more summary { cursor: pointer; width: max-content; }
+  details.more summary:hover { color: var(--fg-muted); }
+  details.more dl { margin-top: 6px; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+  details.more dt { color: var(--fg-subtle); }
+  details.more dd { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-muted); overflow-wrap: anywhere; }
+
+  .int-status--conflict { color: var(--warn); }
+  .row-click { cursor: pointer; }
+  .proto-foot { font-size: 12px; color: var(--fg-subtle); border-top: 1px solid var(--border); padding-top: 14px; }
+  .proto-foot b { color: var(--fg-muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="proto">
+  <div class="proto-head">
+    <div>
+      <h1>Config journal conflict: UX prototype</h1>
+      <p>Mock only, no backend. Every card below is a separate scenario and is clickable. Buttons and classes reuse the real Integrations styles.</p>
+    </div>
+    <button class="theme-toggle" id="theme" type="button"><span class="theme-toggle__mode" id="themeMode">dark</span></button>
+  </div>
+  <div class="int-grid" id="grid"></div>
+  <div class="proto-foot">
+    <b>Rules baked into every flow.</b> Nothing is written before the user confirms. The old journal is never deleted, it is renamed to <code>.bak</code>. Cancel and Esc write nothing. Paths live under "Details".
+  </div>
+</div>
+
+<script>
+const JOURNAL = '~/.omp/agent/.models.yml.prism-journal.json'
+const MODELS = '~/.omp/agent/models.yml'
+
+const scenarios = [
+  {
+    key: 'apply',
+    tag: 'A. Apply',
+    title: 'User clicks Apply, journal conflicts',
+    hint: 'Click Apply. Dialog replaces the red text. Confirm to see the result, Cancel to see nothing written.',
+    id: 'omp', state: 'managed', enabled: true,
+    onApply: 'conflict-apply',
+  },
+  {
+    key: 'rollback',
+    tag: 'B. Rollback',
+    title: 'User clicks Rollback, journal conflicts',
+    hint: 'Click Rollback. The only way out is removing the prism block, so the dialog offers exactly that.',
+    id: 'omp', state: 'managed', enabled: true,
+    onRollback: 'conflict-rollback',
+  },
+  {
+    key: 'auto',
+    tag: 'C. Auto-apply',
+    title: 'Background apply hit the conflict',
+    hint: 'The user did not click anything. The card shows a standing notice. Click anywhere on the notice row or "Review" to open the dialog.',
+    id: 'omp', state: 'conflict', enabled: true,
+    note: 'auto',
+  },
+  {
+    key: 'takeover',
+    tag: 'D. Existing dialog',
+    title: 'Foreign values in the config (today)',
+    hint: 'Unchanged for comparison: red Take over is for the user\u2019s own values. The journal dialog is amber because nothing of the user\u2019s is displaced.',
+    id: 'claude', state: 'managed', enabled: false,
+    onApply: 'takeover',
+  },
+  {
+    key: 'structural',
+    tag: 'E. Not recoverable here',
+    title: 'Damaged fence (today)',
+    hint: 'Unchanged: structural refusals stay an inline alert with no dialog and Apply disabled.',
+    id: 'codex', state: 'damaged', enabled: false,
+  },
+]
+
+const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstChild }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const dotFor = { managed: 'dot-ok', unmanaged: 'dot-muted', damaged: 'dot-danger', conflict: 'dot-warn' }
+
+const details = (rows) => `<details class="more"><summary>Details</summary><dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></details>`
+
+function dialogHtml(kind) {
+  if (kind === 'apply' || kind === 'auto') {
+    return `<div class="confirm confirm--warn" role="alertdialog" aria-label="Prism lost track of models.yml">
+      <p class="confirm__title">Prism lost track of models.yml</p>
+      <p class="confirm__detail">The file was changed outside Prism, so Prism can\u2019t safely compare it with its saved copy. Nothing has been written. Apply again to treat the file as it is now and write the Prism block.</p>
+      <p class="confirm__note">Rollback after this restores the file to how it looks today, not to how it was before Prism first touched it.</p>
+      ${details([['Config', MODELS], ['Old journal', JOURNAL], ['Kept as', JOURNAL + '.bak']])}
+      <div class="confirm__actions">
+        <button class="btn btn--ghost btn--sm" data-act="cancel" autofocus><span>Cancel</span></button>
+        <button class="btn btn--warn btn--sm" data-act="confirm"><span>Apply again</span></button>
+      </div></div>`
+  }
+  if (kind === 'rollback') {
+    return `<div class="confirm confirm--warn" role="alertdialog" aria-label="Can\u2019t roll back models.yml automatically">
+      <p class="confirm__title">Can\u2019t roll back models.yml automatically</p>
+      <p class="confirm__detail">The file was changed outside Prism. Prism can still remove its own provider block and leave every other line as it is. Your edits stay.</p>
+      <p class="confirm__note">Values Prism displaced earlier are not restored, because the saved copy no longer matches the file.</p>
+      ${details([['Config', MODELS], ['Old journal', JOURNAL], ['Kept as', JOURNAL + '.bak']])}
+      <div class="confirm__actions">
+        <button class="btn btn--ghost btn--sm" data-act="cancel" autofocus><span>Cancel</span></button>
+        <button class="btn btn--warn btn--sm" data-act="confirm"><span>Remove Prism block</span></button>
+      </div></div>`
+  }
+  return `<div class="confirm" role="alertdialog" aria-label="Take over claude config?">
+    <p class="confirm__title">Take over claude config?</p>
+    <p class="confirm__detail">prism: settings.json has user-owned settings ANTHROPIC_BASE_URL. Confirmed apply displaces your own values, journals them, and rollback restores them verbatim.</p>
+    <div class="confirm__actions">
+      <button class="btn btn--ghost btn--sm" data-act="cancel" autofocus><span>Cancel</span></button>
+      <button class="btn btn--danger btn--sm" data-act="confirm"><span>Take over</span></button>
+    </div></div>`
+}
+
+function noteHtml(kind, extra = {}) {
+  if (kind === 'auto') {
+    return `<div class="int-note int-note--warn row-click" data-act="review" role="status">
+      <div class="int-note__body">
+        <p class="int-note__title">Auto-apply paused</p>
+        <p>models.yml changed outside Prism and the last background apply could not run. Nothing was written.</p>
+        <div class="int-note__actions"><button class="btn btn--primary btn--sm" data-act="review"><span>Review</span></button></div>
+      </div></div>`
+  }
+  if (kind === 'ok-apply') {
+    return `<div class="int-note int-note--ok" role="status"><div class="int-note__body">
+      <p class="int-note__title">Applied</p>
+      <p>Prism block written. The old journal was kept as <code>.models.yml.prism-journal.json.bak</code>.</p>
+      ${details([['Config', MODELS], ['Kept as', JOURNAL + '.bak']])}
+    </div><button class="int-refusal__close" data-act="dismiss" aria-label="Dismiss">\u00d7</button></div>`
+  }
+  if (kind === 'ok-rollback') {
+    return `<div class="int-note int-note--ok" role="status"><div class="int-note__body">
+      <p class="int-note__title">Prism block removed</p>
+      <p>Everything else in models.yml was left as is. The old journal was kept as <code>.bak</code>.</p>
+      ${details([['Config', MODELS], ['Kept as', JOURNAL + '.bak']])}
+    </div><button class="int-refusal__close" data-act="dismiss" aria-label="Dismiss">\u00d7</button></div>`
+  }
+  if (kind === 'cancelled') {
+    return `<div class="int-note" style="color:var(--fg-subtle);border:1px dashed var(--border)" role="status"><div class="int-note__body">Cancelled. No files were changed.</div><button class="int-refusal__close" data-act="dismiss" aria-label="Dismiss">\u00d7</button></div>`
+  }
+  if (kind === 'fence') {
+    return `<div class="int-refusal" role="alert"><span class="int-refusal__msg">prism: codex config has a damaged prism fence; repair or remove the marker lines, then apply again</span></div>`
+  }
+  return ''
+}
+
+function render(sc, s) {
+  const el = s.el
+  const busy = s.busy
+  const stateLabel = s.state
+  const damaged = s.state === 'damaged'
+  const paused = sc.key === 'auto' && s.state === 'conflict'
+  const foot = damaged ? 'apply blocked until the fence is repaired' : (paused ? 'auto-apply paused' : 'http://127.0.0.1:8787/v1')
+  el.innerHTML = `
+    <div class="int-card-top">
+      <span class="int-name">${sc.id}</span>
+      <span class="int-status int-status--${stateLabel}"><span class="dot ${dotFor[stateLabel]}"></span>${stateLabel}</span>
+    </div>
+    <span class="int-path">${sc.id === 'omp' ? MODELS : sc.id === 'claude' ? '~/.claude/settings.json' : '~/.codex/config.toml'}</span>
+    ${s.note ? noteHtml(s.note) : ''}
+    ${s.dialog ? dialogHtml(s.dialog) : ''}
+    <div class="int-card-foot">
+      <span class="int-src">${foot}</span>
+      <label class="toggle ${(busy || damaged) ? 'toggle--disabled' : ''}"><input type="checkbox" ${s.enabled ? 'checked' : ''} ${(busy || damaged) ? 'disabled' : ''} data-act="toggle" /><span class="toggle__track"><span class="toggle__thumb"></span></span><span class="toggle__label">Auto-apply</span></label>
+      <span class="int-actions">
+        <button class="btn ${s.state === 'managed' ? 'btn--ghost' : 'btn--primary'} btn--sm" data-act="apply" ${(busy || damaged) ? 'disabled' : ''}>${busy === 'apply' ? '<span class="btn__spinner"></span>' : ''}<span>Apply</span></button>
+        <button class="btn btn--ghost btn--sm" data-act="rollback" ${(busy || damaged || s.state === 'unmanaged') ? 'disabled' : ''}>${busy === 'rollback' ? '<span class="btn__spinner"></span>' : ''}<span>Rollback</span></button>
+      </span>
+    </div>`
+  const cancelBtn = el.querySelector('[data-act="cancel"]')
+  if (cancelBtn) cancelBtn.focus()
+}
+
+function mount() {
+  const grid = document.getElementById('grid')
+  for (const sc of scenarios) {
+    const wrap = document.createElement('div')
+    wrap.className = 'scenario'
+    wrap.innerHTML = `<span class="scenario__tag">${sc.tag}</span><span class="scenario__title">${sc.title}</span><span class="scenario__hint">${sc.hint}</span>`
+    const card = document.createElement('div')
+    card.className = 'int-row-wrap panel card int-card' + (sc.state === 'damaged' ? ' int-card--down' : sc.state === 'conflict' ? ' int-card--alert' : '')
+    const s = { el: card, state: sc.state, enabled: sc.enabled, busy: null, dialog: null, note: sc.note || (sc.state === 'damaged' ? 'fence' : null), resumeKind: null }
+    wrap.appendChild(card)
+    grid.appendChild(wrap)
+    render(sc, s)
+
+    const setTone = () => { card.classList.toggle('int-card--alert', s.state === 'conflict') }
+    const refresh = () => { setTone(); render(sc, s) }
+
+    card.addEventListener('keydown', (e) => { if (e.key === 'Escape' && s.dialog) { s.dialog = null; s.note = 'cancelled'; refresh() } })
+    card.addEventListener('click', async (e) => {
+      const t = e.target.closest('[data-act]')
+      if (!t) return
+      const act = t.dataset.act
+      if (act === 'dismiss') { s.note = null; refresh(); return }
+      if (act === 'toggle') { s.enabled = t.checked; return }
+      if (act === 'apply') {
+        s.busy = 'apply'; s.note = null; refresh(); await sleep(650); s.busy = null
+        if (sc.onApply === 'conflict-apply') { s.dialog = 'apply'; s.state = 'conflict' }
+        else if (sc.onApply === 'takeover') s.dialog = 'takeover'
+        else if (s.state === 'conflict') s.dialog = 'auto'
+        else s.note = 'ok-apply'
+        refresh(); return
+      }
+      if (act === 'rollback') {
+        s.busy = 'rollback'; s.note = null; refresh(); await sleep(650); s.busy = null
+        if (sc.onRollback === 'conflict-rollback') { s.dialog = 'rollback'; s.state = 'conflict' } else { s.state = 'unmanaged'; s.note = 'ok-rollback' }
+        refresh(); return
+      }
+      if (act === 'review') { s.dialog = 'auto'; s.note = null; refresh(); return }
+      if (act === 'cancel') { const kept = s.dialog; s.dialog = null; s.note = 'cancelled'; if (kept === 'auto') s.note = 'auto'; refresh(); return }
+      if (act === 'confirm') {
+        const kind = s.dialog
+        s.busy = kind === 'rollback' ? 'rollback' : 'apply'; s.dialog = null; refresh(); await sleep(900); s.busy = null
+        if (kind === 'rollback') { s.state = 'unmanaged'; s.note = 'ok-rollback' }
+        else { s.state = 'managed'; s.note = kind === 'takeover' ? null : 'ok-apply' }
+        refresh(); return
+      }
+    })
+  }
+}
+mount()
+
+document.getElementById('theme').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
+  document.documentElement.dataset.theme = next
+  document.getElementById('themeMode').textContent = next
+})
+</script>
+</body>
+</html>
