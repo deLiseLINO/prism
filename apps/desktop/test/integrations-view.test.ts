@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { applyTargets, rollbackTargets, rowState, setIntegrationEnabled, visibleIntegrations } from '../renderer/src/views/IntegrationsView'
+import { applyTargets, baseName, journalDialogCopy, journalPath, rollbackTargets, rowState, setIntegrationEnabled, visibleIntegrations } from '../renderer/src/views/IntegrationsView'
 import type { IntegrationStatus } from '@prism/contracts'
 import { api, ApiError } from '../renderer/src/api'
 
@@ -85,6 +85,28 @@ describe('bulk targets', () => {
   it('empty lists disable both bulk buttons', () => {
     expect(applyTargets([status({ id: 'codex', managed: true, detail: 'managed by prism' })])).toEqual([])
     expect(rollbackTargets([status({ id: 'codex', managed: false })])).toEqual([])
+  })
+})
+
+describe('journal conflict', () => {
+  const conflicted = status({ id: 'omp', managed: true, conflict: 'journal', detail: 'managed by prism' })
+
+  it('shows conflict above drift and keeps conflict rows out of both bulk actions', () => {
+    expect(rowState({ ...conflicted, drift: true })).toBe('conflict')
+    expect(rowState(status({ installed: false, conflict: 'journal' }))).toBe('uninstalled')
+    expect(applyTargets([conflicted])).toEqual([])
+    expect(rollbackTargets([conflicted])).toEqual([])
+  })
+
+  it('derives the journal path next to the config file', () => {
+    expect(journalPath('/home/u/.omp/agent/models.yml')).toBe('/home/u/.omp/agent/.models.yml.prism-journal.json')
+    expect(baseName('/home/u/.omp/agent/models.yml')).toBe('models.yml')
+    expect(journalPath('C:\\u\\models.yml')).toBe('C:\\u\\.models.yml.prism-journal.json')
+  })
+
+  it('words the apply and rollback dialogs for the file', () => {
+    expect(journalDialogCopy('apply', 'models.yml')).toMatchObject({ title: 'Prism lost track of models.yml', confirmLabel: 'Apply again' })
+    expect(journalDialogCopy('rollback', 'models.yml')).toMatchObject({ title: 'Can’t roll back models.yml automatically', confirmLabel: 'Remove Prism block' })
   })
 })
 

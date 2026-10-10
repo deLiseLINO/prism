@@ -40,6 +40,8 @@ type WriteOutcome struct {
 	Kind      string
 	Reason    string
 	Retryable bool
+	Conflict  string
+	Backup    string
 }
 
 // ApplyConfigTransform is one apply pass over a config file: read, normalize
@@ -125,12 +127,12 @@ func ToRollbackResult(id ID, outcome WriteOutcome) ApplyResult {
 
 func ToApplyResult(id ID, outcome WriteOutcome) ApplyResult {
 	if outcome.Kind == OutcomeRefused {
-		return ApplyResult{OK: false, ID: id, Reason: outcome.Reason, Retryable: outcome.Retryable}
+		return ApplyResult{OK: false, ID: id, Reason: outcome.Reason, Retryable: outcome.Retryable, Conflict: outcome.Conflict}
 	}
 	if outcome.Kind == OutcomeCrashed {
 		return ApplyResult{OK: false, ID: id, Reason: "prism: config write staged but not committed (crash simulation); recovery discards it"}
 	}
-	return ApplyResult{OK: true, ID: id}
+	return ApplyResult{OK: true, ID: id, Backup: outcome.Backup}
 }
 
 var tomlStringFieldRe = func(key string) *regexp.Regexp {

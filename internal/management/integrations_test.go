@@ -973,3 +973,43 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+func TestIntegrationRollbackForceQueryResetsJournal(t *testing.T) {
+	dir := t.TempDir()
+	ts, registry := integrationEnv(t)
+	registerSandbox(t, registry, dir)
+	modelsPath := filepath.Join(dir, "omp", "models.yml")
+	seed := "theme: dark\nproviders:\n  openai:\n    apiKey: sk-user\n    models: []\n"
+	writeFile(t, modelsPath, seed)
+
+	post := func(query string) integrations.ApplyResult {
+		t.Helper()
+		res, err := http.Post(ts.URL+"/api/v1/integrations/omp/"+query, "application/json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var result integrations.ApplyResult
+		if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	if result := post("apply"); !result.OK {
+		t.Fatalf("apply: %+v", result)
+	}
+	journalPath := filepath.Join(dir, "omp", ".models.yml.prism-journal.json")
+	writeFile(t, journalPath, strings.Replace(readFile(t, journalPath), `"version": 1`, `"version": 2`, 1))
+
+	plain := post("rollback")
+	if plain.OK || !plain.Retryable || plain.Conflict != integrations.ConflictJournal {
+		t.Fatalf("plain rollback: %+v", plain)
+	}
+	forced := post("rollback?force=true")
+	if !forced.OK || forced.Backup != journalPath+".bak" {
+		t.Fatalf("forced rollback: %+v", forced)
+	}
+	if got := readFile(t, modelsPath); got != seed {
+		t.Fatalf("file after forced rollback:\n%q", got)
+	}
+}
