@@ -70,6 +70,17 @@ describe('theme catalog', () => {
     expect(resolveThemePack(next, 'dark')).toMatchObject({ codeThemeId: 'nord', theme: { accent: '#88c0d0', surface: '#2e3440' } })
     expect(setThemeCodeThemeId(DEFAULT_THEME_STATE, 'dark', 'proof').codeThemeIds.dark).toBe('github')
   })
+
+  it('keeps the window translucency choice when another pack is selected', () => {
+    const mac = { electron: true, isMac: true }
+    for (const id of ['linear', 'notion', 'raycast', 'vercel', 'matrix']) {
+      const next = setThemeCodeThemeId(DEFAULT_THEME_STATE, 'dark', id)
+      expect(resolveThemePack(next, 'dark').theme.opaqueWindows).toBe(false)
+      expect(buildThemeCssVariables(resolveThemePack(next, 'dark'), 'dark', mac).material).toBe('translucent')
+    }
+    const solid = updateChromeTheme(DEFAULT_THEME_STATE, 'dark', { opaqueWindows: true })
+    expect(resolveThemePack(setThemeCodeThemeId(solid, 'dark', 'vercel'), 'dark').theme.opaqueWindows).toBe(true)
+  })
 })
 
 describe('stored state parsing', () => {

@@ -50,9 +50,8 @@ export function AsyncBoundary<T>({
     case 'loading':
       return (
         <div className="state state--loading" role="status" aria-busy="true">
-          <span>{loadingLabel ?? 'Loading…'}</span>
-          <span className="state__skeleton" style={{ width: '70%' }} aria-hidden="true" />
-          <span className="state__skeleton" style={{ width: '45%' }} aria-hidden="true" />
+          <span className="sr-only">{loadingLabel ?? 'Loading…'}</span>
+          <SkeletonRows rows={3} />
         </div>
       )
     case 'error':
@@ -109,7 +108,7 @@ export interface ButtonProps {
   readonly onClick: () => void
   readonly disabled?: boolean
   readonly tone?: 'primary' | 'ghost' | 'danger' | 'warn'
-  readonly size?: 'md' | 'sm'
+  readonly size?: 'lg' | 'md' | 'sm'
   readonly type?: 'button' | 'submit'
   readonly busy?: boolean
   readonly title?: string
@@ -130,7 +129,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`btn btn--${tone} btn--${size}`}
+      className={size === 'md' ? `btn btn--${tone}` : `btn btn--${tone} btn--${size}`}
       onClick={onClick}
       disabled={disabled === true || busy === true}
       aria-busy={busy === true}
@@ -316,8 +315,11 @@ export function SearchInput({ id, value, onChange, placeholder, ariaLabel, hotke
   }, [hotkey])
 
   return (
-    <div className="search">
-      <span className="search__icon" aria-hidden="true">/</span>
+    <div className="search search--grow">
+      <svg className="search__icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+        <circle cx="9" cy="9" r="5.5" />
+        <path d="m13.2 13.2 3.3 3.3" />
+      </svg>
       <input
         id={id}
         ref={inputRef}
@@ -330,6 +332,7 @@ export function SearchInput({ id, value, onChange, placeholder, ariaLabel, hotke
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
       />
+      {hotkey ? <kbd className="search__kbd" aria-hidden="true">/</kbd> : null}
     </div>
   )
 }
@@ -355,11 +358,18 @@ export interface EmptyProps {
   readonly title: string
   readonly children?: ReactNode
   readonly action?: ReactNode
+  readonly icon?: string
+  readonly inline?: boolean
 }
 
-export function Empty({ title, children, action }: EmptyProps): JSX.Element {
+export function Empty({ title, children, action, icon, inline = false }: EmptyProps): JSX.Element {
   return (
-    <div className="empty">
+    <div className={inline ? 'empty empty--inline' : 'empty'}>
+      {icon !== undefined ? (
+        <span className="empty__icon" aria-hidden="true">
+          <svg width="20" height="20"><use href={icon} /></svg>
+        </span>
+      ) : null}
       <p className="empty__title">{title}</p>
       {children !== undefined ? <div className="empty__body">{children}</div> : null}
       {action !== undefined ? <div className="empty__action">{action}</div> : null}
@@ -370,6 +380,19 @@ export function Empty({ title, children, action }: EmptyProps): JSX.Element {
 export interface ConfirmDetail {
   readonly label: string
   readonly value: string
+}
+
+export function SkeletonRows({ rows = 3 }: { readonly rows?: number }): JSX.Element {
+  return (
+    <div className="skel-rows" aria-hidden="true">
+      {Array.from({ length: rows }, (_, index) => (
+        <div className="skel-row" key={index}>
+          <span className="skel skel-dot" />
+          <span className="skel skel-bar" style={{ width: `${46 - index * 8}%` }} />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export interface ConfirmProps {

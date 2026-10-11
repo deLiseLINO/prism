@@ -24,6 +24,12 @@
   var variant = mode === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode
   root.dataset.theme = variant
 
+  try {
+    root.dataset.primary = localStorage.getItem('prism-primary') === 'accent' ? 'accent' : 'ink'
+  } catch (err) {
+    root.dataset.primary = 'ink'
+  }
+
   // useAppearance caches the computed custom properties; applying them here avoids a flash.
   try {
     var cache = JSON.parse(localStorage.getItem('prism-theme-vars') || 'null')

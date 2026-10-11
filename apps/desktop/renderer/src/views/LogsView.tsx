@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AttemptView, RequestView, RequestsView } from '@prism/contracts'
 import { api } from '../api'
 import { useAsync } from '../useAsync'
-import { AsyncBoundary, Button, Empty, SearchInput, Stat } from '../components/Ui'
+import { AsyncBoundary, Button, Empty, SearchInput } from '../components/Ui'
+import { Metric, PageHeader, Toolbar, ToolbarSpacer } from '../components/Patterns'
 
 const AUTO_REFRESH_ACTIVE_MS = 1_000
 const AUTO_REFRESH_BACKGROUND_MS = 30_000
@@ -19,7 +20,7 @@ type StatusFilter = (typeof STATUS_FILTERS)[number]['value']
 function statusTone(status: RequestView['status']): 'ok' | 'warn' | 'error' | 'info' | 'muted' {
   switch (status) {
     case 'completed':
-      return 'ok'
+      return 'muted'
     case 'incomplete':
       return 'warn'
     case 'failed':
@@ -33,7 +34,7 @@ function statusTone(status: RequestView['status']): 'ok' | 'warn' | 'error' | 'i
 
 function formatTime(iso: string): string {
   const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '—'
+  if (Number.isNaN(date.getTime())) return '-'
   const year = String(date.getUTCFullYear()).padStart(2, '0')
   const month = String(date.getUTCMonth() + 1).padStart(2, '0')
   const day = String(date.getUTCDate()).padStart(2, '0')
@@ -44,7 +45,7 @@ function formatTime(iso: string): string {
 }
 
 function formatDuration(ms: number): string {
-  if (ms <= 0) return '—'
+  if (ms <= 0) return '-'
   if (ms < 1_000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`
   return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1_000)}s`
@@ -132,52 +133,17 @@ export function LogsView(): JSX.Element {
   }
 
   return (
-    <section className="screen" aria-labelledby="h-logs">
-      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
-        <div>
-          <h1 id="h-logs">
-            <svg width="19" height="19" className="h-ic">
-              <use href="#i-logs" />
-            </svg>
-            Logs
-          </h1>
-          {logs.state.kind === 'ready' ? (
-            <div className="sub">
-              <span className="num">{requests.length}</span> in ring
-              {dropped > 0 ? (
-                <>
-                  {' · ring evicted '}
-                  <span className="num">{dropped}</span> older record{dropped === 1 ? '' : 's'}
-                </>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        <div className="head-actions">
-          <SearchInput
-            id="logs-search"
-            value={query}
-            onChange={setQuery}
-            placeholder="Filter by request id, model, or provider"
-          />
-          <div className="seg" role="group" aria-label="Filter requests by status">
-            {STATUS_FILTERS.map((entry) => (
-              <button
-                key={entry.value}
-                type="button"
-                className="seg-btn"
-                aria-pressed={statusFilter === entry.value}
-                onClick={() => setStatusFilter(entry.value)}
-              >
-                {entry.label}
-              </button>
-            ))}
-          </div>
-          <Button tone="ghost" size="sm" onClick={() => logs.refresh()}>
+    <section className="screen logs-page" aria-labelledby="h-logs">
+      <PageHeader
+        id="h-logs"
+        icon="#i-logs"
+        title="Logs"
+        actions={
+          <Button tone="ghost" onClick={() => logs.refresh()}>
             Refresh
           </Button>
-        </div>
-      </div>
+        }
+      />
       <AsyncBoundary<RequestsView>
         state={logs.state}
         loadingLabel="Loading requests…"
@@ -185,63 +151,98 @@ export function LogsView(): JSX.Element {
       >
         {(value) =>
           value.requests.length === 0 ? (
-            <Empty title="No requests yet.">
+            <Empty icon="#i-logs" title="No requests yet.">
               Requests routed through the daemon appear here with their full failover trail.
             </Empty>
           ) : (
             <>
-              <div className="stats">
-                <Stat
+              <div className="metrics">
+                <Metric
                   label="Requests"
                   value={String(requests.length)}
                   hint={`${filtered.length} shown`}
                 />
-                <Stat
+                <Metric
                   label="Failed"
                   value={String(totals.errors)}
                   tone={totals.errors > 0 ? 'error' : 'default'}
                 />
-                <Stat label="Tokens" value={String(totals.tokens)} />
+                <Metric label="Tokens" value={String(totals.tokens)} />
               </div>
-              <section className="panel card" style={{ '--i': 1 } as CSSProperties}>
-                <div className="tbl-wrap">
-                  <table className="tbl table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Time</th>
-                        <th scope="col">Request</th>
-                        <th scope="col">Client</th>
-                        <th scope="col">Model</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Duration</th>
-                        <th scope="col">Attempts</th>
-                        <th scope="col">Tokens</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.length === 0 ? (
-                        <tr>
-                          <td colSpan={8}>
-                            <Empty title="No requests match the filter." />
-                          </td>
-                        </tr>
-                      ) : (
-                        filtered.map((row) => (
-                          <RequestRow
-                            key={row.seq}
-                            request={row}
-                            expanded={expandedSeq === row.seq}
-                            copied={copiedSeq === row.seq}
-                            onToggle={() =>
-                              setExpandedSeq(expandedSeq === row.seq ? null : row.seq)
-                            }
-                            onCopy={() => void copyRequestId(row)}
-                          />
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+              <Toolbar label="Request filters">
+                <SearchInput
+                  id="logs-search"
+                  value={query}
+                  onChange={setQuery}
+                  placeholder="Filter by request id, model, or provider"
+                  hotkey
+                />
+                <div className="seg" role="group" aria-label="Filter requests by status">
+                  {STATUS_FILTERS.map((entry) => (
+                    <button
+                      key={entry.value}
+                      type="button"
+                      className="seg-btn"
+                      aria-pressed={statusFilter === entry.value}
+                      onClick={() => setStatusFilter(entry.value)}
+                    >
+                      {entry.label}
+                    </button>
+                  ))}
                 </div>
+                <ToolbarSpacer />
+                <span className="toolbar__count num">
+                  {filtered.length} / {requests.length}
+                  {dropped > 0 ? ` · ${dropped} evicted` : ''}
+                </span>
+              </Toolbar>
+              <section className="logs-wrap">
+                <table className="logs-tbl">
+                  <colgroup>
+                    <col style={{ width: 168 }} />
+                    <col />
+                    <col style={{ width: 88 }} />
+                    <col style={{ width: 170 }} />
+                    <col style={{ width: 118 }} />
+                    <col style={{ width: 76 }} />
+                    <col style={{ width: 78 }} />
+                    <col style={{ width: 78 }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th scope="col">Time</th>
+                      <th scope="col">Request</th>
+                      <th scope="col">Client</th>
+                      <th scope="col">Model</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Duration</th>
+                      <th scope="col">Attempts</th>
+                      <th scope="col">Tokens</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.length === 0 ? (
+                      <tr>
+                        <td colSpan={8}>
+                          <Empty inline icon="#i-logs" title="No requests match the filter." />
+                        </td>
+                      </tr>
+                    ) : (
+                      filtered.map((row) => (
+                        <RequestRow
+                          key={row.seq}
+                          request={row}
+                          expanded={expandedSeq === row.seq}
+                          copied={copiedSeq === row.seq}
+                          onToggle={() =>
+                            setExpandedSeq(expandedSeq === row.seq ? null : row.seq)
+                          }
+                          onCopy={() => void copyRequestId(row)}
+                        />
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </section>
             </>
           )
@@ -273,35 +274,39 @@ function RequestRow({
     request.status === 'open' && liveMs > 0 ? formatDuration(liveMs) : formatDuration(request.durationMs)
   return (
     <>
-      <tr onClick={onToggle} style={{ cursor: 'pointer' }}>
+      <tr
+        className="logs-row"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          onToggle()
+        }}
+      >
         <td>
           <span className="num" title={request.startedAt}>
             {formatTime(request.startedAt)}
           </span>
         </td>
-        <td className="td-strong">
-          {request.requestId ?? '—'}
+        <td className="td-strong" title={request.requestId ?? ''}>
+          <span className="num">{request.requestId ?? '-'}</span>
           {request.session !== undefined && request.session !== '' ? (
-            <span className="num" style={{ color: 'var(--fg-subtle)' }}>
-              {' '}
-              · {request.session}
-            </span>
+            <span className="num logs-sub"> · {request.session}</span>
           ) : null}
         </td>
-        <td>{request.client}</td>
-        <td className="num">{modelLabel(request)}</td>
-        <td>
+        <td title={request.client}>{request.client}</td>
+        <td className="num" title={modelLabel(request)}>{modelLabel(request)}</td>
+        <td title={request.reason ?? ''}>
           <span className={`badge badge--${statusTone(request.status)}`}>
             {request.status === 'open' ? (
-              <span className="dot dot-ok dot-pulse" aria-hidden="true" style={{ marginRight: 6 }} />
+              <span className="dot dot-ok dot-pulse" aria-hidden="true" />
             ) : null}
             {request.status}
           </span>
           {request.reason !== undefined && request.reason !== '' ? (
-            <span className="num" style={{ color: 'var(--fg-subtle)' }}>
-              {' '}
-              {request.reason}
-            </span>
+            <span className="num logs-reason">{request.reason}</span>
           ) : null}
         </td>
         <td>
@@ -320,8 +325,8 @@ function RequestRow({
       </tr>
       {expanded ? (
         <tr>
-          <td colSpan={8}>
-            <div className="kv" style={{ marginTop: 0 }}>
+          <td colSpan={8} className="logs-detail">
+            <div className="kv">
               {request.requestId !== undefined ? (
                 <div className="kv-row">
                   <span className="kv-k">Request id</span>
@@ -358,7 +363,7 @@ function RequestRow({
                     {attempt.error !== undefined && attempt.error !== '' ? (
                       <>
                         {' · '}
-                        <span className="num" style={{ color: 'var(--fg-subtle)' }}>
+                        <span className="num logs-sub">
                           {attempt.error}
                         </span>
                       </>

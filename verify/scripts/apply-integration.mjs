@@ -17,11 +17,11 @@ const expression = `(async () => {
   if (!nav) throw new Error('Integrations navigation button not found')
   nav.click()
   for (let i = 0; i < 40; i++) {
-    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-row-wrap').length >= 3) break
+    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-item').length >= 3) break
     await sleep(100)
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Integrations') throw new Error('Integrations view did not open')
-  const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '${integrationId}')
+  const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '${integrationId}')
   if (!card) throw new Error('${integrationId} card not found')
   const button = [...card.querySelectorAll('button')].find((node) => node.textContent.trim() === 'Apply')
   if (!button) throw new Error('${integrationId} Apply button not found')
@@ -29,10 +29,10 @@ const expression = `(async () => {
   button.click()
   for (let i = 0; i < 60; i++) {
     await sleep(100)
-    const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '${integrationId}')
+    const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '${integrationId}')
     const alert = current?.querySelector('[role=alert]')
     if (alert) throw new Error(alert.textContent)
-    const state = current?.querySelector('.int-status')?.textContent.trim()
+    const state = current?.querySelector('.lrow__title .chip')?.textContent.trim()
     if (state === 'managed') return {id: '${integrationId}', state}
   }
   throw new Error('${integrationId} did not become managed after clicking Apply')

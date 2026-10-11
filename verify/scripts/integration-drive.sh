@@ -90,7 +90,7 @@ cdp_eval "await (async () => {
   if (!button) throw new Error('Integrations navigation button not found')
   button.click()
   for (let i = 0; i < 40; i++) {
-    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-row-wrap').length >= 3) break
+    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-item').length >= 3) break
     await sleep(100)
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Integrations') throw new Error('Integrations view did not open')
@@ -101,7 +101,7 @@ click_apply() {
   id=$1
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+    const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')
     if (!card) throw new Error('$id card not found')
     const button = [...card.querySelectorAll('button')].find((node) => node.textContent.trim() === 'Apply')
     if (!button) throw new Error('$id Apply button not found')
@@ -113,10 +113,10 @@ click_apply() {
     const animationReplays = []
     for (let i = 0; i < 60; i++) {
       await sleep(100)
-      const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+      const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')
       const alert = current?.querySelector('[role=alert]')
       if (alert) throw new Error('$id: ' + alert.textContent)
-      const state = current?.querySelector('.int-status')?.textContent.trim()
+      const state = current?.querySelector('.lrow__title .chip')?.textContent.trim()
       if (state === 'managed') {
         if (current !== card) throw new Error('$id card remounted on Apply: the DOM node changed')
         if (current.dataset.verifyTag !== 'before-apply') throw new Error('$id card remounted on Apply: the tag was lost')
@@ -138,7 +138,7 @@ verify_no_remount_rollback() {
   id=$1
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+    const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')
     if (!card) throw new Error('$id card not found')
     const rollback = [...card.querySelectorAll('button')].find((node) => node.textContent.trim() === 'Rollback')
     if (!rollback) throw new Error('$id Rollback button not found')
@@ -149,7 +149,7 @@ verify_no_remount_rollback() {
     const beforeClick = new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null))
     const animationReplays = []
     for (let i = 0; i < 150; i++) {
-      const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+      const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')
       if (!current) throw new Error('$id card disappeared mid-rollback')
       if (current !== card) throw new Error('$id card remounted during rollback: the DOM node changed')
       if (current.dataset.verifyTag !== 'before-rollback') throw new Error('$id card remounted during rollback: the tag was lost')
@@ -160,7 +160,7 @@ verify_no_remount_rollback() {
       }
       const alert = current.querySelector('[role=alert]')
       if (alert) throw new Error('$id rollback refused: ' + alert.textContent)
-      const state = current.querySelector('.int-status')?.textContent.trim()
+      const state = current.querySelector('.lrow__title .chip')?.textContent.trim()
       if (state !== 'managed') {
         if (animationReplays.length > 0) throw new Error('$id card played an entry animation during rollback: ' + animationReplays.join(','))
         delete current.dataset.verifyTag
@@ -282,15 +282,15 @@ verify_bulk_apply_all() {
   out=$1
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const stripButton = (text) => [...document.querySelectorAll('.int-strip button')]
+    const stripButton = (text) => [...document.querySelectorAll('.toolbar button')]
       .find((node) => node.textContent.trim() === text)
     const rollbackAll = stripButton('Rollback all')
-    if (!rollbackAll) throw new Error('Rollback all button not found in the stats strip')
+    if (!rollbackAll) throw new Error('Rollback all button not found in the toolbar')
     if (!rollbackAll.disabled) throw new Error('Rollback all is enabled with no managed card')
     const applyAll = stripButton('Apply all')
-    if (!applyAll) throw new Error('Apply all button not found in the stats strip')
+    if (!applyAll) throw new Error('Apply all button not found in the toolbar')
     if (applyAll.disabled) throw new Error('Apply all is disabled while cards are unmanaged')
-    const cards = [...document.querySelectorAll('.int-row-wrap')]
+    const cards = [...document.querySelectorAll('.int-item')]
     if (cards.length < 3) throw new Error('expected the integration cards, found ' + cards.length)
     for (const card of cards) card.dataset.verifyTag = 'before-bulk-apply'
     const clickTime = performance.now()
@@ -298,20 +298,20 @@ verify_bulk_apply_all() {
     const beforeClick = cards.map((card) => new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null)))
     const animationReplays = []
     for (let i = 0; i < 300; i++) {
-      const current = [...document.querySelectorAll('.int-row-wrap')]
+      const current = [...document.querySelectorAll('.int-item')]
       if (current.length !== cards.length) throw new Error('card count changed mid bulk apply: ' + current.length)
       for (let j = 0; j < current.length; j++) {
-        if (current[j] !== cards[j]) throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk apply: the DOM node changed')
-        if (current[j].dataset.verifyTag !== 'before-bulk-apply') throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk apply: the tag was lost')
+        if (current[j] !== cards[j]) throw new Error(current[j].querySelector('.lrow__title > span:first-child')?.textContent + ' card remounted during bulk apply: the DOM node changed')
+        if (current[j].dataset.verifyTag !== 'before-bulk-apply') throw new Error(current[j].querySelector('.lrow__title > span:first-child')?.textContent + ' card remounted during bulk apply: the tag was lost')
         for (const anim of current[j].getAnimations()) {
           if (!(anim instanceof CSSAnimation) || beforeClick[j].has(anim.animationName)) continue
           const started = anim.startTime ?? 0
           if (started > clickTime && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
         }
       }
-      const alert = document.querySelector('.int-screen > .int-refusal[role=alert]')
+      const alert = document.querySelector('.screen > .lrow-note[role=alert]')
       if (alert) throw new Error('bulk apply reported a refusal: ' + alert.textContent)
-      const states = current.map((card) => card.querySelector('.int-status')?.textContent.trim())
+      const states = current.map((card) => card.querySelector('.lrow__title .chip')?.textContent.trim())
       const managed = states.filter((state) => state === 'managed').length
       if (managed === current.length) {
         if (animationReplays.length > 0) throw new Error('bulk apply played an entry animation: ' + animationReplays.join(','))
@@ -332,15 +332,15 @@ node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$PROOF_WORK/integrati
 verify_bulk_rollback_all() {
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const stripButton = (text) => [...document.querySelectorAll('.int-strip button')]
+    const stripButton = (text) => [...document.querySelectorAll('.toolbar button')]
       .find((node) => node.textContent.trim() === text)
     const rollbackAll = stripButton('Rollback all')
-    if (!rollbackAll) throw new Error('Rollback all button not found in the stats strip')
+    if (!rollbackAll) throw new Error('Rollback all button not found in the toolbar')
     if (rollbackAll.disabled) throw new Error('Rollback all is disabled while every card is managed')
     const applyAll = stripButton('Apply all')
-    if (!applyAll) throw new Error('Apply all button not found in the stats strip')
+    if (!applyAll) throw new Error('Apply all button not found in the toolbar')
     if (!applyAll.disabled) throw new Error('Apply all is enabled with every card managed')
-    const cards = [...document.querySelectorAll('.int-row-wrap')]
+    const cards = [...document.querySelectorAll('.int-item')]
     if (cards.length < 3) throw new Error('expected the integration cards, found ' + cards.length)
     for (const card of cards) card.dataset.verifyTag = 'before-bulk-rollback'
     const clickTime = performance.now()
@@ -348,20 +348,20 @@ verify_bulk_rollback_all() {
     const beforeClick = cards.map((card) => new Set(card.getAnimations().map((anim) => anim.animationName ?? null).filter((name) => name !== null)))
     const animationReplays = []
     for (let i = 0; i < 300; i++) {
-      const current = [...document.querySelectorAll('.int-row-wrap')]
+      const current = [...document.querySelectorAll('.int-item')]
       if (current.length !== cards.length) throw new Error('card count changed mid bulk rollback: ' + current.length)
       for (let j = 0; j < current.length; j++) {
-        if (current[j] !== cards[j]) throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk rollback: the DOM node changed')
-        if (current[j].dataset.verifyTag !== 'before-bulk-rollback') throw new Error(current[j].querySelector('.int-name')?.textContent + ' card remounted during bulk rollback: the tag was lost')
+        if (current[j] !== cards[j]) throw new Error(current[j].querySelector('.lrow__title > span:first-child')?.textContent + ' card remounted during bulk rollback: the DOM node changed')
+        if (current[j].dataset.verifyTag !== 'before-bulk-rollback') throw new Error(current[j].querySelector('.lrow__title > span:first-child')?.textContent + ' card remounted during bulk rollback: the tag was lost')
         for (const anim of current[j].getAnimations()) {
           if (!(anim instanceof CSSAnimation) || beforeClick[j].has(anim.animationName)) continue
           const started = anim.startTime ?? 0
           if (started > clickTime && !animationReplays.includes(anim.animationName)) animationReplays.push(anim.animationName)
         }
       }
-      const alert = document.querySelector('.int-screen > .int-refusal[role=alert]')
+      const alert = document.querySelector('.screen > .lrow-note[role=alert]')
       if (alert) throw new Error('bulk rollback reported a refusal: ' + alert.textContent)
-      const states = current.map((card) => card.querySelector('.int-status')?.textContent.trim())
+      const states = current.map((card) => card.querySelector('.lrow__title .chip')?.textContent.trim())
       const unmanaged = states.filter((state) => state === 'unmanaged').length
       if (unmanaged === current.length) {
         if (animationReplays.length > 0) throw new Error('bulk rollback played an entry animation: ' + animationReplays.join(','))
@@ -384,7 +384,7 @@ click_toggle() {
   next=$2
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+    const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')
     if (!card) throw new Error('$id card not found')
     const toggle = [...card.querySelectorAll('label.toggle')].find((node) => node.querySelector('.toggle__label')?.textContent.trim() === 'Auto-apply')
     if (!toggle) throw new Error('$id Auto-apply toggle not found')
@@ -396,10 +396,10 @@ click_toggle() {
       input.click()
       for (let i = 0; i < 60; i++) {
         await sleep(100)
-        const cur = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+        const cur = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')
         if (cur?.querySelector('label.toggle input[type=checkbox]')?.checked === !$next) break
       }
-      const settled = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')?.querySelector('label.toggle input[type=checkbox]')
+      const settled = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')?.querySelector('label.toggle input[type=checkbox]')
       if (settled?.checked !== !$next) throw new Error('$id toggle pre-pass never reached enabled=' + !$next)
       settled.click()
     }
@@ -410,7 +410,7 @@ click_toggle() {
     const animationReplays = []
     for (let i = 0; i < 60; i++) {
       await sleep(100)
-      const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === '$id')
+      const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === '$id')
       const alert = current?.querySelector('[role=alert]')
       if (alert) throw new Error('$id: ' + alert.textContent)
       const live = current?.querySelector('label.toggle input[type=checkbox]')
@@ -477,14 +477,14 @@ cdp_eval "await (async () => {
   if (!back) throw new Error('Integrations navigation button not found')
   back.click()
   for (let i = 0; i < 40; i++) {
-    const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'grok')
-    if (card?.querySelector('.int-status')?.textContent.trim() === 'damaged') return {id: 'grok', state: 'damaged'}
+    const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'grok')
+    if (card?.querySelector('.lrow__title .chip')?.textContent.trim() === 'damaged') return {id: 'grok', state: 'damaged'}
     await sleep(100)
   }
   throw new Error('grok card never rendered damaged')
 })()" > "$PROOF_WORK/grok-damaged-card.json" || fail "grok card never showed the damaged state"
 cdp_eval "await (async () => {
-  const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'grok')
+  const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'grok')
   if (!card) throw new Error('grok card not found')
   const apply = [...card.querySelectorAll('button')].find((node) => node.textContent.trim() === 'Apply')
   const rollback = [...card.querySelectorAll('button')].find((node) => node.textContent.trim() === 'Rollback')
@@ -527,7 +527,7 @@ for VIEW in Overview Accounts Stats Logs Providers Integrations; do
     }
     const title = document.querySelector('main h1')?.textContent.trim()
     if (title !== '$VIEW') throw new Error('$VIEW view did not open (title=' + title + ')')
-    const cards = document.querySelectorAll('main section.card').length
+    const cards = document.querySelectorAll('main section').length
     const body = document.querySelector('main')?.innerText ?? ''
     if (body.trim().length < 20) throw new Error('$VIEW view body is empty')
     return {view: title, cards, bodyChars: body.length, bodyHead: body.slice(0, 400)}

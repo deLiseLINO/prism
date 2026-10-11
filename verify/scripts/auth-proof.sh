@@ -82,7 +82,7 @@ cdp_eval 'await (async () => {
     await sleep(100)
   }
   if (document.querySelector("main h1")?.textContent.trim() !== "Accounts") throw new Error("Accounts view did not open")
-  const add = [...document.querySelectorAll("main .head-actions button")].find((b) => b.textContent.trim() === "Add account")
+  const add = [...document.querySelectorAll("main .page-head__actions button")].find((b) => b.textContent.trim() === "Add account")
   if (!add) throw new Error("Add account button not found")
   add.click()
   for (let i = 0; i < 40; i++) {
@@ -91,7 +91,7 @@ cdp_eval 'await (async () => {
   }
   const dialog = document.querySelector("[role=dialog][aria-label=\"Add account\"]")
   if (!dialog) throw new Error("Add account dialog not found")
-  const codexSeg = [...dialog.querySelectorAll(".msm-seg-btn")].find((b) => b.textContent.trim() === "codex")
+  const codexSeg = [...dialog.querySelectorAll(".seg-btn")].find((b) => b.textContent.trim() === "codex")
   if (!codexSeg) throw new Error("codex provider segment not found")
   codexSeg.click()
   const start = [...dialog.querySelectorAll("footer button")].find((b) => b.textContent.trim() === "Start login")
@@ -134,7 +134,7 @@ cdp_eval 'await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   const dialog = document.querySelector("[role=dialog][aria-label=\"Add account\"]")
   if (!dialog) throw new Error("Add account dialog gone before Antigravity leg")
-  const agySeg = [...dialog.querySelectorAll(".msm-seg-btn")].find((b) => b.textContent.trim() === "antigravity")
+  const agySeg = [...dialog.querySelectorAll(".seg-btn")].find((b) => b.textContent.trim() === "antigravity")
   if (!agySeg) throw new Error("antigravity provider segment not found")
   agySeg.click()
   const start = [...dialog.querySelectorAll("footer button")].find((b) => b.textContent.trim() === "Start login")

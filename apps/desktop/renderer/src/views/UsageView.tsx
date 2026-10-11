@@ -8,6 +8,7 @@ import type {
   UsageView,
 } from '@prism/contracts'
 import { AsyncBoundary, Button, Confirm, Empty, SearchInput } from '../components/Ui'
+import { Metric, PageHeader, Section, Toolbar, ToolbarSpacer } from '../components/Patterns'
 import { useAsync, useTask, describeError } from '../useAsync'
 import { api, type ProviderWrite } from '../api'
 import { AddAccountModal } from '../components/AddAccountModal'
@@ -183,6 +184,7 @@ export function providerWriteFrom(
 export function UsagePanel(): JSX.Element {
   const usage = useAsync<UsageView>(() => api.usage(), [])
   const [query, setQuery] = useState('')
+  const [providerFilter, setProviderFilter] = useState('all')
   const [quotaLoading, setQuotaLoading] = useState<Record<string, boolean>>({})
   const [quotaFailed, setQuotaFailed] = useState<Record<string, string>>({})
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
@@ -296,15 +298,16 @@ export function UsagePanel(): JSX.Element {
 
   const filtered = useMemo<readonly UsageAccountView[]>(() => {
     const needle = query.trim().toLowerCase()
-    if (needle === '') return accounts
-    return accounts.filter(
+    const scoped = providerFilter === 'all' ? accounts : accounts.filter((row) => row.provider === providerFilter)
+    if (needle === '') return scoped
+    return scoped.filter(
       (row) =>
         row.account.toLowerCase().includes(needle) ||
         row.provider.toLowerCase().includes(needle) ||
         row.state.toLowerCase().includes(needle) ||
         accountLabel(row).toLowerCase().includes(needle),
     )
-  }, [accounts, query])
+  }, [accounts, query, providerFilter])
   const liveAccounts = accounts
 
   async function selectAccount(row: UsageAccountView): Promise<void> {
@@ -340,51 +343,76 @@ export function UsagePanel(): JSX.Element {
     )
   }
 
+  const providerNames = Object.keys(accountCounts)
+  const groups = providerNames
+    .map((name) => ({ name, rows: filtered.filter((row) => row.provider === name) }))
+    .filter((group) => group.rows.length > 0)
+  const inUse = accounts.filter((row) => pinIndex[row.provider] === row.account || (pinIndex[row.provider] === undefined && accountCounts[row.provider] === 1)).length
+  const attention = accounts.filter((row) => row.state === 'needs_reauth' || row.state === 'cooling_down' || row.state === 'soft_avoid').length
+
   return (
     <section className="screen" aria-labelledby="h-usage">
-      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
-        <div>
-          <h1 id="h-usage">
-            <svg width="19" height="19" className="h-ic">
-              <use href="#i-heart" />
-            </svg>
-            Accounts
-          </h1>
-        </div>
-        <div className="head-actions">
+      <PageHeader
+        id="h-usage"
+        icon="#i-heart"
+        title="Accounts"
+        actions={
           <Button
-            tone="ghost"
-            size="sm"
+            tone="primary"
             onClick={() => setAdding(true)}
             title="Authorize a new account through the provider login flow."
           >
             Add account
           </Button>
-          <Button
-            tone="ghost"
-            size="sm"
-            onClick={refreshAll}
-            busy={refreshAllTask.running}
-            disabled={liveAccounts.length === 0}
-          >
-            Refresh all
-          </Button>
-          <SearchInput
-            id="usage-search"
-            value={query}
-            onChange={setQuery}
-            placeholder="Filter by account, email, provider, or state"
-            hotkey
-          />
+        }
+      />
+      {usage.state.kind === 'ready' ? (
+        <div className="metrics">
+          <Metric label="Accounts" value={String(accounts.length)} hint={`${providerNames.length} provider${providerNames.length === 1 ? '' : 's'}`} />
+          <Metric label="In use" value={String(inUse)} />
+          <Metric label="Needs attention" value={String(attention)} tone={attention > 0 ? 'warn' : 'default'} />
         </div>
-      </div>
+      ) : null}
+      <Toolbar label="Account filters">
+        <SearchInput
+          id="usage-search"
+          value={query}
+          onChange={setQuery}
+          placeholder="Filter by account, email, provider, or state"
+          hotkey
+        />
+        {providerNames.length > 1 ? (
+          <div className="seg" role="group" aria-label="Filter by provider">
+            {['all', ...providerNames].map((name) => (
+              <button
+                key={name}
+                type="button"
+                className="seg-btn"
+                aria-pressed={providerFilter === name}
+                onClick={() => setProviderFilter(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <ToolbarSpacer />
+        <Button
+          tone="ghost"
+          onClick={refreshAll}
+          busy={refreshAllTask.running}
+          disabled={liveAccounts.length === 0}
+        >
+          Refresh all
+        </Button>
+      </Toolbar>
       {pinTask.error !== null ? (
         <div className="alert" role="alert">{describeError(pinTask.error)}</div>
       ) : null}
       <AsyncBoundary<UsageView>
         state={usage.state}
         loadingLabel="Loading usage…"
-        empty={<Empty title="No usage reported." />}
+        empty={<Empty icon="#i-heart" title="No usage reported." />}
         onRetry={() => usage.refresh()}
       >
         {() => (
@@ -410,34 +438,41 @@ export function UsagePanel(): JSX.Element {
             ))}
             {filtered.length === 0 ? (
               <Empty
+                icon="#i-heart"
                 title={
                   accounts.length === 0
                     ? 'No accounts yet. Add one to start routing.'
                     : 'No accounts match the filter.'
                 }
+                action={accounts.length === 0 ? <Button tone="primary" onClick={() => setAdding(true)}>Add account</Button> : undefined}
               />
             ) : (
-              <div className="usage-grid">
-                {filtered.map((row, index) => (
-                  <UsageCard
-                    key={row.account}
-                    row={row}
-                    index={index}
-                    loading={quotaLoading[row.account] === true}
-                    failed={quotaFailed[row.account]}
-                    pinned={pinIndex[row.provider] === row.account}
-                    implicit={pinIndex[row.provider] === undefined && accountCounts[row.provider] === 1}
-                    canPin={providerById[row.provider] !== undefined}
-                    onPinToggle={() => void selectAccount(row)}
-                    confirmingDelete={confirmingDelete === row.account}
-                    deleteBusy={deleteTask.running || pinTask.running}
-                    deleteError={deleteTask.error}
-                    onDelete={() => setConfirmingDelete(row.account)}
-                    onCancelDelete={() => setConfirmingDelete(null)}
-                    onConfirmDelete={() => void removeAccount()}
-                  />
-                ))}
-              </div>
+              groups.map((group) => (
+                <div className="usage-group" key={group.name}>
+                  <Section title={`${group.name} · ${group.rows.length}`}>
+                    <div className="usage-grid">
+                      {group.rows.map((row) => (
+                        <UsageCard
+                          key={row.account}
+                          row={row}
+                          loading={quotaLoading[row.account] === true}
+                          failed={quotaFailed[row.account]}
+                          pinned={pinIndex[row.provider] === row.account}
+                          implicit={pinIndex[row.provider] === undefined && accountCounts[row.provider] === 1}
+                          canPin={providerById[row.provider] !== undefined}
+                          onPinToggle={() => void selectAccount(row)}
+                          confirmingDelete={confirmingDelete === row.account}
+                          deleteBusy={deleteTask.running || pinTask.running}
+                          deleteError={deleteTask.error}
+                          onDelete={() => setConfirmingDelete(row.account)}
+                          onCancelDelete={() => setConfirmingDelete(null)}
+                          onConfirmDelete={() => void removeAccount()}
+                        />
+                      ))}
+                    </div>
+                  </Section>
+                </div>
+              ))
             )}
           </>
         )}
@@ -448,7 +483,6 @@ export function UsagePanel(): JSX.Element {
 
 interface UsageCardProps {
   readonly row: UsageAccountView
-  readonly index: number
   readonly loading: boolean
   readonly failed: string | undefined
   readonly pinned: boolean
@@ -465,7 +499,6 @@ interface UsageCardProps {
 
 function UsageCard({
   row,
-  index,
   loading,
   failed,
   pinned,
@@ -484,7 +517,6 @@ function UsageCard({
   return (
     <article
       className="panel card usage-card"
-      style={{ '--i': index + 1 } as CSSProperties}
     >
       <div className="usage-card-top">
         <div className="usage-card-name">
@@ -580,7 +612,6 @@ function UsageWindowBar({
           className="bar-fill"
           style={{
             '--w': leftRatio(window),
-            background: windowGradient(window),
           } as CSSProperties}
         />
       </span>
