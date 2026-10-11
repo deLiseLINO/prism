@@ -188,6 +188,27 @@ describe('shell.openExternal IPC forwarding', () => {
     expect(electronRegistry.setTitleBarOverlay).not.toHaveBeenCalled()
   })
 
+  it('validates window material requests and only applies them on macOS', async () => {
+    const ipcModule = await import('../main/ipc')
+    ipcModule.registerIpc({
+      supervisor: {} as never,
+      management: {} as never,
+      integrations: {} as never,
+    })
+    const handler = electronRegistry.handlers.get(IpcChannel.windowSetMaterial)
+    expect(handler).toBeDefined()
+    expect(() => handler!(fakeEvent(true), { material: 'opaque', blurRadius: 0 })).toThrow(/untrusted sender/)
+    await expect(Promise.resolve().then(() => handler!(fakeEvent(), { material: 'translucent', blurRadius: 999 }))).rejects.toThrow(/between 1 and 64/)
+    await expect(Promise.resolve().then(() => handler!(fakeEvent(), 'translucent'))).rejects.toThrow(/must be an object/)
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      expect(handler!(fakeEvent(), { material: 'translucent', blurRadius: 30 })).toBe(false)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
   it('opens a valid https url via shell.openExternal', async () => {
     const ipcModule = await import('../main/ipc')
     ipcModule.registerIpc({
