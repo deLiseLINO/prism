@@ -12,11 +12,12 @@ import {
 } from './window-state'
 import { installExternalNavigationGuard } from './window/navigation'
 import { installWindowLog } from './report'
+import { MAC_WINDOW_VIBRANCY } from './window-material'
 
 
 const DEFAULT_WIDTH = 1200
 const DEFAULT_HEIGHT = 800
-const TITLEBAR_OVERLAY_HEIGHT = 40
+const TITLEBAR_OVERLAY_HEIGHT = 44
 const TITLEBAR_DARK_SYMBOL_COLOR = '#f8fafc'
 const TITLEBAR_LIGHT_SYMBOL_COLOR = '#1f2937'
 
@@ -34,7 +35,7 @@ export function titleBarOptions(theme: 'dark' | 'light'): TitleBarOptions {
   if (process.platform === 'darwin') {
     return {
       titleBarStyle: 'hiddenInset',
-      trafficLightPosition: { x: 16, y: 18 },
+      trafficLightPosition: { x: 16, y: 15 },
     }
   }
   return {
@@ -45,6 +46,19 @@ export function titleBarOptions(theme: 'dark' | 'light'): TitleBarOptions {
       symbolColor: theme === 'dark' ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
     },
   }
+}
+
+interface MaterialOptions {
+  readonly backgroundColor: string
+  readonly vibrancy?: 'under-window'
+  readonly visualEffectState?: 'followWindow'
+}
+
+export function materialOptions(): MaterialOptions {
+  if (process.platform === 'darwin') {
+    return { backgroundColor: '#00000000', vibrancy: MAC_WINDOW_VIBRANCY, visualEffectState: 'followWindow' }
+  }
+  return { backgroundColor: '#101014' }
 }
 
 function isHeadless(): boolean {
@@ -125,7 +139,7 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 820,
     minHeight: 560,
     show: false,
-    backgroundColor: '#101014',
+    ...materialOptions(),
     ...titleBarOptions('dark'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
