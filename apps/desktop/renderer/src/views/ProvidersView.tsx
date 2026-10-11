@@ -55,6 +55,11 @@ export function sortProviders(list: readonly ProviderView[], disabledSnapshot: R
   })
 }
 
+export function enabledModelCount(provider: Pick<ProviderView, 'models' | 'disabledModels'>): number {
+  const disabled = new Set(provider.disabledModels ?? [])
+  return (provider.models ?? []).filter((model) => !disabled.has(model)).length
+}
+
 // The antigravity model view: logical family rows carry effort rungs a user
 // set manually in model settings, raw rows are the wire ids the daemon
 // routes. The mode switch persists through the daemon, so the stored list,
@@ -664,7 +669,6 @@ export function ProvidersView(): JSX.Element {
                   {filtered.length === 0 ? <p className="prov-models__empty">No providers match.</p> : null}
                   {sortProviders(filtered, sortDisabled).map((provider) => {
                     const isActive = provider.id === activeId
-                    const disabledCount = (provider.disabledModels ?? []).length
                     const on = provider.enabled ?? true
                     return (
                       <div
@@ -689,8 +693,7 @@ export function ProvidersView(): JSX.Element {
                         <div className="lrow__main">
                           <div className="lrow__title"><span>{provider.id}</span></div>
                           <div className="lrow__sub lrow__sub--mono">
-                            {wireLabel(provider.wire)} · {(provider.models ?? []).length} models
-                            {disabledCount > 0 ? ` · ${disabledCount} off` : ''}
+                            {wireLabel(provider.wire)} · {enabledModelCount(provider)} models
                           </div>
                         </div>
                         <div
