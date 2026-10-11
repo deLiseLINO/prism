@@ -336,7 +336,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
             aria-label="Refresh models from provider"
             title="Refresh models from provider"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className={syncing ? 'spin' : ''}><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className={syncing ? 'spin' : ''}><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
           </button>
           <button
             type="button"
@@ -346,7 +346,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
             aria-label="Disable all models"
             title="Disable all"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
           </button>
           <button
             type="button"
@@ -356,7 +356,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
             aria-label="Enable all models"
             title="Enable all"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
           </button>
         </span>
       </div>
@@ -431,7 +431,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
                     aria-label={'Edit ' + model}
                     title={'Edit ' + model}
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                   </button>
                   <button
                     type="button"
@@ -441,7 +441,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
                     aria-label={`Remove ${model}`}
                     title={`Remove ${model}`}
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
                   </button>
                 </div>
               </div>

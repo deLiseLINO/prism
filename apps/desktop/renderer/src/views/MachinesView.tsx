@@ -206,7 +206,7 @@ export function MachinesView(): JSX.Element {
         </form>
       </Section>
       {addError !== null ? (
-        <div className="lrow-note" role="alert" style={{ borderRadius: 10 }}>
+        <div className="lrow-note lrow-note--card" role="alert">
           <span className="lrow-note__msg">{addError}</span>
           <button type="button" className="lrow-note__close" aria-label="Dismiss" onClick={() => setAddError(null)}>
             ×

@@ -45,7 +45,7 @@ export function AppearanceView(): JSX.Element {
 
       <SettingsSectionShell title="Theme" action={mode !== 'system' ? <ResetButton label="theme" onClick={() => setMode('system')} /> : null}>
         <ModePicker value={mode} onChange={setMode} />
-        <div className="stack" style={{ gap: 12 }}>
+        <div className="stack">
           {order.map((target) => (
             <ThemePackEditor key={target} variant={target} isActive={variant === target} />
           ))}
@@ -125,7 +125,7 @@ function SettingsRow({ title, resetAction, control }: {
     <div className="st-row">
       <div className="st-row__text">
         <div className="st-row__title">
-          <h3 style={{ font: 'inherit' }}>{title}</h3>
+          <h3>{title}</h3>
           <span className="st-reset-slot">{resetAction}</span>
         </div>
       </div>
@@ -291,12 +291,12 @@ function ThemePackEditor({ variant, isActive }: { readonly variant: ThemeVariant
   }
 
   return (
-    <div className="st-card" style={{ ['--tc-radius' as string]: '12px' }}>
-      <div className="st-head" style={{ borderTop: 0 }}>
+    <div className="st-card">
+      <div className="st-head">
         <div className="st-head__title">
-          <h3 style={{ font: 'inherit' }}>{titleLabel}</h3>
+          <h3>{titleLabel}</h3>
           {!isPristine ? (
-            <button type="button" className="st-text-action" style={{ fontSize: 12 }} onClick={() => resetThemeVariant(variant)}>
+            <button type="button" className="st-text-action st-text-action--sm" onClick={() => resetThemeVariant(variant)}>
               Reset
             </button>
           ) : null}
@@ -309,7 +309,7 @@ function ThemePackEditor({ variant, isActive }: { readonly variant: ThemeVariant
           <CodeThemePicker variant={variant} value={pack.codeThemeId} theme={theme} onChange={(id) => setCodeThemeId(variant, id)} ariaLabel={`${titleLabel} code theme`} />
         </div>
       </div>
-      <div className="st-context" style={{ borderTop: 0 }}>
+      <div className="st-context">
         <span>{contextLabel}</span>
         {!isActive ? (
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => setMode(variant)}>
@@ -355,7 +355,7 @@ function ThemePackEditor({ variant, isActive }: { readonly variant: ThemeVariant
           />
         </ThemeRow>
         <ThemeRow label="UI font">
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+          <div className="st-field-end">
             <FontInput
               value={theme.fonts.ui ?? ''}
               placeholder="System default"
@@ -385,10 +385,10 @@ function ThemePackEditor({ variant, isActive }: { readonly variant: ThemeVariant
             />
           </ThemeRow>
           {!translucentCapable ? (
-            <p className="st-note" style={{ padding: '0 12px 10px' }}>Window translucency needs the macOS desktop app</p>
+            <p className="st-note st-note--inset">Window translucency needs the macOS desktop app</p>
           ) : null}
           {!theme.opaqueWindows ? (
-            <div className="st-stack" style={{ borderTop: '1px solid var(--border)' }}>
+            <div className="st-stack st-stack--ruled">
               <ThemeRow label="Sidebar only">
                 <Switch
                   checked={translucency.sidebarOnly}
@@ -503,7 +503,7 @@ function CodeThemePicker({ variant, value, theme, onChange, ariaLabel }: {
       <button type="button" className="st-picker__btn" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} onClick={() => setOpen((current) => !current)}>
         <CodeThemeBadge theme={theme} />
         <span className="st-picker__label">{label}</span>
-        <svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m2 4 3 3 3-3" /></svg>
+        <svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="m2 4 3 3 3-3" /></svg>
       </button>
       {open ? (
         <div className="st-picker__menu" role="listbox" aria-label={ariaLabel}>
@@ -728,8 +728,7 @@ function ImportThemeDialog({ variant, onImport }: { readonly variant: ThemeVaria
         >
           <DialogSection>
             <textarea
-              className="st-input st-input--mono"
-              style={{ width: '100%', height: 110, padding: 8, resize: 'vertical' }}
+              className="st-input st-input--mono st-input--area"
               value={value}
               rows={5}
               spellCheck={false}
@@ -740,7 +739,7 @@ function ImportThemeDialog({ variant, onImport }: { readonly variant: ThemeVaria
                 setError(null)
               }}
             />
-            {error !== null ? <p className="st-error" style={{ padding: 0 }}>{error}</p> : null}
+            {error !== null ? <p className="st-error st-error--flush">{error}</p> : null}
           </DialogSection>
         </Dialog>
       ) : null}

@@ -213,7 +213,7 @@ function DaemonHero({
             off += (p.disabledModels ?? []).length
           }
           return (
-            <div className="metrics" style={{ gridColumn: '1 / -1' }}>
+            <div className="metrics">
               <Metric label="Providers" value={String(all.providers.length)} hint={`${enabledProviders} enabled`} />
               <Metric label="Models" value={String(models - off)} hint={`${off} disabled of ${models}`} />
               <Metric label="Context window" value={all.contextWindow.toLocaleString('en-US')} />

@@ -36,24 +36,24 @@ function IconSprite(): JSX.Element {
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
       <defs>
-        <symbol id="i-prism" viewBox="0 0 20 20"><path d="M10 2 18.5 17H1.5L10 2Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="M10 2v15M6.3 12.4 10 17l3.7-4.6" fill="none" stroke="currentColor" strokeWidth="1.2" opacity="0.55"/></symbol>
-        <symbol id="i-sidebar" viewBox="0 0 20 20"><rect x="2.5" y="3.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5"/><path d="M8 3.5v13" stroke="currentColor" strokeWidth="1.5"/></symbol>
+        <symbol id="i-prism" viewBox="0 0 20 20"><path d="M10 2 18.5 17H1.5L10 2Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M10 2v15M6.3 12.4 10 17l3.7-4.6" fill="none" stroke="currentColor" strokeWidth="1.2" opacity="0.55"/></symbol>
+        <symbol id="i-sidebar" viewBox="0 0 20 20"><rect x="2.5" y="3.5" width="15" height="13" rx="3" fill="none" stroke="currentColor" strokeWidth="1.6"/><path d="M8 3.5v13" stroke="currentColor" strokeWidth="1.6"/></symbol>
         <symbol id="i-back" viewBox="0 0 20 20"><path d="M16 10H4.5M9.5 4.5 4 10l5.5 5.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></symbol>
         <symbol id="i-forward" viewBox="0 0 20 20"><path d="M4 10h11.5M10.5 4.5 16 10l-5.5 5.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></symbol>
         <symbol id="i-home" viewBox="0 0 20 20"><path d="M3 9.2 10 3l7 6.2V16a1 1 0 0 1-1 1h-3.5v-4.5h-5V17H4a1 1 0 0 1-1-1V9.2Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
         <symbol id="i-sliders" viewBox="0 0 20 20"><path d="M3.5 6h8M15 6h1.5M3.5 14H5M8.5 14h8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/><circle cx="13" cy="6" r="1.9" fill="none" stroke="currentColor" strokeWidth="1.6"/><circle cx="6.8" cy="14" r="1.9" fill="none" stroke="currentColor" strokeWidth="1.6"/></symbol>
-        <symbol id="i-gauge" viewBox="0 0 20 20"><path d="M3 15a7.5 7.5 0 1 1 14 0" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/><path d="M10 15 13.8 8.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></symbol>
+        <symbol id="i-gauge" viewBox="0 0 20 20"><path d="M3 15a7.5 7.5 0 1 1 14 0" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/><path d="M10 15 13.8 8.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
         <symbol id="i-eye" viewBox="0 0 20 20"><path d="M2.5 10S5.8 4.5 10 4.5 17.5 10 17.5 10 14.2 15.5 10 15.5 2.5 10 2.5 10Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" strokeWidth="1.6"/></symbol>
         <symbol id="i-heart" viewBox="0 0 20 20"><path d="M10 16.5S3 12.4 3 7.9C3 5.2 5.2 3.5 7.4 3.5c1 0 2 .4 2.6 1.2C10.6 3.9 11.6 3.5 12.6 3.5 14.8 3.5 17 5.2 17 7.9c0 4.5-7 8.6-7 8.6Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
         <symbol id="i-plug" viewBox="0 0 20 20"><path d="M6.5 2.5v4M13.5 2.5v4M4.5 6.5h11v3.2c0 3-2.5 5.3-5.5 5.3s-5.5-2.3-5.5-5.3V6.5ZM10 15v2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></symbol>
-        <symbol id="i-daemon" viewBox="0 0 20 20"><path d="M4.5 8.2a5.5 5.5 0 0 1 10.4-1.6A4.3 4.3 0 0 1 15.5 15h-11a4 4 0 0 1 0-8.1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 12.5v3M10 15.5l2.2-2.2M10 15.5l-2.2-2.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></symbol>
+        <symbol id="i-daemon" viewBox="0 0 20 20"><path d="M4.5 8.2a5.5 5.5 0 0 1 10.4-1.6A4.3 4.3 0 0 1 15.5 15h-11a4 4 0 0 1 0-8.1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 12.5v3M10 15.5l2.2-2.2M10 15.5l-2.2-2.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></symbol>
         <symbol id="i-puzzle" viewBox="0 0 20 20"><path d="M7.3 3.5a1.7 1.7 0 1 1 3.4 0V5h2.8a1 1 0 0 1 1 1v2.8h1.5a1.7 1.7 0 1 1 0 3.4H14.5v2.8a1 1 0 0 1-1 1h-3v-1.6a1.7 1.7 0 1 0-3.4 0v1.6h-3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2.2V3.5Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
         <symbol id="i-sun" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.6"/><path d="M10 1.8V4M10 16v2.2M18.2 10H16M4 10H1.8M15.7 4.3l-1.6 1.6M5.9 14.1l-1.6 1.6M15.7 15.7l-1.6-1.6M5.9 5.9 4.3 4.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
         <symbol id="i-moon" viewBox="0 0 20 20"><path d="M15.5 12.6A6.8 6.8 0 0 1 7.4 4.5a6.8 6.8 0 1 0 8.1 8.1Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
-        <symbol id="i-usage" viewBox="0 0 20 20"><path d="M3.5 4.5v11M10 2.5v13M16.5 6.5v9" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></symbol>
-        <symbol id="i-cube" viewBox="0 0 20 20"><path d="M10 2.2 17 6v8L10 18 3 14V6l7-3.8Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M3 6l7 3.8L17 6M10 9.8V18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></symbol>
+        <symbol id="i-usage" viewBox="0 0 20 20"><path d="M3.5 4.5v11M10 2.5v13M16.5 6.5v9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
+        <symbol id="i-cube" viewBox="0 0 20 20"><path d="M10 2.2 17 6v8L10 18 3 14V6l7-3.8Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M3 6l7 3.8L17 6M10 9.8V18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></symbol>
         <symbol id="i-flask" viewBox="0 0 20 20"><path d="M8 2.5h4M9.5 2.5v5.2L4.6 15a2.2 2.2 0 0 0 1.9 3.4h7a2.2 2.2 0 0 0 1.9-3.4L10.5 7.7V2.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 13h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
-        <symbol id="i-logs" viewBox="0 0 20 20"><path d="M4 3.5h12v13H4z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M7 7h6M7 10h6M7 13h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></symbol>
+        <symbol id="i-logs" viewBox="0 0 20 20"><path d="M4 3.5h12v13H4z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M7 7h6M7 10h6M7 13h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></symbol>
       </defs>
     </svg>
   )
@@ -341,7 +341,7 @@ function RemoteBanner(): JSX.Element {
 
   if (host === 'local') return <></>
   return (
-    <div className="banner" role="status" style={{ marginBottom: 14 }}>
+    <div className="banner banner--spaced" role="status">
       <div>
         <p className="banner__title">Managing {host}</p>
         <p className="banner__detail">Views and actions go to that machine's daemon over SSH.</p>

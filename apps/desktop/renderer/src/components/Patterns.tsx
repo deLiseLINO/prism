@@ -87,7 +87,7 @@ export function SettingRow({
     <div className={`st-row${stacked ? ' st-row--stack' : ''}`}>
       <div className="st-row__text">
         <div className="st-row__title">
-          <h3 style={{ font: 'inherit' }}>{title}</h3>
+          <h3>{title}</h3>
           {titleAdornment}
         </div>
       </div>

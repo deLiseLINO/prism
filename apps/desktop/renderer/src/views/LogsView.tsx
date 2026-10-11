@@ -34,7 +34,7 @@ function statusTone(status: RequestView['status']): 'ok' | 'warn' | 'error' | 'i
 
 function formatTime(iso: string): string {
   const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '—'
+  if (Number.isNaN(date.getTime())) return '-'
   const year = String(date.getUTCFullYear()).padStart(2, '0')
   const month = String(date.getUTCMonth() + 1).padStart(2, '0')
   const day = String(date.getUTCDate()).padStart(2, '0')
@@ -45,7 +45,7 @@ function formatTime(iso: string): string {
 }
 
 function formatDuration(ms: number): string {
-  if (ms <= 0) return '—'
+  if (ms <= 0) return '-'
   if (ms < 1_000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`
   return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1_000)}s`
@@ -291,7 +291,7 @@ function RequestRow({
           </span>
         </td>
         <td className="td-strong" title={request.requestId ?? ''}>
-          <span className="num">{request.requestId ?? '—'}</span>
+          <span className="num">{request.requestId ?? '-'}</span>
           {request.session !== undefined && request.session !== '' ? (
             <span className="num logs-sub"> · {request.session}</span>
           ) : null}
