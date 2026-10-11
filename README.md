@@ -32,17 +32,3 @@ prism upgrade         # update prism (brew and go installs)
 ```
 
 The daemon listens on `127.0.0.1:10200`. The UI, the CLI and the desktop app share it.
-
-## Request translation
-
-Chat, Responses, and Messages ingress preserve JSON numeric spellings in tool schemas and replayed arguments. Resend full Responses history instead of using `previous_response_id`.
-
-Custom tools use a required string `input` wrapper on Chat routes and in buffered Messages replies. Responses routes preserve custom result arrays, including empty arrays and supported images. Vision descriptions replace images without changing string-valued custom results. Unsupported attachments and tool-result parts are rejected rather than dropped.
-
-Tool subsets, explicit reasoning disablement, parallel-call controls, verbosity, and sampling are forwarded when the target format represents them. Messages routes reject unsupported verbosity and sampling with extended thinking. Forced tool choice omits incompatible thinking. Cline routes use Chat format.
-
-Configured upstream URLs may name an API root or an endpoint. Versioned roots such as `/v1`, `/v4`, and `/v1beta` are retained; unversioned roots receive `/v1`.
-
-## Editing this README
-
-Do not add to this README without asking the maintainer first.
