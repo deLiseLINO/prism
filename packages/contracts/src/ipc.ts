@@ -16,6 +16,7 @@ export const IpcChannel = {
   shellOpenExternal: 'prism:shell-open-external',
   clipboardWrite: 'prism:clipboard-write',
   windowSetTheme: 'prism:window-set-theme',
+  windowSetMaterial: 'prism:window-set-material',
   updaterStatusEvent: 'prism:updater-status-event',
   updaterGetStatus: 'prism:updater-get-status',
   updaterCheck: 'prism:updater-check',
@@ -26,3 +27,12 @@ export const IpcChannel = {
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]
+
+// Range of the native macOS window background blur radius, in points.
+export const DESKTOP_WINDOW_BLUR_RADIUS_MAX = 64
+export const DESKTOP_WINDOW_BLUR_RADIUS_MIN = 1
+
+export interface DesktopWindowMaterial {
+  readonly material: 'opaque' | 'translucent'
+  readonly blurRadius: number
+}

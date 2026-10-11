@@ -1,4 +1,3 @@
-import type { ThemeMode } from '../useTheme'
 import { cloneElement, Component, Fragment, isValidElement, useEffect, useId, useRef, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ReportActions } from './ReportActions'
@@ -443,35 +442,6 @@ export function DetailsList({ rows }: { readonly rows: readonly ConfirmDetail[] 
     </details>
   )
 }
-
-export interface ThemeToggleProps {
-  readonly mode: ThemeMode
-  readonly onCycle: () => void
-}
-
-export function ThemeToggle({ mode, onCycle }: ThemeToggleProps): JSX.Element {
-  return (
-    <button
-      type="button"
-      className="theme-toggle"
-      onClick={onCycle}
-      aria-label={`Theme: ${mode}. Switch theme.`}
-      title={`Theme: ${mode} (cycles auto, dark, light)`}
-    >
-      <span className="theme-toggle__icon" aria-hidden="true">
-        {mode === 'auto' ? (
-          <svg width="15" height="15"><use href="#i-prism" /></svg>
-        ) : (
-          <svg width="15" height="15" className={mode === 'dark' ? 'icon-moon' : 'icon-sun'}>
-            <use href={mode === 'dark' ? '#i-moon' : '#i-sun'} />
-          </svg>
-        )}
-      </span>
-      <span className="theme-toggle__mode">{mode}</span>
-    </button>
-  )
-}
-
 export function isErrorShape(value: unknown): value is { readonly message?: unknown } {
   return typeof value === 'object' && value !== null && 'message' in value
 }

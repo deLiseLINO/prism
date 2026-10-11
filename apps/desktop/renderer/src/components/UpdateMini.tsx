@@ -56,7 +56,7 @@ export function UpdateMini({ status }: { readonly status: UpdaterStatus | null }
 
   if (status.state === 'downloaded') {
     return (
-      <div className="update-mini" title={installError ?? undefined}>
+      <div className="update-mini" title={installError ?? row.label}>
         <span className={dotClass} aria-hidden="true" />
         <span>{row.label}</span>
         <button type="button" className="btn btn--primary btn--sm" disabled={installing} onClick={install}>
@@ -68,7 +68,7 @@ export function UpdateMini({ status }: { readonly status: UpdaterStatus | null }
 
   if (row.retryable) {
     return (
-      <button type="button" className="update-mini update-mini--retry" title={status.error ?? undefined} onClick={() => void bridge.updater.check()}>
+      <button type="button" className="update-mini update-mini--retry" title={status.error ?? row.label} onClick={() => void bridge.updater.check()}>
         <span className={dotClass} aria-hidden="true" />
         <span>{row.label}</span>
       </button>
@@ -76,7 +76,7 @@ export function UpdateMini({ status }: { readonly status: UpdaterStatus | null }
   }
 
   return (
-    <div className="update-mini" title={status.error ?? undefined}>
+    <div className="update-mini" title={status.error ?? row.label}>
       <span className={dotClass} aria-hidden="true" />
       <span>{row.label}</span>
       {status.state === 'downloading' && status.progress !== null ? (

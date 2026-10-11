@@ -80,7 +80,7 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
       >
         <header className="msm-head">
           <div>
-            <div className="msm-title num">{existing === null ? 'New provider' : existing.id}</div>
+            <div className={existing === null ? 'msm-title' : 'msm-title num'}>{existing === null ? 'New provider' : existing.id}</div>
             <div className="msm-sub">
               <span className="badge badge--muted num">{wireLabel(existing === null ? wire : existing.wire)}</span>
             </div>

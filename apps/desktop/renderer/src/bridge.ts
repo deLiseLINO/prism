@@ -82,6 +82,7 @@ const webShell: PrismBridge['shell'] = {
 
 const webWindow: PrismBridge['window'] = {
   setTheme: () => Promise.resolve(),
+  setMaterial: () => Promise.resolve(false),
 }
 
 const webZoom: PrismBridge['zoom'] = {

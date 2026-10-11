@@ -55,10 +55,9 @@ describe('renderer routing', () => {
     routing = await import('../renderer/src/routing')
   })
 
-  it('places stats in the nav after usage under Operate', () => {
+  it('places stats in the nav after usage', () => {
     const entries = routing.VIEWS.map((entry) => entry.view)
     expect(entries.indexOf('stats')).toBe(entries.indexOf('usage') + 1)
-    expect(routing.VIEWS[entries.indexOf('stats')].section).toBe('Operate')
   })
 
   afterEach(() => {
@@ -73,6 +72,12 @@ describe('renderer routing', () => {
     expect(routing.hashFor('machines')).toBe('#/machines')
     expect(routing.hashFor('stats')).toBe('#/stats')
     expect(routing.hashFor('logs')).toBe('#/logs')
+    expect(routing.hashFor('appearance')).toBe('#/appearance')
+  })
+
+  it('knows the appearance route', () => {
+    expect(routing.viewFromHash('#/appearance')).toBe('appearance')
+    expect(routing.VIEWS[routing.VIEWS.length - 1]?.view).toBe('appearance')
   })
 
   it('falls back to overview for unknown hashes', () => {

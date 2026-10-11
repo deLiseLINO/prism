@@ -3,6 +3,7 @@ import { cp, copyFile, mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { buildWindowMaterialAddon } from './scripts/build-window-material-addon.mjs'
 
 // node's spawnSync does not resolve go.exe through PATHEXT on win32 in all
 // environments (observed on GitHub's windows runners inside npm lifecycle
@@ -98,5 +99,9 @@ await Promise.all([
   copyFile(path.join(scriptDir, 'renderer/styles.css'), path.join(distDir, 'webui/styles.css')),
   copyFile(path.join(scriptDir, 'renderer/theme-boot.js'), path.join(distDir, 'webui/theme-boot.js')),
 ])
+
+if (process.platform === 'darwin') {
+  buildWindowMaterialAddon(path.join(distDir, 'native', 'window-material.node'))
+}
 
 await cp(path.join(distDir, 'webui'), path.join(scriptDir, 'resources', 'webui'), { recursive: true })
