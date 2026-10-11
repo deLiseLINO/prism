@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sortProviders } from '../renderer/src/views/ProvidersView'
+import { enabledModelCount, sortProviders } from '../renderer/src/views/ProvidersView'
 import type { ProviderView } from '@prism/contracts'
 
 function provider(id: string, enabled: boolean): ProviderView {
@@ -36,5 +36,22 @@ describe('provider rail sort', () => {
     const list = [provider('a', false), provider('b', true)]
     const sorted = sortProviders(list, {})
     expect(sorted.map((p) => p.id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('provider rail model count', () => {
+  it('counts only models that are not disabled', () => {
+    const p = { models: ['a', 'b', 'c'], disabledModels: ['b'] } as unknown as ProviderView
+    expect(enabledModelCount(p)).toBe(2)
+  })
+
+  it('ignores disabled ids that are not in the model list', () => {
+    const p = { models: ['a'], disabledModels: ['gone'] } as unknown as ProviderView
+    expect(enabledModelCount(p)).toBe(1)
+  })
+
+  it('is zero when every model is disabled or none are listed', () => {
+    expect(enabledModelCount({ models: ['a'], disabledModels: ['a'] } as unknown as ProviderView)).toBe(0)
+    expect(enabledModelCount({} as unknown as ProviderView)).toBe(0)
   })
 })
