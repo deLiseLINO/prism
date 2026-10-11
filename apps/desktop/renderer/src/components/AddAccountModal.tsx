@@ -170,7 +170,7 @@ export function AddAccountModal({
       >
         <header className="msm-head">
           <div>
-            <div className="msm-title num">Add account</div>
+            <div className="msm-title">Add account</div>
             <div className="msm-sub">
               <span className="badge badge--muted num">{selected.id}</span>
               {session !== null ? (
