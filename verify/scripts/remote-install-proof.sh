@@ -121,7 +121,7 @@ cdp_eval "await (async () => {
   nav('Experimental').click()
   for (let i = 0; i < 60; i++) { if (document.querySelector('main h1')?.textContent.trim() === 'Experimental') break; await sleep(100) }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
-  const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Remote machines'))
+  const card = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes('Remote machines'))
   if (!card) throw new Error('remote machines flag card not rendered')
   const toggle = card.querySelector('input[type=checkbox]')
   if (!toggle) throw new Error('remote install toggle not rendered')
@@ -140,7 +140,7 @@ cdp_eval "await (async () => {
   nav('Machines').click()
   for (let i = 0; i < 60; i++) { if (document.querySelector('main h1')?.textContent.trim() === 'Machines') break; await sleep(100) }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Machines') throw new Error('Machines view did not open')
-  const row = [...document.querySelectorAll('.int-row-wrap')].find((n) => n.querySelector('.int-name')?.textContent.trim() === 'self')
+  const row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
   if (!row) throw new Error('self host row not rendered')
   const install = [...row.querySelectorAll('button')].find((b) => /install daemon/i.test(b.textContent))
   if (!install) throw new Error('Install daemon button not rendered with the flag on and no daemon port')
@@ -161,9 +161,9 @@ cdp_eval "await (async () => {
   nav('Machines').click()
   for (let i = 0; i < 60; i++) { if (document.querySelector('main h1')?.textContent.trim() === 'Machines') break; await sleep(100) }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Machines') throw new Error('Machines view did not reopen mid-install')
-  const row = [...document.querySelectorAll('.int-row-wrap')].find((n) => n.querySelector('.int-name')?.textContent.trim() === 'self')
+  const row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
   if (!row) throw new Error('self row not rendered after tab switch')
-  const refusal = row.querySelector('.int-refusal__msg')?.textContent ?? ''
+  const refusal = row.querySelector('.lrow-note__msg')?.textContent ?? ''
   if (/already running/i.test(refusal)) throw new Error('already-running error surfaced after a tab switch: ' + refusal)
   const install = [...row.querySelectorAll('button')].find((b) => /installing|install daemon/i.test(b.textContent))
   if (!install) return {settled: true, rowText: row.innerText.replace(/\n/g, ' | ')}
@@ -177,9 +177,9 @@ echo "==> waiting for the install to finish (upload + start + verify)"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   for (let i = 0; i < 120; i++) {
-    const row = [...document.querySelectorAll('.int-row-wrap')].find((n) => n.querySelector('.int-name')?.textContent.trim() === 'self')
+    const row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
     if (!row) throw new Error('self row vanished during install')
-    const refusal = row.querySelector('.int-refusal__msg')?.textContent ?? ''
+    const refusal = row.querySelector('.lrow-note__msg')?.textContent ?? ''
     if (refusal !== '') throw new Error('install failed: ' + refusal)
     const install = [...row.querySelectorAll('button')].find((b) => /installing|install daemon|retry/i.test(b.textContent))
     if (!install) return {done: true, rowText: row.innerText.replace(/\n/g, ' | ')}
@@ -204,7 +204,7 @@ ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/prism" || fail "prism bi
 echo "==> Manage routes through the installed daemon"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  const row = [...document.querySelectorAll('.int-row-wrap')].find((n) => n.querySelector('.int-name')?.textContent.trim() === 'self')
+  const row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
   const manage = [...row.querySelectorAll('button')].find((b) => /^manage$/i.test(b.textContent.trim()))
   if (!manage || manage.disabled) throw new Error('Manage button not enabled after install')
   manage.click()

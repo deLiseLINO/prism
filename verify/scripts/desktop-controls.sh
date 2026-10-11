@@ -65,8 +65,7 @@ wait_for_daemon_ready() {
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     for (let i = 0; i < 120; i++) {
-      const card = [...document.querySelectorAll('.ov-card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Daemon')
-      const state = [...(card?.querySelectorAll('.kv-row') ?? [])].find((node) => node.querySelector('.kv-k')?.textContent.trim() === 'state')?.querySelector('.kv-v')?.textContent.trim()
+      const state = document.querySelector('.ov-hero__sub .num')?.textContent.trim()
       if (state === 'ready') return {state}
       await sleep(500)
     }
@@ -80,11 +79,8 @@ wait_for_daemon_ready
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   for (let i = 0; i < 120; i++) {
-    const main = document.querySelector('main')
-    const card = [...(main?.querySelectorAll('.ov-card') ?? [])].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Daemon')
-    const value = (key) => [...(card?.querySelectorAll('.kv-row') ?? [])].find((node) => node.querySelector('.kv-k')?.textContent.trim() === key)?.querySelector('.kv-v')
-    const state = value('state')
-    const endpoint = value('endpoint')
+    const card = document.querySelector('main .ov-hero')
+    const [state, endpoint] = [...(card?.querySelectorAll('.ov-hero__sub .num') ?? [])]
     if (
       card && state && endpoint &&
       state.textContent.trim() === 'ready' &&
@@ -130,7 +126,7 @@ cdp_eval "await (async () => {
   if (!create) throw new Error('Create provider button not found')
   create.click()
   for (let i = 0; i < 40; i++) {
-    const card = [...document.querySelectorAll('section.card')].find((node) => node.querySelector('h2, h3')?.textContent.trim() === 'ui-probe')
+    const card = [...document.querySelectorAll('.prov-detail')].find((node) => node.querySelector('.prov-detail__name')?.textContent.startsWith('ui-probe'))
     if (card) return {created: true, text: card.innerText.slice(0, 200)}
     await sleep(250)
   }
@@ -139,14 +135,14 @@ cdp_eval "await (async () => {
 
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const findCard = () => [...document.querySelectorAll('section.card')].find((node) => node.querySelector('h2, h3')?.textContent.trim() === 'ui-probe')
+  const findCard = () => [...document.querySelectorAll('.prov-detail')].find((node) => node.querySelector('.prov-detail__name')?.textContent.startsWith('ui-probe'))
   if (!findCard()) {
-    const row = [...document.querySelectorAll('.prov-prow')].find((b) => b.textContent.includes('ui-probe'))
+    const row = [...document.querySelectorAll('.prov-rail__list .lrow')].find((b) => b.textContent.includes('ui-probe'))
     if (!row) throw new Error('ui-probe row not found in provider rail')
     row.click()
     await sleep(500)
   }
-  const addInput = document.querySelector('.prov-addinput')
+  const addInput = document.querySelector('.prov-detail__add .text-input')
   if (!addInput) throw new Error('model add input not found on ui-probe card')
   addInput.focus()
   document.execCommand('insertText', false, 'ui-probe-model')
@@ -169,17 +165,17 @@ cdp_eval "await (async () => {
 
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const card = [...document.querySelectorAll('section.card')].find((node) => node.querySelector('h2, h3')?.textContent.trim() === 'ui-probe')
+  const card = [...document.querySelectorAll('.prov-detail')].find((node) => node.querySelector('.prov-detail__name')?.textContent.startsWith('ui-probe'))
   if (!card) throw new Error('ui-probe card not found')
   const del = [...card.querySelectorAll('button')].find((b) => /delete|remove/i.test(b.textContent))
   if (!del) throw new Error('Delete button not found on ui-probe card')
   del.click()
   await sleep(300)
-  const current = [...document.querySelectorAll('section.card')].find((node) => node.querySelector('h2, h3')?.textContent.trim() === 'ui-probe')
+  const current = [...document.querySelectorAll('.prov-detail')].find((node) => node.querySelector('.prov-detail__name')?.textContent.startsWith('ui-probe'))
   const confirm = [...(current?.querySelectorAll('button') ?? []), ...document.querySelectorAll('dialog button, [role=dialog] button')].find((b) => /confirm|delete|remove/i.test(b.textContent) && b !== del)
   if (confirm) confirm.click()
   for (let i = 0; i < 40; i++) {
-    const gone = ![...document.querySelectorAll('section.card')].some((node) => node.querySelector('h2, h3')?.textContent.trim() === 'ui-probe')
+    const gone = ![...document.querySelectorAll('.prov-detail')].some((node) => node.querySelector('.prov-detail__name')?.textContent.startsWith('ui-probe'))
     if (gone) return {deleted: true}
     await sleep(250)
   }
@@ -207,27 +203,27 @@ goto_view "Integrations"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   for (let i = 0; i < 40; i++) {
-    if (document.querySelectorAll('.int-row-wrap').length >= 3) break
+    if (document.querySelectorAll('.int-item').length >= 3) break
     await sleep(250)
   }
-  const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'grok')
+  const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'grok')
   if (!card) throw new Error('grok integration row not found')
   const apply = [...card.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Apply')
   if (!apply) throw new Error('Apply button not found on grok row')
   apply.click()
   for (let i = 0; i < 60; i++) {
-    const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'grok')
-    if (current?.querySelector('.int-status')?.textContent.trim() === 'managed') break
+    const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'grok')
+    if (current?.querySelector('.lrow__title .chip')?.textContent.trim() === 'managed') break
     await sleep(250)
   }
-  const managed = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'grok')
-  if (managed?.querySelector('.int-status')?.textContent.trim() !== 'managed') throw new Error('grok did not become managed after Apply')
+  const managed = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'grok')
+  if (managed?.querySelector('.lrow__title .chip')?.textContent.trim() !== 'managed') throw new Error('grok did not become managed after Apply')
   const rollback = [...(managed?.querySelectorAll('button') ?? [])].find((b) => /rollback/i.test(b.textContent))
   if (!rollback) throw new Error('Rollback button not found on managed grok card')
   rollback.click()
   for (let i = 0; i < 60; i++) {
-    const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'grok')
-    const state = current?.querySelector('.int-status')?.textContent.trim()
+    const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'grok')
+    const state = current?.querySelector('.lrow__title .chip')?.textContent.trim()
     if (state === 'unmanaged') return {rolledBack: true, state}
     await sleep(250)
   }

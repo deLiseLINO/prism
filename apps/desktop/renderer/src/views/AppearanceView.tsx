@@ -21,6 +21,9 @@ import {
 } from '../theme/typography'
 import { bridge } from '../bridge'
 import { useAppearance } from '../useAppearance'
+import { DEFAULT_PRIMARY_STYLE, usePrimaryStyle, type PrimaryStyle } from '../primaryStyle'
+import { Button } from '../components/Ui'
+import { Dialog, DialogSection, PageHeader, Section } from '../components/Patterns'
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/
 const COLOR_COMMIT_DELAY_MS = 220
@@ -33,15 +36,12 @@ const MODE_CHOICES: readonly { readonly value: ThemeMode; readonly label: string
 
 export function AppearanceView(): JSX.Element {
   const { mode, setMode, variant, systemUiFont, setSystemUiFont, typography, setTypography } = useAppearance()
+  const [primary, setPrimary] = usePrimaryStyle()
   const order: readonly ThemeVariant[] = variant === 'dark' ? ['dark', 'light'] : ['light', 'dark']
 
   return (
-    <section className="screen st-page" aria-labelledby="h-appearance">
-      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
-        <div>
-          <h1 id="h-appearance">Appearance</h1>
-        </div>
-      </div>
+    <section className="screen" aria-labelledby="h-appearance">
+      <PageHeader id="h-appearance" icon="#i-sliders" title="Appearance" />
 
       <SettingsSectionShell title="Theme" action={mode !== 'system' ? <ResetButton label="theme" onClick={() => setMode('system')} /> : null}>
         <ModePicker value={mode} onChange={setMode} />
@@ -56,13 +56,11 @@ export function AppearanceView(): JSX.Element {
         <div className="st-card">
           <SettingsRow
             title="Use system UI font"
-            description="Ignore the theme's custom UI font and render the interface with the native system font (SF Pro on macOS)."
             resetAction={!systemUiFont ? <ResetButton label="system UI font" onClick={() => setSystemUiFont(true)} /> : null}
             control={<Switch checked={systemUiFont} onChange={setSystemUiFont} label="Use system UI font" />}
           />
           <SettingsRow
             title="Base font size"
-            description="Adjust the app text base in pixels. UI typography scales proportionally from this value."
             resetAction={
               typography.fontSizePx !== DEFAULT_FONT_SIZE_PX ? (
                 <ResetButton label="base font size" onClick={() => setTypography({ fontSizePx: DEFAULT_FONT_SIZE_PX })} />
@@ -91,6 +89,23 @@ export function AppearanceView(): JSX.Element {
           />
         </div>
       </SettingsSectionShell>
+
+      <SettingsSectionShell title="Buttons">
+        <div className="st-card">
+          <SettingsRow
+            title="Primary button colour"
+            resetAction={primary !== DEFAULT_PRIMARY_STYLE ? <ResetButton label="primary button colour" onClick={() => setPrimary(DEFAULT_PRIMARY_STYLE)} /> : null}
+            control={
+              <SegmentedControl<PrimaryStyle>
+                value={primary}
+                ariaLabel="Primary button colour"
+                options={[{ value: 'ink', label: 'Ink' }, { value: 'accent', label: 'Accent' }]}
+                onChange={setPrimary}
+              />
+            }
+          />
+        </div>
+      </SettingsSectionShell>
     </section>
   )
 }
@@ -98,20 +113,11 @@ export function AppearanceView(): JSX.Element {
 // ── Settings primitives ──
 
 function SettingsSectionShell({ title, action, children }: { readonly title: string; readonly action?: ReactNode; readonly children: ReactNode }): JSX.Element {
-  return (
-    <section className="st-section">
-      <div className="st-section__head">
-        <h2 className="st-section__title">{title}</h2>
-        {action}
-      </div>
-      {children}
-    </section>
-  )
+  return <Section title={title} action={action}>{children}</Section>
 }
 
-function SettingsRow({ title, description, resetAction, control }: {
+function SettingsRow({ title, resetAction, control }: {
   readonly title: string
-  readonly description: string
   readonly resetAction?: ReactNode
   readonly control: ReactNode
 }): JSX.Element {
@@ -120,9 +126,8 @@ function SettingsRow({ title, description, resetAction, control }: {
       <div className="st-row__text">
         <div className="st-row__title">
           <h3 style={{ font: 'inherit' }}>{title}</h3>
-          <span className="st-reset-slot" style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>{resetAction}</span>
+          <span className="st-reset-slot">{resetAction}</span>
         </div>
-        <p className="st-row__desc">{description}</p>
       </div>
       <div className="st-row__control">{control}</div>
     </div>
@@ -158,13 +163,13 @@ function SegmentedControl<T extends string>({ value, options, ariaLabel, onChang
   readonly disabledValues?: readonly T[]
 }): JSX.Element {
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className="st-seg">
+    <div role="radiogroup" aria-label={ariaLabel} className="seg">
       {options.map((option) => (
         <button
           key={option.value}
           type="button"
           role="radio"
-          className="st-seg__btn"
+          className="seg-btn"
           aria-checked={option.value === value}
           disabled={disabledValues?.includes(option.value) === true}
           onClick={() => onChange(option.value)}
@@ -680,7 +685,7 @@ function ThemeSlider({ value, min = 0, max, suffix = '', valueLabel, onChange, a
         value={value}
         aria-label={ariaLabel}
         onChange={(event) => onChange(Number(event.target.value))}
-        style={{ background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${fill}%, var(--bar-track) ${fill}%, var(--bar-track) 100%)` }}
+        style={{ background: `linear-gradient(to right, var(--switch-on) 0%, var(--switch-on) ${fill}%, var(--bar-track) ${fill}%, var(--bar-track) 100%)` }}
       />
       <span className="st-slider__value">{valueLabel ?? `${value}${suffix}`}</span>
     </div>
@@ -709,43 +714,35 @@ function ImportThemeDialog({ variant, onImport }: { readonly variant: ThemeVaria
         Import
       </button>
       {open ? (
-        <div className="msm-veil" role="presentation" onClick={() => setOpen(false)}>
-          <div className="msm panel" role="dialog" aria-modal="true" aria-label={`Import ${variant} theme`} onClick={(event) => event.stopPropagation()}>
-            <div className="msm-head">
-              <div>
-                <h2 className="msm-title">Import {variant} theme</h2>
-                <p className="st-note" style={{ marginTop: 6 }}>
-                  Paste a <code>codex-theme-v1:</code> share string. The embedded variant must match {variant}, and the selected code theme must exist for that variant.
-                </p>
-              </div>
-            </div>
-            <div className="msm-sec">
-              <textarea
-                className="st-input st-input--mono"
-                style={{ width: '100%', height: 110, padding: 8, resize: 'vertical' }}
-                value={value}
-                rows={5}
-                spellCheck={false}
-                aria-label="Theme share string"
-                placeholder='codex-theme-v1:{"codeThemeId":"linear",...}'
-                onChange={(event) => {
-                  setValue(event.target.value)
-                  setError(null)
-                }}
-              />
-              {error !== null ? <p className="st-error" style={{ padding: '8px 0 0' }}>{error}</p> : null}
-            </div>
-            <div className="msm-foot">
-              <span className="msm-spacer" />
-              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setOpen(false)}>
-                Cancel
-              </button>
-              <button type="button" className="btn btn--primary btn--sm" disabled={value.trim().length === 0} onClick={submit}>
-                Import
-              </button>
-            </div>
-          </div>
-        </div>
+        <Dialog
+          label={`Import ${variant} theme`}
+          title={`Import ${variant} theme`}
+          onClose={() => setOpen(false)}
+          footer={
+            <>
+              <span className="ctl-spacer" />
+              <Button tone="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button tone="primary" disabled={value.trim().length === 0} onClick={submit}>Import</Button>
+            </>
+          }
+        >
+          <DialogSection>
+            <textarea
+              className="st-input st-input--mono"
+              style={{ width: '100%', height: 110, padding: 8, resize: 'vertical' }}
+              value={value}
+              rows={5}
+              spellCheck={false}
+              aria-label="Theme share string"
+              placeholder='codex-theme-v1:{"codeThemeId":"linear",...}'
+              onChange={(event) => {
+                setValue(event.target.value)
+                setError(null)
+              }}
+            />
+            {error !== null ? <p className="st-error" style={{ padding: 0 }}>{error}</p> : null}
+          </DialogSection>
+        </Dialog>
       ) : null}
     </>
   )

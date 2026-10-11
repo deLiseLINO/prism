@@ -5,7 +5,8 @@ import type {
   StatsRange,
   StatsResponseView,
 } from '@prism/contracts'
-import { AsyncBoundary, Empty, Stat } from '../components/Ui'
+import { AsyncBoundary, Empty } from '../components/Ui'
+import { Metric, PageHeader, Section } from '../components/Patterns'
 import { useAsync, type AsyncState } from '../useAsync'
 import { api } from '../api'
 
@@ -68,21 +69,19 @@ function StatsRow({
   readonly max: number
 }): JSX.Element {
   return (
-    <div className="stats-row">
-      <div className="stats-row-main">
-        <div className="stats-row-name">
-          <span title={name}>{name}</span>
-          {tag !== undefined ? <span className="stats-row-tag">{tag}</span> : null}
-        </div>
-        <span className="num">{fmt(row.total_tokens)}</span>
-        <span className="bar">
-          <span
-            className="bar-fill"
-            style={{ '--w': barRatio(row.total_tokens, max) } as CSSProperties}
-          />
-        </span>
-        <span className="sub">{counts(row)}</span>
+    <div className="drow">
+      <div className="drow__name">
+        <span title={name}>{name}</span>
+        {tag !== undefined ? <span className="drow__tag">{tag}</span> : null}
       </div>
+      <span className="num drow__tok">{fmt(row.total_tokens)}</span>
+      <span className="bar">
+        <span
+          className="bar-fill"
+          style={{ '--w': barRatio(row.total_tokens, max) } as CSSProperties}
+        />
+      </span>
+      <span className="drow__counts">{counts(row)}</span>
     </div>
   )
 }
@@ -107,20 +106,25 @@ function StatsPanel({
   readonly state: AsyncState<StatsResponseView>
 }): JSX.Element {
   return (
-    <section className="panel card panel-pad" style={{ '--i': 2 } as CSSProperties}>
-      <div className="panel-title">{title}</div>
-      <div className="divide" style={{ marginTop: 10 }}>
-        <AsyncBoundary<StatsResponseView>
-          state={state}
-          loadingLabel={loadingLabel}
-          empty={<Empty title="No stats yet." />}
-          onRetry={onRetry}
-        >
-          {() =>
-            rows.length === 0 ? (
-              <Empty title="No stats yet." />
-            ) : (
-              rows.map((row) => (
+    <Section title={title}>
+      <AsyncBoundary<StatsResponseView>
+        state={state}
+        loadingLabel={loadingLabel}
+        empty={<Empty icon="#i-usage" title="No stats yet." />}
+        onRetry={onRetry}
+      >
+        {() =>
+          rows.length === 0 ? (
+            <div className="list"><Empty icon="#i-usage" inline title="No stats yet.">Requests routed through the daemon show up here.</Empty></div>
+          ) : (
+            <div className="list">
+              <div className="drow drow--head" aria-hidden="true">
+                <span>{title === 'Models' ? 'Model' : 'Provider'}</span>
+                <span>Tokens</span>
+                <span>Share</span>
+                <span>Requests</span>
+              </div>
+              {rows.map((row) => (
                 <StatsRow
                   key={nameOf(row)}
                   name={nameOf(row)}
@@ -128,12 +132,12 @@ function StatsPanel({
                   row={row}
                   max={max}
                 />
-              ))
-            )
-          }
-        </AsyncBoundary>
-      </div>
-    </section>
+              ))}
+            </div>
+          )
+        }
+      </AsyncBoundary>
+    </Section>
   )
 }
 
@@ -178,16 +182,11 @@ export function StatsView(): JSX.Element {
 
   return (
     <section className="screen" aria-labelledby="h-stats">
-      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
-        <div>
-          <h1 id="h-stats">
-            <svg width="19" height="19" className="h-ic">
-              <use href="#i-usage" />
-            </svg>
-            Stats
-          </h1>
-        </div>
-        <div className="head-actions">
+      <PageHeader
+        id="h-stats"
+        icon="#i-usage"
+        title="Stats"
+        actions={
           <div className="seg" role="group" aria-label="Stats time range">
             {STATS_RANGES.map((entry) => (
               <button
@@ -201,46 +200,48 @@ export function StatsView(): JSX.Element {
               </button>
             ))}
           </div>
+        }
+      />
+      {stats.state.kind === 'error' ? (
+        <div className="state--error" role="alert">
+          <div className="state__headline">Stats unavailable</div>
+          <div className="state__detail">{stats.state.error.message}</div>
         </div>
-      </div>
-      <section className="panel card stats" style={{ '--i': 1 } as CSSProperties}>
-        {stats.state.kind === 'error' ? (
-          <div className="state--error">
-            <div className="state__headline">Stats unavailable</div>
-            <div className="state__detail">{stats.state.error.message}</div>
-          </div>
-        ) : overview === undefined ? (
-          <div className="state--loading">
-            <span className="skel skel-line" aria-hidden="true" />
-            <span className="skel skel-line" aria-hidden="true" />
-          </div>
-        ) : (
-          <>
-            <Stat
-              label="Requests"
-              value={fmt(overview.requests)}
-              hint={`${fmt(overview.completed)} completed · ${fmt(overview.failed)} failed`}
-            />
-            <Stat label="Tokens In" value={fmt(overview.input_tokens)} />
-            <Stat label="Tokens Out" value={fmt(overview.output_tokens)} />
-            <Stat
-              label="Cached"
-              value={fmt(overview.cached_tokens)}
-              hint={`${fmt(overview.reasoning_tokens)} reasoning tokens`}
-            />
-            <Stat
-              label="Total Tokens"
-              value={fmt(overview.total_tokens)}
-              tone={overview.failed > overview.completed ? 'warn' : 'default'}
-            />
-            <Stat
-              label="Coverage"
-              value={`${fmt(overview.measured)}/${fmt(overview.requests)}`}
-              hint={`${coverage(overview)} of requests with reported usage`}
-            />
-          </>
-        )}
-      </section>
+      ) : overview === undefined ? (
+        <div className="metrics" role="status" aria-busy="true">
+          {Array.from({ length: 6 }, (_, index) => (
+            <div className="metric" key={index}>
+              <span className="skel skel-line" aria-hidden="true" />
+              <span className="skel skel-num" aria-hidden="true" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="metrics">
+          <Metric
+            label="Requests"
+            value={fmt(overview.requests)}
+            hint={`${fmt(overview.completed)} completed · ${fmt(overview.failed)} failed`}
+          />
+          <Metric label="Tokens In" value={fmt(overview.input_tokens)} />
+          <Metric label="Tokens Out" value={fmt(overview.output_tokens)} />
+          <Metric
+            label="Cached"
+            value={fmt(overview.cached_tokens)}
+            hint={`${fmt(overview.reasoning_tokens)} reasoning tokens`}
+          />
+          <Metric
+            label="Total Tokens"
+            value={fmt(overview.total_tokens)}
+            tone={overview.failed > overview.completed ? 'warn' : 'default'}
+          />
+          <Metric
+            label="Coverage"
+            value={`${fmt(overview.measured)}/${fmt(overview.requests)}`}
+            hint={coverage(overview)}
+          />
+        </div>
+      )}
       <StatsPanel
         title="Providers"
         rows={providers}

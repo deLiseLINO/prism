@@ -84,7 +84,7 @@ cdp_eval 'await (async () => {
   maxChip.click()
   await sleep(100)
   if (!maxChip.className.includes("msm-effort--on")) throw new Error("max chip did not toggle on: " + maxChip.className)
-  const save = [...document.querySelectorAll(".msm-foot button")].find((b) => b.textContent.trim() === "Save")
+  const save = [...document.querySelectorAll("[role=dialog] footer button")].find((b) => b.textContent.trim() === "Save")
   if (!save) throw new Error("Save button not found")
   save.click()
   await sleep(500)
@@ -119,7 +119,7 @@ cdp_eval 'await (async () => {
   if (!maxChip) throw new Error("max chip missing on reopen")
   if (!maxChip.className.includes("msm-effort--on")) throw new Error("max chip not pressed after reload: " + maxChip.className)
   const overrideRow = [...document.querySelectorAll(".msm-row-name")].some((n) => n.textContent.includes("Override reasoning efforts"))
-  const cancel = [...document.querySelectorAll(".msm-foot button")].find((b) => b.textContent.trim() === "Cancel")
+  const cancel = [...document.querySelectorAll("[role=dialog] footer button")].find((b) => b.textContent.trim() === "Cancel")
   cancel.click()
   return {roundTrip: "ok", overrideRow}
 })()' || fail "round-trip verification failed"

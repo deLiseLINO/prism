@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ModelSettingsView, ProviderView, ProvidersView as ProvidersViewData } from '@prism/contracts'
-import { AsyncBoundary, Banner, Button, Confirm, Empty, Row, SearchInput, Toggle } from '../components/Ui'
+import { AsyncBoundary, Banner, Button, Confirm, Empty, SearchInput, Toggle } from '../components/Ui'
+import { PageHeader, StatusChip } from '../components/Patterns'
 import { useAsync, useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
 import { ModelSettingsModal, draftToSettings, type ModelSettingsDraft } from '../components/ModelSettingsModal'
@@ -251,247 +252,254 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   const cataloged = provider.wire === 'cline' ? clineCatalogModels(models, catalog) : models
   const listedModels = visibleModelRows(cataloged, needle)
 
+  const visibleCount = needle === '' ? cataloged.length : listedModels.length
+  const allOff = cataloged.length === 0 || cataloged.every((model) => disabledModels.includes(model))
+  const allOn = cataloged.length === 0 || cataloged.every((model) => !disabledModels.includes(model))
+  const duplicate = addModel.trim() === '' || models.includes(addModel.trim())
+  const enabled = provider.enabled ?? true
+
   return (
-    <section className="panel card prov-detail" style={{ '--i': 1 } as CSSProperties}>
-      <div className="prov-detail-head">
+    <section className="panel prov-detail">
+      <div className="prov-detail__head">
         <div>
-          <div className="prov-detail-title">
-            <h2 className="prov-detail-name">{provider.id}</h2>
-          </div>
-          <p className="prov-detail-wire">
+          <h2 className="prov-detail__name">
+            {provider.id}
+            <StatusChip tone={enabled ? 'ok' : 'muted'}>{enabled ? 'Enabled' : 'Disabled'}</StatusChip>
+          </h2>
+          <p className="prov-detail__wire">
             {wireLabel(provider.wire)}
             {provider.baseURL ? ` · ${provider.baseURL}` : ''}
           </p>
         </div>
-        <Toggle
-          checked={provider.enabled ?? true}
-          onChange={() => onToggleProvider(provider)}
-          label={(provider.enabled ?? true) ? 'Enabled' : 'Disabled'}
-        />
-      </div>
-      <div className="prov-detail-body">
-        <div className="prov-detail-label">
-          models
-          {provider.wire === 'cline' ? (
-            <span className="msm-seg prov-catalog" role="group" aria-label="Cline catalog">
-              <button type="button" className="msm-seg-btn" aria-pressed={catalog === 'free'} onClick={() => setCatalog('free')}>free</button>
-              <button type="button" className="msm-seg-btn" aria-pressed={catalog === 'pass'} onClick={() => setCatalog('pass')}>pass</button>
-            </span>
-          ) : null}
-          <span className="num">
-            {(needle === '' ? cataloged.length : listedModels.length + ' of ' + cataloged.length) +
-              (hasFamilies ? (rawMode ? ' raw' : ' logical') : '')}
-          </span>
-          <span className="prov-detail-acts">
-            {hasFamilies ? (
-              <button
-                type="button"
-                className="pm-rawbtn"
-                onClick={() => void switchMode(rawMode ? 'logical' : 'raw')}
-                aria-pressed={rawMode}
-                aria-label={rawMode ? 'Switch to logical models' : 'Switch to raw models'}
-                title={rawMode
-                  ? 'Switch the provider to the collapsed logical model ids'
-                  : 'Switch the provider to the raw wire model ids'}
-              >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/></svg>
-                <span>{rawMode ? 'logical models' : 'raw models'}</span>
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="ibtn"
-              onClick={() => void syncModels()}
-              disabled={syncing || task.running}
-              aria-label="Refresh models from provider"
-              title="Refresh models from provider"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className={syncing ? 'spin' : ''}><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
-            </button>
-            <button
-              type="button"
-              className="ibtn"
-              onClick={() => void setAllModelsDisabled(true)}
-              disabled={task.running || cataloged.length === 0 || cataloged.every((model) => disabledModels.includes(model))}
-              aria-label="Disable all models"
-              title="Disable all"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
-            </button>
-            <button
-              type="button"
-              className="ibtn"
-              onClick={() => void setAllModelsDisabled(false)}
-              disabled={task.running || cataloged.length === 0 || cataloged.every((model) => !disabledModels.includes(model))}
-              aria-label="Enable all models"
-              title="Enable all"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
-            </button>
-            <span className="num">{disabledModels.length} off</span>
-          </span>
-        </div>
-        {listedModels.length > 0 ? (
-          <div className="prov-mlist">
-            {listedModels.slice().sort((a, b) => {
-              const oa = sortDisabled.includes(a) ? 1 : 0
-              const ob = sortDisabled.includes(b) ? 1 : 0
-              if (oa !== ob) return oa - ob
-              const fa = freshModels.includes(a) ? 0 : 1
-              const fb = freshModels.includes(b) ? 0 : 1
-              return fa - fb
-            }).map((model) => {
-              const off = disabledModels.includes(model)
-              const manual = syncedModels.length > 0 && !syncedModels.includes(model)
-              const fresh = freshModels.includes(model)
-              const rungs = rungChips(model, modelSettings)
-              const facts = provider.resolvedFacts?.[model]
-              const wireTag = facts?.wireSource === 'model' && facts.wire !== undefined ? wireLabel(facts.wire) : null
-              return (
-                <div
-                  className={`prov-mline${off ? ' prov-mline--off' : ''}${fresh ? ' prov-mline--new' : ''} prov-mline--click`}
-                  key={model}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => void toggleModel(model)}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return
-                    event.preventDefault()
-                    void toggleModel(model)
-                  }}
-                  aria-pressed={!off}
-                >
-                  <div className="pm-stack">
-                    <div className="pm-line1">
-                      <span className="prov-mline-dot" aria-hidden="true" />
-                      <span className="pm-name">{model}</span>
-                      {fresh ? <span className="badge badge--ok prov-mline-newbadge">new</span> : null}
-                      {manual ? <span className="badge badge--muted prov-mline-manual">manual</span> : null}
-                      {wireTag !== null ? <span className="badge badge--muted prov-mline-manual">{wireTag}</span> : null}
-                    </div>
-                    {rungs.length > 0 ? (
-                      <div className="pm-line2">
-                        <span className="pm-rungs" aria-label={`Efforts for ${model}`}>
-                          {rungs.map((rung) => (
-                            <span className={`pm-rung${rung.defaultRung ? ' pm-rung--def' : ''}`} key={rung.effort}>
-                              {rung.effort}
-                            </span>
-                          ))}
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="prov-mline-acts model-toggles" aria-label={`Models for ${provider.id}`}>
-                    <span
-                      className="prov-mline-acts-inner"
-                      onClick={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => event.stopPropagation()}
-                    >
-                    <Toggle
-                      checked={!off}
-                      onChange={() => void toggleModel(model)}
-                      label={`${model} enabled`}
-                      visuallyHidden
-                    />
-                    <button
-                      type="button"
-                      className="ibtn"
-                      onClick={() => {
-                        setModalNew(false)
-                        setModalModel(model)
-                      }}
-                      disabled={task.running}
-                      aria-label={'Edit ' + model}
-                      title={'Edit ' + model}
-                    >
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                    </button>
-                    <button
-                      type="button"
-                      className="ibtn ibtn--danger"
-                      onClick={() => void removeModel(model)}
-                      disabled={task.running}
-                      aria-label={`Remove ${model}`}
-                      title={`Remove ${model}`}
-                    >
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
-                    </button>
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <p className="meta">{needle === '' ? 'No models listed.' : 'No models match the current filter.'}</p>
-        )}
-        <div className="prov-addline">
-          <input
-            className="prov-addinput"
-            value={addModel}
-            onChange={(event) => setAddModel(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void addModelSubmit()
-            }}
-            placeholder="model id, e.g. gpt-5.3"
-            spellCheck={false}
+        <div className="ctl-row prov-detail__acts">
+          <Toggle
+            checked={enabled}
+            onChange={() => onToggleProvider(provider)}
+            label={enabled ? 'Enabled' : 'Disabled'}
+            visuallyHidden
           />
-          <Button tone="primary" size="sm" onClick={() => void addModelSubmit()} disabled={task.running || addModel.trim() === '' || models.includes(addModel.trim())}>
-            Add
-          </Button>
-          <Button
-            tone="ghost"
-            size="sm"
-            onClick={() => {
-              setModalNew(true)
-              setModalModel(addModel.trim())
-            }}
-            disabled={task.running || addModel.trim() === '' || models.includes(addModel.trim())}
-          >
-            Configure
-          </Button>
-        </div>
-        {modalModel !== null ? (
-          <ModelSettingsModal
-            providerId={provider.id}
-            model={modalModel}
-            isNew={modalNew}
-            fallbackContextWindow={provider.resolvedFacts?.[modalModel]?.contextWindow ?? globalContextWindow}
-            providerWire={provider.wire}
-            contextSource={provider.resolvedFacts?.[modalModel]?.contextSource ?? 'global'}
-            resolvedImage={provider.resolvedImage?.[modalModel] === true}
-            initial={modalNew ? undefined : settings[modalModel]}
-            busy={task.running}
-            onCancel={() => {
-              setModalModel(null)
-              setModalNew(false)
-            }}
-            onSave={(draft) => {
-              void saveModelSettings(modalModel, draft)
-              setModalModel(null)
-              setModalNew(false)
-            }}
-          />
-        ) : null}
-        <Row gap="tight" align="start">
-          <Button tone="ghost" size="sm" onClick={onEdit} disabled={task.running}>
+          <Button tone="ghost" onClick={onEdit} disabled={task.running}>
             Edit
           </Button>
-          {confirming ? (
-            <Confirm
-              title={`Delete ${provider.id}?`}
-              detail="The provider leaves the config immediately."
-              confirmLabel="Delete"
-              busy={task.running}
-              onCancel={() => setConfirming(false)}
-              onConfirm={() => void onDelete()}
-            />
-          ) : (
-            <Button tone="danger" size="sm" onClick={() => setConfirming(true)} disabled={task.running}>
-              Delete
-            </Button>
-          )}
-        </Row>
+          <Button tone="danger" onClick={() => setConfirming(true)} disabled={task.running || confirming}>
+            Delete
+          </Button>
+        </div>
+      </div>
+      {confirming ? (
+        <div className="prov-detail__confirm">
+          <Confirm
+            title={`Delete ${provider.id}?`}
+            detail="The provider leaves the config immediately."
+            confirmLabel="Delete"
+            busy={task.running}
+            onCancel={() => setConfirming(false)}
+            onConfirm={() => void onDelete()}
+          />
+        </div>
+      ) : null}
+      <div className="prov-models__bar ctl-row ctl-row--sm">
+        <span>Models</span>
+        {provider.wire === 'cline' ? (
+          <span className="seg" role="group" aria-label="Cline catalog">
+            <button type="button" className="seg-btn" aria-pressed={catalog === 'free'} onClick={() => setCatalog('free')}>free</button>
+            <button type="button" className="seg-btn" aria-pressed={catalog === 'pass'} onClick={() => setCatalog('pass')}>pass</button>
+          </span>
+        ) : null}
+        <span className="num">
+          {(needle === '' ? cataloged.length : listedModels.length + ' of ' + cataloged.length) +
+            (hasFamilies ? (rawMode ? ' raw' : ' logical') : '')}
+          {' · '}
+          {disabledModels.length} off
+        </span>
+        <span className="ctl-row ctl-row--sm prov-models__tools">
+          {hasFamilies ? (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => void switchMode(rawMode ? 'logical' : 'raw')}
+              aria-pressed={rawMode}
+              aria-label={rawMode ? 'Switch to logical models' : 'Switch to raw models'}
+              title={rawMode
+                ? 'Switch the provider to the collapsed logical model ids'
+                : 'Switch the provider to the raw wire model ids'}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/></svg>
+              <span>{rawMode ? 'logical models' : 'raw models'}</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="ibtn"
+            onClick={() => void syncModels()}
+            disabled={syncing || task.running}
+            aria-label="Refresh models from provider"
+            title="Refresh models from provider"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className={syncing ? 'spin' : ''}><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+          </button>
+          <button
+            type="button"
+            className="ibtn"
+            onClick={() => void setAllModelsDisabled(true)}
+            disabled={task.running || allOff}
+            aria-label="Disable all models"
+            title="Disable all"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
+          </button>
+          <button
+            type="button"
+            className="ibtn"
+            onClick={() => void setAllModelsDisabled(false)}
+            disabled={task.running || allOn}
+            aria-label="Enable all models"
+            title="Enable all"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+          </button>
+        </span>
+      </div>
+      {visibleCount > 0 ? (
+        <div className="prov-models__list" aria-label={`Models for ${provider.id}`}>
+          {listedModels.slice().sort((a, b) => {
+            const oa = sortDisabled.includes(a) ? 1 : 0
+            const ob = sortDisabled.includes(b) ? 1 : 0
+            if (oa !== ob) return oa - ob
+            const fa = freshModels.includes(a) ? 0 : 1
+            const fb = freshModels.includes(b) ? 0 : 1
+            return fa - fb
+          }).map((model) => {
+            const off = disabledModels.includes(model)
+            const manual = syncedModels.length > 0 && !syncedModels.includes(model)
+            const fresh = freshModels.includes(model)
+            const rungs = rungChips(model, modelSettings)
+            const facts = provider.resolvedFacts?.[model]
+            const wireTag = facts?.wireSource === 'model' && facts.wire !== undefined ? wireLabel(facts.wire) : null
+            return (
+              <div
+                className={`lrow lrow--click${off ? ' lrow--off' : ''}${fresh ? ' lrow--new' : ''}`}
+                key={model}
+                role="button"
+                tabIndex={0}
+                onClick={() => void toggleModel(model)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  void toggleModel(model)
+                }}
+                aria-pressed={!off}
+              >
+                <span className="lrow__lead"><span className="mdot" aria-hidden="true" /></span>
+                <div className="lrow__main">
+                  <div className="lrow__title">
+                    <span className="num" title={model}>{model}</span>
+                    {fresh ? <span className="badge badge--ok">new</span> : null}
+                    {manual ? <span className="badge badge--muted">manual</span> : null}
+                    {wireTag !== null ? <span className="badge badge--muted">{wireTag}</span> : null}
+                  </div>
+                  {rungs.length > 0 ? (
+                    <span className="pm-rungs" aria-label={`Efforts for ${model}`}>
+                      {rungs.map((rung) => (
+                        <span className={`pm-rung${rung.defaultRung ? ' pm-rung--def' : ''}`} key={rung.effort}>
+                          {rung.effort}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
+                </div>
+                <div
+                  className="lrow__side model-toggles"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <Toggle
+                    checked={!off}
+                    onChange={() => void toggleModel(model)}
+                    label={`${model} enabled`}
+                    visuallyHidden
+                  />
+                  <button
+                    type="button"
+                    className="ibtn"
+                    onClick={() => {
+                      setModalNew(false)
+                      setModalModel(model)
+                    }}
+                    disabled={task.running}
+                    aria-label={'Edit ' + model}
+                    title={'Edit ' + model}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="ibtn ibtn--danger"
+                    onClick={() => void removeModel(model)}
+                    disabled={task.running}
+                    aria-label={`Remove ${model}`}
+                    title={`Remove ${model}`}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="prov-models__empty">{needle === '' ? 'No models listed. Refresh from the provider or add one below.' : 'No models match the current filter.'}</p>
+      )}
+      <div className="ctl-row prov-detail__add">
+        <input
+          className="text-input text-input--mono"
+          value={addModel}
+          onChange={(event) => setAddModel(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void addModelSubmit()
+          }}
+          placeholder="model id, e.g. gpt-5.3"
+          aria-label="New model id"
+          spellCheck={false}
+        />
+        <Button tone="primary" onClick={() => void addModelSubmit()} disabled={task.running || duplicate}>
+          Add
+        </Button>
+        <Button
+          tone="ghost"
+          onClick={() => {
+            setModalNew(true)
+            setModalModel(addModel.trim())
+          }}
+          disabled={task.running || duplicate}
+        >
+          Configure
+        </Button>
+      </div>
+      {modalModel !== null ? (
+        <ModelSettingsModal
+          providerId={provider.id}
+          model={modalModel}
+          isNew={modalNew}
+          fallbackContextWindow={provider.resolvedFacts?.[modalModel]?.contextWindow ?? globalContextWindow}
+          providerWire={provider.wire}
+          contextSource={provider.resolvedFacts?.[modalModel]?.contextSource ?? 'global'}
+          resolvedImage={provider.resolvedImage?.[modalModel] === true}
+          initial={modalNew ? undefined : settings[modalModel]}
+          busy={task.running}
+          onCancel={() => {
+            setModalModel(null)
+            setModalNew(false)
+          }}
+          onSave={(draft) => {
+            void saveModelSettings(modalModel, draft)
+            setModalModel(null)
+            setModalNew(false)
+          }}
+        />
+      ) : null}
+      <div className="prov-detail__notes">
         {task.error !== null ? (
           <Banner tone="error" title="Mutation failed">
             {describeError(task.error)}
@@ -591,37 +599,26 @@ export function ProvidersView(): JSX.Element {
 
   return (
     <section className="screen" aria-labelledby="h-providers">
-      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
-        <div>
-          <h1 id="h-providers">
-            <svg width="19" height="19" className="h-ic"><use href="#i-plug" /></svg>
-            Providers
-          </h1>
-        </div>
-        <div className="head-actions">
-          <SearchInput
-            id="provider-search"
-            value={query}
-            onChange={setQuery}
-            placeholder="Filter by id, wire, or model"
-            hotkey
-          />
-          <Button tone="primary" size="sm" onClick={() => setCreating(true)}>
+      <PageHeader
+        id="h-providers"
+        icon="#i-plug"
+        title="Providers"
+        actions={
+          <Button tone="primary" onClick={() => setCreating(true)}>
             New provider
           </Button>
-        </div>
-      </div>
+        }
+      />
       <AsyncBoundary<ProvidersViewData>
         state={providers.state}
         loadingLabel="Loading providers…"
-        empty={<Empty title="No providers configured." />}
+        empty={<Empty icon="#i-plug" title="No providers configured." />}
         onRetry={() => providers.refresh()}
       >
         {(all) => {
-          if (filtered.length === 0) {
-            return <Empty title={all.providers.length === 0 ? 'No providers configured.' : 'No providers match the current filter.'} />
-          }
-          const detail: ReactNode = active === null ? null : (
+          const detail: ReactNode = active === null ? (
+            <Empty icon="#i-plug" title="No provider matches the current filter.">Clear the search to see every provider.</Empty>
+          ) : (
             <div key={`detail-${active.id}`} className="prov-detail-wrap">
               <ProviderDetail
                 provider={active}
@@ -636,50 +633,82 @@ export function ProvidersView(): JSX.Element {
               />
             </div>
           )
+          if (all.providers.length === 0) {
+            return (
+              <Empty
+                icon="#i-plug"
+                title="No providers configured."
+                action={<Button tone="primary" onClick={() => setCreating(true)}>New provider</Button>}
+              >
+                Add a provider to start routing requests.
+              </Empty>
+            )
+          }
           return (
             <div className="prov-split">
-              <aside className="panel card prov-rail" aria-label="Provider list">
-                <div className="prov-rail-label">providers <span className="num">{filtered.length}</span></div>
-                {sortProviders(filtered, sortDisabled).map((provider) => {
-                  const isActive = provider.id === activeId
-                  const disabledCount = (provider.disabledModels ?? []).length
-                  return (
-                    <div
-                      key={provider.id}
-                      className={`prov-prow${isActive ? ' prov-prow--sel' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => {
-                        setSelected(provider.id)
-                        setEditing(null)
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter' && event.key !== ' ') return
-                        event.preventDefault()
-                        setSelected(provider.id)
-                        setEditing(null)
-                      }}
-                      aria-current={isActive ? 'true' : undefined}
-                    >
-                      <div className="prov-prow-top">
-                        <span className="prov-prow-name">{provider.id}</span>
-                        <Toggle
-                          checked={provider.enabled ?? true}
-                          onChange={() => void toggleProvider(provider, all.generation)}
-                          label={`${provider.id} enabled`}
-                          visuallyHidden
-                        />
+              <aside className="panel prov-rail" aria-label="Provider list">
+                <div className="prov-rail__head">
+                  <SearchInput
+                    id="provider-search"
+                    value={query}
+                    onChange={setQuery}
+                    placeholder="Filter by id, wire, or model"
+                    hotkey
+                  />
+                  <div className="prov-rail__count">
+                    <span>providers</span>
+                    <span className="num">{filtered.length}</span>
+                  </div>
+                </div>
+                <div className="prov-rail__list">
+                  {filtered.length === 0 ? <p className="prov-models__empty">No providers match.</p> : null}
+                  {sortProviders(filtered, sortDisabled).map((provider) => {
+                    const isActive = provider.id === activeId
+                    const disabledCount = (provider.disabledModels ?? []).length
+                    const on = provider.enabled ?? true
+                    return (
+                      <div
+                        key={provider.id}
+                        className={`lrow lrow--click${isActive ? ' lrow--sel' : ''}${on ? '' : ' lrow--off'}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSelected(provider.id)
+                          setEditing(null)
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
+                          setSelected(provider.id)
+                          setEditing(null)
+                        }}
+                        aria-current={isActive ? 'true' : undefined}
+                      >
+                        <span className="lrow__lead"><span className={`dot ${on ? 'dot-ok' : 'dot-muted'}`} aria-hidden="true" /></span>
+                        <div className="lrow__main">
+                          <div className="lrow__title"><span>{provider.id}</span></div>
+                          <div className="lrow__sub lrow__sub--mono">
+                            {wireLabel(provider.wire)} · {(provider.models ?? []).length} models
+                            {disabledCount > 0 ? ` · ${disabledCount} off` : ''}
+                          </div>
+                        </div>
+                        <div
+                          className="lrow__side"
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <Toggle
+                            checked={on}
+                            onChange={() => void toggleProvider(provider, all.generation)}
+                            label={`${provider.id} enabled`}
+                            visuallyHidden
+                          />
+                        </div>
                       </div>
-                      <div className="prov-prow-sub">
-                        <span className="prov-prow-wire">{wireLabel(provider.wire)}</span>
-                        <span className="num" style={{ marginLeft: 'auto' }}>{(provider.models ?? []).length} models</span>
-                      </div>
-                      <p className={`meta prov-prow-off${disabledCount > 0 ? '' : ' prov-prow-off--empty'}`}>
-                        {disabledCount > 0 ? disabledCount + ' disabled' : 'all models on'}
-                      </p>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </aside>
               {detail}
             </div>

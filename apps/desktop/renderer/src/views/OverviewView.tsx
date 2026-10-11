@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DaemonStatus, ProvidersView, ProviderView } from '@prism/contracts'
-import { AsyncBoundary, Banner, Empty, Toggle } from '../components/Ui'
+import { AsyncBoundary, Banner, Button, Toggle } from '../components/Ui'
+import { Metric, PageHeader, Section, SettingRow, StatusChip } from '../components/Patterns'
+import { navigateTo } from '../routing'
 import { useAsync, useTask, describeError, type UseAsyncResult } from '../useAsync'
 import { api } from '../api'
 import { useExperimentalFlags } from '../experimental'
@@ -154,52 +156,76 @@ export function ModelSelect({
   )
 }
 
-function DaemonCard({
+function DaemonHero({
   status,
   unreachable,
+  providers,
 }: {
   readonly status: DaemonStatus | null
   readonly unreachable: boolean
+  readonly providers: UseAsyncResult<ProvidersView>
 }): ReactNode {
   const chip = daemonChip(status, unreachable)
+  const endpoint = status === null ? 'unknown' : status.endpoint ?? 'not listening'
+  const headline =
+    chip.tone === 'ok' ? 'Prism is running'
+    : chip.tone === 'danger' ? 'Prism is not responding'
+    : chip.tone === 'warn' ? 'Prism is starting'
+    : 'Prism is idle'
+  const pid = status?.pid
   return (
-    <section className="panel card ov-card" style={{ '--i': 1 } as CSSProperties}>
-      <div className="ov-head">
-        <div className="ov-head-l">
-          <span className="ov-ic">
-            <svg width="18" height="18"><use href="#i-daemon" /></svg>
-          </span>
-          <div>
-            <div className="ov-title">Daemon</div>
-          </div>
-        </div>
-        <span className={`chip chip-${chip.tone}`}>
-          <span
-            className={`dot dot-${chip.tone}${chip.pulse ? ' dot-pulse' : ''}`}
-            aria-hidden="true"
-          />
-          {chip.label}
+    <section className={`ov-hero ov-hero--${chip.tone}`} aria-label="Daemon status">
+      <div className="ov-hero__status">
+        <span className="ov-hero__orb" aria-hidden="true">
+          <svg width="22" height="22"><use href="#i-daemon" /></svg>
         </span>
-      </div>
-      <div className="ov-body">
-        <div className="kv">
-          <div className="kv-row">
-            <span className="kv-k">state</span>
-            <span className="kv-v num">{status !== null ? status.state : chip.label}</span>
+        <div className="ov-hero__text">
+          <div className="ov-hero__title">
+            {headline}
+            <StatusChip tone={chip.tone} pulse={chip.pulse}>{chip.label}</StatusChip>
           </div>
-          <div className="kv-row">
-            <span className="kv-k">endpoint</span>
-            <span className="kv-v num">
-              {status === null ? 'unknown' : status.endpoint ?? 'not listening'}
-            </span>
-          </div>
+          <p className="ov-hero__sub">
+            <span className="num">{status !== null ? status.state : chip.label}</span>
+            {' · '}
+            <span className="num">{endpoint}</span>
+            {pid !== null && pid !== undefined ? (
+              <>
+                {' · pid '}
+                <span className="num">{pid}</span>
+              </>
+            ) : null}
+          </p>
+          {status?.lastError ? <p className="ov-error" role="alert">{status.lastError}</p> : null}
         </div>
       </div>
+      <div className="ctl-row ov-hero__actions">
+        <Button tone="primary" size="lg" onClick={() => navigateTo('providers')}>Manage providers</Button>
+        <Button tone="ghost" size="lg" onClick={() => navigateTo('usage')}>Accounts</Button>
+        <Button tone="ghost" size="lg" onClick={() => navigateTo('logs')}>View logs</Button>
+      </div>
+      <AsyncBoundary<ProvidersView> state={providers.state} loadingLabel="Loading providers…" empty={null} onRetry={providers.refresh}>
+        {(all) => {
+          const enabledProviders = all.providers.filter((p) => p.enabled ?? true).length
+          let models = 0
+          let off = 0
+          for (const p of all.providers) {
+            models += (p.models ?? []).length
+            off += (p.disabledModels ?? []).length
+          }
+          return (
+            <div className="metrics" style={{ gridColumn: '1 / -1' }}>
+              <Metric label="Providers" value={String(all.providers.length)} hint={`${enabledProviders} enabled`} />
+              <Metric label="Models" value={String(models - off)} hint={`${off} disabled of ${models}`} />
+              <Metric label="Context window" value={all.contextWindow.toLocaleString('en-US')} />
+            </div>
+          )
+        }}
+      </AsyncBoundary>
     </section>
   )
 }
 
-function VisionSidecarCard({
+function VisionSidecarRows({
   providers,
 }: {
   readonly providers: UseAsyncResult<ProvidersView>
@@ -219,38 +245,10 @@ function VisionSidecarCard({
   }
 
   return (
-    <section className="panel card ov-card" style={{ '--i': 2 } as CSSProperties}>
-      <div className="ov-head">
-        <div className="ov-head-l">
-          <span className="ov-ic">
-            <svg width="18" height="18"><use href="#i-eye" /></svg>
-          </span>
-          <div>
-            <div className="ov-title">Vision sidecar</div>
-            <p className="ov-sub">
-              describes images with a vision model before they reach text-only models
-            </p>
-          </div>
-        </div>
-        <AsyncBoundary<ProvidersView>
-          state={providers.state}
-          loadingLabel="Loading sidecar…"
-          empty={null}
-          onRetry={providers.refresh}
-        >
-          {(all) => (
-            <Toggle
-              checked={all.visionSidecar.enabled === true}
-              onChange={(next) => void save(next, all.visionSidecar.target ?? '')}
-              label={all.visionSidecar.enabled === true ? 'Enabled' : 'Disabled'}
-              disabled={task.running}
-            />
-          )}
-        </AsyncBoundary>
-      </div>
+    <Section title="Vision sidecar">
       <AsyncBoundary<ProvidersView>
         state={providers.state}
-        loadingLabel="Loading models…"
+        loadingLabel="Loading sidecar…"
         empty={null}
         onRetry={providers.refresh}
       >
@@ -259,42 +257,59 @@ function VisionSidecarCard({
           const current = all.visionSidecar.target ?? ''
           const enabled = all.visionSidecar.enabled === true
           return (
-            <div className="ov-body">
-              {task.error !== null ? (
-                <Banner tone="error" title="Sidecar change failed">
-                  {describeError(task.error)}
-                </Banner>
-              ) : null}
-              {eligible.length === 0 ? (
-                <Empty title="No vision models configured.">
-                  Enable image input on a model in Providers to make it eligible.
-                </Empty>
-              ) : (
-                <>
-                  <ModelSelect
-                    ids={eligible}
-                    selected={current}
-                    onSelect={(id) => void save(true, id)}
-                    placeholder="pick a vision model"
+            <div className="st-card">
+              <SettingRow
+                title="Describe images for text-only models"
+                control={
+                  <Toggle
+                    checked={enabled}
+                    onChange={(next) => void save(next, current)}
+                    label={enabled ? 'Enabled' : 'Disabled'}
                     disabled={task.running}
                   />
-                  <p className="ov-sub">pick the model that describes images for text-only models</p>
-                </>
-              )}
+                }
+              />
+              <SettingRow
+                title="Vision model"
+                control={
+                  eligible.length === 0 ? (
+                    <span className="note">No vision models configured. Enable image input on a model in Providers to make it eligible.</span>
+                  ) : (
+                    <div className="ov-set">
+                      <ModelSelect
+                        ids={eligible}
+                        selected={current}
+                        onSelect={(id) => void save(true, id)}
+                        placeholder="pick a vision model"
+                        disabled={task.running}
+                      />
+                    </div>
+                  )
+                }
+              />
+              {task.error !== null ? (
+                <div className="lrow-confirm">
+                  <Banner tone="error" title="Sidecar change failed">
+                    {describeError(task.error)}
+                  </Banner>
+                </div>
+              ) : null}
               {enabled && current !== '' && !eligible.includes(current) ? (
-                <Banner tone="warn" title="Configured target is no longer eligible.">
-                  {current} is disabled or lost image input; pick another model.
-                </Banner>
+                <div className="lrow-confirm">
+                  <Banner tone="warn" title="Configured target is no longer eligible.">
+                    {current} is disabled or lost image input; pick another model.
+                  </Banner>
+                </div>
               ) : null}
             </div>
           )
         }}
       </AsyncBoundary>
-    </section>
+    </Section>
   )
 }
 
-function ContextWindowCard({
+function ContextWindowRows({
   providers,
 }: {
   readonly providers: UseAsyncResult<ProvidersView>
@@ -313,20 +328,7 @@ function ContextWindowCard({
   }
 
   return (
-    <section className="panel card ov-card" style={{ '--i': 3 } as CSSProperties}>
-      <div className="ov-head">
-        <div className="ov-head-l">
-          <span className="ov-ic">
-            <svg width="18" height="18"><use href="#i-gauge" /></svg>
-          </span>
-          <div>
-            <div className="ov-title">Default context window</div>
-            <p className="ov-sub">
-              applies to every model without its own override
-            </p>
-          </div>
-        </div>
-      </div>
+    <Section title="Routing defaults">
       <AsyncBoundary<ProvidersView>
         state={providers.state}
         loadingLabel="Loading default…"
@@ -337,48 +339,57 @@ function ContextWindowCard({
           const current = all.contextWindow
           const isPreset = CONTEXT_PRESETS.some((p) => p.value === current)
           return (
-            <div className="ov-body">
+            <div className="st-card">
+              <SettingRow
+                title="Default context window"
+                control={
+                  <div className="ov-ctx">
+                    <div className="seg" role="group" aria-label="Default context window presets">
+                      {CONTEXT_PRESETS.map((preset) => (
+                        <button
+                          key={preset.value}
+                          type="button"
+                          className="seg-btn num"
+                          aria-pressed={current === preset.value}
+                          disabled={task.running}
+                          onClick={() => void save(preset.value)}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="ov-ctx__custom">
+                      <span className="msm-custom-k">Custom</span>
+                      <input
+                        key={current}
+                        className="text-input text-input--num"
+                        inputMode="numeric"
+                        defaultValue={isPreset ? '' : String(current)}
+                        placeholder={isPreset ? String(current) : ''}
+                        aria-label="Custom default context window"
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter') return
+                          const digits = (event.target as HTMLInputElement).value.replace(/[^0-9]/g, '')
+                          if (digits !== '' && Number(digits) !== current) void save(Number(digits))
+                        }}
+                      />
+                      <span className="msm-suffix">tokens</span>
+                    </label>
+                  </div>
+                }
+              />
               {task.error !== null ? (
-                <Banner tone="error" title="Default window change failed">
-                  {describeError(task.error)}
-                </Banner>
+                <div className="lrow-confirm">
+                  <Banner tone="error" title="Default window change failed">
+                    {describeError(task.error)}
+                  </Banner>
+                </div>
               ) : null}
-              <div className="msm-seg" role="group" aria-label="Default context window presets">
-                {CONTEXT_PRESETS.map((preset) => (
-                  <button
-                    key={preset.value}
-                    type="button"
-                    className="msm-seg-btn num"
-                    aria-pressed={current === preset.value}
-                    disabled={task.running}
-                    onClick={() => void save(preset.value)}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-              <div className="msm-custom">
-                <span className="msm-custom-k">Custom</span>
-                <input
-                  key={current}
-                  className="msm-custom-input num"
-                  inputMode="numeric"
-                  defaultValue={isPreset ? '' : String(current)}
-                  placeholder={isPreset ? String(current) : ''}
-                  aria-label="Custom default context window"
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter') return
-                    const digits = (event.target as HTMLInputElement).value.replace(/[^0-9]/g, '')
-                    if (digits !== '' && Number(digits) !== current) void save(Number(digits))
-                  }}
-                />
-                <span className="msm-suffix">tokens</span>
-              </div>
             </div>
           )
         }}
       </AsyncBoundary>
-    </section>
+    </Section>
   )
 }
 
@@ -395,21 +406,10 @@ export function OverviewView({
 
   return (
     <section className="screen" aria-labelledby="h-overview">
-      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
-        <div>
-          <h1 id="h-overview">
-            <svg width="19" height="19" className="h-ic">
-              <use href="#i-gauge" />
-            </svg>
-            Overview
-          </h1>
-        </div>
-      </div>
-      <div className="ov-grid">
-        <DaemonCard status={daemon} unreachable={daemonUnreachable} />
-        {visionSidecarVisible ? <VisionSidecarCard providers={providers} /> : null}
-        <ContextWindowCard providers={providers} />
-      </div>
+      <PageHeader id="h-overview" icon="#i-home" title="Overview" />
+      <DaemonHero status={daemon} unreachable={daemonUnreachable} providers={providers} />
+      <ContextWindowRows providers={providers} />
+      {visionSidecarVisible ? <VisionSidecarRows providers={providers} /> : null}
     </section>
   )
 }

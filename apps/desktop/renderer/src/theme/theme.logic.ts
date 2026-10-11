@@ -139,7 +139,7 @@ export interface ResolvedThemeTokens {
 }
 
 type ChromeThemeSeedPatch = Partial<
-  Pick<ChromeTheme, "accent" | "ink" | "opaqueWindows" | "surface">
+  Pick<ChromeTheme, "accent" | "ink" | "surface">
 > & {
   fonts?: Partial<ThemeFonts>;
   semanticColors?: Partial<ThemeSemanticColors>;
@@ -147,7 +147,6 @@ type ChromeThemeSeedPatch = Partial<
 
 type CodeThemeSeedPatchMetadata = {
   fonts?: Partial<Record<keyof ThemeFonts, true>>;
-  opaqueWindows?: true;
 };
 
 type RgbColor = {
@@ -194,32 +193,32 @@ const CODE_THEME_SEED_PATCH_METADATA: Partial<
   Record<string, Partial<Record<ThemeVariant, CodeThemeSeedPatchMetadata>>>
 > = {
   linear: {
-    dark: { fonts: { ui: true }, opaqueWindows: true },
-    light: { fonts: { ui: true }, opaqueWindows: true },
+    dark: { fonts: { ui: true } },
+    light: { fonts: { ui: true } },
   },
   lobster: {
     dark: { fonts: { ui: true } },
   },
   matrix: {
-    dark: { fonts: { code: true, ui: true }, opaqueWindows: true },
+    dark: { fonts: { code: true, ui: true } },
   },
   notion: {
-    dark: { fonts: { code: true, ui: true }, opaqueWindows: true },
-    light: { fonts: { code: true, ui: true }, opaqueWindows: true },
+    dark: { fonts: { code: true, ui: true } },
+    light: { fonts: { code: true, ui: true } },
   },
   proof: {
-    light: { fonts: { code: true, ui: true }, opaqueWindows: true },
+    light: { fonts: { code: true, ui: true } },
   },
   raycast: {
-    dark: { fonts: { code: true, ui: true }, opaqueWindows: true },
-    light: { fonts: { code: true, ui: true }, opaqueWindows: true },
+    dark: { fonts: { code: true, ui: true } },
+    light: { fonts: { code: true, ui: true } },
   },
   sentry: {
     dark: { fonts: { code: true, ui: true } },
   },
   vercel: {
-    dark: { fonts: { code: true, ui: true }, opaqueWindows: true },
-    light: { fonts: { code: true, ui: true }, opaqueWindows: true },
+    dark: { fonts: { code: true, ui: true } },
+    light: { fonts: { code: true, ui: true } },
   },
 };
 
@@ -666,10 +665,6 @@ function getCodeThemeSeedPatch(codeThemeId: string, variant: ThemeVariant): Chro
     semanticColors: normalizedSeed.semanticColors,
     surface: normalizedSeed.surface,
   };
-
-  if (metadata?.opaqueWindows) {
-    patch.opaqueWindows = normalizedSeed.opaqueWindows;
-  }
 
   if (metadata?.fonts) {
     const fontPatch: Partial<ThemeFonts> = {};

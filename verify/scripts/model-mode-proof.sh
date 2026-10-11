@@ -119,10 +119,10 @@ cdp_eval "await (async () => {
 })()" > /dev/null
 cdp_eval "await (async () => {
   const detail = document.querySelector('.prov-detail')
-  const rows = [...detail.querySelectorAll('.prov-mline')]
-  const logicalIds = rows.map((r) => r.querySelector('.pm-name')?.textContent ?? '')
-  const badges = rows.map((r) => [...r.querySelectorAll('.prov-mline-manual')].map((b) => b.textContent).join(','))
-  const rungRows = rows.filter((r) => r.querySelector('.pm-rungs')).map((r) => r.querySelector('.pm-name')?.textContent ?? '')
+  const rows = [...detail.querySelectorAll('.prov-models__list .lrow')]
+  const logicalIds = rows.map((r) => r.querySelector('.lrow__title .num')?.textContent ?? '')
+  const badges = rows.map((r) => [...r.querySelectorAll('.lrow__title .badge')].map((b) => b.textContent).join(','))
+  const rungRows = rows.filter((r) => r.querySelector('.pm-rungs')).map((r) => r.querySelector('.lrow__title .num')?.textContent ?? '')
   const errors = []
   const wantLogical = ['gemini-2.5-pro', 'gemini-3.7-flash', 'chat_20706'].sort()
   const gotLogical = logicalIds.slice().sort()
@@ -131,7 +131,7 @@ cdp_eval "await (async () => {
   if (JSON.stringify(rungRows) !== JSON.stringify(['gemini-3.7-flash'])) {
     errors.push('effort rungs must render only on the manually overridden model: ' + JSON.stringify(rungRows))
   }
-  const rungTexts = [...(rows.find((r) => (r.querySelector('.pm-name')?.textContent ?? '') === 'gemini-3.7-flash')?.querySelectorAll('.pm-rung') ?? [])].map((r) => r.textContent.trim())
+  const rungTexts = [...(rows.find((r) => (r.querySelector('.lrow__title .num')?.textContent ?? '') === 'gemini-3.7-flash')?.querySelectorAll('.pm-rung') ?? [])].map((r) => r.textContent.trim())
   if (JSON.stringify(rungTexts) !== JSON.stringify(['low', 'high'])) {
     errors.push('rung chips = ' + JSON.stringify(rungTexts) + ', want ["low","high"] from the manual override')
   }
@@ -142,7 +142,7 @@ cdp_eval "await (async () => {
 echo "==> switch to raw through the UI button"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const btn = document.querySelector('.pm-rawbtn')
+  const btn = document.querySelector('button[aria-label^=Switch]')
   if (!btn) throw new Error('mode switch button not found')
   if (!/raw models/i.test(btn.textContent)) throw new Error('unexpected button label: ' + btn.textContent)
   btn.click()
@@ -161,8 +161,8 @@ cdp_eval "await (async () => {
     if (detail && detail.textContent.includes('gemini-3.7-flash-high')) break
     await sleep(250)
   }
-  const rows = [...document.querySelectorAll('.prov-detail .prov-mline')]
-  const ids = rows.map((r) => r.querySelector('.pm-name')?.textContent ?? '')
+  const rows = [...document.querySelectorAll('.prov-detail .prov-models__list .lrow')]
+  const ids = rows.map((r) => r.querySelector('.lrow__title .num')?.textContent ?? '')
   const toggles = rows.filter((r) => r.querySelector('.model-toggles input[type=checkbox]')).length
   const settings = rows.filter((r) => [...r.querySelectorAll('.ibtn')].some((b) => (b.getAttribute('aria-label') ?? '').startsWith('Edit '))).length
   const errors = []
@@ -172,8 +172,7 @@ cdp_eval "await (async () => {
   if (!ids.includes('chat_20706')) errors.push('non-family id missing from raw rows: ' + JSON.stringify(ids))
   if (toggles !== rows.length) errors.push('raw rows missing per-model toggles: ' + toggles + ' of ' + rows.length)
   if (settings !== rows.length) errors.push('raw rows missing edit buttons: ' + settings + ' of ' + rows.length)
-  if (rows.some((r) => r.classList.contains('prov-mline--off') === false && false)) errors.push('unreachable')
-  const offRows = rows.filter((r) => r.classList.contains('prov-mline--off')).map((r) => r.querySelector('.pm-name')?.textContent)
+  const offRows = rows.filter((r) => r.classList.contains('lrow--off')).map((r) => r.querySelector('.lrow__title .num')?.textContent)
   if (!offRows.includes('gemini-2.5-pro')) errors.push('disabled non-family state lost in raw mode: ' + JSON.stringify(offRows))
   if (errors.length) throw new Error(errors.join('; '))
   return {rows: ids.length, off: offRows}
@@ -214,12 +213,12 @@ echo "==> switch back to logical through the UI"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   for (let i = 0; i < 80; i++) {
-    const btn = document.querySelector('.pm-rawbtn')
+    const btn = document.querySelector('button[aria-label^=Switch]')
     if (btn && /logical models/i.test(btn.textContent)) {
       btn.click()
       await sleep(700)
       const detail = document.querySelector('.prov-detail')
-      const names = [...detail.querySelectorAll('.pm-name')].map((n) => n.textContent)
+      const names = [...detail.querySelectorAll('.lrow__title .num')].map((n) => n.textContent)
       const want = ['gemini-2.5-pro', 'gemini-3.7-flash', 'chat_20706']
       if (JSON.stringify(names.slice().sort()) === JSON.stringify(want.sort())) return {restored: true, rows: names}
     }
