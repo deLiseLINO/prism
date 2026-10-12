@@ -838,3 +838,80 @@ func TestToolsFromSkipsToolsTheUpstreamRejects(t *testing.T) {
 		t.Errorf("skipped = %v, want %d entries", skipped, want)
 	}
 }
+
+func thinkingBody(t *testing.T, model string, reasoning canon.ReasoningConfig) map[string]any {
+	t.Helper()
+	request := baseRequest()
+	request.Model = canon.ModelID(model)
+	request.Sampling = canon.Sampling{}
+	request.Reasoning = reasoning
+	out, err := New(Options{}).buildRequest(provider.RunRequest{Request: request, Target: provider.Target{APIKeyRef: "k"}})
+	if err != nil {
+		t.Fatalf("buildRequest(%s): %v", model, err)
+	}
+	return decodeBody(t, out.body)
+}
+
+func TestThinkingSummaryRequest(t *testing.T) {
+	t.Run("generation 5 sonnet uses adaptive mode with effort", func(t *testing.T) {
+		body := thinkingBody(t, "astra/claude-sonnet-5", canon.ReasoningConfig{Effort: canon.EffortXHigh, Summary: canon.SummaryAuto})
+		th, _ := body["thinking"].(map[string]any)
+		if th["type"] != "adaptive" || th["display"] != "summarized" {
+			t.Fatalf("thinking = %v", th)
+		}
+		if _, has := th["budget_tokens"]; has {
+			t.Fatalf("adaptive thinking carries a budget: %v", th)
+		}
+		oc, _ := body["output_config"].(map[string]any)
+		if oc["effort"] != "xhigh" {
+			t.Fatalf("output_config = %v", oc)
+		}
+	})
+	t.Run("adaptive request without effort still asks for a summary", func(t *testing.T) {
+		body := thinkingBody(t, "claude-sonnet-5", canon.ReasoningConfig{Summary: canon.SummaryAuto})
+		th, _ := body["thinking"].(map[string]any)
+		if th["type"] != "adaptive" || th["display"] != "summarized" {
+			t.Fatalf("thinking = %v", th)
+		}
+		if _, has := body["output_config"]; has {
+			t.Fatalf("output_config without effort: %v", body["output_config"])
+		}
+	})
+	t.Run("client hiding the summary sends no display", func(t *testing.T) {
+		body := thinkingBody(t, "claude-sonnet-5", canon.ReasoningConfig{Effort: canon.EffortHigh, Summary: canon.SummaryNone})
+		th, _ := body["thinking"].(map[string]any)
+		if th["type"] != "adaptive" {
+			t.Fatalf("thinking = %v", th)
+		}
+		if _, has := th["display"]; has {
+			t.Fatalf("display sent despite omitted: %v", th)
+		}
+	})
+	t.Run("hidden adaptive request without effort stays adaptive", func(t *testing.T) {
+		body := thinkingBody(t, "claude-sonnet-5", canon.ReasoningConfig{Summary: canon.SummaryNone})
+		th, _ := body["thinking"].(map[string]any)
+		if th["type"] != "adaptive" {
+			t.Fatalf("thinking = %v", th)
+		}
+		if _, has := th["display"]; has {
+			t.Fatalf("display sent despite omitted: %v", th)
+		}
+	})
+	t.Run("other generation 5 models keep a budget and ask for a summary", func(t *testing.T) {
+		body := thinkingBody(t, "claude-haiku-5", canon.ReasoningConfig{Effort: canon.EffortMedium, Summary: canon.SummaryAuto})
+		th, _ := body["thinking"].(map[string]any)
+		if th["type"] != "enabled" || th["budget_tokens"] != float64(8192) || th["display"] != "summarized" {
+			t.Fatalf("thinking = %v", th)
+		}
+	})
+	t.Run("older models never get display", func(t *testing.T) {
+		body := thinkingBody(t, "claude-sonnet-4-5", canon.ReasoningConfig{Effort: canon.EffortMedium, Summary: canon.SummaryAuto})
+		th, _ := body["thinking"].(map[string]any)
+		if th["type"] != "enabled" {
+			t.Fatalf("thinking = %v", th)
+		}
+		if _, has := th["display"]; has {
+			t.Fatalf("display sent to older model: %v", th)
+		}
+	})
+}

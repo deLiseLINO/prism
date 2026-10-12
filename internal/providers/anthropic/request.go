@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
@@ -57,7 +58,8 @@ type wireToolChoice struct {
 
 type wireThinking struct {
 	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Display      string `json:"display,omitempty"`
 }
 
 type wireOutputFormat struct {
@@ -66,7 +68,8 @@ type wireOutputFormat struct {
 }
 
 type wireOutputConfig struct {
-	Format wireOutputFormat `json:"format"`
+	Format *wireOutputFormat `json:"format,omitempty"`
+	Effort string            `json:"effort,omitempty"`
 }
 
 type wireRequest struct {
@@ -102,7 +105,39 @@ var budgetTable = map[string]budgetRow{
 	"fable":  referenceBudgets,
 }
 
-var familyPattern = regexp.MustCompile(`(?:^|/)claude-([a-z]+)-\d+`)
+var familyPattern = regexp.MustCompile(`(?:^|/)claude-([a-z]+)-(\d+)`)
+
+// Models from generation 5 on return thinking text only when the request asks
+// for a summary, and Sonnet 5 accepts that request only in adaptive mode.
+const summaryMinGeneration = 5
+
+func modelGeneration(model canon.ModelID) int {
+	m := familyPattern.FindStringSubmatch(strings.ToLower(string(model)))
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[2])
+	return n
+}
+
+func usesAdaptiveThinking(model canon.ModelID) bool {
+	return modelFamily(model) == "sonnet" && modelGeneration(model) >= summaryMinGeneration
+}
+
+func adaptiveEffortName(effort canon.ReasoningEffort) string {
+	switch effort {
+	case canon.EffortMinimal, canon.EffortLow:
+		return "low"
+	case canon.EffortMedium:
+		return "medium"
+	case canon.EffortHigh:
+		return "high"
+	case canon.EffortXHigh:
+		return "xhigh"
+	default:
+		return "max"
+	}
+}
 
 func budgetFor(model canon.ModelID, effort canon.ReasoningEffort) (int, bool) {
 	row, ok := budgetTable[modelFamily(model)]
@@ -213,9 +248,29 @@ func (r *Runner) buildWireRequest(request canon.Request, outputLimit int, stream
 		Stream:        streaming,
 		OutputConfig:  outputConfig,
 	}
-	if request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff && !forcesToolUse(choice) {
+	thinkingOn := request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff
+	if !thinkingOn && request.Reasoning.Effort == 0 && request.Reasoning.Summary != 0 && usesAdaptiveThinking(request.Model) {
+		thinkingOn = true
+	}
+	if thinkingOn && !forcesToolUse(choice) {
 		if request.Sampling.Temperature != nil || request.Sampling.TopP != nil {
 			return nil, errors.New("anthropic: sampling controls are not representable with extended thinking")
+		}
+		display := ""
+		if request.Reasoning.Summary != canon.SummaryNone && modelGeneration(request.Model) >= summaryMinGeneration {
+			display = "summarized"
+		}
+		if usesAdaptiveThinking(request.Model) {
+			wr.Thinking = &wireThinking{Type: "adaptive", Display: display}
+			if request.Reasoning.Effort != 0 {
+				if wr.OutputConfig == nil {
+					wr.OutputConfig = &wireOutputConfig{}
+				}
+				wr.OutputConfig.Effort = adaptiveEffortName(request.Reasoning.Effort)
+			}
+			wr.Temperature = nil
+			wr.TopP = nil
+			return wr, nil
 		}
 		budget, ok := budgetFor(request.Model, request.Reasoning.Effort)
 		if !ok {
@@ -229,7 +284,7 @@ func (r *Runner) buildWireRequest(request canon.Request, outputLimit int, stream
 		if budget < minThinkingBudget {
 			return nil, fmt.Errorf("anthropic: thinking budget %d below minimum %d for max_tokens %d", budget, minThinkingBudget, maxTokens)
 		}
-		wr.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget}
+		wr.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget, Display: display}
 		wr.MaxTokens = maxTokens
 		wr.Temperature = nil
 		wr.TopP = nil
@@ -257,7 +312,7 @@ func outputConfigFrom(format *canon.TextFormat) (*wireOutputConfig, error) {
 	if json.Unmarshal(format.Schema, &schema) != nil || schema == nil {
 		return nil, errors.New("anthropic: output format requires a JSON schema object")
 	}
-	return &wireOutputConfig{Format: wireOutputFormat{Type: "json_schema", Schema: format.Schema}}, nil
+	return &wireOutputConfig{Format: &wireOutputFormat{Type: "json_schema", Schema: format.Schema}}, nil
 }
 
 func systemBlocks(contents []canon.Content) ([]wireTextBlock, error) {

@@ -172,6 +172,9 @@ func TestThinkingConfig(t *testing.T) {
 		{name: "high budget", thinking: `{"type":"enabled","budget_tokens":32768}`, wantEffort: canon.EffortHigh, wantSum: canon.SummaryAuto},
 		{name: "enabled without budget", thinking: `{"type":"enabled"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
 		{name: "adaptive", thinking: `{"type":"adaptive"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
+		{name: "adaptive summarized", thinking: `{"type":"adaptive","display":"summarized"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
+		{name: "adaptive omitted", thinking: `{"type":"adaptive","display":"omitted"}`, wantEffort: 0, wantSum: canon.SummaryNone},
+		{name: "budget omitted", thinking: `{"type":"enabled","budget_tokens":2048,"display":"omitted"}`, wantEffort: canon.EffortLow, wantSum: canon.SummaryNone},
 		{name: "disabled", thinking: `{"type":"disabled"}`, wantEffort: canon.EffortOff, wantSum: 0},
 		{name: "absent", thinking: "", wantEffort: 0, wantSum: 0},
 	}

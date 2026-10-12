@@ -579,20 +579,25 @@ func decodeThinking(raw json.RawMessage) (canon.ReasoningConfig, error) {
 	var t struct {
 		Type         string `json:"type"`
 		BudgetTokens *int   `json:"budget_tokens"`
+		Display      string `json:"display"`
 	}
 	if err := json.Unmarshal(raw, &t); err != nil {
 		return canon.ReasoningConfig{}, &ParseError{Reason: ReasonInvalidJSON, Field: "thinking", Err: err}
+	}
+	summary := canon.SummaryAuto
+	if t.Display == "omitted" {
+		summary = canon.SummaryNone
 	}
 	switch t.Type {
 	case "disabled":
 		return canon.ReasoningConfig{Effort: canon.EffortOff}, nil
 	case "enabled":
 		if t.BudgetTokens == nil {
-			return canon.ReasoningConfig{Summary: canon.SummaryAuto}, nil
+			return canon.ReasoningConfig{Summary: summary}, nil
 		}
-		return canon.ReasoningConfig{Effort: effortForBudget(*t.BudgetTokens), Summary: canon.SummaryAuto}, nil
+		return canon.ReasoningConfig{Effort: effortForBudget(*t.BudgetTokens), Summary: summary}, nil
 	case "adaptive":
-		return canon.ReasoningConfig{Summary: canon.SummaryAuto}, nil
+		return canon.ReasoningConfig{Summary: summary}, nil
 	default:
 		return canon.ReasoningConfig{}, &ParseError{Reason: ReasonInvalidField, Field: "thinking.type", Err: fmt.Errorf("unsupported thinking type %q", t.Type)}
 	}
