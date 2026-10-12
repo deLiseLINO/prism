@@ -729,13 +729,16 @@ func CodexCatalogPath(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), codexCatalogFileName)
 }
 
-func codexTransform(port int, catalogPath string, force bool) func(current string) ConfigTransform {
+func codexTransform(port int, catalogPath string, force, currentBaseline bool) func(current string) ConfigTransform {
 	return func(current string) ConfigTransform {
-		return applyCodexConfig(current, port, catalogPath, force)
+		return applyCodexConfig(current, port, catalogPath, force, currentBaseline)
 	}
 }
 
-func applyCodexConfig(current string, port int, catalogPath string, force bool) ConfigTransform {
+func applyCodexConfig(current string, port int, catalogPath string, force, currentBaseline bool) ConfigTransform {
+	if err := inspectConfig("config.toml", current); err != nil {
+		return refusedTransform(failureReason("codex config", err))
+	}
 	fenceLookup := FindFencedRegion(current, CodexFence)
 	if fenceLookup.Kind == FencedOrphaned {
 		return refusedTransform(DamagedFenceApply)
@@ -743,7 +746,7 @@ func applyCodexConfig(current string, port int, catalogPath string, force bool) 
 	journal := codexRoutingJournal{}
 	catalogJournal := codexCatalogJournal{}
 	providerJournal := codexProviderJournal{}
-	if fenceLookup.Kind == FencedFound {
+	if !currentBaseline && fenceLookup.Kind == FencedFound {
 		journal = parseCodexRoutingJournal(fenceLookup.Region.Inner)
 		catalogJournal = parseCodexCatalogJournal(fenceLookup.Region.Inner)
 		providerJournal = parseCodexProviderJournal(fenceLookup.Region.Inner)
@@ -822,6 +825,46 @@ func codexRollbackTransform(catalogPath string) func(current string) ConfigTrans
 	}
 }
 
+func codexRecoveryRollbackTransform(catalogPath string) func(current string) ConfigTransform {
+	return func(current string) ConfigTransform {
+		if err := inspectConfig("config.toml", current); err != nil {
+			return refusedTransform(failureReason("codex config", err))
+		}
+		lookup := FindFencedRegion(current, CodexFence)
+		if lookup.Kind == FencedOrphaned {
+			return refusedTransform(DamagedFenceRollback)
+		}
+		next, changed := RemoveFencedBlock(current, CodexFence)
+		endpoint := ""
+		if lookup.Kind == FencedFound {
+			endpoint, _ = ParseTomlStringField(lookup.Region.Inner, "base_url")
+		}
+		lines := strings.Split(next, "\n")
+		remove := map[int]bool{}
+		for i := range codexRootEnd(lines) {
+			if match := codexRootBaseUrlValueRe.FindStringSubmatch(lines[i]); match != nil && endpoint != "" && match[1] == endpoint && i > 0 && lines[i-1] == prismRoutingMarker {
+				remove[i-1], remove[i] = true, true
+			}
+			if match := codexRootCatalogValueRe.FindStringSubmatch(lines[i]); match != nil && match[1] == catalogPath && i > 0 && lines[i-1] == prismCatalogMarker {
+				remove[i-1], remove[i] = true, true
+			}
+			if match := codexRootProviderValueRe.FindStringSubmatch(lines[i]); lookup.Kind == FencedFound && match != nil && match[1] == "prism" {
+				remove[i] = true
+			}
+		}
+		if len(remove) == 0 {
+			return nextTransform(next, changed)
+		}
+		kept := make([]string, 0, len(lines))
+		for i, line := range lines {
+			if !remove[i] {
+				kept = append(kept, line)
+			}
+		}
+		return nextTransform(strings.Join(kept, "\n"), true)
+	}
+}
+
 func codexManagedRead(content string) ManagedRead {
 	lookup := FindFencedRegion(content, CodexFence)
 	switch lookup.Kind {
@@ -860,12 +903,25 @@ func writeCodexConfig(options CodexOptions, force bool) WriteOutcome {
 		catalogPath = CodexCatalogPath(options.ConfigPath)
 		side = map[string]fileState{catalogPath: {Present: true, Text: RenderCodexCatalog(models)}}
 	}
+	if err := inspectJournal(io, options.ConfigPath, nil); err != nil {
+		refusal := recoveryRefusal("codex apply", err)
+		if !force || refusal.Conflict != ConflictJournal {
+			return refusal
+		}
+		transform := codexTransform(options.Port, catalogPath, force, true)
+		outcome, err := recoverRestorationUnlocked(io, options.ConfigPath, nil, []string{CodexCatalogPath(options.ConfigPath)}, transform, side, false)
+		return withRecoveryBackups(outcome, outcome, "codex apply", err)
+	}
+	journal, err := loadJournal(io, options.ConfigPath)
+	if err != nil {
+		return recoveryRefusal("codex apply", err)
+	}
 	var inherited *restorationJournal
 	raw, present, err := io.ReadText(options.ConfigPath)
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
+		return recoveryRefusal("codex apply", err)
 	}
-	if present && FindFencedRegion(raw, CodexFence).Kind == FencedFound {
+	if journal == nil && present && FindFencedRegion(raw, CodexFence).Kind == FencedFound {
 		original := codexRollbackTransform(CodexCatalogPath(options.ConfigPath))(ApplyEol(raw, EolLF))
 		if original.Refused != "" {
 			return WriteOutcome{Kind: OutcomeRefused, Reason: original.Refused}
@@ -874,35 +930,49 @@ func writeCodexConfig(options CodexOptions, force bool) WriteOutcome {
 		if catalogPath != "" {
 			cache, err := readState(io, catalogPath)
 			if err != nil {
-				return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
+				return recoveryRefusal("codex apply", err)
 			}
 			inherited.Files = append(inherited.Files, journalFile{Path: catalogPath, Original: fileState{}, Written: cache})
 		}
 	}
-	outcome, err := applyRestorationUnlocked(io, options.ConfigPath, codexTransform(options.Port, catalogPath, force), side, options.CrashBeforeRename, inherited)
+	transform := codexTransform(options.Port, catalogPath, force, journal != nil && journal.CurrentBaseline)
+	outcome, err := applyRestorationUnlocked(io, options.ConfigPath, transform, side, options.CrashBeforeRename, inherited)
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex apply", err)}
+		return recoveryRefusal("codex apply", err)
 	}
 	return outcome
 }
 
 func StripCodexConfig(io FileIO, configPath string) WriteOutcome {
+	return stripCodexConfig(io, configPath, false)
+}
+
+func stripCodexConfig(io FileIO, configPath string, force bool) WriteOutcome {
 	unlock := lockMutation(configPath)
 	defer unlock()
+	catalogPath := CodexCatalogPath(configPath)
+	if _, _, err := io.ReadText(catalogPath); err != nil {
+		return recoveryRefusal("codex rollback", err)
+	}
+	if err := inspectJournal(io, configPath, nil); err != nil {
+		refusal := recoveryRefusal("codex rollback", err)
+		if !force || refusal.Conflict != ConflictJournal {
+			return refusal
+		}
+		outcome, err := recoverRestorationUnlocked(io, configPath, nil, []string{catalogPath}, codexRecoveryRollbackTransform(catalogPath), nil, true)
+		return withRecoveryBackups(outcome, outcome, "codex rollback", err)
+	}
 	journal, err := loadJournal(io, configPath)
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex rollback", err)}
+		return recoveryRefusal("codex rollback", err)
 	}
-	if _, _, err := io.ReadText(CodexCatalogPath(configPath)); err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex rollback", err)}
-	}
-	outcome, err := rollbackRestorationUnlocked(io, configPath, codexRollbackTransform(CodexCatalogPath(configPath)))
+	outcome, err := rollbackRestorationUnlocked(io, configPath, codexRollbackTransform(catalogPath))
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex rollback", err)}
+		return recoveryRefusal("codex rollback", err)
 	}
 	if journal == nil && outcome.Kind == OutcomeWritten {
-		if err := io.RemoveDurable(CodexCatalogPath(configPath)); err != nil {
-			return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("codex catalog cleanup", err)}
+		if err := io.RemoveDurable(catalogPath); err != nil {
+			return recoveryRefusal("codex catalog cleanup", err)
 		}
 	}
 	return outcome
@@ -1017,7 +1087,9 @@ func codexCatalogRefreshAllowedUnlocked(io FileIO, configPath string, port int) 
 func (c *CodexIntegration) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return ObservedIntegrationStatus(c.io, c.id, c.configPath, []string{CodexHome(c.env, c.home)}, func(path string) ManagedRead {
+	unlock := lockMutation(c.configPath)
+	defer unlock()
+	status := observedIntegrationStatusUnlocked(c.io, c.id, c.configPath, []string{CodexHome(c.env, c.home)}, func(path string) ManagedRead {
 		content, ok, err := c.io.ReadText(path)
 		if err != nil {
 			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
@@ -1027,10 +1099,25 @@ func (c *CodexIntegration) Status() Status {
 		}
 		return codexManagedRead(content)
 	}, ProviderBaseUrl(c.port))
+	catalog, err := readState(c.io, CodexCatalogPath(c.configPath))
+	if err == nil && catalog.Present {
+		err = inspectConfig(CodexCatalogPath(c.configPath), catalog.Text)
+	}
+	if err != nil {
+		status.Blocked, status.Detail = true, failureReason("codex status", err)
+		return status
+	}
+	return journalStatus(c.io, c.configPath, nil, status)
 }
 
 func (c *CodexIntegration) Rollback() ApplyResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return ToRollbackResult(c.id, StripCodexConfig(c.io, c.configPath))
+}
+
+func (c *CodexIntegration) RollbackForced() ApplyResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return ToRollbackResult(c.id, stripCodexConfig(c.io, c.configPath, true))
 }

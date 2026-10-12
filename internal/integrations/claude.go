@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -196,7 +197,7 @@ func (c *ClaudeIntegration) ApplyForced() ApplyResult {
 func (c *ClaudeIntegration) applyWith(force bool) ApplyResult {
 	unlock := lockMutation(c.paths())
 	defer unlock()
-	refuse := func(err error) ApplyResult { return ApplyResult{ID: c.id, Reason: failureReason("claude apply", err)} }
+	refuse := func(err error) ApplyResult { return ToApplyResult(c.id, recoveryRefusal("claude apply", err)) }
 	raw, _, err := c.io.ReadText(c.paths())
 	if err != nil {
 		return refuse(err)
@@ -205,14 +206,20 @@ func (c *ClaudeIntegration) applyWith(force bool) ApplyResult {
 	if err != nil {
 		return refuse(err)
 	}
-	if _, _, err = c.io.ReadText(c.envJournalPath()); err != nil {
-		return refuse(err)
-	}
-	if _, _, err = c.io.ReadText(c.cacheJournalPath()); err != nil {
-		return refuse(err)
-	}
 	journal, err := c.inheritedJournal(raw, cache)
+	if err == nil {
+		err = inspectJournal(c.io, c.paths(), journal)
+	}
 	if err != nil {
+		var conflict *journalConflictError
+		if force && errors.As(err, &conflict) {
+			if cache.Present && !json.Valid([]byte(cache.Text)) {
+				return refuse(fmt.Errorf("gateway cache is not valid JSON"))
+			}
+			side := map[string]fileState{c.cachePath(): {Present: true, Text: RenderClaudeGatewayCache(ClaudeBaseURL(c.port), c.currentModels(), c.nowMS())}}
+			outcome, recoveryErr := recoverRestorationUnlocked(c.io, c.paths(), []string{c.envJournalPath(), c.cacheJournalPath()}, []string{c.cachePath()}, claudeTransform(c.port, c.currentModels(), true), side, false)
+			return ToApplyResult(c.id, withRecoveryBackups(outcome, outcome, "claude apply", recoveryErr))
+		}
 		return refuse(err)
 	}
 	active, err := loadJournal(c.io, c.paths())
@@ -249,7 +256,7 @@ func (c *ClaudeIntegration) applyWith(force bool) ApplyResult {
 }
 
 func (c *ClaudeIntegration) cacheOwned(j *restorationJournal, cache fileState) bool {
-	if j == nil || j.Retired {
+	if j == nil || j.Retired && !j.CurrentBaseline {
 		return false
 	}
 	for _, f := range j.Files {
@@ -262,8 +269,22 @@ func (c *ClaudeIntegration) cacheOwned(j *restorationJournal, cache fileState) b
 
 func (c *ClaudeIntegration) inheritedJournal(raw string, cache fileState) (*restorationJournal, error) {
 	active, err := loadJournal(c.io, c.paths())
-	if err != nil || active != nil {
-		return active, err
+	if err == nil && active != nil {
+		err = inspectJournalFiles(c.io, c.paths(), active, nil)
+	}
+	if err != nil {
+		var conflict *journalConflictError
+		if errors.As(err, &conflict) {
+			for _, path := range []string{c.envJournalPath(), c.cacheJournalPath()} {
+				if _, _, readErr := c.io.ReadText(path); readErr != nil {
+					return nil, readErr
+				}
+			}
+		}
+		return nil, err
+	}
+	if active != nil {
+		return active, nil
 	}
 	legacy, present, err := c.io.ReadText(c.envJournalPath())
 	if err != nil {
@@ -285,7 +306,7 @@ func (c *ClaudeIntegration) inheritedJournal(raw string, cache fileState) (*rest
 	}
 	var displaced map[string]string
 	if present && json.Unmarshal([]byte(legacy), &displaced) != nil {
-		return nil, fmt.Errorf("historical env journal invalid; original bytes retained")
+		return nil, journalConflict("historical env journal invalid; original bytes retained")
 	}
 	var settings map[string]json.RawMessage
 	if json.Unmarshal([]byte(raw), &settings) != nil {
@@ -293,12 +314,12 @@ func (c *ClaudeIntegration) inheritedJournal(raw string, cache fileState) (*rest
 	}
 	var env map[string]string
 	if json.Unmarshal(settings["env"], &env) != nil || env["ANTHROPIC_AUTH_TOKEN"] != prismApiKey {
-		return nil, fmt.Errorf("historical restoration journal conflicts with settings")
+		return nil, journalConflict("historical restoration journal conflicts with settings")
 	}
 	entries := ClaudeEnvEntries(c.port, c.currentModels())
 	alias := env["ANTHROPIC_MODEL"]
 	if !strings.HasPrefix(alias, "claude-") {
-		return nil, fmt.Errorf("historical written model is not managed")
+		return nil, journalConflict("historical written model is not managed")
 	}
 	for _, e := range entries {
 		if e.Key == "ANTHROPIC_BASE_URL" {
@@ -309,7 +330,7 @@ func (c *ClaudeIntegration) inheritedJournal(raw string, cache fileState) (*rest
 			want = alias
 		}
 		if env[e.Key] != want {
-			return nil, fmt.Errorf("historical restoration journal written value conflicts at %s", e.Key)
+			return nil, journalConflict("historical restoration journal written value conflicts at %s", e.Key)
 		}
 	}
 	original := claudeRollbackTransform()(ApplyEol(raw, EolLF))
@@ -323,7 +344,7 @@ func (c *ClaudeIntegration) inheritedJournal(raw string, cache fileState) (*rest
 			allowed = allowed || e.Key == key
 		}
 		if !allowed {
-			return nil, fmt.Errorf("historical restoration journal contains an unknown key")
+			return nil, journalConflict("historical restoration journal contains an unknown key")
 		}
 		restore = append(restore, JSONScalarEntry{Key: key, Value: value})
 	}
@@ -341,18 +362,20 @@ func (c *ClaudeIntegration) inheritedJournal(raw string, cache fileState) (*rest
 			BaseURL string `json:"baseUrl"`
 		}
 		if json.Unmarshal([]byte(cache.Text), &value) != nil || value.BaseURL != env["ANTHROPIC_BASE_URL"] {
-			return nil, fmt.Errorf("historical restoration journal conflicts with cache")
+			return nil, journalConflict("historical restoration journal conflicts with cache")
 		}
 		j.Files = append(j.Files, journalFile{Path: c.cachePath(), Original: backup, Written: cache})
 	}
 	if backup.Present && !cache.Present {
-		return nil, fmt.Errorf("historical written cache absent; originals retained")
+		return nil, journalConflict("historical written cache absent; originals retained")
 	}
 	return j, nil
 }
 
 func (c *ClaudeIntegration) Status() Status {
-	return ObservedIntegrationStatus(c.io, c.id, c.paths(), []string{ClaudeConfigDir(c.env, c.home)}, func(path string) ManagedRead {
+	unlock := lockMutation(c.paths())
+	defer unlock()
+	status := observedIntegrationStatusUnlocked(c.io, c.id, c.paths(), []string{ClaudeConfigDir(c.env, c.home)}, func(path string) ManagedRead {
 		content, ok, err := c.io.ReadText(path)
 		if err != nil {
 			return ManagedRead{Kind: ManagedUnsupported, Reason: failureReason("status read", err)}
@@ -362,9 +385,48 @@ func (c *ClaudeIntegration) Status() Status {
 		}
 		return claudeManagedRead(content)
 	}, ClaudeBaseURL(c.port))
+	cache, err := readState(c.io, c.cachePath())
+	if err != nil {
+		status.Blocked = true
+		status.Detail = failureReason("claude status", err)
+		return status
+	}
+	if cache.Present && !json.Valid([]byte(cache.Text)) {
+		status.Blocked = true
+		status.Detail = "prism: gateway cache is not valid JSON"
+		return status
+	}
+	raw, _, err := c.io.ReadText(c.paths())
+	if err != nil {
+		return status
+	}
+	journal, err := c.inheritedJournal(raw, cache)
+	if err != nil {
+		if status.Blocked {
+			return status
+		}
+		if checked := claudeTransform(c.port, c.currentModels(), true)(ApplyEol(raw, EolLF)); checked.Refused != "" {
+			status.Blocked = true
+			status.Detail = checked.Refused
+			return status
+		}
+		outcome := recoveryRefusal("claude status", err)
+		status.Detail, status.Conflict = outcome.Reason, outcome.Conflict
+		status.Blocked = outcome.Conflict == ""
+		return status
+	}
+	return journalStatus(c.io, c.paths(), journal, status)
 }
 
 func (c *ClaudeIntegration) Rollback() ApplyResult {
+	return c.rollbackWith(false)
+}
+
+func (c *ClaudeIntegration) RollbackForced() ApplyResult {
+	return c.rollbackWith(true)
+}
+
+func (c *ClaudeIntegration) rollbackWith(force bool) ApplyResult {
 	unlock := lockMutation(c.paths())
 	defer unlock()
 	raw, _, err := c.io.ReadText(c.paths())
@@ -375,9 +437,20 @@ func (c *ClaudeIntegration) Rollback() ApplyResult {
 	if err != nil {
 		return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
 	}
+	if cache.Present && !json.Valid([]byte(cache.Text)) {
+		return ApplyResult{ID: c.id, Reason: "prism: gateway cache is not valid JSON"}
+	}
 	j, err := c.inheritedJournal(raw, cache)
+	if err == nil {
+		err = inspectJournal(c.io, c.paths(), j)
+	}
 	if err != nil {
-		return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
+		var conflict *journalConflictError
+		if force && errors.As(err, &conflict) {
+			outcome, recoveryErr := recoverRestorationUnlocked(c.io, c.paths(), []string{c.envJournalPath(), c.cacheJournalPath()}, []string{c.cachePath()}, c.recoveryRemovalTransform(raw), nil, true)
+			return ToRollbackResult(c.id, withRecoveryBackups(outcome, outcome, "claude rollback", recoveryErr))
+		}
+		return ToRollbackResult(c.id, recoveryRefusal("claude rollback", err))
 	}
 	if j != nil {
 		if _, present, err := c.io.ReadText(restorationPath(c.paths())); err != nil {
@@ -390,7 +463,7 @@ func (c *ClaudeIntegration) Rollback() ApplyResult {
 	}
 	outcome, err := rollbackRestorationUnlocked(c.io, c.paths(), claudeRollbackTransform())
 	if err != nil {
-		return ApplyResult{ID: c.id, Reason: failureReason("claude rollback", err)}
+		return ToRollbackResult(c.id, recoveryRefusal("claude rollback", err))
 	}
 	return ToRollbackResult(c.id, outcome)
 }

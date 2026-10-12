@@ -258,7 +258,7 @@ var grokEffortMeta = map[string]struct {
 // grok apply, so rollback restores their original names verbatim.
 const grokRenamesHeader = "# prism-renames"
 
-func grokTransform(models []Model, port int, force bool) func(current string) ConfigTransform {
+func grokTransform(models []Model, port int, force, currentBaseline bool) func(current string) ConfigTransform {
 	return func(current string) ConfigTransform {
 		migrated, migratedChanged := removePrismLegacyTables(current, GrokFence)
 		userTables := UserModelTables(migrated, GrokFence)
@@ -301,10 +301,11 @@ func grokTransform(models []Model, port int, force bool) func(current string) Co
 				return forceableTransform("prism: grok apply refused — emitted " + strings.Join(parts, ", ") + " collides with a user-owned model table outside the prism fence")
 			}
 		}
-		historical := parseGrokRenamesJournal(current)
-		for from, to := range historical {
-			if _, exists := renames[from]; !exists {
-				renames[from] = to
+		if !currentBaseline {
+			for from, to := range parseGrokRenamesJournal(current) {
+				if _, exists := renames[from]; !exists {
+					renames[from] = to
+				}
 			}
 		}
 		result := UpsertFencedBlock(migrated, GrokFence, GrokManagedBlock(port, models)+renderGrokRenamesJournal(renames))
@@ -327,6 +328,16 @@ func grokRollbackTransform() func(current string) ConfigTransform {
 			next = restoreUserModelTables(next, renames)
 			changed = true
 		}
+		return nextTransform(next, changed)
+	}
+}
+
+func grokRecoveryRollbackTransform() func(current string) ConfigTransform {
+	return func(current string) ConfigTransform {
+		if FindFencedRegion(current, GrokFence).Kind == FencedOrphaned {
+			return refusedTransform(DamagedFenceRollback)
+		}
+		next, changed := RemoveFencedBlock(current, GrokFence)
 		return nextTransform(next, changed)
 	}
 }
@@ -458,29 +469,56 @@ func writeGrokConfig(options GrokOptions, force bool) WriteOutcome {
 	io := withLocalIO(options.IO)
 	unlock := lockMutation(options.ConfigPath)
 	defer unlock()
+	if err := inspectJournal(io, options.ConfigPath, nil); err != nil {
+		refusal := recoveryRefusal("grok apply", err)
+		if !force || refusal.Conflict != ConflictJournal {
+			return refusal
+		}
+		outcome, err := recoverRestorationUnlocked(io, options.ConfigPath, nil, nil, grokTransform(models, options.Port, force, true), nil, false)
+		return withRecoveryBackups(outcome, outcome, "grok apply", err)
+	}
+	journal, err := loadJournal(io, options.ConfigPath)
+	if err != nil {
+		return recoveryRefusal("grok apply", err)
+	}
 	var inherited *restorationJournal
 	raw, present, err := io.ReadText(options.ConfigPath)
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok apply", err)}
+		return recoveryRefusal("grok apply", err)
 	}
-	if present && FindFencedRegion(raw, GrokFence).Kind == FencedFound {
+	if journal == nil && present && FindFencedRegion(raw, GrokFence).Kind == FencedFound {
 		original := grokRollbackTransform()(ApplyEol(raw, EolLF))
 		if original.Refused != "" {
 			return WriteOutcome{Kind: OutcomeRefused, Reason: original.Refused}
 		}
 		inherited = &restorationJournal{Version: 1, Target: filepath.Clean(options.ConfigPath), Files: []journalFile{{Path: options.ConfigPath, Original: fileState{Present: true, Text: ApplyEol(original.Next, DominantEol(raw))}, Written: fileState{Present: true, Text: raw}}}}
 	}
-	outcome, err := applyRestorationUnlocked(io, options.ConfigPath, grokTransform(models, options.Port, force), nil, options.CrashBeforeRename, inherited)
+	transform := grokTransform(models, options.Port, force, journal != nil && journal.CurrentBaseline)
+	outcome, err := applyRestorationUnlocked(io, options.ConfigPath, transform, nil, options.CrashBeforeRename, inherited)
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok apply", err)}
+		return recoveryRefusal("grok apply", err)
 	}
 	return outcome
 }
 
 func StripGrokConfig(io FileIO, configPath string) WriteOutcome {
-	outcome, err := rollbackRestoration(io, configPath, grokRollbackTransform())
+	return stripGrokConfig(io, configPath, false)
+}
+
+func stripGrokConfig(io FileIO, configPath string, force bool) WriteOutcome {
+	unlock := lockMutation(configPath)
+	defer unlock()
+	if err := inspectJournal(io, configPath, nil); err != nil {
+		refusal := recoveryRefusal("grok rollback", err)
+		if !force || refusal.Conflict != ConflictJournal {
+			return refusal
+		}
+		outcome, err := recoverRestorationUnlocked(io, configPath, nil, nil, grokRecoveryRollbackTransform(), nil, true)
+		return withRecoveryBackups(outcome, outcome, "grok rollback", err)
+	}
+	outcome, err := rollbackRestorationUnlocked(io, configPath, grokRollbackTransform())
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("grok rollback", err)}
+		return recoveryRefusal("grok rollback", err)
 	}
 	return outcome
 }
@@ -532,4 +570,8 @@ func (g *GrokIntegration) Status() Status {
 
 func (g *GrokIntegration) Rollback() ApplyResult {
 	return ToRollbackResult(g.id, StripGrokConfig(g.io, g.configPath))
+}
+
+func (g *GrokIntegration) RollbackForced() ApplyResult {
+	return ToRollbackResult(g.id, stripGrokConfig(g.io, g.configPath, true))
 }

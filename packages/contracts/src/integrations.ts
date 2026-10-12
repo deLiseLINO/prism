@@ -37,13 +37,15 @@ export interface HostMutationResponse {
 export type IntegrationConflict = 'journal'
 
 export type IntegrationApplyResult =
-  | { readonly ok: true; readonly id: IntegrationId; readonly backup?: string }
+  | { readonly ok: true; readonly id: IntegrationId; readonly backup?: string; readonly backups?: readonly string[] }
   | {
       readonly ok: false
       readonly id: IntegrationId
       readonly reason: string
       readonly retryable?: boolean
       readonly conflict?: IntegrationConflict
+      readonly backup?: string
+      readonly backups?: readonly string[]
     }
 
 export interface IntegrationStatus {
@@ -56,6 +58,7 @@ export interface IntegrationStatus {
   readonly drift: boolean
   readonly detail: string
   readonly conflict?: IntegrationConflict
+  readonly blocked?: boolean
 }
 
 export interface IntegrationsView {

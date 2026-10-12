@@ -94,14 +94,32 @@ func NewHermes(options HermesOptions) *HermesIntegration {
 }
 func (h *HermesIntegration) ID() ID { return h.id }
 
-func (h *HermesIntegration) Apply() ApplyResult {
+func (h *HermesIntegration) Apply() ApplyResult { return h.applyWith(false) }
+
+func (h *HermesIntegration) ApplyForced() ApplyResult { return h.applyWith(true) }
+
+func (h *HermesIntegration) applyWith(force bool) ApplyResult {
 	models, refusal := resolveModels(h.models, h.modelsSrc, h.id)
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: h.id, Reason: refusal}
 	}
-	outcome, err := applyRestoration(h.io, h.paths(), hermesTransform(h.port, models), nil, false)
+	configPath := h.paths()
+	unlock := lockMutation(configPath)
+	defer unlock()
+	transform := hermesTransform(h.port, models)
+	if force {
+		if err := inspectJournal(h.io, configPath, nil); err != nil {
+			refusal := recoveryRefusal("hermes apply", err)
+			if refusal.Conflict != ConflictJournal {
+				return ToApplyResult(h.id, refusal)
+			}
+			outcome, err := recoverRestorationUnlocked(h.io, configPath, nil, nil, transform, nil, false)
+			return ToApplyResult(h.id, withRecoveryBackups(outcome, outcome, "hermes apply", err))
+		}
+	}
+	outcome, err := applyRestorationUnlocked(h.io, configPath, transform, nil, false, nil)
 	if err != nil {
-		return ToApplyResult(h.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("hermes apply", err)})
+		return ToApplyResult(h.id, recoveryRefusal("hermes apply", err))
 	}
 	return ToApplyResult(h.id, outcome)
 }
@@ -119,10 +137,28 @@ func (h *HermesIntegration) Status() Status {
 	}, ProviderBaseUrl(h.port))
 }
 
-func (h *HermesIntegration) Rollback() ApplyResult {
-	outcome, err := rollbackRestoration(h.io, h.paths(), hermesRollbackTransform())
+func (h *HermesIntegration) Rollback() ApplyResult { return h.rollbackWith(false) }
+
+func (h *HermesIntegration) RollbackForced() ApplyResult { return h.rollbackWith(true) }
+
+func (h *HermesIntegration) rollbackWith(force bool) ApplyResult {
+	configPath := h.paths()
+	unlock := lockMutation(configPath)
+	defer unlock()
+	transform := hermesRollbackTransform()
+	if force {
+		if err := inspectJournal(h.io, configPath, nil); err != nil {
+			refusal := recoveryRefusal("hermes rollback", err)
+			if refusal.Conflict != ConflictJournal {
+				return ToRollbackResult(h.id, refusal)
+			}
+			outcome, err := recoverRestorationUnlocked(h.io, configPath, nil, nil, transform, nil, true)
+			return ToRollbackResult(h.id, withRecoveryBackups(outcome, outcome, "hermes rollback", err))
+		}
+	}
+	outcome, err := rollbackRestorationUnlocked(h.io, configPath, transform)
 	if err != nil {
-		return ToRollbackResult(h.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("hermes rollback", err)})
+		return ToRollbackResult(h.id, recoveryRefusal("hermes rollback", err))
 	}
 	return ToRollbackResult(h.id, outcome)
 }
