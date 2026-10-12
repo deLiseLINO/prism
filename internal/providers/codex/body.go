@@ -207,11 +207,7 @@ func BuildRequestBody(req canon.Request) (BuildResult, error) {
 }
 
 func reasoningFrom(cfg canon.ReasoningConfig, warnings *[]string) *wireReasoning {
-	effort := effortWire(cfg.Effort)
-	if effort == "" {
-		return nil
-	}
-	out := wireReasoning{Effort: effort}
+	out := wireReasoning{Effort: effortWire(cfg.Effort)}
 	switch cfg.Summary {
 	case canon.SummaryAuto:
 		s := "auto"
@@ -222,6 +218,9 @@ func reasoningFrom(cfg canon.ReasoningConfig, warnings *[]string) *wireReasoning
 	case canon.SummaryDetailed:
 		s := "detailed"
 		out.Summary = &s
+	}
+	if out.Effort == "" && out.Summary == nil {
+		return nil
 	}
 	return &out
 }
