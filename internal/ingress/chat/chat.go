@@ -87,13 +87,17 @@ func (Ingress) Parse(_ context.Context, hr *http.Request) (canon.Request, execut
 	if err != nil {
 		return canon.Request{}, execution.Facts{}, err
 	}
+	reasoning, err := reasoningFrom(b)
+	if err != nil {
+		return canon.Request{}, execution.Facts{}, err
+	}
 	req := canon.Request{
 		Model:           canon.ModelID(b.Model),
 		Stream:          b.Stream,
 		Input:           items,
 		MaxOutputTokens: maxTokensFrom(b),
 		Sampling:        sampling,
-		Reasoning:       reasoningFrom(b.ReasoningEffort),
+		Reasoning:       reasoning,
 	}
 	switch b.Verbosity {
 	case "low":
@@ -193,27 +197,59 @@ func numberField(raw json.RawMessage) (int, bool) {
 	return int(f), true
 }
 
-func reasoningFrom(effort *string) canon.ReasoningConfig {
+func reasoningFrom(b body) (canon.ReasoningConfig, error) {
+	cfg := canon.ReasoningConfig{Effort: effortFrom(b.ReasoningEffort)}
+	if cfg.Effort == 0 && b.Reasoning != nil {
+		cfg.Effort = effortFrom(b.Reasoning.Effort)
+	}
+	if cfg.Effort == canon.EffortOff {
+		return cfg, nil
+	}
+	if b.Reasoning != nil && b.Reasoning.Summary != nil {
+		switch *b.Reasoning.Summary {
+		case "auto":
+			cfg.Summary = canon.SummaryAuto
+		case "concise":
+			cfg.Summary = canon.SummaryConcise
+		case "detailed":
+			cfg.Summary = canon.SummaryDetailed
+		case "none":
+			cfg.Summary = canon.SummaryNone
+		default:
+			return cfg, invalid("reasoning.summary", fmt.Errorf("unsupported summary %q", *b.Reasoning.Summary))
+		}
+		return cfg, nil
+	}
+	switch {
+	case b.IncludeReasoning != nil && !*b.IncludeReasoning:
+		cfg.Summary = canon.SummaryNone
+	case cfg.Effort != 0 || (b.IncludeReasoning != nil && *b.IncludeReasoning):
+		cfg.Summary = canon.SummaryAuto
+	}
+	return cfg, nil
+}
+
+func effortFrom(effort *string) canon.ReasoningEffort {
 	if effort == nil {
-		return canon.ReasoningConfig{}
+		return 0
 	}
 	switch *effort {
 	case "minimal":
-		return canon.ReasoningConfig{Effort: canon.EffortMinimal}
+		return canon.EffortMinimal
 	case "off", "none":
-		return canon.ReasoningConfig{Effort: canon.EffortOff}
+		return canon.EffortOff
 	case "low":
-		return canon.ReasoningConfig{Effort: canon.EffortLow}
+		return canon.EffortLow
 	case "medium":
-		return canon.ReasoningConfig{Effort: canon.EffortMedium}
+		return canon.EffortMedium
 	case "high":
-		return canon.ReasoningConfig{Effort: canon.EffortHigh}
+		return canon.EffortHigh
 	case "xhigh":
-		return canon.ReasoningConfig{Effort: canon.EffortXHigh}
+		return canon.EffortXHigh
 	case "max":
-		return canon.ReasoningConfig{Effort: canon.EffortMax}
+		return canon.EffortMax
 	}
-	return canon.ReasoningConfig{}
+	return 0
 }
 
 func samplingFrom(b body) (canon.Sampling, error) {
@@ -551,10 +587,17 @@ type body struct {
 	FrequencyPenalty    *float64        `json:"frequency_penalty"`
 	ParallelToolCalls   *bool           `json:"parallel_tool_calls"`
 	ReasoningEffort     *string         `json:"reasoning_effort"`
+	Reasoning           *reasoningBody  `json:"reasoning"`
+	IncludeReasoning    *bool           `json:"include_reasoning"`
 	Tools               []tool          `json:"tools"`
 	ToolChoice          json.RawMessage `json:"tool_choice"`
 	Verbosity           string          `json:"verbosity"`
 	ServiceTier         string          `json:"service_tier"`
+}
+
+type reasoningBody struct {
+	Effort  *string `json:"effort"`
+	Summary *string `json:"summary"`
 }
 
 type message struct {
