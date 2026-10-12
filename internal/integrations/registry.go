@@ -118,6 +118,11 @@ func (r *Registry) ApplyEnabled() []ApplyResult {
 		if !ok {
 			continue
 		}
+		status := module.Status()
+		if status.Blocked || status.Conflict != "" {
+			refused = append(refused, ApplyResult{ID: id, Reason: status.Detail, Retryable: status.Conflict == ConflictJournal, Conflict: status.Conflict})
+			continue
+		}
 		if result := module.Apply(); !result.OK {
 			refused = append(refused, result)
 		}

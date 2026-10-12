@@ -406,6 +406,9 @@ func ReadJSONBlockLeaf(text, containerKey, leafKey, fileLabel, endpointKey strin
 	if !ok {
 		return JSONLeafRead{Kind: jsonLeafAbsent}
 	}
+	if !m.value.object {
+		return JSONLeafRead{Kind: jsonLeafRefused, Reason: "prism: " + fileLabel + " patch refused: " + leafKey + " is not an object"}
+	}
 	return JSONLeafRead{Kind: jsonLeafPresent, Endpoint: jsonEndpoint(text, m.value, endpointKey)}
 }
 func UpsertJSONScalarKeys(text, containerKey, fileLabel string, entries []JSONScalarEntry) JSONPatch {

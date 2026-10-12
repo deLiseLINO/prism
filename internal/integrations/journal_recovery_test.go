@@ -97,8 +97,12 @@ func TestOmpRollbackForcedRemovesOnlyPrismBlock(t *testing.T) {
 	if got := readFile(t, res.Backup); got != oldJournal {
 		t.Fatal("backup differs from the old journal")
 	}
-	if _, err := os.Stat(restorationPath(path)); !os.IsNotExist(err) {
-		t.Fatalf("journal left in place: %v", err)
+	journal, err := loadJournal(LocalIO{}, path)
+	if err != nil || journal == nil || !journal.Retired || !journal.CurrentBaseline {
+		t.Fatalf("removal receipt missing: %+v %v", journal, err)
+	}
+	if result := o.Rollback(); result.OK {
+		t.Fatal("second rollback unexpectedly restored a removed block")
 	}
 }
 
@@ -136,14 +140,6 @@ func TestOmpSecondForcedResetKeepsFirstBackup(t *testing.T) {
 	}
 	if readFile(t, journalPath+".bak") != "{one" || readFile(t, journalPath+".bak.1") != "{two" {
 		t.Fatal("a backup was overwritten")
-	}
-}
-
-func TestRetireJournalMissingIsNoop(t *testing.T) {
-	path := tempFile(t, t.TempDir(), "models.yml", userModelYaml)
-	backup, err := retireJournal(LocalIO{}, path)
-	if err != nil || backup != "" {
-		t.Fatalf("retire without journal: %q %v", backup, err)
 	}
 }
 
@@ -190,19 +186,18 @@ func TestRegistryRollbackForced(t *testing.T) {
 	}
 }
 
-func TestOmpForcedRetryFailureKeepsBackupInResult(t *testing.T) {
+func TestOmpUnsafeForcedRecoveryRetainsOriginalJournal(t *testing.T) {
 	path := tempFile(t, t.TempDir(), "models.yml", "providers: {openai: {api: x}}\n")
 	writeFileOrDie(t, restorationPath(path), "{broken")
 	o := NewOmp(OmpOptions{ModelsPath: path, Port: testPort, Models: ompTestModels})
 	res := o.ApplyForced()
-	backup := restorationPath(path) + ".bak"
-	if res.OK || res.Backup != backup || !strings.Contains(res.Reason, backup) {
-		t.Fatalf("forced apply: %+v", res)
+	if res.OK || res.Backup != "" || res.Retryable {
+		t.Fatalf("unsafe recovery must refuse before reset: %+v", res)
 	}
-	if got := readFile(t, backup); got != "{broken" {
-		t.Fatalf("backup bytes %q", got)
+	if got := readFile(t, restorationPath(path)); got != "{broken" {
+		t.Fatalf("original journal changed: %q", got)
 	}
-	if _, err := os.Stat(restorationPath(path)); !os.IsNotExist(err) {
-		t.Fatalf("journal left in place: %v", err)
+	if got := readFile(t, path); got != "providers: {openai: {api: x}}\n" {
+		t.Fatalf("unsafe config changed: %q", got)
 	}
 }

@@ -7,6 +7,7 @@ package integrations
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,8 +28,52 @@ type FileIO interface {
 	RemoveDurable(path string) error
 }
 
+type durableBackupIO interface {
+	CreateBackup(path, content string) error
+}
+
 // LocalIO is the local-disk FileIO.
 type LocalIO struct{}
+
+func (LocalIO) CreateBackup(path, content string) error {
+	d, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	info, err := d.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("backup parent is not a directory")
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Chmod(0o600); err != nil {
+		return err
+	}
+	n, err := f.WriteString(content)
+	if err != nil {
+		return err
+	}
+	if n != len(content) {
+		return io.ErrShortWrite
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		return err
+	}
+	return d.Close()
+}
 
 func (LocalIO) ReadText(path string) (string, bool, error) {
 	b, err := os.ReadFile(path)

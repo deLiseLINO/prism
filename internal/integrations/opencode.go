@@ -227,14 +227,32 @@ func NewOpencode(options OpencodeOptions) *OpencodeIntegration {
 
 func (o *OpencodeIntegration) ID() ID { return o.id }
 
-func (o *OpencodeIntegration) Apply() ApplyResult {
+func (o *OpencodeIntegration) Apply() ApplyResult { return o.applyWith(false) }
+
+func (o *OpencodeIntegration) ApplyForced() ApplyResult { return o.applyWith(true) }
+
+func (o *OpencodeIntegration) applyWith(force bool) ApplyResult {
 	models, refusal := resolveModels(o.models, o.modelsSrc, o.id)
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: o.id, Reason: refusal}
 	}
-	outcome, err := applyRestoration(o.io, o.paths(), opencodeTransform(o.port, models), nil, false)
+	configPath := o.paths()
+	unlock := lockMutation(configPath)
+	defer unlock()
+	transform := opencodeTransform(o.port, models)
+	if force {
+		if err := inspectJournal(o.io, configPath, nil); err != nil {
+			refusal := recoveryRefusal("opencode apply", err)
+			if refusal.Conflict != ConflictJournal {
+				return ToApplyResult(o.id, refusal)
+			}
+			outcome, err := recoverRestorationUnlocked(o.io, configPath, nil, nil, transform, nil, false)
+			return ToApplyResult(o.id, withRecoveryBackups(outcome, outcome, "opencode apply", err))
+		}
+	}
+	outcome, err := applyRestorationUnlocked(o.io, configPath, transform, nil, false, nil)
 	if err != nil {
-		return ToApplyResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode apply", err)})
+		return ToApplyResult(o.id, recoveryRefusal("opencode apply", err))
 	}
 	return ToApplyResult(o.id, outcome)
 }
@@ -252,10 +270,28 @@ func (o *OpencodeIntegration) Status() Status {
 	}, ProviderBaseUrl(o.port))
 }
 
-func (o *OpencodeIntegration) Rollback() ApplyResult {
-	outcome, err := rollbackRestoration(o.io, o.paths(), opencodeRollbackTransform())
+func (o *OpencodeIntegration) Rollback() ApplyResult { return o.rollbackWith(false) }
+
+func (o *OpencodeIntegration) RollbackForced() ApplyResult { return o.rollbackWith(true) }
+
+func (o *OpencodeIntegration) rollbackWith(force bool) ApplyResult {
+	configPath := o.paths()
+	unlock := lockMutation(configPath)
+	defer unlock()
+	transform := opencodeRollbackTransform()
+	if force {
+		if err := inspectJournal(o.io, configPath, nil); err != nil {
+			refusal := recoveryRefusal("opencode rollback", err)
+			if refusal.Conflict != ConflictJournal {
+				return ToRollbackResult(o.id, refusal)
+			}
+			outcome, err := recoverRestorationUnlocked(o.io, configPath, nil, nil, transform, nil, true)
+			return ToRollbackResult(o.id, withRecoveryBackups(outcome, outcome, "opencode rollback", err))
+		}
+	}
+	outcome, err := rollbackRestorationUnlocked(o.io, configPath, transform)
 	if err != nil {
-		return ToRollbackResult(o.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("opencode rollback", err)})
+		return ToRollbackResult(o.id, recoveryRefusal("opencode rollback", err))
 	}
 	return ToRollbackResult(o.id, outcome)
 }

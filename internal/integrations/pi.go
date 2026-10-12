@@ -154,18 +154,35 @@ func NewPi(options PiOptions) *PiIntegration {
 
 func (p *PiIntegration) ID() ID { return p.id }
 
-func (p *PiIntegration) Apply() ApplyResult {
+func (p *PiIntegration) Apply() ApplyResult { return p.applyWith(false) }
+
+func (p *PiIntegration) ApplyForced() ApplyResult { return p.applyWith(true) }
+
+func (p *PiIntegration) applyWith(force bool) ApplyResult {
 	_, configPath, err := p.paths()
 	if err != nil {
-		return ApplyResult{OK: false, ID: p.id, Reason: failureReason("pi apply", err)}
+		return ToApplyResult(p.id, recoveryRefusal("pi apply", err))
 	}
 	models, refusal := resolveModels(p.models, p.modelsSrc, p.id)
 	if refusal != "" {
 		return ApplyResult{OK: false, ID: p.id, Reason: refusal}
 	}
-	outcome, err := applyRestoration(p.io, configPath, piTransform(p.port, models), nil, false)
+	unlock := lockMutation(configPath)
+	defer unlock()
+	transform := piTransform(p.port, models)
+	if force {
+		if err := inspectJournal(p.io, configPath, nil); err != nil {
+			refusal := recoveryRefusal("pi apply", err)
+			if refusal.Conflict != ConflictJournal {
+				return ToApplyResult(p.id, refusal)
+			}
+			outcome, err := recoverRestorationUnlocked(p.io, configPath, nil, nil, transform, nil, false)
+			return ToApplyResult(p.id, withRecoveryBackups(outcome, outcome, "pi apply", err))
+		}
+	}
+	outcome, err := applyRestorationUnlocked(p.io, configPath, transform, nil, false, nil)
 	if err != nil {
-		return ToApplyResult(p.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi apply", err)})
+		return ToApplyResult(p.id, recoveryRefusal("pi apply", err))
 	}
 	return ToApplyResult(p.id, outcome)
 }
@@ -193,14 +210,31 @@ func (p *PiIntegration) Status() Status {
 	}, ProviderBaseUrl(p.port))
 }
 
-func (p *PiIntegration) Rollback() ApplyResult {
+func (p *PiIntegration) Rollback() ApplyResult { return p.rollbackWith(false) }
+
+func (p *PiIntegration) RollbackForced() ApplyResult { return p.rollbackWith(true) }
+
+func (p *PiIntegration) rollbackWith(force bool) ApplyResult {
 	_, configPath, err := p.paths()
 	if err != nil {
-		return ApplyResult{OK: false, ID: p.id, Reason: failureReason("pi rollback", err)}
+		return ToRollbackResult(p.id, recoveryRefusal("pi rollback", err))
 	}
-	outcome, err := rollbackRestoration(p.io, configPath, piRollbackTransform())
+	unlock := lockMutation(configPath)
+	defer unlock()
+	transform := piRollbackTransform()
+	if force {
+		if err := inspectJournal(p.io, configPath, nil); err != nil {
+			refusal := recoveryRefusal("pi rollback", err)
+			if refusal.Conflict != ConflictJournal {
+				return ToRollbackResult(p.id, refusal)
+			}
+			outcome, err := recoverRestorationUnlocked(p.io, configPath, nil, nil, transform, nil, true)
+			return ToRollbackResult(p.id, withRecoveryBackups(outcome, outcome, "pi rollback", err))
+		}
+	}
+	outcome, err := rollbackRestorationUnlocked(p.io, configPath, transform)
 	if err != nil {
-		return ToRollbackResult(p.id, WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("pi rollback", err)})
+		return ToRollbackResult(p.id, recoveryRefusal("pi rollback", err))
 	}
 	return ToRollbackResult(p.id, outcome)
 }

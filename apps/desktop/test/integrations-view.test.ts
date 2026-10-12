@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { applyTargets, baseName, journalDialogCopy, journalPath, rollbackTargets, rowState, setIntegrationEnabled, visibleIntegrations } from '../renderer/src/views/IntegrationsView'
-import type { IntegrationStatus } from '@prism/contracts'
+import { applyTargets, baseName, rollbackTargets, rowState, setIntegrationEnabled, visibleIntegrations } from '../renderer/src/views/IntegrationsView'
+import type { IntegrationId, IntegrationStatus } from '@prism/contracts'
 import { api, ApiError } from '../renderer/src/api'
 
 vi.mock('../renderer/src/bridge', () => ({
@@ -28,7 +28,7 @@ function status(partial: Partial<IntegrationStatus>): IntegrationStatus {
 }
 
 describe('integration card row state', () => {
-  it('marks uninstalled first, whatever else the detail says', () => {
+  it('marks an absent client uninstalled when no config problem is reported', () => {
     expect(rowState(status({ installed: false }))).toBe('uninstalled')
   })
 
@@ -88,25 +88,29 @@ describe('bulk targets', () => {
   })
 })
 
-describe('journal conflict', () => {
-  const conflicted = status({ id: 'omp', managed: true, conflict: 'journal', detail: 'managed by prism' })
+describe('integration repair states', () => {
+  const clients: readonly IntegrationId[] = ['codex', 'grok', 'omp', 'claude', 'pi', 'opencode', 'hermes']
 
-  it('shows conflict above drift and keeps conflict rows out of both bulk actions', () => {
-    expect(rowState({ ...conflicted, drift: true })).toBe('conflict')
-    expect(rowState(status({ installed: false, conflict: 'journal' }))).toBe('uninstalled')
+  it.each(clients)('keeps %s journal conflicts above drift and out of both bulk actions', (id) => {
+    const conflicted = status({ id, managed: true, drift: true, conflict: 'journal', detail: 'unsupported journal version' })
+    expect(rowState(conflicted)).toBe('conflict')
     expect(applyTargets([conflicted])).toEqual([])
     expect(rollbackTargets([conflicted])).toEqual([])
   })
 
-  it('derives the journal path next to the config file', () => {
-    expect(journalPath('/home/u/.omp/agent/models.yml')).toBe('/home/u/.omp/agent/.models.yml.prism-journal.json')
-    expect(baseName('/home/u/.omp/agent/models.yml')).toBe('models.yml')
-    expect(journalPath('C:\\u\\models.yml')).toBe('C:\\u\\.models.yml.prism-journal.json')
+  it.each([
+    { blocked: true, detail: 'cannot read config: permission denied', expected: 'blocked' },
+    { detail: 'prism: managed fence is damaged', expected: 'damaged' },
+  ])('prioritizes $expected over installation, conflict and drift', ({ expected, ...problem }) => {
+    const row = status({ ...problem, installed: false, managed: true, conflict: 'journal', drift: true })
+    expect(rowState(row)).toBe(expected)
+    expect(applyTargets([{ ...row, installed: true }])).toEqual([])
+    expect(rollbackTargets([{ ...row, installed: true }])).toEqual([])
   })
 
-  it('words the apply and rollback dialogs for the file', () => {
-    expect(journalDialogCopy('apply', 'models.yml')).toMatchObject({ title: 'Prism lost track of models.yml', confirmLabel: 'Apply again' })
-    expect(journalDialogCopy('rollback', 'models.yml')).toMatchObject({ title: 'Can’t roll back models.yml automatically', confirmLabel: 'Remove Prism block' })
+  it('shows config file names on either supported path separator', () => {
+    expect(baseName('/home/u/config/settings.json')).toBe('settings.json')
+    expect(baseName('C:\\u\\models.yml')).toBe('models.yml')
   })
 })
 
