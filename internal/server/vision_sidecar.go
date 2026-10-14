@@ -89,6 +89,7 @@ func (v *visionSidecar) describeImages(ctx context.Context, req canon.Request) (
 }
 
 func (v *visionSidecar) describeImage(ctx context.Context, img canon.ImageContent) (string, error) {
+	img.Cache = canon.CacheNone
 	turnReq := canon.Request{
 		Model:        canon.ModelID(string(v.target.Provider) + "/" + string(v.target.Model)),
 		Stream:       false,
@@ -147,11 +148,11 @@ func applyImageDescriptions(req canon.Request, descriptions []string) canon.Requ
 			return c
 		}
 		if idx >= len(descriptions) {
-			return canon.TextContent{Text: "[image description unavailable]"}
+			return canon.TextContent{Text: "[image description unavailable]", Cache: img.Cache}
 		}
 		text := strings.ReplaceAll(descriptions[idx], "</image>", "<\\/image>")
 		idx++
-		return canon.TextContent{Text: "<image path=\"attachment://" + imageRef(img) + "\">\n" + text + "\n</image>"}
+		return canon.TextContent{Text: "<image path=\"attachment://" + imageRef(img) + "\">\n" + text + "\n</image>", Cache: img.Cache}
 	}
 	if len(req.Instructions) > 0 {
 		instructions := make([]canon.Content, len(req.Instructions))
@@ -174,7 +175,8 @@ func applyImageDescriptions(req canon.Request, descriptions []string) canon.Requ
 			for j, c := range it.Output {
 				output[j] = replace(c)
 			}
-			input[i] = canon.FunctionOutput{ID: it.ID, CallID: it.CallID, Output: output}
+			it.Output = output
+			input[i] = it
 		case canon.CustomToolOutput:
 			if it.Content != nil {
 				content := make([]canon.Content, len(it.Content))

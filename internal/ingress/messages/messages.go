@@ -121,6 +121,7 @@ type wireRequest struct {
 	ToolChoice    json.RawMessage   `json:"tool_choice"`
 	Thinking      json.RawMessage   `json:"thinking"`
 	OutputConfig  json.RawMessage   `json:"output_config"`
+	CacheControl  json.RawMessage   `json:"cache_control"`
 }
 
 func decodeRequest(raw []byte) (canon.Request, error) {
@@ -140,17 +141,24 @@ func decodeRequest(raw []byte) (canon.Request, error) {
 	if len(wire.Messages) == 0 {
 		return canon.Request{}, &ParseError{Reason: ReasonMissingField, Field: "messages"}
 	}
+	cache, err := cacheHint(wire.CacheControl, "cache_control")
+	if err != nil {
+		return canon.Request{}, err
+	}
 	req := canon.Request{
 		Model:           canon.ModelID(wire.Model),
 		Stream:          wire.Stream,
 		MaxOutputTokens: *wire.MaxTokens,
+		Cache:           cache,
 	}
 	req.Sampling.Temperature = wire.Temperature
 	req.Sampling.TopP = wire.TopP
 	req.Sampling.Stop = wire.StopSequences
-	if text, ok := systemText(wire.System); ok {
-		req.Instructions = append(req.Instructions, canon.TextContent{Text: text})
+	instructions, err := systemContents(wire.System, "system.cache_control")
+	if err != nil {
+		return canon.Request{}, err
 	}
+	req.Instructions = instructions
 	for _, rawMsg := range wire.Messages {
 		var msg struct {
 			Role    string          `json:"role"`
@@ -173,9 +181,11 @@ func decodeRequest(raw []byte) (canon.Request, error) {
 			}
 			req.Input = append(req.Input, items...)
 		case "system":
-			if text, ok := systemText(msg.Content); ok {
-				req.Instructions = append(req.Instructions, canon.TextContent{Text: text})
+			contents, err := systemContents(msg.Content, "messages.content.cache_control")
+			if err != nil {
+				return canon.Request{}, err
 			}
+			req.Instructions = append(req.Instructions, contents...)
 		default:
 			return canon.Request{}, &ParseError{Reason: ReasonInvalidField, Field: "messages.role", Err: fmt.Errorf("unsupported role %q", msg.Role)}
 		}
@@ -251,48 +261,85 @@ func effortFromName(name string) (canon.ReasoningEffort, bool) {
 	return 0, false
 }
 
-func systemText(raw json.RawMessage) (string, bool) {
+func cacheHint(raw json.RawMessage, field string) (canon.CacheHint, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return "", false
+		return canon.CacheNone, nil
+	}
+	var control struct {
+		Type string          `json:"type"`
+		TTL  json.RawMessage `json:"ttl"`
+	}
+	if err := json.Unmarshal(raw, &control); err != nil {
+		return canon.CacheNone, &ParseError{Reason: ReasonInvalidField, Field: field, Err: err}
+	}
+	if control.Type != "ephemeral" {
+		return canon.CacheNone, &ParseError{Reason: ReasonInvalidField, Field: field + ".type", Err: fmt.Errorf("unsupported cache type %q", control.Type)}
+	}
+	if len(control.TTL) == 0 {
+		return canon.CacheDefault, nil
+	}
+	var ttl string
+	if err := json.Unmarshal(control.TTL, &ttl); err != nil {
+		return canon.CacheNone, &ParseError{Reason: ReasonInvalidField, Field: field + ".ttl", Err: err}
+	}
+	switch ttl {
+	case "5m":
+		return canon.Cache5m, nil
+	case "1h":
+		return canon.Cache1h, nil
+	default:
+		return canon.CacheNone, &ParseError{Reason: ReasonInvalidField, Field: field + ".ttl", Err: fmt.Errorf("unsupported cache TTL %q", ttl)}
+	}
+}
+
+func systemContents(raw json.RawMessage, field string) ([]canon.Content, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s, s != ""
+		if s == "" {
+			return nil, nil
+		}
+		return []canon.Content{canon.TextContent{Text: s}}, nil
 	}
 	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		CacheControl json.RawMessage `json:"cache_control"`
 	}
 	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return "", false
+		return nil, nil
 	}
-	var parts []string
+	var contents []canon.Content
 	for _, b := range blocks {
+		cache, err := cacheHint(b.CacheControl, field)
+		if err != nil {
+			return nil, err
+		}
 		if b.Type == "text" && b.Text != "" {
-			parts = append(parts, b.Text)
+			contents = append(contents, canon.TextContent{Text: b.Text, Cache: cache})
 		}
 	}
-	if len(parts) == 0 {
-		return "", false
-	}
-	return strings.Join(parts, "\n\n"), true
+	return contents, nil
 }
 
 type contentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text"`
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Input     json.RawMessage `json:"input"`
-	ToolUseID string          `json:"tool_use_id"`
-	IsError   bool            `json:"is_error"`
-	Content   json.RawMessage `json:"content"`
-	MediaType string          `json:"media_type"`
-	Data      string          `json:"data"`
-	Source    json.RawMessage `json:"source"`
-	Thinking  string          `json:"thinking"`
-	Signature string          `json:"signature"`
-	URL       string          `json:"url"`
+	Type         string          `json:"type"`
+	Text         string          `json:"text"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Input        json.RawMessage `json:"input"`
+	ToolUseID    string          `json:"tool_use_id"`
+	IsError      bool            `json:"is_error"`
+	Content      json.RawMessage `json:"content"`
+	MediaType    string          `json:"media_type"`
+	Data         string          `json:"data"`
+	Source       json.RawMessage `json:"source"`
+	Thinking     string          `json:"thinking"`
+	Signature    string          `json:"signature"`
+	URL          string          `json:"url"`
+	CacheControl json.RawMessage `json:"cache_control"`
 }
 
 func userItems(raw json.RawMessage) ([]canon.Item, error) {
@@ -316,14 +363,19 @@ func userItems(raw json.RawMessage) ([]canon.Item, error) {
 		return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content", Err: fmt.Errorf("content is neither string nor block array")}
 	}
 	for _, b := range blocks {
+		cache, err := cacheHint(b.CacheControl, "messages.content.cache_control")
+		if err != nil {
+			return nil, err
+		}
 		switch b.Type {
 		case "text":
-			pending = append(pending, canon.TextContent{Text: b.Text})
+			pending = append(pending, canon.TextContent{Text: b.Text, Cache: cache})
 		case "image":
 			img, err := imageContent(b.Source, b.MediaType, b.Data)
 			if err != nil {
 				return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.image", Err: err}
 			}
+			img.Cache = cache
 			pending = append(pending, img)
 		case "document":
 			return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.document", Err: fmt.Errorf("document payloads are unsupported")}
@@ -336,7 +388,7 @@ func userItems(raw json.RawMessage) ([]canon.Item, error) {
 			if err != nil {
 				return nil, err
 			}
-			items = append(items, canon.FunctionOutput{CallID: canon.CallID(b.ToolUseID), Output: output})
+			items = append(items, canon.FunctionOutput{CallID: canon.CallID(b.ToolUseID), Output: output, Cache: cache})
 		case "web_search_tool_result":
 			var results []string
 			if len(b.Content) > 0 {
@@ -349,7 +401,7 @@ func userItems(raw json.RawMessage) ([]canon.Item, error) {
 					}
 				}
 			}
-			pending = append(pending, canon.TextContent{Text: "[web search results: " + strings.Join(results, " ") + "]"})
+			pending = append(pending, canon.TextContent{Text: "[web search results: " + strings.Join(results, " ") + "]", Cache: cache})
 		default:
 			continue
 		}
@@ -376,11 +428,12 @@ func toolResultContent(b contentBlock) ([]canon.Content, error) {
 		return []canon.Content{canon.TextContent{Text: text}}, nil
 	}
 	var parts []struct {
-		Type      string          `json:"type"`
-		Text      *string         `json:"text"`
-		Source    json.RawMessage `json:"source"`
-		MediaType string          `json:"media_type"`
-		Data      string          `json:"data"`
+		Type         string          `json:"type"`
+		Text         *string         `json:"text"`
+		Source       json.RawMessage `json:"source"`
+		MediaType    string          `json:"media_type"`
+		Data         string          `json:"data"`
+		CacheControl json.RawMessage `json:"cache_control"`
 	}
 	if err := json.Unmarshal(b.Content, &parts); err != nil {
 		return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content", Err: err}
@@ -390,17 +443,22 @@ func toolResultContent(b contentBlock) ([]canon.Content, error) {
 		output = append(output, canon.TextContent{Text: "[tool error]"})
 	}
 	for _, part := range parts {
+		cache, err := cacheHint(part.CacheControl, "messages.content.tool_result.content.cache_control")
+		if err != nil {
+			return nil, err
+		}
 		switch part.Type {
 		case "text":
 			if part.Text == nil {
 				return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content.text"}
 			}
-			output = append(output, canon.TextContent{Text: *part.Text})
+			output = append(output, canon.TextContent{Text: *part.Text, Cache: cache})
 		case "image":
 			image, err := imageContent(part.Source, part.MediaType, part.Data)
 			if err != nil {
 				return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content.image", Err: err}
 			}
+			image.Cache = cache
 			output = append(output, image)
 		default:
 			return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content.tool_result.content.type", Err: fmt.Errorf("unsupported block type %q", part.Type)}
@@ -460,9 +518,13 @@ func assistantItems(raw json.RawMessage) ([]canon.Item, error) {
 		return nil, &ParseError{Reason: ReasonInvalidField, Field: "messages.content", Err: fmt.Errorf("content is neither string nor block array")}
 	}
 	for _, b := range blocks {
+		cache, err := cacheHint(b.CacheControl, "messages.content.cache_control")
+		if err != nil {
+			return nil, err
+		}
 		switch b.Type {
 		case "text":
-			pendingText = append(pendingText, canon.TextContent{Text: b.Text})
+			pendingText = append(pendingText, canon.TextContent{Text: b.Text, Cache: cache})
 		case "thinking":
 			if b.Thinking == "" && b.Signature == "" {
 				continue
@@ -488,7 +550,7 @@ func assistantItems(raw json.RawMessage) ([]canon.Item, error) {
 					}
 				}
 			}
-			pendingText = append(pendingText, canon.TextContent{Text: "[server tool " + b.Name + ": " + query + "]"})
+			pendingText = append(pendingText, canon.TextContent{Text: "[server tool " + b.Name + ": " + query + "]", Cache: cache})
 		case "tool_use":
 			flush()
 			if b.ID == "" || b.Name == "" {
@@ -502,6 +564,7 @@ func assistantItems(raw json.RawMessage) ([]canon.Item, error) {
 				CallID:    canon.CallID(b.ID),
 				Name:      canon.ToolName(b.Name),
 				Arguments: arguments,
+				Cache:     cache,
 			})
 		default:
 			continue
@@ -515,13 +578,18 @@ func decodeTools(raw []json.RawMessage) ([]canon.Tool, error) {
 	var tools []canon.Tool
 	for _, rawTool := range raw {
 		var t struct {
-			Type        string          `json:"type"`
-			Name        string          `json:"name"`
-			Description string          `json:"description"`
-			InputSchema json.RawMessage `json:"input_schema"`
+			Type         string          `json:"type"`
+			Name         string          `json:"name"`
+			Description  string          `json:"description"`
+			InputSchema  json.RawMessage `json:"input_schema"`
+			CacheControl json.RawMessage `json:"cache_control"`
 		}
 		if err := json.Unmarshal(rawTool, &t); err != nil {
 			return nil, &ParseError{Reason: ReasonInvalidJSON, Field: "tools", Err: err}
+		}
+		cache, err := cacheHint(t.CacheControl, "tools.cache_control")
+		if err != nil {
+			return nil, err
 		}
 		if strings.HasPrefix(t.Type, "web_search") {
 			continue
@@ -533,6 +601,7 @@ func decodeTools(raw []json.RawMessage) ([]canon.Tool, error) {
 			Name:        canon.ToolName(t.Name),
 			Description: t.Description,
 			Parameters:  t.InputSchema,
+			Cache:       cache,
 		})
 	}
 	return tools, nil

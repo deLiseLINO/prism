@@ -40,10 +40,6 @@ func parseErr(t *testing.T, err error) *ParseError {
 	return pe
 }
 
-func intPtr(v int) *int { return &v }
-
-func f64Ptr(v float64) *float64 { return &v }
-
 func TestSystemInstructions(t *testing.T) {
 	tests := []struct {
 		name string
@@ -54,11 +50,6 @@ func TestSystemInstructions(t *testing.T) {
 			name: "system string",
 			body: `{"model":"claude-antigravity--gemini-3-pro","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"system":"be brief"}`,
 			want: []canon.Content{canon.TextContent{Text: "be brief"}},
-		},
-		{
-			name: "system content blocks joined",
-			body: `{"model":"claude-antigravity--gemini-3-pro","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"system":[{"type":"text","text":"one"},{"type":"text","text":"two"}]}`,
-			want: []canon.Content{canon.TextContent{Text: "one\n\ntwo"}},
 		},
 		{
 			name: "no system",

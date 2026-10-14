@@ -32,3 +32,5 @@ prism upgrade         # update prism (brew and go installs)
 ```
 
 The daemon listens on `127.0.0.1:10200`. The UI, the CLI and the desktop app share it.
+
+Anthropic Messages requests retain client `cache_control` markers and system block boundaries when routed to a Messages provider. No additional settings are required. Prism does not add cache markers to requests that omit them.
