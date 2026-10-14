@@ -14,9 +14,25 @@ import (
 	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
-type wireTextBlock struct {
+type wireCacheControl struct {
 	Type string `json:"type"`
-	Text string `json:"text"`
+	TTL  string `json:"ttl,omitempty"`
+}
+
+var wireCacheControls = [...]*wireCacheControl{
+	canon.CacheDefault: {Type: "ephemeral"},
+	canon.Cache5m:      {Type: "ephemeral", TTL: "5m"},
+	canon.Cache1h:      {Type: "ephemeral", TTL: "1h"},
+}
+
+func wireCache(hint canon.CacheHint) *wireCacheControl {
+	return wireCacheControls[hint]
+}
+
+type wireTextBlock struct {
+	Type         string            `json:"type"`
+	Text         string            `json:"text"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireImageSource struct {
@@ -26,17 +42,18 @@ type wireImageSource struct {
 }
 
 type wireBlock struct {
-	Type      string           `json:"type"`
-	Text      string           `json:"text,omitempty"`
-	Source    *wireImageSource `json:"source,omitempty"`
-	Thinking  *string          `json:"thinking,omitempty"`
-	Data      string           `json:"data,omitempty"`
-	Signature string           `json:"signature,omitempty"`
-	ID        string           `json:"id,omitempty"`
-	Name      string           `json:"name,omitempty"`
-	Input     json.RawMessage  `json:"input,omitempty"`
-	ToolUseID string           `json:"tool_use_id,omitempty"`
-	Content   []wireBlock      `json:"content,omitempty"`
+	Type         string            `json:"type"`
+	Text         string            `json:"text,omitempty"`
+	Source       *wireImageSource  `json:"source,omitempty"`
+	Thinking     *string           `json:"thinking,omitempty"`
+	Data         string            `json:"data,omitempty"`
+	Signature    string            `json:"signature,omitempty"`
+	ID           string            `json:"id,omitempty"`
+	Name         string            `json:"name,omitempty"`
+	Input        json.RawMessage   `json:"input,omitempty"`
+	ToolUseID    string            `json:"tool_use_id,omitempty"`
+	Content      []wireBlock       `json:"content,omitempty"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireMessage struct {
@@ -45,9 +62,10 @@ type wireMessage struct {
 }
 
 type wireTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	InputSchema  json.RawMessage   `json:"input_schema"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireToolChoice struct {
@@ -85,6 +103,7 @@ type wireRequest struct {
 	Stream        bool              `json:"stream,omitempty"`
 	Thinking      *wireThinking     `json:"thinking,omitempty"`
 	OutputConfig  *wireOutputConfig `json:"output_config,omitempty"`
+	CacheControl  *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type budgetRow map[canon.ReasoningEffort]int
@@ -247,6 +266,7 @@ func (r *Runner) buildWireRequest(request canon.Request, outputLimit int, stream
 		StopSequences: request.Sampling.Stop,
 		Stream:        streaming,
 		OutputConfig:  outputConfig,
+		CacheControl:  wireCache(request.Cache),
 	}
 	thinkingOn := request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff
 	if !thinkingOn && request.Reasoning.Effort == 0 && request.Reasoning.Summary != 0 && usesAdaptiveThinking(request.Model) {
@@ -325,7 +345,7 @@ func systemBlocks(contents []canon.Content) ([]wireTextBlock, error) {
 		if text.Text == "" {
 			continue
 		}
-		blocks = append(blocks, wireTextBlock{Type: "text", Text: text.Text})
+		blocks = append(blocks, wireTextBlock{Type: "text", Text: text.Text, CacheControl: wireCache(text.Cache)})
 	}
 	return blocks, nil
 }
@@ -349,9 +369,9 @@ func contentBlocks(contents []canon.Content) ([]wireBlock, error) {
 			if v.Text == "" {
 				continue
 			}
-			blocks = append(blocks, wireBlock{Type: "text", Text: v.Text})
+			blocks = append(blocks, wireBlock{Type: "text", Text: v.Text, CacheControl: wireCache(v.Cache)})
 		case canon.ImageContent:
-			blocks = append(blocks, wireBlock{Type: "image", Source: &wireImageSource{
+			blocks = append(blocks, wireBlock{Type: "image", CacheControl: wireCache(v.Cache), Source: &wireImageSource{
 				Type:      "base64",
 				MediaType: v.MIMEType,
 				Data:      base64.StdEncoding.EncodeToString(v.Data),
@@ -407,13 +427,13 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 			if !json.Valid(args) {
 				return nil, nil, fmt.Errorf("anthropic: tool call %q has malformed arguments", v.CallID)
 			}
-			appendBlock("assistant", wireBlock{Type: "tool_use", ID: string(v.CallID), Name: string(v.Name), Input: json.RawMessage(args)})
+			appendBlock("assistant", wireBlock{Type: "tool_use", ID: string(v.CallID), Name: string(v.Name), Input: json.RawMessage(args), CacheControl: wireCache(v.Cache)})
 		case canon.FunctionOutput:
 			blocks, err := contentBlocks(v.Output)
 			if err != nil {
 				return nil, nil, err
 			}
-			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks})
+			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks, CacheControl: wireCache(v.Cache)})
 		case canon.CustomToolCall:
 			if v.CallID == "" {
 				return nil, nil, errors.New("anthropic: custom tool call has no call id")
@@ -551,7 +571,7 @@ func toolsFrom(tools []canon.Tool) ([]wireTool, []string, error) {
 				skipped = append(skipped, string(v.Name))
 				continue
 			}
-			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema})
+			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema, CacheControl: wireCache(v.Cache)})
 		case canon.CustomToolDef:
 			schema, err := customToolSchema(v.Name)
 			if err != nil {
