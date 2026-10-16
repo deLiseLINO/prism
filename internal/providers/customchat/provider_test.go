@@ -487,6 +487,7 @@ func TestStreamIncompleteLength(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{"content":"part"}}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_cut","function":{"name":"get_weather","arguments":"{\"city\":\""}}]}}]}`+"\n\n")
 		fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`+"\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
@@ -500,6 +501,13 @@ func TestStreamIncompleteLength(t *testing.T) {
 	reason, ok := finish.Status.Reason()
 	if !ok || reason != canon.IncompleteMaxOutputTokens {
 		t.Fatalf("status = %+v", finish.Status)
+	}
+	for _, event := range events.All() {
+		if finished, ok := event.(canon.ItemFinished); ok {
+			if _, ok := finished.Item.(canon.FunctionCall); ok {
+				t.Fatal("truncated tool call published as finished")
+			}
+		}
 	}
 }
 
