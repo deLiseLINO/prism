@@ -372,7 +372,7 @@ func (s *streamer) handleToolCallDelta(call map[string]any) error {
 	}
 	for _, fields := range []map[string]any{call, fn} {
 		for _, key := range []string{"id", "name", "arguments"} {
-			if value, present := fields[key]; present {
+			if value, present := fields[key]; present && value != nil {
 				if _, ok := value.(string); !ok {
 					return s.protocolError("upstream tool call " + key + " is not a string")
 				}
