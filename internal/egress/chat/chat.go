@@ -426,6 +426,9 @@ func (c *Chat) messageWire() message {
 	m := message{Role: assistantRole, Content: c.content.String(), ReasoningContent: c.reasoning.String()}
 	for _, id := range c.order {
 		st := c.tools[id]
+		if !st.finished {
+			continue
+		}
 		m.ToolCalls = append(m.ToolCalls, toolCallFull{
 			ID:       st.callID,
 			Type:     functionType,
