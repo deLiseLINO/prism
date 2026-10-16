@@ -247,7 +247,7 @@ func (s *streamer) handleDelta(delta map[string]any) error {
 			return err
 		}
 	}
-	if raw, present := delta["tool_calls"]; present {
+	if raw, present := delta["tool_calls"]; present && raw != nil {
 		rawCalls, ok := raw.([]any)
 		if !ok {
 			return s.protocolError("upstream tool_calls delta is not an array")
