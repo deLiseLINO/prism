@@ -484,29 +484,117 @@ func TestStreamToCanonEvents(t *testing.T) {
 }
 
 func TestStreamIncompleteLength(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{"content":"part"}}]}`+"\n\n")
-		fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_cut","function":{"name":"get_weather","arguments":"{\"city\":\""}}]}}]}`+"\n\n")
-		fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`+"\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
-	}))
-	defer srv.Close()
-	events := &collector{}
-	r := New(staticKey, Options{})
-	if err := r.Run(context.Background(), provider.RunRequest{Request: testRequest(true), Target: testTarget(srv.URL)}, events); err != nil {
-		t.Fatalf("Run: %v", err)
+	cases := []struct {
+		name      string
+		calls     string
+		unstarted bool
+	}{
+		{name: "text_only", calls: `[]`},
+		{name: "partial_function_json", calls: `[{"index":0,"id":"call_cut","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\""}}]`},
+		{name: "partial_custom_wrapper", calls: `[{"index":0,"id":"call_cut","type":"function","function":{"name":"patch","arguments":"{\"input\":\"partial"}}]`},
+		{name: "missing_name", calls: `[{"index":0,"id":"call_cut","type":"function","function":{"arguments":"{}"}}]`, unstarted: true},
+		{name: "missing_id", calls: `[{"index":0,"type":"function","function":{"name":"get_weather","arguments":"{}"}}]`, unstarted: true},
+		{name: "valid_plus_partial", calls: `[{"index":0,"id":"call_valid","type":"function","function":{"name":"get_weather","arguments":"{}"}},{"index":1,"id":"call_cut","type":"function","function":{"name":"patch","arguments":"{\"input\":\"partial"}}]`},
 	}
-	finish := events.All()[len(events.All())-1].(canon.TurnFinished)
-	reason, ok := finish.Status.Reason()
-	if !ok || reason != canon.IncompleteMaxOutputTokens {
-		t.Fatalf("status = %+v", finish.Status)
+	const usage = `{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8,"prompt_tokens_details":{"cached_tokens":1},"completion_tokens_details":{"reasoning_tokens":2}}`
+	for _, streaming := range []bool{true, false} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("stream=%t/%s", streaming, tc.name), func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if streaming {
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{"content":"part","reasoning_content":"thinking"}}]}`+"\n\n")
+						fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-2\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":%s}}]}\n\n", tc.calls)
+						fmt.Fprint(w, `data: {"id":"chatcmpl-2","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`+"\n\n")
+						fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-2\",\"choices\":[],\"usage\":%s}\n\n", usage)
+						fmt.Fprint(w, "data: [DONE]\n\n")
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprintf(w, `{"id":"chatcmpl-2","choices":[{"index":0,"message":{"role":"assistant","content":"part","reasoning_content":"thinking","tool_calls":%s},"finish_reason":"length"}],"usage":%s}`, tc.calls, usage)
+				}))
+				defer srv.Close()
+				request := testRequest(streaming)
+				request.Model = "model"
+				request.Tools = append(request.Tools, canon.CustomToolDef{Name: "patch"})
+				events := &collector{}
+				if err := New(staticKey, Options{}).Run(context.Background(), provider.RunRequest{Request: request, Target: testTarget(srv.URL)}, events); err != nil {
+					t.Fatalf("Run: %v", err)
+				}
+				if events.TerminalCount() != 1 {
+					t.Fatalf("terminals = %d", events.TerminalCount())
+				}
+				finish, ok := events.All()[len(events.All())-1].(canon.TurnFinished)
+				if !ok || finish.Status != canon.Incomplete(canon.IncompleteMaxOutputTokens) {
+					t.Fatalf("terminal = %+v", events.All()[len(events.All())-1])
+				}
+				if finish.Usage != (canon.Usage{InputTokens: 3, CachedInputTokens: 1, OutputTokens: 5, ReasoningTokens: 2, TotalTokens: 8}) {
+					t.Fatalf("usage = %+v", finish.Usage)
+				}
+				var text, reasoning string
+				for _, event := range events.All() {
+					switch ev := event.(type) {
+					case canon.ItemStarted:
+						switch ev.Item.(type) {
+						case canon.FunctionCall, canon.CustomToolCall:
+							if !streaming || tc.unstarted {
+								t.Fatalf("unstarted truncated call acquired an identity: %+v", ev.Item)
+							}
+						}
+					case canon.ItemFinished:
+						switch item := ev.Item.(type) {
+						case canon.FunctionCall, canon.CustomToolCall:
+							t.Fatalf("truncated turn published a finished tool call: %+v", item)
+						case canon.Message:
+							for _, content := range item.Content {
+								if part, ok := content.(canon.TextContent); ok {
+									text += part.Text
+								}
+							}
+						case canon.ReasoningItem:
+							reasoning += item.Content
+						}
+					}
+				}
+				if text != "part" || reasoning != "thinking" {
+					t.Fatalf("preserved text = %q, reasoning = %q", text, reasoning)
+				}
+			})
+		}
 	}
-	for _, event := range events.All() {
-		if finished, ok := event.(canon.ItemFinished); ok {
-			if _, ok := finished.Item.(canon.FunctionCall); ok {
-				t.Fatal("truncated tool call published as finished")
-			}
+}
+
+func TestMalformedFunctionArgumentsOnNaturalFinish(t *testing.T) {
+	for _, streaming := range []bool{true, false} {
+		for _, reason := range []string{"stop", "tool_calls"} {
+			t.Run(fmt.Sprintf("stream=%t/%s", streaming, reason), func(t *testing.T) {
+				const calls = `[{"index":0,"id":"call_cut","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\""}}]`
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if streaming {
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":%s}}]}\n\n", calls)
+						fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":%q}]}\n\ndata: [DONE]\n\n", reason)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprintf(w, `{"choices":[{"index":0,"message":{"role":"assistant","tool_calls":%s},"finish_reason":%q}]}`, calls, reason)
+				}))
+				defer srv.Close()
+				request := testRequest(streaming)
+				request.Model = "model"
+				events := &collector{}
+				err := New(staticKey, Options{}).Run(context.Background(), provider.RunRequest{Request: request, Target: testTarget(srv.URL)}, events)
+				var runErr provider.RunError
+				if !errors.As(err, &runErr) || runErr.Class != provider.ClassTransport || !runErr.Accepted {
+					t.Fatalf("want accepted transport RunError, got %v", err)
+				}
+				for _, event := range events.All() {
+					switch event.(type) {
+					case canon.ItemFinished, canon.TurnFinished:
+						t.Fatalf("malformed function arguments published %T", event)
+					}
+				}
+			})
 		}
 	}
 }
