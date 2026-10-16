@@ -277,6 +277,37 @@ func TestToolCallWholeArguments(t *testing.T) {
 	}
 }
 
+func TestNonStreamOmitsUnfinishedTools(t *testing.T) {
+	var buf bytes.Buffer
+	c := New(&buf, false)
+	if err := c.Begin(header()); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []canon.Event{
+		canon.ItemStarted{Item: canon.FunctionCall{ID: "done", CallID: "call_done", Name: "lookup"}},
+		canon.ItemFinished{Item: canon.FunctionCall{ID: "done", CallID: "call_done", Name: "lookup", Arguments: []byte(`{"id":1}`)}},
+		canon.ItemStarted{Item: canon.FunctionCall{ID: "cut", CallID: "call_cut", Name: "lookup"}},
+		canon.ToolArgumentsDelta{ItemID: "cut", Bytes: []byte(`{"id":`)},
+		canon.ItemStarted{Item: canon.CustomToolCall{ID: "custom", CallID: "call_custom", Name: "patch"}},
+		canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens)},
+	} {
+		if err := c.Frame(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	choice := firstChoice(t, decode(t, buf.String()))
+	calls := choice["message"].(map[string]any)["tool_calls"].([]any)
+	if choice["finish_reason"] != "length" || len(calls) != 1 || calls[0].(map[string]any)["id"] != "call_done" {
+		t.Fatalf("unfinished tools leaked: %s", buf.String())
+	}
+	if calls[0].(map[string]any)["function"].(map[string]any)["arguments"] != `{"id":1}` {
+		t.Fatalf("completed arguments changed: %s", buf.String())
+	}
+}
+
 func TestFinishReasonMapping(t *testing.T) {
 	tests := []struct {
 		name string

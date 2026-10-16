@@ -101,6 +101,9 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 	if err != nil {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
 	}
+	if choice.FinishReason == "length" {
+		choice.Message.ToolCalls = nil
+	}
 	for i, tc := range choice.Message.ToolCalls {
 		if tc.Type != "" && tc.Type != "function" || tc.Function.Name == "" {
 			return runError(provider.Retryable, provider.ClassTransport, true, true, 0, fmt.Errorf("customchat: malformed upstream tool call %d", i))

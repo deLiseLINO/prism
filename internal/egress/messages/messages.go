@@ -199,6 +199,9 @@ func (e *streamEncoder) ResponseFailure(terminal canon.Event) (canon.Failure, bo
 		if reason, incomplete := t.Status.Reason(); incomplete {
 			unsafe := reason != canon.IncompleteMaxOutputTokens && reason != canon.IncompleteContentFilter
 			for _, block := range e.blocks {
+				if reason == canon.IncompleteMaxOutputTokens && block.kind == blockToolUse {
+					continue
+				}
 				unsafe = unsafe || block.kind != blockText
 			}
 			if unsafe {
@@ -293,6 +296,9 @@ func (e *streamEncoder) closeOpenBlocks() error {
 	clear(e.blocks)
 	for _, b := range open {
 		if !e.streaming {
+			if b.kind == blockToolUse {
+				continue
+			}
 			if e.finished == nil {
 				e.finished = make(map[int]any)
 			}
@@ -310,8 +316,6 @@ func partialBlockWire(b *openBlock) any {
 	switch b.kind {
 	case blockThinking:
 		return thinkingBlockWire{Type: "thinking", Thinking: b.text.String()}
-	case blockToolUse:
-		return toolUseBlockWire{Type: "tool_use", Input: json.RawMessage(`{}`)}
 	}
 	return textBlockWire{Type: "text", Text: b.text.String()}
 }

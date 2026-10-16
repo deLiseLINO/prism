@@ -219,6 +219,9 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		if !known {
 			return s.failUnknown(fmt.Sprintf("upstream finish reason %q is not representable", reason))
 		}
+		if reason == "length" {
+			s.tools = nil
+		}
 		if err := s.finishItems(); err != nil {
 			return err
 		}

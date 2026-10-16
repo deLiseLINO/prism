@@ -38,3 +38,5 @@ Anthropic Messages requests retain client `cache_control` markers and system blo
 Chat providers may send `tool_calls: null` in stream chunks. Prism treats it as no tool-call update and preserves text and active tool calls. Non-null tool-call values must still be arrays.
 
 Within streamed tool calls, null `id`, `name`, and `arguments` fields mean no update. Prism preserves the call identity and accumulated arguments. Non-null values in these fields must still be strings.
+
+When a Chat provider stops with `finish_reason: "length"`, Prism preserves the output-limit reason, text, reasoning, and token usage. It does not finish tool calls from that turn. Non-streaming responses omit those calls. Streaming clients may have received partial tool deltas and must not execute them after a length stop. Malformed tool arguments on normal completion still fail.
