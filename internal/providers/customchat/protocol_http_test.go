@@ -441,3 +441,48 @@ func protocolDataFrames(t *testing.T, raw []byte) []json.RawMessage {
 	}
 	return frames
 }
+
+func TestMixedReasoningPrecedesTextAtHTTPEgress(t *testing.T) {
+	for _, field := range []string{"reasoning_content", "reasoning", "reasoning_text"} {
+		t.Run(field, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{%q:\"Considering the request\"}}]}\n\n", field)
+				fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"D\",%q:\". Ready.\"}}]}\n\n", field)
+				fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"one.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			}))
+			defer upstream.Close()
+			raw := protocolPost(t, protocolProxy(t, upstream), "/v1/chat/completions", `{"model":"edge/model","messages":[{"role":"user","content":"Confirm completion."}],"stream":true}`)
+			var text, reasoning strings.Builder
+			textStarted := false
+			for _, data := range protocolDataFrames(t, raw) {
+				var frame struct {
+					Choices []struct {
+						Delta struct {
+							Content   string `json:"content"`
+							Reasoning string `json:"reasoning_content"`
+						} `json:"delta"`
+					} `json:"choices"`
+				}
+				if err := json.Unmarshal(data, &frame); err != nil {
+					t.Fatal(err)
+				}
+				for _, choice := range frame.Choices {
+					if choice.Delta.Reasoning != "" {
+						if textStarted {
+							t.Fatalf("reasoning resumed after answer text: %s", raw)
+						}
+						reasoning.WriteString(choice.Delta.Reasoning)
+					}
+					if choice.Delta.Content != "" {
+						textStarted = true
+						text.WriteString(choice.Delta.Content)
+					}
+				}
+			}
+			if text.String() != "Done." || reasoning.String() != "Considering the request. Ready." {
+				t.Fatalf("text=%q reasoning=%q", text.String(), reasoning.String())
+			}
+		})
+	}
+}

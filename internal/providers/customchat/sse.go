@@ -232,21 +232,21 @@ func (s *streamer) handleFrame(f sseFrame) error {
 }
 
 func (s *streamer) handleDelta(delta map[string]any) error {
-	if text, ok := delta["content"].(string); ok && text != "" {
-		if err := s.ensureMessageOpen(); err != nil {
-			return err
-		}
-		s.msgText.WriteString(text)
-		if err := s.emit(canon.TextDelta{ItemID: s.msgID, Text: text}); err != nil {
-			return err
-		}
-	}
 	if text := reasoningDelta(delta); text != "" {
 		if err := s.ensureReasoningOpen(); err != nil {
 			return err
 		}
 		s.reasonText.WriteString(text)
 		if err := s.emit(canon.ReasoningDelta{ItemID: s.reasoningID(), Text: text}); err != nil {
+			return err
+		}
+	}
+	if text, ok := delta["content"].(string); ok && text != "" {
+		if err := s.ensureMessageOpen(); err != nil {
+			return err
+		}
+		s.msgText.WriteString(text)
+		if err := s.emit(canon.TextDelta{ItemID: s.msgID, Text: text}); err != nil {
 			return err
 		}
 	}
