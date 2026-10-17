@@ -353,16 +353,6 @@ func TestNewRunnerGuards(t *testing.T) {
 	}
 }
 
-func TestErrorEnvelopeMessage(t *testing.T) {
-	got := errorEnvelopeMessage(`{"error":{"message":"boom","status":"INVALID_ARGUMENT"}}`)
-	if got != "INVALID_ARGUMENT: boom" {
-		t.Fatalf("message = %q", got)
-	}
-	if got := errorEnvelopeMessage("plain text"); got != "plain text" {
-		t.Fatalf("message = %q", got)
-	}
-}
-
 func readAllBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, fmt.Errorf("nil body")
@@ -391,10 +381,14 @@ type renewingCreds struct {
 	stubCreds
 	next     CredentialPair
 	rejected []string
+	err      error
 }
 
 func (c *renewingCreds) RefreshRejected(_ context.Context, _ account.Lease, rejected string) (CredentialPair, error) {
 	c.rejected = append(c.rejected, rejected)
+	if c.err != nil {
+		return CredentialPair{}, c.err
+	}
 	return c.next, nil
 }
 

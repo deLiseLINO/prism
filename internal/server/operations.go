@@ -386,7 +386,20 @@ func (s *Server) handleCompact(w http.ResponseWriter, r *http.Request) {
 			}
 			w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 		}
-		writeJSON(w, failureStatus(failed.Event.Failure.Reason), errorEnvelope{Error: errorObject{Code: "compact_failed", Message: failed.Event.Failure.Message}})
+		failure := failed.Event.Failure
+		var body any = errorEnvelope{Error: errorObject{Code: "compact_failed", Message: failure.Message}}
+		if failure.HasProvider() {
+			payload := make(map[string]json.RawMessage)
+			if len(failure.Provider.Error) > 0 {
+				payload["error"] = failure.Provider.Error
+			}
+			if len(failure.Provider.StatusDetails) > 0 {
+				details, _ := json.Marshal(map[string]json.RawMessage{"error": failure.Provider.StatusDetails})
+				payload["status_details"] = details
+			}
+			body = payload
+		}
+		writeJSON(w, failureStatus(failure), body)
 		return
 	}
 	finished, ok := res.Terminal.(routing.Finished)

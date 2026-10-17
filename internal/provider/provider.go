@@ -102,6 +102,16 @@ func CredentialRunError(err error) RunError {
 	}
 }
 
+// CredentialRenewalRunError retains the inference refusal while the renewal
+// failure determines whether the account needs re-authentication.
+func CredentialRenewalRunError(err error, rejection RunError) RunError {
+	failure := CredentialRunError(err)
+	failure.Accepted = rejection.Accepted
+	failure.Reported = rejection.Reported
+	failure.RetryAfter = rejection.RetryAfter
+	return failure
+}
+
 func (k RunErrorKind) FailoverAllowed() bool {
 	switch k {
 	case TerminalEmitted, UnsafeReplay:

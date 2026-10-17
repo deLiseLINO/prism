@@ -152,20 +152,39 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 	fail := func(f canon.Failure) TurnResult {
 		return turnFailed(f, attempts, trace)
 	}
-	exhausted := func() TurnResult {
-		return fail(canon.Failure{Reason: canon.FailQuotaExhausted, Message: "routing: failover budget exhausted"})
+	var lastFailure, firstLimit, storedFailure *TurnResult
+	resolve := func(local TurnResult) TurnResult {
+		var held *TurnResult
+		if failure, ok := local.Terminal.(Failed); ok {
+			f := failure.Event.Failure
+			if f.Reason == canon.FailUnauthorized || f.Reason == canon.FailAccountUnavailable || f.Provider != nil && f.Provider.Status == 401 {
+				held = firstLimit
+			}
+		}
+		if held == nil {
+			held = lastFailure
+		}
+		if held == nil {
+			held = storedFailure
+		}
+		if held != nil {
+			result := *held
+			result.Attempts, result.Trace = attempts, trace
+			return result
+		}
+		return local
 	}
 	for ti := range plan.Targets {
 		target := plan.Targets[ti]
 		runner, ok := r.runners.Lookup(target.Provider)
 		if !ok {
-			return fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: no runner registered for provider %q", target.Provider)})
+			return resolve(fail(canon.Failure{Reason: canon.FailAccountUnavailable, Message: fmt.Sprintf("routing: no runner registered for provider %q", target.Provider)}))
 		}
 		if canon.HasImage(req) && !target.ImageInput {
 			if ti+1 < len(plan.Targets) {
 				continue
 			}
-			return fail(imageUnsupportedFailure(target).Failure)
+			return resolve(fail(imageUnsupportedFailure(target).Failure))
 		}
 		lease, err := r.pool.Acquire(ctx, account.AcquireRequest{
 			Provider:   target.Provider,
@@ -176,14 +195,19 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 			Policy:     target.Policy,
 		})
 		if err != nil {
-			if errors.Is(err, account.ErrNoAccount) && ti+1 < len(plan.Targets) && targetSwitches < policy.MaxTargetFailovers {
-				targetSwitches++
-				continue
-			}
 			if errors.Is(err, account.ErrNoAccount) {
-				return fail(canon.Failure{Reason: canon.FailQuotaExhausted, Message: "routing: pool exhausted"})
+				var unavailable *account.AcquireError
+				if errors.As(err, &unavailable) && unavailable.Failure != nil {
+					result := fail(*unavailable.Failure)
+					storedFailure = &result
+				}
+				if ti+1 < len(plan.Targets) && targetSwitches < policy.MaxTargetFailovers {
+					targetSwitches++
+					continue
+				}
+				return resolve(fail(canon.Failure{Reason: canon.FailAccountUnavailable, Message: err.Error()}))
 			}
-			return fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: acquire failed: %v", err)})
+			return resolve(fail(canon.Failure{Reason: canon.FailUnknown, Message: fmt.Sprintf("routing: acquire failed: %v", err)}))
 		}
 		attempts++
 		trace = append(trace, AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "failed"})
@@ -281,8 +305,9 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 			re.Class = openaierr.ClassForInband(*capture.failed.Failure.Provider, re.Class)
 		}
 		logAttempt(attemptOutcome(re), runErrorMessage(re))
+		result := runErrorTerminal(re, capture, attempts, trace)
 		if re.Class == provider.ClassUnauthorized {
-			_ = r.pool.Record(ctx, lease, account.AuthRejected{})
+			_ = r.pool.Record(ctx, lease, account.AuthRejected{Failure: result.Terminal.(Failed).Event.Failure})
 		} else {
 			_ = r.pool.Record(ctx, lease, account.RequestRejected{})
 		}
@@ -290,14 +315,18 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 			trace[attempts-1].Usage = capture.failed.Usage
 		}
 		if ctx.Err() != nil || !hopAllowed(re, capture, lifecycle) {
-			return runErrorTerminal(re, capture, attempts, trace)
+			return result
+		}
+		lastFailure = &result
+		if firstLimit == nil && (re.Class == provider.ClassRateLimited || re.Class == provider.ClassQuotaExhausted) {
+			firstLimit = &result
 		}
 		if ti+1 >= len(plan.Targets) || targetSwitches >= policy.MaxTargetFailovers {
-			return runErrorTerminal(re, capture, attempts, trace)
+			return resolve(result)
 		}
 		targetSwitches++
 	}
-	return exhausted()
+	return resolve(fail(canon.Failure{Reason: canon.FailAccountUnavailable, Message: "routing: no available target"}))
 }
 
 func runErrorOf(err error) (provider.RunError, bool) {
@@ -407,10 +436,12 @@ func runErrorResult(re provider.RunError, capture *captureSink, attempts int, tr
 		return TurnResult{Terminal: Failed{Event: failed}, Attempts: attempts, Trace: trace}
 	}
 	failure := canon.Failure{Reason: failureReason(re.Class), Message: runErrorMessage(re)}
-	if re.Reported != nil && (len(re.Reported.Error) > 0 || len(re.Reported.StatusDetails) > 0) {
+	if re.Reported != nil {
 		copied := *re.Reported
 		failure.Provider = &copied
-		failure.Message = openaierr.Text(copied)
+		if message := openaierr.Text(copied); message != "" {
+			failure.Message = message
+		}
 	}
 	return turnFailed(failure, attempts, trace)
 }

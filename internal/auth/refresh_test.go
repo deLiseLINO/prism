@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/account"
+	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 	"github.com/deLiseLINO/prism/internal/store"
 )
 
@@ -104,7 +106,8 @@ type harness struct {
 		account.Pool
 		Register(account.Account)
 		AdvanceGeneration(account.AccountID, account.CredentialGeneration) error
-		MarkNeedsReauth(account.AccountID) error
+		PublishCredential(account.AccountID, account.CredentialGeneration, bool) error
+		MarkNeedsReauth(account.Lease) error
 	}
 	ref    *Refresher
 	sink   *FileSink
@@ -568,6 +571,123 @@ func TestInvalidGrantMarksNeedsReauthAndDropsCredentials(t *testing.T) {
 	}
 	if pa := h.poolAccount(); pa.State != account.NeedsReauth {
 		t.Fatalf("pool state = %v, want NeedsReauth", pa.State)
+	}
+}
+
+func TestInvalidGrantRetainsProviderRefusalOnlyAcrossItsOwnTransition(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(context.Context, *harness) error
+		state  account.State
+		retain bool
+	}{
+		{name: "matching invalidation", state: account.NeedsReauth, retain: true},
+		{name: "resume", state: account.Active, mutate: func(ctx context.Context, h *harness) error {
+			a := h.poolAccount()
+			return h.pool.Resume(ctx, a.ID, a.Version)
+		}},
+		{name: "pause", state: account.Paused, mutate: func(ctx context.Context, h *harness) error {
+			a := h.poolAccount()
+			return h.pool.Pause(ctx, a.ID, a.Version)
+		}},
+		{name: "priority update", state: account.NeedsReauth, mutate: func(ctx context.Context, h *harness) error {
+			a := h.poolAccount()
+			return h.pool.UpdatePriority(ctx, a.ID, 7, a.Version)
+		}},
+		{name: "same generation registration", state: account.NeedsReauth, mutate: func(_ context.Context, h *harness) error {
+			h.pool.Register(h.poolAccount())
+			return nil
+		}},
+		{name: "credential replacement", state: account.Active, mutate: func(_ context.Context, h *harness) error {
+			a := h.poolAccount()
+			a.CredGen++
+			a.State = account.Active
+			h.pool.Register(a)
+			return nil
+		}},
+		{name: "same generation credential replacement", state: account.Active, mutate: func(_ context.Context, h *harness) error {
+			a := h.poolAccount()
+			return h.pool.PublishCredential(a.ID, a.CredGen, true)
+		}},
+		{name: "provider replacement", state: account.Active, mutate: func(_ context.Context, h *harness) error {
+			a := h.poolAccount()
+			a.Provider = "edge"
+			a.State = account.Active
+			h.pool.Register(a)
+			return nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newRefreshHarness(t, "codex")
+			cred := freshCodex()
+			h.seed(cred)
+			ctx := context.Background()
+			request := account.AcquireRequest{Provider: h.provider, Policy: account.SelectionPolicy{PinnedAccount: h.acc}}
+			lease, err := h.pool.Acquire(ctx, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":{"message":"access refused","code":"access_revoked","detail":"request-17"}}`))
+			}))
+			t.Cleanup(upstream.Close)
+			resp, err := upstream.Client().Get(upstream.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			captured, err := openaierr.Capture(resp)
+			_ = resp.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.tokens.respond(http.StatusBadRequest, `{"error":"invalid_grant"}`)
+			if _, err := h.ref.RefreshRejected(ctx, lease, cred.Access); !errors.Is(err, account.ErrNeedsReauth) {
+				t.Fatalf("refresh rejection = %v, want ErrNeedsReauth", err)
+			}
+			if tc.mutate != nil {
+				if err := tc.mutate(ctx, h); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := h.poolAccount()
+			failure := canon.Failure{Reason: canon.FailUnauthorized, Message: "access refused", Provider: &captured.Reported}
+			if err := h.pool.Record(ctx, lease, account.AuthRejected{Failure: failure}); err != nil {
+				t.Fatal(err)
+			}
+			after := h.poolAccount()
+			if after.State != tc.state || after.Version != before.Version || after.InFlight != 0 {
+				t.Fatalf("rejection changed lifecycle or left lease in flight, before=%+v after=%+v", before, after)
+			}
+			request.Provider = after.Provider
+			_, err = h.pool.Acquire(ctx, request)
+			if tc.state == account.Active {
+				if err != nil {
+					t.Fatalf("stale rejection blocked usable account: %v", err)
+				}
+				return
+			}
+			var denied *account.AcquireError
+			if !errors.As(err, &denied) {
+				t.Fatalf("acquire = %v, want account denial", err)
+			}
+			if !tc.retain {
+				if denied.Failure != nil {
+					t.Fatalf("stale rejection retained after lifecycle mutation: %+v", denied.Failure)
+				}
+				return
+			}
+			if denied.Reason != account.AccountNeedsReauth || denied.Failure == nil || denied.Failure.Provider == nil {
+				t.Fatalf("missing original provider refusal: %+v", denied)
+			}
+			got := denied.Failure
+			if got.Reason != canon.FailUnauthorized || got.Message != "access refused" || got.Provider.Status != 401 ||
+				string(got.Provider.Error) != `{"message":"access refused","code":"access_revoked","detail":"request-17"}` {
+				t.Fatalf("provider refusal changed: %+v provider=%+v", got, got.Provider)
+			}
+		})
 	}
 }
 

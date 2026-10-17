@@ -150,7 +150,7 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 		if status == http.StatusOK && proto == protocolMessages {
 			if terminal, ok := res.Terminal.(routing.Finished); ok {
 				if failure, failed := sink.(*messagesSink).e.ResponseFailure(terminal.Event); failed {
-					status = failureStatus(failure.Reason)
+					status = failureStatus(failure)
 				}
 			}
 		}
@@ -165,7 +165,7 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 func bufferedStatus(proto protocol, terminal routing.Terminal) int {
 	switch t := terminal.(type) {
 	case routing.Failed:
-		return failureStatus(t.Event.Failure.Reason)
+		return failureStatus(t.Event.Failure)
 	case routing.Finished:
 		if proto == protocolResponses {
 			return http.StatusOK
@@ -186,8 +186,11 @@ func bufferedStatus(proto protocol, terminal routing.Terminal) int {
 	return http.StatusOK
 }
 
-func failureStatus(r canon.FailureReason) int {
-	switch r {
+func failureStatus(f canon.Failure) int {
+	if f.Provider != nil && f.Provider.Status >= 400 && f.Provider.Status <= 599 {
+		return f.Provider.Status
+	}
+	switch f.Reason {
 	case canon.FailUnauthorized:
 		return http.StatusUnauthorized
 	case canon.FailForbidden:
@@ -206,6 +209,8 @@ func failureStatus(r canon.FailureReason) int {
 		return http.StatusGatewayTimeout
 	case canon.FailClientClosed:
 		return 499
+	case canon.FailAccountUnavailable:
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusBadGateway
 	}

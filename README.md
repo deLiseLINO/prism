@@ -40,3 +40,7 @@ Chat providers may send `tool_calls: null` in stream chunks. Prism treats it as 
 Within streamed tool calls, null `id`, `name`, and `arguments` fields mean no update. Prism preserves the call identity and accumulated arguments. Non-null values in these fields must still be strings.
 
 When a Chat provider stops with `finish_reason: "length"`, Prism preserves the output-limit reason, text, reasoning, and token usage. It does not finish tool calls from that turn. Non-streaming responses omit those calls. Streaming clients may have received partial tool deltas and must not execute them after a length stop. Malformed tool arguments on normal completion still fail.
+
+Provider HTTP failures retain their original status on non-streaming responses, their error details, and plain-text messages. An unavailable fallback does not replace an earlier provider failure. A rate or quota refusal takes precedence over a later authentication refusal before output begins.
+
+After a provider rejects a credential, prism retains that refusal for later requests in the running daemon. Replacing the credential or resuming the account clears it. After a daemon restart, an account that still needs login receives a local login-required message instead of a quota error. Missing, paused, and unselected accounts return `account_unavailable`, not `quota_exhausted`.
