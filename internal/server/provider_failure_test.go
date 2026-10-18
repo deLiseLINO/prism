@@ -194,6 +194,7 @@ func TestChatProviderFailureHasReadableMessage(t *testing.T) {
 		{"blank message", `{"code":"server_overloaded","message":" \t\n"}`, "Server is overloaded. Please try again later.", false},
 		{"null message", `{"code":"server_overloaded","message":null}`, "Server is overloaded. Please try again later.", false},
 		{"provider message", `{"code":"server_overloaded","message":"  Provider says wait.  ","request":9007199254740993}`, "  Provider says wait.  ", false},
+		{"case-distinct extra field", `{"code":"server_overloaded","message":"  Provider says wait.  ","MESSAGE":""}`, "  Provider says wait.  ", false},
 		{"status details", `{"code":"server_overloaded","details":{"request":"mock"}}`, "Server is overloaded. Please try again later.", true},
 	} {
 		for _, stream := range []bool{true, false} {
