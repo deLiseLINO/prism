@@ -746,6 +746,8 @@ func readMessagesJSON(raw []byte) (outcome, error) {
 		out.Stop = "tool"
 	case "max_tokens":
 		out.Stop = "length"
+	case "refusal":
+		out.Stop = "filter"
 	default:
 		return out, fmt.Errorf("stop_reason %v", m["stop_reason"])
 	}

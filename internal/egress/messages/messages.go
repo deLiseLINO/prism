@@ -579,8 +579,11 @@ func (e *streamEncoder) writeJSON(payload any) error {
 
 func stopReason(s canon.Status, toolUse bool) string {
 	if s.Kind() == canon.StatusIncomplete {
-		if reason, _ := s.Reason(); reason == canon.IncompleteMaxOutputTokens {
+		switch reason, _ := s.Reason(); reason {
+		case canon.IncompleteMaxOutputTokens:
 			return "max_tokens"
+		case canon.IncompleteContentFilter:
+			return "refusal"
 		}
 		return "end_turn"
 	}
