@@ -401,6 +401,31 @@ func chatProviderError(raw []byte) (any, error) {
 		}
 		return map[string]any{"message": message}, nil
 	}
+	if raw[0] == '{' {
+		var fields struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		}
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return json.RawMessage(raw), nil
+		}
+		code := strings.TrimSpace(fields.Code)
+		if strings.TrimSpace(fields.Message) == "" && code != "" {
+			var message string
+			if code == "server_overloaded" {
+				message = "Server is overloaded. Please try again later."
+			} else {
+				message = "Provider error: " + code
+			}
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &body); err != nil {
+				return nil, err
+			}
+			body["message"], _ = json.Marshal(message)
+			encoded, err := json.Marshal(body)
+			return json.RawMessage(encoded), err
+		}
+	}
 	return json.RawMessage(raw), nil
 }
 
