@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/customchat"
+	"github.com/deLiseLINO/prism/internal/providers/customresponses"
 	"github.com/deLiseLINO/prism/internal/routing"
 )
 
@@ -178,5 +180,76 @@ func TestLimitFailureOnlyOverridesUnavailableOrAuthFallback(t *testing.T) {
 				t.Fatalf("wrong fallback precedence: HTTP %d %s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestChatProviderFailureHasReadableMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, message string
+		statusDetails      bool
+	}{
+		{"overload", `{"code":"server_overloaded","request":9007199254740993,"param":null}`, "Server is overloaded. Please try again later.", false},
+		{"unknown code", `{"code":"edge_unavailable","type":"server_error"}`, "Provider error: edge_unavailable", false},
+		{"empty message", `{"code":"server_overloaded","message":""}`, "Server is overloaded. Please try again later.", false},
+		{"blank message", `{"code":"server_overloaded","message":" \t\n"}`, "Server is overloaded. Please try again later.", false},
+		{"null message", `{"code":"server_overloaded","message":null}`, "Server is overloaded. Please try again later.", false},
+		{"provider message", `{"code":"server_overloaded","message":"  Provider says wait.  ","request":9007199254740993}`, "  Provider says wait.  ", false},
+		{"status details", `{"code":"server_overloaded","details":{"request":"mock"}}`, "Server is overloaded. Please try again later.", true},
+	} {
+		for _, stream := range []bool{true, false} {
+			t.Run(tc.name+"/stream="+strconv.FormatBool(stream), func(t *testing.T) {
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					response := `{"status":"failed","error":` + tc.raw + `}`
+					if tc.statusDetails {
+						response = `{"status":"failed","status_details":{"error":` + tc.raw + `}}`
+					}
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = w.Write([]byte("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":" + response + "}\n\n"))
+					} else {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write([]byte(response))
+					}
+				}))
+				defer upstream.Close()
+				runner := customresponses.New(func(context.Context, provider.Target, account.Lease) (string, error) { return "mock", nil }, customresponses.Options{})
+				plan := routing.Plan{Targets: []provider.Target{{Provider: "p1", Model: "mock", Wire: provider.WireResponses, BaseURL: upstream.URL}}}
+				h := newTestServer(t, nil, map[canon.ModelID]routing.Plan{"edge/mock": plan}, func(reg *provider.Registry) {
+					if err := reg.Register("p1", runner); err != nil {
+						t.Fatal(err)
+					}
+				})
+				rec := postJSON(t, h, "/v1/chat/completions", `{"model":"edge/mock","messages":[{"role":"user","content":"hi"}],"stream":`+strconv.FormatBool(stream)+`}`)
+				body := rec.Body.String()
+				wantStatus := http.StatusBadGateway
+				if stream {
+					wantStatus = http.StatusOK
+					parts := strings.Split(strings.TrimSpace(body), "\n\n")
+					body = strings.TrimPrefix(parts[len(parts)-1], "data: ")
+				}
+				if rec.Code != wantStatus {
+					t.Fatalf("HTTP %d, want %d: %s", rec.Code, wantStatus, body)
+				}
+				var envelope struct {
+					Error map[string]json.RawMessage `json:"error"`
+				}
+				if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+					t.Fatal(err)
+				}
+				var message string
+				if err := json.Unmarshal(envelope.Error["message"], &message); err != nil || message != tc.message {
+					t.Fatalf("message = %q, want %q: %s", message, tc.message, body)
+				}
+				var original map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(tc.raw), &original); err != nil {
+					t.Fatal(err)
+				}
+				for key, value := range original {
+					if key != "message" && string(envelope.Error[key]) != string(value) {
+						t.Fatalf("provider field %s changed: %s", key, body)
+					}
+				}
+			})
+		}
 	}
 }
