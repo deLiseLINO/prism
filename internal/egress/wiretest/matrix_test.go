@@ -152,9 +152,6 @@ func assertOutcome(t *testing.T, sc scenario, w wire, got outcome, raw []byte) {
 	if wantStop == "stall" {
 		wantStop = "" // no wire has a dedicated class; only wire validity is asserted
 	}
-	if wantStop == "filter" && strings.HasPrefix(w.name, "messages") {
-		wantStop = "end" // the Messages wire has no content-filter stop reason the SDKs all accept
-	}
 	if wantStop != "" && got.Stop != wantStop {
 		fail("stop = %q, want %q", got.Stop, wantStop)
 	}

@@ -230,22 +230,48 @@ func TestStopReasonTranslation(t *testing.T) {
 			terminal: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens)},
 			want:     "max_tokens",
 		},
+		{
+			name:     "content filter",
+			terminal: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteContentFilter)},
+			want:     "refusal",
+		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			out, _ := runStream(t, ResponseHeader{ID: "msg_1", Model: "m"}, append(tc.evs, tc.terminal))
-			frames := parseFrames(t, out)
-			delta := frames[len(frames)-2]
-			if delta.name != "message_delta" {
-				t.Fatalf("terminal frame = %s, want message_delta", delta.name)
-			}
-			if got := delta.data["delta"].(map[string]any)["stop_reason"]; got != tc.want {
-				t.Fatalf("stop_reason = %v, want %v", got, tc.want)
-			}
-			if frames[len(frames)-1].name != "message_stop" {
-				t.Fatalf("last frame = %s, want message_stop", frames[len(frames)-1].name)
-			}
-		})
+		for _, streaming := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, streaming), func(t *testing.T) {
+				var buf bytes.Buffer
+				eg := New(&buf, streaming)
+				defer eg.Close()
+				if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "m"}); err != nil {
+					t.Fatal(err)
+				}
+				for _, ev := range append(tc.evs, tc.terminal) {
+					if err := eg.Frame(ev); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := eg.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				var message map[string]any
+				if streaming {
+					frames := parseFrames(t, buf.String())
+					delta := frames[len(frames)-2]
+					if delta.name != "message_delta" {
+						t.Fatalf("terminal frame = %s, want message_delta", delta.name)
+					}
+					message = delta.data["delta"].(map[string]any)
+					if frames[len(frames)-1].name != "message_stop" {
+						t.Fatalf("last frame = %s, want message_stop", frames[len(frames)-1].name)
+					}
+				} else if err := json.Unmarshal(buf.Bytes(), &message); err != nil {
+					t.Fatal(err)
+				}
+				if got := message["stop_reason"]; got != tc.want {
+					t.Fatalf("stop_reason = %v, want %v", got, tc.want)
+				}
+			})
+		}
 	}
 }
 
