@@ -22,17 +22,23 @@ func TestParseKeepsBothSlotsAndUnknownKeys(t *testing.T) {
 }
 
 func TestParseStatusDetailsOnly(t *testing.T) {
-	raw := []byte(`{"response":{"status_details":{"error":{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}}}}`)
-	got, ok := Parse(raw)
-	if !ok {
-		t.Fatal("Parse returned false")
-	}
-	if len(got.Error) != 0 {
-		t.Fatalf("Error = %s, want empty", got.Error)
-	}
-	assertJSONEqual(t, got.StatusDetails, []byte(`{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}`))
-	if Text(got) != "Slow down." {
-		t.Fatalf("Text = %q", Text(got))
+	for _, raw := range []string{
+		`{"response":{"status_details":{"error":{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}}}}`,
+		`{"status_details":{"error":{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}}}`,
+		`{"response":{"status_details":{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}}}`,
+		`{"status_details":{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}}`,
+	} {
+		got, ok := Parse([]byte(raw))
+		if !ok {
+			t.Fatalf("Parse(%s) returned false", raw)
+		}
+		if len(got.Error) != 0 {
+			t.Fatalf("Error = %s, want empty", got.Error)
+		}
+		assertJSONEqual(t, got.StatusDetails, []byte(`{"code":"rate_limit_exceeded","message":"Slow down.","extra":1}`))
+		if Text(got) != "Slow down." {
+			t.Fatalf("Text = %q", Text(got))
+		}
 	}
 }
 

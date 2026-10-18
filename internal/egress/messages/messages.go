@@ -591,18 +591,24 @@ func stopReason(s canon.Status, toolUse bool) string {
 }
 
 func messagesErrorWire(f canon.Failure) any {
-	if !f.HasProvider() || len(f.Provider.Error) == 0 {
+	if !f.HasProvider() {
 		return errorWire{Type: "error", Error: errorBody{Type: failureErrorType(f.Reason), Message: f.Message}}
 	}
-	raw := bytes.TrimSpace(f.Provider.Error)
+	raw := f.Provider.Error
+	if len(raw) == 0 {
+		raw = f.Provider.StatusDetails
+	}
+	raw = bytes.TrimSpace(raw)
 	if len(raw) > 0 && raw[0] == '{' {
 		return map[string]any{"type": "error", "error": json.RawMessage(raw)}
 	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return errorWire{Type: "error", Error: errorBody{Message: s}}
+	if len(raw) > 0 && raw[0] == '"' {
+		var message string
+		if json.Unmarshal(raw, &message) == nil {
+			return errorWire{Type: "error", Error: errorBody{Message: message}}
+		}
 	}
-	return errorWire{Type: "error", Error: errorBody{Message: f.Message}}
+	return map[string]any{"type": "error", "error": map[string]any{"message": f.Message, "details": json.RawMessage(raw)}}
 }
 
 func failureErrorType(r canon.FailureReason) string {

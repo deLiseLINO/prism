@@ -276,7 +276,7 @@ func (r clineAuthRunner) Run(ctx context.Context, req provider.RunRequest, sink 
 	}
 	cred, err = r.env.refresher.RefreshRejected(ctx, req.Lease, cred.Access)
 	if err != nil {
-		return provider.CredentialRunError(err)
+		return provider.CredentialRenewalRunError(err, runErr)
 	}
 	req.Target.APIKeyRef = cred.Access
 	if req.CredentialObserver != nil {

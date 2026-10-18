@@ -61,6 +61,8 @@ func FailureName(r canon.FailureReason) string {
 		return "unknown"
 	case canon.FailClientClosed:
 		return "client_closed"
+	case canon.FailAccountUnavailable:
+		return "account_unavailable"
 	default:
 		return "unknown"
 	}

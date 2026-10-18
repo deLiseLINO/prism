@@ -27,7 +27,7 @@ func TestHTTPErrorShapes(t *testing.T) {
 		{"object", 400, `{"error":{"message":"bad param","code":"invalid_value"}}`, "bad param"},
 		{"string", 400, `{"error":"just broken"}`, "just broken"},
 		{"message", 400, `{"message":"top level"}`, "top level"},
-		{"nonjson", 400, `not json`, "upstream http 400"},
+		{"nonjson", 400, `not json`, "not json"},
 		{"empty", 500, ``, "upstream http 500"},
 	}
 	for _, tc := range cases {

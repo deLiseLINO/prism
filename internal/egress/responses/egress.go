@@ -848,6 +848,8 @@ func failureReasonWire(r canon.FailureReason) string {
 		return "not_found"
 	case canon.FailTimeout:
 		return "timeout"
+	case canon.FailAccountUnavailable:
+		return "account_unavailable"
 	default:
 		return "unknown"
 	}

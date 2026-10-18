@@ -1,0 +1,2 @@
+{"version": 2, "width": 140, "height": 10, "timestamp": 1792280304, "title": "Provider authentication refusal retained on retry", "env": {"TERM": "xterm-256color", "SHELL": "/bin/sh"}}
+[0, "o", "^D\b\brequest 1: HTTP 401 {\"error\":{\"details\":{\"request\":\"mock\"},\"message\":\"Invalid credential\",\"type\":\"authentication_error\"}}\nrequest 2: HTTP 401 {\"error\":{\"details\":{\"request\":\"mock\"},\"message\":\"Invalid credential\",\"type\":\"authentication_error\"}}\nupstream calls: 1\n"]

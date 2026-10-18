@@ -417,6 +417,7 @@ type Failure struct {
 type ProviderError struct {
 	Error         []byte
 	StatusDetails []byte
+	Status        int
 }
 
 func (f Failure) HasProvider() bool {
@@ -442,6 +443,7 @@ const (
 	FailTimeout
 	FailUnknown
 	FailClientClosed
+	FailAccountUnavailable
 )
 
 type Usage struct {

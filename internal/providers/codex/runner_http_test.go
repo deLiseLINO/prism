@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/deLiseLINO/prism/internal/canon"
 	"io"
 	"net/http"
@@ -55,6 +56,7 @@ type rotatingCreds struct {
 	current  string
 	next     string
 	rejected []string
+	err      error
 }
 
 func (c *rotatingCreds) Credential(context.Context, account.Lease) (Credential, error) {
@@ -63,6 +65,9 @@ func (c *rotatingCreds) Credential(context.Context, account.Lease) (Credential, 
 
 func (c *rotatingCreds) RefreshRejected(_ context.Context, _ account.Lease, rejected string) (Credential, error) {
 	c.rejected = append(c.rejected, rejected)
+	if c.err != nil {
+		return Credential{}, c.err
+	}
 	c.current = c.next
 	return Credential{AccessToken: c.next}, nil
 }
@@ -177,5 +182,50 @@ func TestRejectedReasoningBlobIsResentOnlyOnce(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("upstream calls = %d, want exactly 2", calls)
+	}
+}
+
+func TestRenewalFailureKeepsRefusalAndCredentialClassification(t *testing.T) {
+	for _, operation := range []string{"run", "compact"} {
+		for _, tc := range []struct {
+			name  string
+			err   error
+			class provider.ErrorClass
+			kind  provider.RunErrorKind
+		}{
+			{"invalid grant", account.ErrNeedsReauth, provider.ClassUnauthorized, provider.TerminalOmitted},
+			{"token unavailable", account.ErrRefreshTransient, provider.ClassTransport, provider.Retryable},
+			{"unknown renewal failure", errors.New("credential store unavailable"), provider.ClassTransport, provider.Retryable},
+		} {
+			t.Run(operation+"/"+tc.name, func(t *testing.T) {
+				calls := 0
+				const detail = `{"message":"access refused","code":"access_rejected","detail":{"request":"edge"}}`
+				up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					w.Header().Set("Retry-After", "7")
+					w.WriteHeader(http.StatusUnauthorized)
+					fmt.Fprint(w, `{"error":`+detail+`}`)
+				}))
+				defer up.Close()
+				creds := &rotatingCreds{current: "old-token", err: tc.err}
+				runner := &Runner{Creds: creds, Client: up.Client()}
+				var err error
+				if operation == "compact" {
+					_, err = runner.Compact(t.Context(), provider.CompactRequest{Target: provider.Target{BaseURL: up.URL}})
+				} else {
+					err = runner.Run(t.Context(), provider.RunRequest{Target: provider.Target{BaseURL: up.URL}}, &captureSink{})
+				}
+				var re provider.RunError
+				if !errors.As(err, &re) || re.Class != tc.class || re.Kind != tc.kind || !re.ReplaySafe || !errors.Is(err, tc.err) {
+					t.Fatalf("renewal result=%v, want class=%v kind=%v cause=%v", err, tc.class, tc.kind, tc.err)
+				}
+				if re.Reported == nil || re.Reported.Status != http.StatusUnauthorized || string(re.Reported.Error) != detail {
+					t.Fatalf("lost inference refusal: report=%+v retryAfter=%v", re.Reported, re.RetryAfter)
+				}
+				if calls != 1 || len(creds.rejected) != 1 || creds.rejected[0] != "old-token" {
+					t.Fatalf("requests=%d rejected=%v", calls, creds.rejected)
+				}
+			})
+		}
 	}
 }
