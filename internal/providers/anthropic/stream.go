@@ -671,7 +671,7 @@ func (r *Runner) CountTokens(ctx context.Context, req provider.CountTokensReques
 		Instructions: req.Instructions,
 		Input:        req.Input,
 		Tools:        req.Tools,
-	}, false)
+	}, req.Target.MaxOutputTokens, false)
 	if err != nil {
 		return provider.TokenCount{}, buildFailure(err)
 	}

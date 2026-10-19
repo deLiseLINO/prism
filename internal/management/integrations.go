@@ -77,7 +77,8 @@ func (s *Server) hostIntegrationRollback(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, registry.Rollback(id))
+	force := r.URL.Query().Get("force") == "true"
+	writeJSON(w, http.StatusOK, registry.RollbackForced(id, force))
 }
 
 func (s *Server) integrationsList(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +108,8 @@ func (s *Server) integrationRollback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.ints.Rollback(id))
+	force := r.URL.Query().Get("force") == "true"
+	writeJSON(w, http.StatusOK, s.ints.RollbackForced(id, force))
 }
 
 func (s *Server) integrationToggle(w http.ResponseWriter, r *http.Request) {

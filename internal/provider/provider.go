@@ -25,15 +25,16 @@ const (
 )
 
 type Target struct {
-	Provider   account.ProviderID
-	Wire       Wire
-	BaseURL    string
-	APIKeyRef  string
-	Model      canon.ModelID
-	ImageInput bool
-	Timeout    time.Duration
-	Policy     account.SelectionPolicy
-	Wait       WaitPolicy
+	Provider        account.ProviderID
+	Wire            Wire
+	BaseURL         string
+	APIKeyRef       string
+	Model           canon.ModelID
+	ImageInput      bool
+	MaxOutputTokens int
+	Timeout         time.Duration
+	Policy          account.SelectionPolicy
+	Wait            WaitPolicy
 }
 
 type CommitState uint8
@@ -99,6 +100,16 @@ func CredentialRunError(err error) RunError {
 	default:
 		return RunError{Kind: Retryable, Class: ClassTransport, ReplaySafe: true, Cause: err}
 	}
+}
+
+// CredentialRenewalRunError retains the inference refusal while the renewal
+// failure determines whether the account needs re-authentication.
+func CredentialRenewalRunError(err error, rejection RunError) RunError {
+	failure := CredentialRunError(err)
+	failure.Accepted = rejection.Accepted
+	failure.Reported = rejection.Reported
+	failure.RetryAfter = rejection.RetryAfter
+	return failure
 }
 
 func (k RunErrorKind) FailoverAllowed() bool {

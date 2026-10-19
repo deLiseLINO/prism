@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { CSSProperties } from 'react'
 import type {
   AgentStatus,
   AgentsView,
@@ -9,7 +8,8 @@ import type {
   IntegrationToggleResponse,
   IntegrationsView as IntegrationsViewData,
 } from '@prism/contracts'
-import { AsyncBoundary, Button, Confirm, Empty, Toggle } from '../components/Ui'
+import { AsyncBoundary, Button, Confirm, DetailsList, Empty, Toggle } from '../components/Ui'
+import { PageHeader, StatusChip, Toolbar, ToolbarSpacer } from '../components/Patterns'
 import { InstallCell } from '../components/InstallCell'
 import { useActiveHost } from '../ActiveHost'
 import { useExperimentalFlags } from '../experimental'
@@ -20,13 +20,48 @@ import type { UseTaskResult } from '../useAsync'
 
 
 
-export type RowState = 'managed' | 'unmanaged' | 'uninstalled' | 'drift' | 'damaged'
+export type RowState = 'managed' | 'unmanaged' | 'uninstalled' | 'drift' | 'blocked' | 'damaged' | 'conflict'
 
 export function rowState(status: IntegrationStatus): RowState {
-  if (!status.installed) return 'uninstalled'
+  if (status.blocked === true) return 'blocked'
   if (status.detail.includes('fence') && status.detail.includes('damag')) return 'damaged'
+  if (!status.installed) return 'uninstalled'
+  if (status.conflict === 'journal') return 'conflict'
   if (status.drift) return 'drift'
   return status.managed ? 'managed' : 'unmanaged'
+}
+
+type JournalAction = 'apply' | 'rollback'
+
+export function baseName(path: string): string {
+  return path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1)
+}
+
+function journalDialogCopy(action: JournalAction, id: IntegrationId, fileName: string): {
+  readonly title: string
+  readonly detail: string
+  readonly note: string
+  readonly confirmLabel: string
+} {
+  const fields = id === 'claude' ? 'Prism environment fields' : id === 'codex' ? 'Prism routing fields and managed fence' : 'Prism provider block'
+  if (action === 'apply') {
+    return {
+      title: `Reconnect ${fileName || id}?`,
+      detail: `Prism cannot use its saved recovery metadata safely. This can follow config edits, damaged metadata, or an unsupported journal. Confirmed reconnect saves the current config, known cache or catalog files, and recovery metadata before updating the ${fields}. The current config becomes the new rollback baseline.`,
+      note: 'Old originals remain in the saved backups but are not automatically restorable. New Rollback restores the pre-reconnect state, not those originals. Keep a separate copy of any config you want to preserve.',
+      confirmLabel: 'Reconnect',
+    }
+  }
+  return {
+    title: `Remove Prism from ${fileName || id}?`,
+    detail: `Prism saves the current config and recovery metadata, then removes only the ${fields}. Unrelated config is kept. Earlier originals are not restored.`,
+    note: 'Unknown side files may remain. Keep a separate copy of any config you want to preserve. Saved backup paths will be shown after the operation, including if it fails.',
+    confirmLabel: id === 'claude' ? 'Remove Prism fields' : id === 'codex' ? 'Remove Prism routing' : 'Remove Prism block',
+  }
+}
+
+function savedPaths(result: IntegrationApplyResult): readonly string[] {
+  return [...new Set([...(result.backups ?? []), ...(result.backup === undefined ? [] : [result.backup])])]
 }
 
 // Bulk targets mirror the per-card buttons except already-converged cards are
@@ -34,24 +69,26 @@ export function rowState(status: IntegrationStatus): RowState {
 export function applyTargets(list: readonly IntegrationStatus[]): readonly IntegrationStatus[] {
   return list.filter((status) => {
     const state = rowState(status)
-    return status.installed && state !== 'damaged' && state !== 'managed'
+    return status.installed && state !== 'blocked' && state !== 'damaged' && state !== 'conflict' && state !== 'managed'
   })
 }
 
 export function rollbackTargets(list: readonly IntegrationStatus[]): readonly IntegrationStatus[] {
-  return list.filter((status) => status.installed && status.managed && rowState(status) !== 'damaged')
+  return list.filter((status) => status.installed && status.managed && rowState(status) !== 'blocked' && rowState(status) !== 'damaged' && rowState(status) !== 'conflict')
 }
 
 export function visibleIntegrations(list: readonly IntegrationStatus[], showOtherAgents: boolean): readonly IntegrationStatus[] {
   return showOtherAgents ? list : list.filter((status) => status.id === 'omp' || status.id === 'opencode')
 }
 
-const stateDot: Record<RowState, string> = {
-  managed: 'dot-ok',
-  unmanaged: 'dot-muted',
-  uninstalled: 'dot-muted',
-  drift: 'dot-warn',
-  damaged: 'dot-danger',
+const stateTone: Record<RowState, 'ok' | 'warn' | 'danger' | 'muted'> = {
+  managed: 'ok',
+  unmanaged: 'muted',
+  uninstalled: 'muted',
+  drift: 'warn',
+  blocked: 'danger',
+  damaged: 'danger',
+  conflict: 'warn',
 }
 
 // One attempt, then a single refresh-and-retry when the generation token went
@@ -76,7 +113,6 @@ export async function setIntegrationEnabled(
 interface IntegrationCardProps {
   readonly status: IntegrationStatus
   readonly agent: AgentStatus | undefined
-  readonly index: number
   readonly bulkBusy: boolean
   readonly generation: number
   readonly remote: boolean
@@ -85,7 +121,6 @@ interface IntegrationCardProps {
 function IntegrationCard({
   status,
   agent,
-  index,
   bulkBusy,
   generation,
   remote,
@@ -99,9 +134,21 @@ function IntegrationCard({
   const taskError = applyTask.error ?? rollbackTask.error ?? toggleTask.error
   const [actionError, setActionError] = useState<string | null>(null)
   const [pendingTakeover, setPendingTakeover] = useState<IntegrationApplyResult & { readonly ok: false } | null>(null)
+  const [journalDialog, setJournalDialog] = useState<JournalAction | null>(null)
+  const [receipt, setReceipt] = useState<{ readonly kind: JournalAction; readonly result: IntegrationApplyResult } | null>(null)
   const state = rowState(status)
-  const damaged = state === 'damaged'
-  const cardTone = damaged ? ' int-card--down' : state === 'drift' ? ' int-card--alert' : ''
+  const blocked = state === 'blocked' || state === 'damaged'
+  const needsRepair = blocked || state === 'conflict'
+  const configPath = status.targetPath ?? ''
+  const fileName = baseName(configPath)
+  const dialogCopy = journalDialog === null ? null : journalDialogCopy(journalDialog, status.id, fileName)
+  const backups = receipt === null ? [] : savedPaths(receipt.result)
+
+  function review(action: JournalAction): void {
+    if (busy || blocked) return
+    setPendingTakeover(null)
+    setJournalDialog(action)
+  }
 
   async function toggle(id: IntegrationId, next: boolean, expectedGeneration: number): Promise<void> {
     const result = await toggleTask.run(() =>
@@ -112,66 +159,138 @@ function IntegrationCard({
   }
 
   async function apply(id: IntegrationId, force: boolean): Promise<void> {
+    if (busy || blocked) return
+    if (state === 'conflict' && !force) {
+      review('apply')
+      return
+    }
     const result = await applyTask.run(() => api.integrationApply(id, force))
-
     if (result === undefined) return
-
+    setReceipt({ kind: 'apply', result })
+    onChanged()
     if (!result.ok) {
-      if (result.retryable === true && !force) {
+      if (result.conflict === 'journal' && !force) {
+        setJournalDialog('apply')
+        setPendingTakeover(null)
+        setActionError(null)
+        return
+      }
+      if (result.retryable === true && !force && result.conflict === undefined) {
         setPendingTakeover(result)
         setActionError(null)
         return
       }
       setPendingTakeover(null)
+      setJournalDialog(null)
       setActionError(result.reason === '' ? 'reason not reported' : result.reason)
       return
     }
     setPendingTakeover(null)
+    setJournalDialog(null)
     setActionError(null)
-    onChanged()
   }
 
-  async function rollback(id: IntegrationId): Promise<void> {
-    const result = await rollbackTask.run(() => api.integrationRollback(id))
+  async function rollback(id: IntegrationId, force: boolean): Promise<void> {
+    if (busy || blocked) return
+    if (state === 'conflict' && !force) {
+      review('rollback')
+      return
+    }
+    const result = await rollbackTask.run(() => api.integrationRollback(id, force))
     if (result === undefined) return
+    setReceipt({ kind: 'rollback', result })
+    onChanged()
     if (!result.ok) {
+      if (result.conflict === 'journal' && !force) {
+        setJournalDialog('rollback')
+        setActionError(null)
+        return
+      }
+      setJournalDialog(null)
       setActionError(result.reason === '' ? 'reason not reported' : result.reason)
       return
     }
+    setJournalDialog(null)
     setActionError(null)
-    onChanged()
   }
 
   return (
-    <div className={`int-row-wrap panel card int-card${cardTone}`} style={{ '--i': index + 1 } as CSSProperties}>
-      <div className="int-card-top">
-        <span className="int-name">{status.id}</span>
-        <span className={`int-status int-status--${state}`}>
-          <span className={`dot ${stateDot[state]}`} aria-hidden="true" />
-          {state}
-        </span>
+    <div className="int-item">
+      <div className="lrow lrow--nolead int-row">
+        <div className="lrow__main">
+          <div className="lrow__title">
+            <span>{status.id}</span>
+            <StatusChip tone={stateTone[state]}>{state === 'conflict' ? 'Needs repair' : state === 'blocked' ? 'Blocked' : state}</StatusChip>
+          </div>
+          <div className="lrow__sub-line">
+            {status.targetPath !== null && status.targetPath !== '' ? (
+              <span className="int-path" title={status.targetPath}>{status.targetPath}</span>
+            ) : (
+              <span className="int-path int-path--empty">no config path</span>
+            )}
+            <span className="int-src">{needsRepair ? status.enabled ? 'auto-apply paused until repaired' : 'auto-apply off; repair needed' : status.endpoint ?? 'no endpoint reported'}</span>
+          </div>
+          {agent !== undefined ? (
+            <InstallCell status={agent} onChanged={onChanged} />
+          ) : (
+            <span className="int-path int-path--empty">binary status unavailable</span>
+          )}
+        </div>
+        <div className="lrow__side">
+          <Toggle
+            checked={status.enabled}
+            onChange={(next) => void toggle(status.id, next, generation)}
+            label="Auto-apply"
+            disabled={!status.installed || remote || busy}
+          />
+          <Button
+            tone={status.managed ? 'ghost' : 'primary'}
+            onClick={() => void apply(status.id, false)}
+            busy={applyTask.running}
+            disabled={!status.installed || blocked || busy}
+          >
+            Apply
+          </Button>
+          <Button
+            tone="ghost"
+            onClick={() => void rollback(status.id, false)}
+            busy={rollbackTask.running}
+            disabled={!status.installed || (!status.managed && state !== 'conflict') || blocked || busy}
+          >
+            Rollback
+          </Button>
+        </div>
       </div>
-      {status.targetPath !== null && status.targetPath !== '' ? (
-        <span className="int-path" title={status.targetPath}>{status.targetPath}</span>
-      ) : (
-        <span className="int-path int-path--empty">no config path</span>
-      )}
-      {agent !== undefined ? (
-        <InstallCell status={agent} onChanged={onChanged} />
-      ) : (
-        <span className="int-path int-path--empty">binary status unavailable</span>
-      )}
+      {needsRepair ? (
+        <div
+          className={`lrow-note ${blocked ? '' : 'lrow-note--warn lrow-note--click'}`}
+          role="status"
+          onClick={() => review('apply')}
+        >
+          <div className="lrow-note__body">
+            <p className="lrow-note__title">{blocked ? 'Config blocked' : 'Needs repair'}</p>
+            <p>{status.detail || 'Problem details were not reported.'}</p>
+            <p>{status.enabled ? 'Auto-apply is paused until this is repaired.' : 'Auto-apply is off. This still needs repair before applying.'}</p>
+            {blocked ? <p>Repair the config or file access first. Confirmation cannot bypass this problem.</p> : null}
+          </div>
+          {!blocked ? (
+            <Button tone="primary" size="sm" disabled={busy} onClick={() => review('apply')}>
+              Review
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {taskError !== null ? (
-        <div className="int-refusal" role="alert">
-          <span className="int-refusal__msg">{describeError(taskError)}</span>
+        <div className="lrow-note" role="alert">
+          <span className="lrow-note__msg">{describeError(taskError)}</span>
         </div>
       ) : null}
       {taskError === null && actionError !== null ? (
-        <div className="int-refusal" role="alert">
-          <span className="int-refusal__msg">{actionError}</span>
+        <div className="lrow-note" role="alert">
+          <span className="lrow-note__msg">{actionError}</span>
           <button
             type="button"
-            className="int-refusal__close"
+            className="lrow-note__close"
             aria-label="Dismiss"
             onClick={() => setActionError(null)}
           >
@@ -179,45 +298,50 @@ function IntegrationCard({
           </button>
         </div>
       ) : null}
-      {taskError === null && pendingTakeover !== null ? (
-        <Confirm
-          title={`Take over ${pendingTakeover.id} config?`}
-          detail={`${pendingTakeover.reason} Confirmed apply displaces your own values, journals them, and rollback restores them verbatim.`}
-          confirmLabel="Take over"
-          busy={busy}
-          onCancel={() => setPendingTakeover(null)}
-          onConfirm={() => void apply(pendingTakeover.id, true)}
-        />
+      {!blocked && taskError === null && pendingTakeover !== null ? (
+        <div className="lrow-confirm">
+          <Confirm
+            title={`Take over ${pendingTakeover.id} config?`}
+            detail={`${pendingTakeover.reason} Confirmed apply displaces your own values, journals them, and rollback restores them verbatim.`}
+            confirmLabel="Take over"
+            busy={busy}
+            onCancel={() => setPendingTakeover(null)}
+            onConfirm={() => void apply(pendingTakeover.id, true)}
+          />
+        </div>
       ) : null}
-      <div className="int-card-foot">
-        <span className="int-src">{damaged ? 'apply blocked until the fence is repaired' : status.endpoint ?? 'no endpoint reported'}</span>
-        <Toggle
-          checked={status.enabled}
-          onChange={(next) => void toggle(status.id, next, generation)}
-          label="Auto-apply"
-          disabled={!status.installed || remote || busy}
-        />
-        <span className="int-actions">
-          <Button
-            tone={status.managed ? 'ghost' : 'primary'}
-            size="sm"
-            onClick={() => void apply(status.id, false)}
-            busy={applyTask.running}
-            disabled={!status.installed || damaged || busy}
+      {!blocked && journalDialog !== null && dialogCopy !== null ? (
+        <div className="lrow-confirm">
+          <Confirm
+            tone="warn"
+            title={dialogCopy.title}
+            detail={dialogCopy.detail}
+            note={dialogCopy.note}
+            details={configPath === '' ? undefined : [{ label: 'Config', value: configPath }]}
+            confirmLabel={dialogCopy.confirmLabel}
+            busy={busy}
+            onCancel={() => setJournalDialog(null)}
+            onConfirm={() => void (journalDialog === 'apply' ? apply(status.id, true) : rollback(status.id, true))}
+          />
+        </div>
+      ) : null}
+      {receipt !== null && backups.length > 0 ? (
+        <div className={`lrow-note ${receipt.result.ok ? 'lrow-note--ok' : 'lrow-note--warn'}`} role="status">
+          <div className="lrow-note__body">
+            <p className="lrow-note__title">{receipt.result.ok ? receipt.kind === 'apply' ? 'Applied; backups saved' : 'Prism configuration removed; backups saved' : 'Operation failed; backups saved'}</p>
+            <p>These paths were saved by the operation. Keep them if you need to recover earlier config or metadata.</p>
+            <DetailsList rows={backups.map((path, index) => ({ label: `Backup ${index + 1}`, value: path }))} />
+          </div>
+          <button
+            type="button"
+            className="lrow-note__close"
+            aria-label="Dismiss backups"
+            onClick={() => setReceipt(null)}
           >
-            Apply
-          </Button>
-          <Button
-            tone="ghost"
-            size="sm"
-            onClick={() => void rollback(status.id)}
-            busy={rollbackTask.running}
-            disabled={!status.installed || !status.managed || damaged || busy}
-          >
-            Rollback
-          </Button>
-        </span>
-      </div>
+            ×
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -236,12 +360,15 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
   const bulkBusy = applyAllTask.running || rollbackAllTask.running
   const bulkTaskError = applyAllTask.error ?? rollbackAllTask.error
   const [bulkError, setBulkError] = useState<string | null>(null)
+  const [bulkBackups, setBulkBackups] = useState<readonly { readonly label: string; readonly value: string }[]>([])
   const applies = applyTargets(list)
   const rollbacks = rollbackTargets(list)
   const installed = list.filter((s) => s.installed).length
-  const managed = list.filter((s) => s.managed).length
-  const drift = list.filter((s) => s.installed && s.drift).length
+  const managed = list.filter((s) => rowState(s) === 'managed').length
+  const drift = list.filter((s) => rowState(s) === 'drift').length
   const damaged = list.filter((s) => rowState(s) === 'damaged').length
+  const blocked = list.filter((s) => rowState(s) === 'blocked').length
+  const conflicts = list.filter((s) => rowState(s) === 'conflict').length
 
   async function runBulk(
     task: UseTaskResult,
@@ -249,11 +376,16 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
     mode: 'apply' | 'rollback',
   ): Promise<void> {
     const failures: string[] = []
+    setBulkBackups([])
     const refused = await task.run(async () => {
       for (const target of targets) {
         const result = mode === 'apply'
           ? await api.integrationApply(target.id, false)
-          : await api.integrationRollback(target.id)
+          : await api.integrationRollback(target.id, false)
+        const paths = savedPaths(result)
+        if (paths.length > 0) {
+          setBulkBackups((previous) => [...previous, ...paths.map((path, index) => ({ label: `${target.id} backup ${index + 1}`, value: path }))])
+        }
         if (!result.ok) {
           failures.push(`${target.id}: ${result.reason === '' ? 'reason not reported' : result.reason}`)
         }
@@ -266,45 +398,44 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
   }
 
   return (
-    <div className="int-screen" style={{ '--i': 1 } as CSSProperties}>
-      <div className="int-strip">
-        <div className="int-stats">
-          <span className="int-stat"><span className="dot dot-ok" aria-hidden="true" /><span className="int-stat__n">{installed}</span>installed</span>
-          <span className="int-stat"><span className="dot dot-ok" aria-hidden="true" /><span className="int-stat__n">{managed}</span>managed</span>
-          <span className="int-stat"><span className="dot dot-warn" aria-hidden="true" /><span className="int-stat__n">{drift}</span>drift</span>
-          <span className="int-stat"><span className="dot dot-danger" aria-hidden="true" /><span className="int-stat__n">{damaged}</span>damaged</span>
+    <>
+      <Toolbar label="Integration actions">
+        <div className="int-stats" role="status">
+          <span className="chip"><span className="int-stat__n">{installed}</span>installed</span>
+          <span className="chip"><span className="int-stat__n">{managed}</span>managed</span>
+          <span className="chip"><span className="int-stat__n">{drift}</span>drift</span>
+          <span className="chip"><span className="int-stat__n">{damaged}</span>damaged</span>
+          <span className="chip"><span className="int-stat__n">{blocked}</span>blocked</span>
+          <span className="chip"><span className="int-stat__n">{conflicts}</span>needs repair</span>
         </div>
-        <span className="int-strip__actions">
-          <Button
-            tone="primary"
-            size="sm"
-            busy={applyAllTask.running}
-            disabled={bulkBusy || applies.length === 0}
-            onClick={() => void runBulk(applyAllTask, applies, 'apply')}
-          >
-            Apply all
-          </Button>
-          <Button
-            tone="ghost"
-            size="sm"
-            busy={rollbackAllTask.running}
-            disabled={bulkBusy || rollbacks.length === 0}
-            onClick={() => void runBulk(rollbackAllTask, rollbacks, 'rollback')}
-          >
-            Rollback all
-          </Button>
-        </span>
-      </div>
+        <ToolbarSpacer />
+        <Button
+          tone="ghost"
+          busy={rollbackAllTask.running}
+          disabled={bulkBusy || rollbacks.length === 0}
+          onClick={() => void runBulk(rollbackAllTask, rollbacks, 'rollback')}
+        >
+          Rollback all
+        </Button>
+        <Button
+          tone="primary"
+          busy={applyAllTask.running}
+          disabled={bulkBusy || applies.length === 0}
+          onClick={() => void runBulk(applyAllTask, applies, 'apply')}
+        >
+          Apply all
+        </Button>
+      </Toolbar>
       {bulkTaskError !== null ? (
-        <div className="int-refusal" role="alert">
-          <span className="int-refusal__msg">{describeError(bulkTaskError)}</span>
+        <div className="lrow-note" role="alert">
+          <span className="lrow-note__msg">{describeError(bulkTaskError)}</span>
         </div>
       ) : bulkError !== null ? (
-        <div className="int-refusal" role="alert">
-          <span className="int-refusal__msg">{bulkError}</span>
+        <div className="lrow-note" role="alert">
+          <span className="lrow-note__msg">{bulkError}</span>
           <button
             type="button"
-            className="int-refusal__close"
+            className="lrow-note__close"
             aria-label="Dismiss"
             onClick={() => setBulkError(null)}
           >
@@ -312,13 +443,20 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
           </button>
         </div>
       ) : null}
-      <div className="int-grid">
-        {list.map((status, index) => (
+      {bulkBackups.length > 0 ? (
+        <div className="lrow-note" role="status">
+          <div className="lrow-note__body">
+            <p className="lrow-note__title">Bulk operation backups</p>
+            <DetailsList rows={bulkBackups} />
+          </div>
+        </div>
+      ) : null}
+      <div className="list">
+        {list.map((status) => (
           <IntegrationCard
             key={status.id}
             status={status}
             agent={byAgent.get(status.id)}
-            index={index}
             bulkBusy={bulkBusy}
             generation={generation}
             remote={remote}
@@ -326,7 +464,7 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
           />
         ))}
       </div>
-    </div>
+    </>
   )
 }
 
@@ -343,25 +481,16 @@ export function IntegrationsView(): JSX.Element {
 
   return (
     <section className="screen" aria-labelledby="h-integrations">
-      <div className="screen-head" style={{ '--i': 0 } as CSSProperties}>
-        <div>
-          <h1 id="h-integrations">
-            <svg width="19" height="19" className="h-ic">
-              <use href="#i-puzzle" />
-            </svg>
-            Integrations
-          </h1>
-        </div>
-      </div>
-
+      <PageHeader id="h-integrations" icon="#i-puzzle" title="Integrations" />
       <AsyncBoundary<IntegrationsViewData>
         state={statuses.state}
         loadingLabel={`Loading integrations on ${selected}…`}
-        empty={<Empty title="No integrations reported." />}
+        empty={<Empty icon="#i-puzzle" title="No integrations reported." />}
         onRetry={() => statuses.refresh()}
       >
         {(all) => (
           <IntegrationsBoard
+            key={selected}
             list={visibleIntegrations(all.integrations, flags.otherAgents)}
             byAgent={byAgent}
             generation={all.generation}

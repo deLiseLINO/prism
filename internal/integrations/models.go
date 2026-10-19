@@ -131,11 +131,16 @@ func resolveModels(fallback []Model, src func() []Model, id ID) ([]Model, string
 }
 
 type ApplyResult struct {
-	OK        bool   `json:"ok"`
-	ID        ID     `json:"id"`
-	Reason    string `json:"reason,omitempty"`
-	Retryable bool   `json:"retryable,omitempty"`
+	OK        bool     `json:"ok"`
+	ID        ID       `json:"id"`
+	Reason    string   `json:"reason,omitempty"`
+	Retryable bool     `json:"retryable,omitempty"`
+	Conflict  string   `json:"conflict,omitempty"`
+	Backup    string   `json:"backup,omitempty"`
+	Backups   []string `json:"backups,omitempty"`
 }
+
+const ConflictJournal = "journal"
 
 type Status struct {
 	ID         ID      `json:"id"`
@@ -146,6 +151,8 @@ type Status struct {
 	Endpoint   *string `json:"endpoint"`
 	Drift      bool    `json:"drift"`
 	Detail     string  `json:"detail"`
+	Conflict   string  `json:"conflict,omitempty"`
+	Blocked    bool    `json:"blocked,omitempty"`
 }
 
 func strPtr(s string) *string {

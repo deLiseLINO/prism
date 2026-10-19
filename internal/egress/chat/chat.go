@@ -394,18 +394,42 @@ func chatProviderError(raw []byte) (any, error) {
 	if len(raw) == 0 || !json.Valid(raw) {
 		return nil, errors.New("chat egress: provider error is not JSON")
 	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return map[string]any{"message": s}, nil
+	if raw[0] == '"' {
+		var message string
+		if err := json.Unmarshal(raw, &message); err != nil {
+			return nil, err
+		}
+		return map[string]any{"message": message}, nil
 	}
-	if raw[0] != '{' {
-		return nil, errors.New("chat egress: provider error is not an object")
+	if raw[0] == '{' {
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, err
+		}
+		var message, code string
+		if rawMessage, ok := body["message"]; ok {
+			if err := json.Unmarshal(rawMessage, &message); err != nil {
+				return json.RawMessage(raw), nil
+			}
+		}
+		if rawCode, ok := body["code"]; ok {
+			if err := json.Unmarshal(rawCode, &code); err != nil {
+				return json.RawMessage(raw), nil
+			}
+		}
+		code = strings.TrimSpace(code)
+		if strings.TrimSpace(message) == "" && code != "" {
+			if code == "server_overloaded" {
+				message = "Server is overloaded. Please try again later."
+			} else {
+				message = "Provider error: " + code
+			}
+			body["message"], _ = json.Marshal(message)
+			encoded, err := json.Marshal(body)
+			return json.RawMessage(encoded), err
+		}
 	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
-		return nil, errors.New("chat egress: provider error is not an object")
-	}
-	return obj, nil
+	return json.RawMessage(raw), nil
 }
 
 func incompleteFailure(st canon.Status, usage canon.Usage) canon.TurnFailed {
@@ -426,6 +450,9 @@ func (c *Chat) messageWire() message {
 	m := message{Role: assistantRole, Content: c.content.String(), ReasoningContent: c.reasoning.String()}
 	for _, id := range c.order {
 		st := c.tools[id]
+		if !st.finished {
+			continue
+		}
 		m.ToolCalls = append(m.ToolCalls, toolCallFull{
 			ID:       st.callID,
 			Type:     functionType,
@@ -567,6 +594,8 @@ func failureCode(r canon.FailureReason) string {
 		return "not_found"
 	case canon.FailTimeout:
 		return "timeout"
+	case canon.FailAccountUnavailable:
+		return "account_unavailable"
 	default:
 		return "unknown"
 	}

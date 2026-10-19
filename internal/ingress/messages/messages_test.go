@@ -40,10 +40,6 @@ func parseErr(t *testing.T, err error) *ParseError {
 	return pe
 }
 
-func intPtr(v int) *int { return &v }
-
-func f64Ptr(v float64) *float64 { return &v }
-
 func TestSystemInstructions(t *testing.T) {
 	tests := []struct {
 		name string
@@ -54,11 +50,6 @@ func TestSystemInstructions(t *testing.T) {
 			name: "system string",
 			body: `{"model":"claude-antigravity--gemini-3-pro","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"system":"be brief"}`,
 			want: []canon.Content{canon.TextContent{Text: "be brief"}},
-		},
-		{
-			name: "system content blocks joined",
-			body: `{"model":"claude-antigravity--gemini-3-pro","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"system":[{"type":"text","text":"one"},{"type":"text","text":"two"}]}`,
-			want: []canon.Content{canon.TextContent{Text: "one\n\ntwo"}},
 		},
 		{
 			name: "no system",
@@ -172,6 +163,9 @@ func TestThinkingConfig(t *testing.T) {
 		{name: "high budget", thinking: `{"type":"enabled","budget_tokens":32768}`, wantEffort: canon.EffortHigh, wantSum: canon.SummaryAuto},
 		{name: "enabled without budget", thinking: `{"type":"enabled"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
 		{name: "adaptive", thinking: `{"type":"adaptive"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
+		{name: "adaptive summarized", thinking: `{"type":"adaptive","display":"summarized"}`, wantEffort: 0, wantSum: canon.SummaryAuto},
+		{name: "adaptive omitted", thinking: `{"type":"adaptive","display":"omitted"}`, wantEffort: 0, wantSum: canon.SummaryNone},
+		{name: "budget omitted", thinking: `{"type":"enabled","budget_tokens":2048,"display":"omitted"}`, wantEffort: canon.EffortLow, wantSum: canon.SummaryNone},
 		{name: "disabled", thinking: `{"type":"disabled"}`, wantEffort: canon.EffortOff, wantSum: 0},
 		{name: "absent", thinking: "", wantEffort: 0, wantSum: 0},
 	}

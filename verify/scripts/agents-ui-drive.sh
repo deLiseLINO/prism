@@ -102,10 +102,10 @@ cdp_eval "await (async () => {
   if (!button) throw new Error('Integrations navigation button not found')
   button.click()
   for (let i = 0; i < 40; i++) {
-    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-row-wrap').length >= 7) break
+    if (document.querySelector('main h1')?.textContent.trim() === 'Integrations' && document.querySelectorAll('.int-item').length >= 7) break
     await sleep(100)
   }
-  if (document.querySelectorAll('.int-row-wrap').length < 7) throw new Error('integrations rows did not render')
+  if (document.querySelectorAll('.int-item').length < 7) throw new Error('integrations rows did not render')
   const cell = [...document.querySelectorAll('.int-install')][0]
   if (!cell) throw new Error('install cell missing from rows')
   return {cells: document.querySelectorAll('.int-install').length, first: cell.innerText}
@@ -114,7 +114,7 @@ cdp_eval "await (async () => {
 echo "==> clicking Install on the codex card"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'codex')
+  const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'codex')
   if (!card) throw new Error('codex card not found')
   const button = [...card.querySelectorAll('.int-install button')].find((node) => node.textContent.trim() === 'Install')
   if (!button) throw new Error('codex Install button not found; card text: ' + card.innerText)
@@ -122,7 +122,7 @@ cdp_eval "await (async () => {
   button.click()
   for (let i = 0; i < 160; i++) {
     await sleep(150)
-    const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'codex')
+    const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'codex')
     const alert = current?.querySelector('[role=alert]')
     if (alert) throw new Error('install alert: ' + alert.textContent)
     const state = current?.querySelector('.int-install__state')?.textContent.trim()
@@ -150,13 +150,13 @@ echo "==> clicking Update and Reinstall on the installed codex card"
 for ACTION in Update Reinstall; do
   cdp_eval "await (async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const card = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'codex')
+    const card = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'codex')
     const button = [...(card?.querySelectorAll('.int-install button') ?? [])].find((node) => node.textContent.trim() === '$ACTION')
     if (!button || button.disabled) throw new Error('$ACTION button is missing or disabled')
     button.click()
     for (let i = 0; i < 160; i++) {
       await sleep(150)
-      const current = [...document.querySelectorAll('.int-row-wrap')].find((node) => node.querySelector('.int-name')?.textContent.trim() === 'codex')
+      const current = [...document.querySelectorAll('.int-item')].find((node) => node.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'codex')
       const alert = current?.querySelector('[role=alert]')
       if (alert) throw new Error('$ACTION alert: ' + alert.textContent)
       const state = current?.querySelector('.int-install__state')?.textContent.trim()

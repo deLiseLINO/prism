@@ -8,6 +8,7 @@ import type { HostProxyRegistry } from './hosts/registry'
 import { installHostDaemon, parseHostInstallRequest, type HostInstallDeps } from './hosts/install'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
+import { applyWindowMaterial, parseWindowMaterialRequest } from './window-material'
 import type { UpdaterService } from './updater/updater'
 import { buildSnapshot, reportSource, sendReport } from './report'
 
@@ -120,6 +121,13 @@ export function registerIpc(wiring: IpcWiring): void {
     const window = BrowserWindow.fromWebContents(sender)
     const overlay = titleBarOptions(input).titleBarOverlay
     if (overlay !== undefined && window !== null && !window.isDestroyed()) window.setTitleBarOverlay(overlay)
+  })
+  ipcMain.handle(IpcChannel.windowSetMaterial, (event, input: unknown) => {
+    const sender = trustedSender(event)
+    const request = parseWindowMaterialRequest(input)
+    const window = BrowserWindow.fromWebContents(sender)
+    if (process.platform !== 'darwin' || window === null || window.isDestroyed()) return false
+    return applyWindowMaterial(window, request)
   })
   ipcMain.handle(IpcChannel.updaterGetStatus, (event) => {
     trustedSender(event)

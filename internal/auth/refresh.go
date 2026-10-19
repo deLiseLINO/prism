@@ -26,7 +26,7 @@ func refreshFingerprint(p account.ProviderID, id account.AccountID) []byte {
 // RefreshPool is the runtime pool surface the refresher needs.
 type RefreshPool interface {
 	AdvanceGeneration(id account.AccountID, gen account.CredentialGeneration) error
-	MarkNeedsReauth(id account.AccountID) error
+	MarkNeedsReauth(lease account.Lease) error
 }
 
 // RefresherOptions configures a Refresher.
@@ -245,7 +245,7 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 	}
 	next, err := rf.Refresh(ctx, prev)
 	if err != nil {
-		return account.Credential{}, r.classifyRefreshError(ctx, err, p, id, repo)
+		return account.Credential{}, r.classifyRefreshError(ctx, err, lease, repo)
 	}
 	if next.Access == "" || next.ExpiresAt.IsZero() {
 		return account.Credential{}, fmt.Errorf("auth: refresh response for %s/%s is incomplete", p, id)
@@ -290,7 +290,7 @@ func (r *Refresher) load(ctx context.Context, p account.ProviderID, id account.A
 // tear down the account; transient network, timeout, and server failures stay
 // retryable and leave the prior generation intact; every other failure is
 // fail-closed without touching stored state.
-func (r *Refresher) classifyRefreshError(ctx context.Context, err error, p account.ProviderID, id account.AccountID, repo *account.Repository) error {
+func (r *Refresher) classifyRefreshError(ctx context.Context, err error, lease account.Lease, repo *account.Repository) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
@@ -298,7 +298,7 @@ func (r *Refresher) classifyRefreshError(ctx context.Context, err error, p accou
 	if errors.As(err, &te) {
 		switch {
 		case te.Code == codeInvalidGrant:
-			if ierr := r.invalidate(ctx, p, id, repo); ierr != nil {
+			if ierr := r.invalidate(ctx, lease, repo); ierr != nil {
 				return fmt.Errorf("%w: revoking the account failed: %v", account.ErrNeedsReauth, ierr)
 			}
 			return fmt.Errorf("%w: provider rejected the refresh grant", account.ErrNeedsReauth)
@@ -315,17 +315,15 @@ func (r *Refresher) classifyRefreshError(ctx context.Context, err error, p accou
 	return err
 }
 
-// invalidate drops the rejected grant: credential blobs are removed, the
-// repository row is marked needs_reauth, and the runtime account stops
-// dispatching with its affinity entries dropped.
-func (r *Refresher) invalidate(ctx context.Context, p account.ProviderID, id account.AccountID, repo *account.Repository) error {
+func (r *Refresher) invalidate(ctx context.Context, lease account.Lease, repo *account.Repository) error {
+	p, id := lease.Provider, lease.Account
 	if err := r.file.Delete(ctx, p, id); err != nil {
 		return err
 	}
 	if err := repo.SetState(p, id, account.NeedsReauth); err != nil {
 		return err
 	}
-	return r.pool.MarkNeedsReauth(id)
+	return r.pool.MarkNeedsReauth(lease)
 }
 
 func (publication credentialPublication) write(ctx context.Context, repo *account.Repository, prevGen, gen account.CredentialGeneration, blob []byte, email string, login bool) error {

@@ -175,6 +175,10 @@ func (d Document) ResolveContextWindow(providerID, model string) int {
 	return n
 }
 
+func (d Document) ResolveMaxOutput(model string) int {
+	return d.catalogFacts(model).MaxOutput
+}
+
 func (d Document) contextFallback(providerID, model string, includeManual bool) (int, string) {
 	if p, ok := d.Providers[providerID]; ok {
 		if includeManual {

@@ -45,9 +45,10 @@ export class IntegrationApi {
   }
 
   async rollback(request: IntegrationRequest): Promise<IntegrationApplyResult> {
+    const query = request.force === true ? '?force=true' : ''
     const reply = await this.management.call({
       method: 'POST',
-      path: `/api/v1${hostSegment(request.host)}/integrations/${request.id}/rollback`,
+      path: `/api/v1${hostSegment(request.host)}/integrations/${request.id}/rollback${query}`,
     })
     return this.result(request.id, reply)
   }

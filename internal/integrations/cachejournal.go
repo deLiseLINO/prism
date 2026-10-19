@@ -27,6 +27,11 @@ func mergeJournalFile(f journalFile, current fileState) (fileState, error) {
 	if filepath.Base(f.Path) == "gateway-models.json" && managedCacheState(f.Written, current) {
 		return f.Original, nil
 	}
+	if base := filepath.Base(f.Path); base == "models.yml" || base == "models.yaml" {
+		if adopted, ok := adoptWrittenLeaf(f.Written.Text, current.Text); ok {
+			current.Text = adopted
+		}
+	}
 	if FindFencedRegion(f.Written.Text, GrokFence).Kind == FencedFound && FindFencedRegion(current.Text, GrokFence).Kind == FencedFound {
 		f.Written.Text, _ = removePrismLegacyTables(f.Written.Text, GrokFence)
 		current.Text, _ = removePrismLegacyTables(current.Text, GrokFence)

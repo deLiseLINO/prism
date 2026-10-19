@@ -7,6 +7,8 @@ A generated config must work in the real client. Parsing a file does not prove i
 - Client grok loads aliases written by Integrations and completes a real request through the selected model.
 - Client omp loads generated provider entries and completes a real request. Its tool probe requires a read call and result before the final answer.
 - A thinking assertion requires a displayed thinking block. Reasoning token usage alone is not that proof.
+- A chat chunk containing both reasoning and answer text emits reasoning first. The transition must not insert a reasoning block between consecutive answer fragments.
+- Messages responses preserve an upstream content filter as `stop_reason: "refusal"` in both streaming and JSON output. Clients can distinguish a blocked request from a normal turn completion.
 - The repeated-request matrix exercises selected client and model pairs over an aggregate duration. Each command invocation is fresh.
 - Other supported clients need separate real inference runs. A structural config loader or two-client matrix does not cover them.
 

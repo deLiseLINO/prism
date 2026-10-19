@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -218,6 +219,32 @@ func TestOmpRollbackRemovesLeafAndPrunesEmptyContainer(t *testing.T) {
 	}
 	if got := readFile(t, fresh); got != "" {
 		t.Fatalf("fresh rollback left %q", got)
+	}
+}
+
+func TestOmpIgnoresDriftInsidePrismLeaf(t *testing.T) {
+	dir := t.TempDir()
+	modelsPath := tempFile(t, dir, "models.yml", userModelYaml)
+	WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels})
+	drifted := "# local note\n" + strings.ReplaceAll(readFile(t, modelsPath), "gemini-3-pro", "gemini-4-flash")
+	if err := os.WriteFile(modelsPath, []byte(drifted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if outcome := WriteOmpConfig(LocalIO{}, OmpOptions{ModelsPath: modelsPath, Port: testPort, Models: ompTestModels}); outcome.Kind != OutcomeWritten {
+		t.Fatalf("apply after leaf drift: %+v", outcome)
+	}
+	got := readFile(t, modelsPath)
+	if strings.Contains(got, "gemini-4-flash") || !strings.HasPrefix(got, "# local note\n") {
+		t.Fatalf("apply must rewrite the drifted leaf and keep the user note:\n%s", got)
+	}
+	if err := os.WriteFile(modelsPath, []byte(drifted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if outcome := StripOmpConfig(LocalIO{}, modelsPath); outcome.Kind != OutcomeWritten {
+		t.Fatalf("rollback after leaf drift: %+v", outcome)
+	}
+	if got := readFile(t, modelsPath); got != "# local note\n"+userModelYaml {
+		t.Fatalf("rollback must restore user yaml and keep the user note:\n%q", got)
 	}
 }
 

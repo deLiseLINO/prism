@@ -35,6 +35,7 @@ const bridge: PrismBridge = {
   },
   window: {
     setTheme: (theme) => ipcRenderer.invoke(IpcChannel.windowSetTheme, theme),
+    setMaterial: (input) => ipcRenderer.invoke(IpcChannel.windowSetMaterial, input),
   },
   zoom: {
     factor: () => webFrame.getZoomFactor(),

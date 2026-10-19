@@ -34,13 +34,13 @@ func (c *ClaudeIntegration) inheritVersionedJournal(raw string, cache, backup fi
 	decoder := json.NewDecoder(strings.NewReader(legacy))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&old) != nil || old.Version != 2 || old.Target != filepath.Clean(c.paths()) || len(old.Changes) != len(claudeEnvKeyNames()) {
-		return nil, fmt.Errorf("historical restoration journal invalid; originals retained")
+		return nil, journalConflict("historical restoration journal invalid; originals retained")
 	}
 	next := raw
 	for _, key := range claudeEnvKeyNames() {
 		change, ok := old.Changes[key]
 		if !ok || (!change.Before.Present && change.Before.Value != "") {
-			return nil, fmt.Errorf("historical restoration journal incomplete")
+			return nil, journalConflict("historical restoration journal incomplete")
 		}
 		_, env, reason := jsonContainer(next, "env", "settings.json")
 		if reason != "" {
@@ -53,7 +53,7 @@ func (c *ClaudeIntegration) inheritVersionedJournal(raw string, cache, backup fi
 		}
 		before := present == change.Before.Present && (!present || observed == change.Before.Value)
 		if !before && (!present || observed != change.Written) {
-			return nil, fmt.Errorf("historical written value conflict at %s", key)
+			return nil, journalConflict("historical written value conflict at %s", key)
 		}
 		if change.Before.Present {
 			patch := UpsertJSONScalarKeysForced(next, "env", "settings.json", []JSONScalarEntry{{Key: key, Value: change.Before.Value}}, true)
@@ -70,12 +70,12 @@ func (c *ClaudeIntegration) inheritVersionedJournal(raw string, cache, backup fi
 		}
 	}
 	if old.Cache.BeforePresent != backup.Present {
-		return nil, fmt.Errorf("historical cache original unavailable")
+		return nil, journalConflict("historical cache original unavailable")
 	}
 	if backup.Present {
 		hash := sha256.Sum256([]byte(backup.Text))
 		if hex.EncodeToString(hash[:]) != old.Cache.BeforeHash {
-			return nil, fmt.Errorf("historical cache original hash mismatch")
+			return nil, journalConflict("historical cache original hash mismatch")
 		}
 	}
 	if cache != backup {
@@ -84,7 +84,7 @@ func (c *ClaudeIntegration) inheritVersionedJournal(raw string, cache, backup fi
 			Signature string `json:"signature"`
 		}
 		if !cache.Present || json.Unmarshal([]byte(cache.Text), &observed) != nil || observed.BaseURL != old.Cache.WrittenEndpoint || (observed.Signature != "" && observed.Signature != old.Cache.WrittenSignature) {
-			return nil, fmt.Errorf("historical written cache conflict")
+			return nil, journalConflict("historical written cache conflict")
 		}
 	}
 	return &restorationJournal{Version: 1, Target: filepath.Clean(c.paths()), Files: []journalFile{{Path: c.paths(), Original: fileState{Present: true, Text: next}, Written: fileState{Present: true, Text: raw}}, {Path: c.cachePath(), Original: backup, Written: cache}}}, nil

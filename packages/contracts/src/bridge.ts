@@ -5,6 +5,7 @@ import type { HostsView, IntegrationApplyResult, IntegrationRequest, Integration
 import type { ManagementCall, ManagementReply } from './management'
 import type { HostInstallReply, HostInstallRequest } from './hostinstall'
 import type { UpdaterStatus } from './updater'
+import type { DesktopWindowMaterial } from './ipc'
 
 export type Unsubscribe = () => void
 
@@ -36,6 +37,7 @@ export interface PrismBridge {
   }
   readonly window: {
     readonly setTheme: (theme: 'dark' | 'light') => Promise<void>
+    readonly setMaterial: (input: DesktopWindowMaterial) => Promise<boolean>
   }
   readonly zoom: {
     readonly factor: () => number

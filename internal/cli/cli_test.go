@@ -532,7 +532,6 @@ func TestParseFailsBeforeNetwork(t *testing.T) {
 		{"providers", "add", "x"},
 		{"combos", "set", "x"},
 		{"integrations", "apply", "not-a-client"},
-		{"integrations", "rollback", "codex", "--force"},
 		{"status", "extra-arg"},
 		{"routes", "set", "only-key"},
 		{"stats", "--range", "bogus"},
@@ -1151,6 +1150,36 @@ func TestIntegrationApplyForceTakeoverThroughCLI(t *testing.T) {
 
 // registerSandboxIntegrations wires real integration modules with paths
 // inside the test sandbox; the CLI process itself touches no files.
+func TestIntegrationRollbackJournalConflictForceThroughCLI(t *testing.T) {
+	env := newDaemonEnv(t, func(e *daemonEnv) {
+		registerSandboxIntegrations(t, e)
+	})
+	modelsPath := filepath.Join(env.sandboxDir, "omp", "models.yml")
+	if err := os.MkdirAll(filepath.Dir(modelsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(modelsPath, []byte("theme: dark\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := env.runCLI(t, "integrations", "apply", "omp"); code != exitOK {
+		t.Fatalf("apply code=%d stderr=%s", code, errOut)
+	}
+	journalPath := filepath.Join(filepath.Dir(modelsPath), ".models.yml.prism-journal.json")
+	if err := os.WriteFile(journalPath, []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := env.runCLI(t, "integrations", "rollback", "omp")
+	if code != exitRefused || !strings.Contains(errOut, "--force") {
+		t.Fatalf("plain rollback code=%d stderr=%s", code, errOut)
+	}
+	if code, _, errOut = env.runCLI(t, "integrations", "rollback", "omp", "--force"); code != exitOK {
+		t.Fatalf("forced rollback code=%d stderr=%s", code, errOut)
+	}
+	if got, err := os.ReadFile(journalPath + ".bak"); err != nil || string(got) != "{broken" {
+		t.Fatalf("backup %q %v", got, err)
+	}
+}
+
 func registerSandboxIntegrations(t *testing.T, e *daemonEnv) {
 	t.Helper()
 	codexPath := filepath.Join(e.sandboxDir, "codex", "config.toml")

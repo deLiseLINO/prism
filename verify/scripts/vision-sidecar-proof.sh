@@ -115,9 +115,9 @@ echo "==> vision sidecar card is hidden while the experimental flag is off"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   for (let i = 0; i < 20; i++) {
-    const card = [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
+    const card = [...document.querySelectorAll('.st-section')].find((node) => node.querySelector('.st-section__title')?.textContent.trim() === 'Vision sidecar')
     if (card) throw new Error('vision sidecar card rendered while the flag is off')
-    if (document.querySelector('main h1')?.textContent.trim() === 'Overview' && document.querySelector('.ov-grid')) break
+    if (document.querySelector('main h1')?.textContent.trim() === 'Overview' && document.querySelector('.ov-hero')) break
     await sleep(250)
   }
   return {hidden: true}
@@ -131,7 +131,7 @@ cdp_eval "await (async () => {
   nav('Experimental').click()
   for (let i = 0; i < 60; i++) { if (document.querySelector('main h1')?.textContent.trim() === 'Experimental') break; await sleep(100) }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
-  const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Vision sidecar'))
+  const card = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes('Vision sidecar'))
   if (!card) throw new Error('vision sidecar flag card not rendered')
   const toggle = card.querySelector('input[type=checkbox]')
   if (!toggle) throw new Error('vision sidecar flag toggle not rendered')
@@ -147,7 +147,7 @@ grep -q '"enabled":true' "$EVID_WORK/flag-enable.json" || fail "vision sidecar f
 echo "==> vision sidecar card renders with disabled state and eligible model"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const card = () => [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
+  const card = () => [...document.querySelectorAll('.st-section')].find((node) => node.querySelector('.st-section__title')?.textContent.trim() === 'Vision sidecar')
   for (let i = 0; i < 60; i++) {
     const c = card()
     const toggle = c?.querySelector('.toggle input[type=checkbox]')
@@ -174,7 +174,7 @@ grep -q '"toggleChecked":false' "$EVID_WORK/sidecar-initial.json" || fail "sidec
 echo "==> selecting the vision model enables the sidecar through the real UI"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const card = () => [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
+  const card = () => [...document.querySelectorAll('.st-section')].find((node) => node.querySelector('.st-section__title')?.textContent.trim() === 'Vision sidecar')
   const btn = card()?.querySelector('.vsd__btn')
   if (!btn) throw new Error('model dropdown button not found')
   btn.click()
@@ -196,7 +196,7 @@ grep -q '"visionSidecar":{"enabled":true,"target":"router/gpt-5.6-luna"}' "$EVID
 echo "==> toggling off through the real UI"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const card = () => [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
+  const card = () => [...document.querySelectorAll('.st-section')].find((node) => node.querySelector('.st-section__title')?.textContent.trim() === 'Vision sidecar')
   const toggle = card()?.querySelector('.toggle input[type=checkbox]')
   if (!toggle || !toggle.checked) throw new Error('sidecar toggle not enabled before switching off')
   toggle.click()
@@ -216,7 +216,7 @@ grep -q '"target":"router/gpt-5.6-luna"' "$EVID_WORK/providers-after-off.json" \
 echo "==> toggling on again through the real UI keeps the chosen target"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const card = () => [...document.querySelectorAll('section.card')].find((node) => node.querySelector('.ov-title')?.textContent.trim() === 'Vision sidecar')
+  const card = () => [...document.querySelectorAll('.st-section')].find((node) => node.querySelector('.st-section__title')?.textContent.trim() === 'Vision sidecar')
   const toggle = card()?.querySelector('.toggle input[type=checkbox]')
   if (!toggle || toggle.checked) throw new Error('sidecar toggle not disabled before switching on')
   toggle.click()

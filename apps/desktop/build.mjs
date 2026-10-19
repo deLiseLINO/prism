@@ -3,6 +3,7 @@ import { cp, copyFile, mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { buildWindowMaterialAddon } from './scripts/build-window-material-addon.mjs'
 
 // node's spawnSync does not resolve go.exe through PATHEXT on win32 in all
 // environments (observed on GitHub's windows runners inside npm lifecycle
@@ -13,9 +14,12 @@ const pkg = JSON.parse(await readFile(new URL('./package.json', import.meta.url)
 // RC/beta tags stamp their full tag version (0.1.0-rc4) into artifact names,
 // embedded versions, and updater identity, so an rc can never be
 // byte-different-but-name-identical to the final release of the same base.
-// Unset (local dev, plain CI) keeps the package.json version.
+// Unset (local dev, plain CI) keeps the package.json version. `--dev` appends a
+// per-build suffix so `service start` replaces a running daemon of the previous
+// build instead of reusing it (it compares versions only).
 const releaseTag = process.env.PRISM_RELEASE_TAG
-const releaseVersion = releaseTag ? releaseTag.replace(/^v/, '') : pkg.version
+const baseVersion = releaseTag ? releaseTag.replace(/^v/, '') : pkg.version
+const releaseVersion = process.argv.includes('--dev') ? `${baseVersion}-dev.${Math.floor(Date.now() / 1000)}` : baseVersion
 // fileURLToPath handles win32 drive letters and percent-encoding; a raw URL
 // pathname is a POSIX-ified path that breaks as a cwd on windows.
 const scriptDir = fileURLToPath(new URL('.', import.meta.url))
@@ -95,5 +99,9 @@ await Promise.all([
   copyFile(path.join(scriptDir, 'renderer/styles.css'), path.join(distDir, 'webui/styles.css')),
   copyFile(path.join(scriptDir, 'renderer/theme-boot.js'), path.join(distDir, 'webui/theme-boot.js')),
 ])
+
+if (process.platform === 'darwin') {
+  buildWindowMaterialAddon(path.join(distDir, 'native', 'window-material.node'))
+}
 
 await cp(path.join(distDir, 'webui'), path.join(scriptDir, 'resources', 'webui'), { recursive: true })

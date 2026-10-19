@@ -107,6 +107,29 @@ func TestEffortWireSendsExtendedRungs(t *testing.T) {
 	}
 }
 
+func TestSummaryOnlyReasoningIsForwarded(t *testing.T) {
+	req := canon.Request{
+		Model:     "gpt-5.2-codex",
+		Input:     []canon.Item{canon.Message{Role: canon.RoleUser, Content: []canon.Content{canon.TextContent{Text: "hi"}}}},
+		Reasoning: canon.ReasoningConfig{Summary: canon.SummaryDetailed},
+	}
+	result, err := BuildRequestBody(req)
+	if err != nil {
+		t.Fatalf("BuildRequestBody: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(result.Body, &got); err != nil {
+		t.Fatalf("parse built body: %v", err)
+	}
+	reasoning, ok := got["reasoning"].(map[string]any)
+	if !ok || reasoning["summary"] != "detailed" {
+		t.Fatalf("reasoning = %#v, want summary detailed", got["reasoning"])
+	}
+	if _, has := reasoning["effort"]; has {
+		t.Fatalf("effort sent without a request: %#v", reasoning)
+	}
+}
+
 func TestRequestBodyKeyOrder(t *testing.T) {
 	req := canon.Request{
 		Model:  "gpt-5.2-codex",

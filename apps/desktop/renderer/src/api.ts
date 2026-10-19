@@ -204,8 +204,8 @@ export const api = {
   integrationApply(id: string, force: boolean): Promise<IntegrationApplyResult> {
     return call('POST', `/api/v1/integrations/${encodeURIComponent(id)}/apply${force ? '?force=true' : ''}`)
   },
-  integrationRollback(id: string): Promise<IntegrationApplyResult> {
-    return call('POST', `/api/v1/integrations/${encodeURIComponent(id)}/rollback`)
+  integrationRollback(id: string, force: boolean): Promise<IntegrationApplyResult> {
+    return call('POST', `/api/v1/integrations/${encodeURIComponent(id)}/rollback${force ? '?force=true' : ''}`)
   },
   localHosts(): Promise<HostsView> {
     return localCall('GET', '/api/v1/hosts')

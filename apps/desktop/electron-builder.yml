@@ -5,6 +5,7 @@ directories:
   output: release
 files:
   - dist/**
+  - '!dist/native/**'
   - package.json
 extraResources:
   - from: resources/prism
@@ -27,6 +28,11 @@ publish:
 detectUpdateChannel: false
 mac:
   category: Utilities
+  binaries:
+    - Contents/Frameworks/window-material.node
+  extraFiles:
+    - from: dist/native/window-material.node
+      to: Frameworks/window-material.node
   forceCodeSigning: true
   notarize: false
   timestamp: none

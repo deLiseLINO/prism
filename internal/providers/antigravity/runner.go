@@ -3,9 +3,7 @@ package antigravity
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand/v2"
 	"net/http"
 	"strings"
@@ -16,6 +14,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/provider"
+	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 )
 
 type CredentialPair struct {
@@ -218,21 +217,28 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 			cancel()
 			return result
 		}
-		errorBody, readErr := readBody(resp)
+		captured, readErr := openaierr.Capture(resp)
+		resp.Body.Close()
 		cancel()
-		if readErr != nil {
-			observe(resp.StatusCode, readErr)
-		} else {
-			class, kind := classifyStatus(resp.StatusCode)
-			if resp.StatusCode == http.StatusTooManyRequests && isQuotaExhaustedBody(string(errorBody)) {
-				class = provider.ClassQuotaExhausted
-			}
-			observe(resp.StatusCode, provider.RunError{Kind: kind, Class: class, Cause: fmt.Errorf("antigravity: upstream status %d", resp.StatusCode)})
+		payloadText := string(captured.Body)
+		message := openaierr.Text(captured.Reported)
+		if message == "" {
+			message = strings.TrimSpace(payloadText)
 		}
-		if readErr != nil {
-			return transportError(readErr)
+		class, kind := classifyStatus(resp.StatusCode)
+		quotaExhausted := resp.StatusCode == http.StatusTooManyRequests && isQuotaExhaustedBody(payloadText)
+		if quotaExhausted {
+			class = provider.ClassQuotaExhausted
 		}
-		payloadText := string(errorBody)
+		failure := provider.RunError{Kind: kind, Class: class, ReplaySafe: true,
+			RetryAfter: provider.HTTPRetryAfterDelay(resp), Reported: &captured.Reported,
+			Cause: fmt.Errorf("antigravity: upstream status %d: %s", resp.StatusCode, message)}
+		if readErr != nil {
+			failure.Cause = readErr
+			observe(resp.StatusCode, failure)
+			return failure
+		}
+		observe(resp.StatusCode, failure)
 
 		if resp.StatusCode == http.StatusUnauthorized && !renewed {
 			if renewer, ok := r.creds.(CredentialRenewer); ok {
@@ -242,7 +248,7 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 				renewed = true
 				fresh, rerr := renewer.RefreshRejected(ctx, req.Lease, creds.AccessToken)
 				if rerr != nil {
-					return provider.CredentialRunError(rerr)
+					return provider.CredentialRenewalRunError(rerr, failure)
 				}
 				creds = fresh
 				attempt--
@@ -257,19 +263,11 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 				continue
 			}
 		}
-		if resp.StatusCode == http.StatusTooManyRequests && isQuotaExhaustedBody(payloadText) {
-			return provider.RunError{
-				Kind:       provider.TerminalOmitted,
-				Class:      provider.ClassQuotaExhausted,
-				ReplaySafe: true,
-				RetryAfter: provider.HTTPRetryAfterDelay(resp),
-				Cause:      fmt.Errorf("antigravity: quota exhausted: %s", errorEnvelopeMessage(payloadText)),
-			}
+		if quotaExhausted {
+			failure.Kind = provider.TerminalOmitted
+			failure.Cause = fmt.Errorf("antigravity: quota exhausted: %s", message)
+			return failure
 		}
-		class, kind := classifyStatus(resp.StatusCode)
-		failure := provider.RunError{Kind: kind, Class: class, ReplaySafe: true,
-			RetryAfter: provider.HTTPRetryAfterDelay(resp),
-			Cause:      fmt.Errorf("antigravity: upstream status %d: %s", resp.StatusCode, errorEnvelopeMessage(payloadText))}
 		if kind == provider.Retryable && attempt < RetryAttempts-1 {
 			delay := max(BackoffDelay(attempt, r.rand()), failure.RetryAfter)
 			if err := r.waitRetry(ctx, delay, failure); err != nil {
@@ -290,31 +288,6 @@ func (r *Runner) run(ctx context.Context, req provider.RunRequest, sink provider
 func (r *Runner) stream(resp *http.Response, sink provider.Sink) error {
 	defer resp.Body.Close()
 	return DecodeStream(resp.Body, sink.Emit)
-}
-
-func readBody(resp *http.Response) ([]byte, error) {
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func errorEnvelopeMessage(payloadText string) string {
-	var env struct {
-		Error struct {
-			Message string `json:"message"`
-			Status  string `json:"status"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(payloadText), &env); err == nil && env.Error.Message != "" {
-		if env.Error.Status != "" {
-			return env.Error.Status + ": " + env.Error.Message
-		}
-		return env.Error.Message
-	}
-	return strings.TrimSpace(payloadText)
 }
 
 func isTimeout(err error) bool {

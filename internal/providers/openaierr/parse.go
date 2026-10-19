@@ -26,16 +26,15 @@ func Parse(raw []byte) (canon.ProviderError, bool) {
 		if v, ok := nonEmpty(response["error"]); ok {
 			out.Error = v
 		}
-		if details, ok := objectField(response, "status_details"); ok {
-			if v, ok := nonEmpty(details["error"]); ok {
-				out.StatusDetails = v
-			}
-		}
+		out.StatusDetails = statusDetails(response)
 	}
 	if len(out.Error) == 0 {
 		if v, ok := nonEmpty(body["error"]); ok {
 			out.Error = v
 		}
+	}
+	if len(out.StatusDetails) == 0 {
+		out.StatusDetails = statusDetails(body)
 	}
 	if len(out.Error) == 0 && len(out.StatusDetails) == 0 && hasIdentityKey(body) {
 		out.Error = append([]byte(nil), raw...)
@@ -146,6 +145,16 @@ func plainMessage(text string) string {
 		out.WriteRune(r)
 	}
 	return out.String()
+}
+
+func statusDetails(body map[string]json.RawMessage) json.RawMessage {
+	if details, ok := objectField(body, "status_details"); ok {
+		if raw, ok := nonEmpty(details["error"]); ok {
+			return raw
+		}
+	}
+	raw, _ := nonEmpty(body["status_details"])
+	return raw
 }
 
 func objectField(parent map[string]json.RawMessage, key string) (map[string]json.RawMessage, bool) {

@@ -104,7 +104,7 @@ cdp_eval "await (async () => {
     await sleep(100)
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
-  const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Remote machines'))
+  const card = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes('Remote machines'))
   if (!card) throw new Error('remote machines flag card not rendered')
   const toggle = card.querySelector('input[type=checkbox]')
   if (!toggle) throw new Error('machines toggle not rendered')
@@ -124,7 +124,7 @@ cdp_eval "await (async () => {
     await sleep(100)
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Machines') throw new Error('Machines view did not open')
-  const before = [...document.querySelectorAll('.int-name')].map((n) => n.textContent.trim())
+  const before = [...document.querySelectorAll('.lrow__title > span:first-child')].map((n) => n.textContent.trim())
   const idInput = document.querySelector('#machine-id')
   const addressInput = document.querySelector('#machine-address')
   if (!idInput || !addressInput) throw new Error('machine form inputs not rendered')
@@ -141,7 +141,7 @@ cdp_eval "await (async () => {
     await sleep(100)
   }
   await sleep(3000)
-  const rows = [...document.querySelectorAll('.int-name')].map((n) => n.textContent.trim())
+  const rows = [...document.querySelectorAll('.lrow__title > span:first-child')].map((n) => n.textContent.trim())
   return {before, rows, body: document.querySelector('main')?.innerText}
 })()" > "$EVID_WORK/machine-add.json" || fail "adding a machine through the form failed"
 
@@ -159,7 +159,7 @@ node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/machines-a
 echo "==> removing the machine through the real UI"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const row = [...document.querySelectorAll('.int-row-wrap')].find((n) => n.querySelector('.int-name')?.textContent.trim() === 'self')
+  const row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
   if (!row) throw new Error('self row not found')
   const removeBtn = [...row.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Remove')
   if (!removeBtn) throw new Error('Remove button not found')
@@ -175,10 +175,10 @@ cdp_eval "await (async () => {
   confirmBtn.click()
   for (let i = 0; i < 60; i++) {
     await sleep(200)
-    const names = [...document.querySelectorAll('.int-name')].map((n) => n.textContent.trim())
+    const names = [...document.querySelectorAll('.lrow__title > span:first-child')].map((n) => n.textContent.trim())
     if (!names.includes('self')) break
   }
-  const names = [...document.querySelectorAll('.int-name')].map((n) => n.textContent.trim())
+  const names = [...document.querySelectorAll('.lrow__title > span:first-child')].map((n) => n.textContent.trim())
   if (names.includes('self')) throw new Error('self row still listed after removal')
   return {names, body: document.querySelector('main')?.innerText}
 })()" > "$EVID_WORK/machine-remove.json" || fail "removing the machine through the UI failed"

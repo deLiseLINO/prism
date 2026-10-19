@@ -69,13 +69,17 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		// Encrypted reasoning is minted per caller identity. After a rotation
 		// or a failover to another account the upstream refuses the blob; the
 		// turn itself is fine, so resend it once without the reasoning items.
-		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(payload))
-		if readErr != nil {
-			return provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassTransport, Cause: readErr}
+		captured, readErr := openaierr.Capture(resp)
+		failure := classifyStatus(resp, captured)
+		if body, ok := resp.Body.(*attemptBody); ok {
+			body.err = failure
 		}
-		if reasoningBlobRejected(payload) {
+		resp.Body.Close()
+		resp.Body = http.NoBody
+		if readErr != nil {
+			return provider.RunError{Kind: provider.TerminalOmitted, Class: provider.ClassTransport, Cause: readErr, Reported: &captured.Reported}
+		}
+		if reasoningBlobRejected(captured.Body) {
 			stripped := req.Request
 			stripped.Input = withoutReasoning(req.Request.Input)
 			retry, berr := BuildRequestBody(stripped)
@@ -88,10 +92,13 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 			if err != nil {
 				return err
 			}
+		} else {
+			return failure
 		}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return classifyStatus(resp)
+		captured, _ := openaierr.Capture(resp)
+		return classifyStatus(resp, captured)
 	}
 	if r.QuotaSink != nil {
 		q := ParseQuotaHeaders(resp.Header)
@@ -155,11 +162,16 @@ func (r *Runner) send(ctx context.Context, lease account.Lease, cred *Credential
 	if !ok {
 		return resp, nil
 	}
+	captured, _ := openaierr.Capture(resp)
+	failure := classifyStatus(resp, captured)
+	if body, ok := resp.Body.(*attemptBody); ok {
+		body.err = failure
+	}
 	resp.Body.Close()
 	*renewed = true
 	fresh, err := renewer.RefreshRejected(ctx, lease, cred.AccessToken)
 	if err != nil {
-		return nil, provider.CredentialRunError(err)
+		return nil, provider.CredentialRenewalRunError(err, failure)
 	}
 	*cred = fresh
 	return r.do(ctx, fresh, observe, credentialObserver, build)
@@ -271,7 +283,8 @@ func (r *Runner) Compact(ctx context.Context, req provider.CompactRequest) (resu
 		resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return provider.CompactResult{}, classifyStatus(resp)
+		captured, _ := openaierr.Capture(resp)
+		return provider.CompactResult{}, classifyStatus(resp, captured)
 	}
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
@@ -374,21 +387,15 @@ func (r *Runner) httpClient() *http.Client {
 	return http.DefaultClient
 }
 
-func classifyStatus(resp *http.Response) error {
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	snippet := payload
+func classifyStatus(resp *http.Response, captured openaierr.Captured) provider.RunError {
+	snippet := captured.Body
 	if len(snippet) > 2048 {
 		snippet = snippet[:2048]
 	}
 	log.Printf("prismd: codex upstream status %d body %q", resp.StatusCode, string(snippet))
-	code := ""
-	var reported *canon.ProviderError
-	if parsed, ok := openaierr.Parse(payload); ok {
-		reported = &parsed
-		code = openaierr.Code(parsed)
-	}
-	class := classForStatus(resp.StatusCode, code)
-	if reported != nil && class == provider.ClassInvalidRequest && openaierr.ContextOverflow(openaierr.Text(*reported)) {
+	reported := &captured.Reported
+	class := classForStatus(resp.StatusCode, openaierr.Code(*reported))
+	if class == provider.ClassInvalidRequest && openaierr.ContextOverflow(openaierr.Text(*reported)) {
 		class = provider.ClassContextLength
 	}
 	re := provider.RunError{

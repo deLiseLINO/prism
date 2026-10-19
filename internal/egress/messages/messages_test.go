@@ -3,6 +3,7 @@ package messages
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -229,20 +230,103 @@ func TestStopReasonTranslation(t *testing.T) {
 			terminal: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens)},
 			want:     "max_tokens",
 		},
+		{
+			name:     "content filter",
+			terminal: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteContentFilter)},
+			want:     "refusal",
+		},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			out, _ := runStream(t, ResponseHeader{ID: "msg_1", Model: "m"}, append(tc.evs, tc.terminal))
-			frames := parseFrames(t, out)
-			delta := frames[len(frames)-2]
-			if delta.name != "message_delta" {
-				t.Fatalf("terminal frame = %s, want message_delta", delta.name)
+		for _, streaming := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, streaming), func(t *testing.T) {
+				var buf bytes.Buffer
+				eg := New(&buf, streaming)
+				defer eg.Close()
+				if err := eg.Begin(ResponseHeader{ID: "msg_1", Model: "m"}); err != nil {
+					t.Fatal(err)
+				}
+				for _, ev := range append(tc.evs, tc.terminal) {
+					if err := eg.Frame(ev); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := eg.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				var message map[string]any
+				if streaming {
+					frames := parseFrames(t, buf.String())
+					delta := frames[len(frames)-2]
+					if delta.name != "message_delta" {
+						t.Fatalf("terminal frame = %s, want message_delta", delta.name)
+					}
+					message = delta.data["delta"].(map[string]any)
+					if frames[len(frames)-1].name != "message_stop" {
+						t.Fatalf("last frame = %s, want message_stop", frames[len(frames)-1].name)
+					}
+				} else if err := json.Unmarshal(buf.Bytes(), &message); err != nil {
+					t.Fatal(err)
+				}
+				if got := message["stop_reason"]; got != tc.want {
+					t.Fatalf("stop_reason = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+func TestLengthStopWithUnfinishedTools(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", streaming), func(t *testing.T) {
+			var buf bytes.Buffer
+			e := New(&buf, streaming)
+			defer e.Close()
+			if err := e.Begin(ResponseHeader{ID: "m", Model: "model"}); err != nil {
+				t.Fatal(err)
 			}
-			if got := delta.data["delta"].(map[string]any)["stop_reason"]; got != tc.want {
-				t.Fatalf("stop_reason = %v, want %v", got, tc.want)
+			for _, event := range []canon.Event{
+				canon.ItemStarted{Item: canon.FunctionCall{ID: "done", CallID: "call_done", Name: "lookup"}},
+				canon.ItemFinished{Item: canon.FunctionCall{ID: "done", CallID: "call_done", Name: "lookup", Arguments: []byte(`{"id":1}`)}},
+				canon.ItemStarted{Item: canon.FunctionCall{ID: "cut", CallID: "call_cut", Name: "lookup"}},
+				canon.ToolArgumentsDelta{ItemID: "cut", Bytes: []byte(`{"id":`)},
+				canon.ItemStarted{Item: canon.CustomToolCall{ID: "custom", CallID: "call_custom", Name: "patch"}},
+				canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens)},
+			} {
+				if err := e.Frame(event); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if frames[len(frames)-1].name != "message_stop" {
-				t.Fatalf("last frame = %s, want message_stop", frames[len(frames)-1].name)
+			if failure, failed := e.ResponseFailure(canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteMaxOutputTokens)}); failed {
+				t.Fatalf("length became failure: %+v", failure)
+			}
+			if err := e.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if streaming {
+				frames := parseFrames(t, buf.String())
+				stopped := map[float64]bool{}
+				for _, frame := range frames {
+					if frame.name == "content_block_stop" {
+						stopped[frame.data["index"].(float64)] = true
+					}
+				}
+				if !stopped[0] || !stopped[1] || !stopped[2] || frames[len(frames)-1].name != "message_stop" || frames[len(frames)-2].data["delta"].(map[string]any)["stop_reason"] != "max_tokens" {
+					t.Fatalf("length stream not closed: %s", buf.String())
+				}
+				return
+			}
+			var message struct {
+				StopReason string `json:"stop_reason"`
+				Content    []struct {
+					ID    string
+					Input json.RawMessage
+				}
+			}
+			if err := json.Unmarshal(buf.Bytes(), &message); err != nil {
+				t.Fatal(err)
+			}
+			if message.StopReason != "max_tokens" || len(message.Content) != 1 || message.Content[0].ID != "call_done" || string(message.Content[0].Input) != `{"id":1}` {
+				t.Fatalf("unfinished tools leaked: %s", buf.String())
 			}
 		})
 	}
@@ -626,10 +710,10 @@ func TestNonStreamingEmitsSingleMessageJSON(t *testing.T) {
 		Type    string `json:"type"`
 		Role    string `json:"role"`
 		Content []struct {
-			Type      string `json:"type"`
-			Text      string `json:"text"`
-			Thinking  string `json:"thinking"`
-			Signature string `json:"signature"`
+			Type      string          `json:"type"`
+			Text      string          `json:"text"`
+			Thinking  string          `json:"thinking"`
+			Signature string          `json:"signature"`
 			ID        string          `json:"id"`
 			Name      string          `json:"name"`
 			Input     json.RawMessage `json:"input"`

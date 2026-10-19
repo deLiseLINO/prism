@@ -1,7 +1,5 @@
 import { noteStep } from './diagnostics'
 
-export type Section = 'Overview' | 'Operate' | 'Configure' | 'System'
-
 export type View =
   | 'overview'
   | 'providers'
@@ -11,13 +9,13 @@ export type View =
   | 'integrations'
   | 'machines'
   | 'experimental'
+  | 'appearance'
 
 
 export interface ViewEntry {
   readonly view: View
   readonly label: string
   readonly tagline: string
-  readonly section: Section
 }
 
 const VIEW_HASHES: Record<View, string> = {
@@ -29,6 +27,7 @@ const VIEW_HASHES: Record<View, string> = {
   integrations: '#/integrations',
   machines: '#/machines',
   experimental: '#/experimental',
+  appearance: '#/appearance',
 }
 
 const VIEW_STORAGE_KEY = 'prism-view'
@@ -42,21 +41,21 @@ const VIEW_BY_HASH: Record<string, View> = {
   '#/integrations': 'integrations',
   '#/machines': 'machines',
   '#/experimental': 'experimental',
+  '#/appearance': 'appearance',
 }
 
 
 export const VIEWS: readonly ViewEntry[] = [
-  { view: 'overview', label: 'Overview', tagline: 'Daemon state and default context window', section: 'Overview' },
-  { view: 'usage', label: 'Accounts', tagline: 'Per-account quota, pinning and login', section: 'Operate' },
-  { view: 'stats', label: 'Stats', tagline: 'Request and token statistics', section: 'Operate' },
-  { view: 'logs', label: 'Logs', tagline: 'Model requests and failover history', section: 'Operate' },
-  { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials', section: 'Configure' },
-  { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback', section: 'System' },
-  { view: 'machines', label: 'Machines', tagline: 'Remote hosts over SSH', section: 'System' },
-  { view: 'experimental', label: 'Experimental', tagline: 'Unfinished features, off by default', section: 'System' },
+  { view: 'overview', label: 'Overview', tagline: 'Daemon state and default context window' },
+  { view: 'usage', label: 'Accounts', tagline: 'Per-account quota, pinning and login' },
+  { view: 'stats', label: 'Stats', tagline: 'Request and token statistics' },
+  { view: 'logs', label: 'Logs', tagline: 'Model requests and failover history' },
+  { view: 'providers', label: 'Providers', tagline: 'Wires, models, credentials' },
+  { view: 'integrations', label: 'Integrations', tagline: 'Codex / Grok / OMP apply and rollback' },
+  { view: 'machines', label: 'Machines', tagline: 'Remote hosts over SSH' },
+  { view: 'experimental', label: 'Experimental', tagline: 'Unfinished features, off by default' },
+  { view: 'appearance', label: 'Appearance', tagline: 'Theme, window glass, typography' },
 ]
-
-export const SECTIONS: readonly Section[] = ['Overview', 'Operate', 'Configure', 'System']
 
 export function hashFor(view: View): string {
   return VIEW_HASHES[view]

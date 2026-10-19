@@ -33,58 +33,14 @@ prism upgrade         # update prism (brew and go installs)
 
 The daemon listens on `127.0.0.1:10200`. The UI, the CLI and the desktop app share it.
 
-## Request translation
+Anthropic Messages requests retain client `cache_control` markers and system block boundaries when routed to a Messages provider. No additional settings are required. Prism does not add cache markers to requests that omit them.
 
-Chat, Responses, and Messages ingress preserve JSON numeric spellings in tool schemas and replayed arguments. Resend full Responses history instead of using `previous_response_id`.
+Chat providers may send `tool_calls: null` in stream chunks. Prism treats it as no tool-call update and preserves text and active tool calls. Non-null tool-call values must still be arrays.
 
-Custom tools use a required string `input` wrapper on Chat routes and in buffered Messages replies. Responses routes preserve custom result arrays, including empty arrays and supported images. Vision descriptions replace images without changing string-valued custom results. Unsupported attachments and tool-result parts are rejected rather than dropped.
+Within streamed tool calls, null `id`, `name`, and `arguments` fields mean no update. Prism preserves the call identity and accumulated arguments. Non-null values in these fields must still be strings.
 
-Tool subsets, explicit reasoning disablement, parallel-call controls, verbosity, and sampling are forwarded when the target format represents them. Messages routes reject unsupported verbosity and sampling with extended thinking. Forced tool choice omits incompatible thinking. Cline routes use Chat format.
+When a Chat provider stops with `finish_reason: "length"`, Prism preserves the output-limit reason, text, reasoning, and token usage. It does not finish tool calls from that turn. Non-streaming responses omit those calls. Streaming clients may have received partial tool deltas and must not execute them after a length stop. Malformed tool arguments on normal completion still fail.
 
-Configured upstream URLs may name an API root or an endpoint. Versioned roots such as `/v1`, `/v4`, and `/v1beta` are retained; unversioned roots receive `/v1`.
+Provider HTTP failures retain their original status on non-streaming responses, their error details, and plain-text messages. An unavailable fallback does not replace an earlier provider failure. A rate or quota refusal takes precedence over a later authentication refusal before output begins.
 
-## Stream waiting
-
-Each provider accepts an optional `wait` object in its configuration and management API writes:
-
-```json
-{
-  "wait": {
-    "firstProgressMs": 900000,
-    "idleMs": 300000
-  }
-}
-```
-
-`firstProgressMs` limits waiting for the first useful output, including connection and response headers.
-`idleMs` limits silence after output begins. It does not run before the first useful output.
-Text, reasoning, tool input, and output items count as progress. Heartbeats and response-start notices do not.
-An output-item start, including a reasoning item with no text yet, starts the idle limit.
-Time spent sending an event to a slow client does not consume the upstream waiting limit.
-
-Each omitted field defaults to 300000 milliseconds. An explicit zero disables that limit.
-If the first limit is disabled, the idle limit starts only after useful output arrives.
-If both limits are disabled, waiting is unbounded unless the provider has a separate total request deadline.
-Negative values and values that overflow a duration are rejected.
-
-A management write without `wait` preserves existing settings. Supplying `wait` replaces the object.
-Sending `"wait": {}` restores both defaults. The UI does not expose these settings yet.
-
-These limits apply to streamed upstream requests. Chat and Responses requests for a single JSON reply do not use them.
-Codex, Antigravity, and Messages upstreams always use streams, including for a buffered client reply.
-The separate Antigravity per-attempt deadline is unchanged.
-A waiting limit ends the turn as `upstream_stall` in the response, request history, and usage.
-It does not replay the request on another provider. A client disconnect remains `client_closed`.
-
-## Token usage
-
-Upstream token counts must be exact nonnegative integers within `int64`.
-Integral decimal and exponential JSON numbers are accepted without float conversion.
-Invalid counts, overflowing sums, conflicting totals, and invalid cache or reasoning details fail the response.
-An invalid update retains the last valid usage snapshot.
-
-Chat and Responses cache and reasoning counts are included in input and output respectively.
-Messages input includes uncached input plus cache reads and writes. Its cache fields and input deltas may be null.
-Antigravity reasoning counts are not limited by output tokens.
-Usage storage keeps cache writes for requests and attempts and migrates existing SQLite databases on open.
-
+After a provider rejects a credential, prism retains that refusal for later requests in the running daemon. Replacing the credential or resuming the account clears it. After a daemon restart, an account that still needs login receives a local login-required message instead of a quota error. Missing, paused, and unselected accounts return `account_unavailable`, not `quota_exhausted`.

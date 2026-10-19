@@ -19,6 +19,11 @@ type ForcedModule interface {
 	ApplyForced() ApplyResult
 }
 
+type ForcedRollbackModule interface {
+	Module
+	RollbackForced() ApplyResult
+}
+
 type Registry struct {
 	mu      sync.Mutex
 	modules map[ID]Module
@@ -76,11 +81,20 @@ func (r *Registry) ApplyForced(id ID, force bool) ApplyResult {
 }
 
 func (r *Registry) Rollback(id ID) ApplyResult {
+	return r.RollbackForced(id, false)
+}
+
+func (r *Registry) RollbackForced(id ID, force bool) ApplyResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	module, ok := r.modules[id]
 	if !ok {
 		return r.unregistered(id)
+	}
+	if force {
+		if forced, ok := module.(ForcedRollbackModule); ok {
+			return forced.RollbackForced()
+		}
 	}
 	return module.Rollback()
 }
@@ -102,6 +116,11 @@ func (r *Registry) ApplyEnabled() []ApplyResult {
 		}
 		module, ok := r.modules[id]
 		if !ok {
+			continue
+		}
+		status := module.Status()
+		if status.Blocked || status.Conflict != "" {
+			refused = append(refused, ApplyResult{ID: id, Reason: status.Detail, Retryable: status.Conflict == ConflictJournal, Conflict: status.Conflict})
 			continue
 		}
 		if result := module.Apply(); !result.OK {

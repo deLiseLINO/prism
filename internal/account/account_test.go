@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/execution"
 	"github.com/deLiseLINO/prism/internal/quota"
 )
@@ -356,6 +357,45 @@ func TestSnapshotDeepCopy(t *testing.T) {
 	if got := p.Snapshot().Accounts[0].Quota; got.Used != 0 || *got.Limit != 200 {
 		t.Fatalf("snapshot is not a deep copy: got %+v", got)
 	}
+
+	ctx := context.Background()
+	lease, err := p.Acquire(ctx, req("proof"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := canon.Failure{
+		Reason:  canon.FailUnauthorized,
+		Message: "grant revoked",
+		Provider: &canon.ProviderError{
+			Status:        401,
+			Error:         []byte(`{"message":"grant revoked"}`),
+			StatusDetails: []byte(`{"reason":"expired"}`),
+		},
+	}
+	if err := p.Record(ctx, lease, AuthRejected{Failure: failure}); err != nil {
+		t.Fatal(err)
+	}
+	failure.Provider.Status = 500
+	failure.Provider.Error[0] = '!'
+	failure.Provider.StatusDetails[0] = '!'
+	p.Register(p.Snapshot().Accounts[0])
+
+	for range 2 {
+		_, err := p.Acquire(ctx, req("retained"))
+		var denied *AcquireError
+		if !errors.As(err, &denied) || !errors.Is(err, ErrNoAccount) || denied.Reason != AccountNeedsReauth || denied.Failure == nil || denied.Failure.Provider == nil {
+			t.Fatalf("missing retained rejection: %v", err)
+		}
+		got := denied.Failure
+		if got.Reason != canon.FailUnauthorized || got.Message != "grant revoked" || got.Provider.Status != 401 || string(got.Provider.Error) != `{"message":"grant revoked"}` || string(got.Provider.StatusDetails) != `{"reason":"expired"}` {
+			t.Fatalf("retained rejection was mutated: %+v, provider=%+v", got, got.Provider)
+		}
+		got.Reason = canon.FailInvalidRequest
+		got.Message = "mutated"
+		got.Provider.Status = 500
+		got.Provider.Error[0] = '!'
+		got.Provider.StatusDetails[0] = '!'
+	}
 }
 
 func TestNoAccounts(t *testing.T) {
@@ -409,7 +449,11 @@ func TestMarkNeedsReauthBlocksWithoutSwitching(t *testing.T) {
 	p.Register(acct("a", 2, Active, 200, 0))
 	p.Register(acct("b", 1, Active, 200, 0))
 
-	if err := p.MarkNeedsReauth("a"); err != nil {
+	lease, err := p.Acquire(ctx, pin("invalidated", "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.MarkNeedsReauth(lease); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
 	var marked Account
@@ -534,5 +578,61 @@ func TestRejectionOfRefreshedGenerationReleasesStaleLease(t *testing.T) {
 	a := p.Snapshot().Accounts[0]
 	if a.State != Active || a.InFlight != 0 || a.CredGen != 2 {
 		t.Fatalf("stale rejection=%+v", a)
+	}
+}
+
+func TestStaleGrantInvalidationCannotBlockCurrentAccount(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(context.Context, *pool, Account) error
+	}{
+		{name: "resume", mutate: func(ctx context.Context, p *pool, a Account) error {
+			return p.Resume(ctx, a.ID, a.Version)
+		}},
+		{name: "pause then resume", mutate: func(ctx context.Context, p *pool, a Account) error {
+			if err := p.Pause(ctx, a.ID, a.Version); err != nil {
+				return err
+			}
+			return p.Resume(ctx, a.ID, a.Version+1)
+		}},
+		{name: "credential replacement", mutate: func(_ context.Context, p *pool, a Account) error {
+			return p.PublishCredential(a.ID, a.CredGen, true)
+		}},
+		{name: "new generation", mutate: func(_ context.Context, p *pool, a Account) error {
+			return p.AdvanceGeneration(a.ID, a.CredGen+1)
+		}},
+		{name: "provider replacement", mutate: func(_ context.Context, p *pool, a Account) error {
+			a.Provider = "edge"
+			p.Register(a)
+			return nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := New()
+			p.Register(acct("a", 1, Active, 200, 0))
+			ctx := context.Background()
+			lease, err := p.Acquire(ctx, pin("old", "a"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.mutate(ctx, p, p.Snapshot().Accounts[0]); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.MarkNeedsReauth(lease); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Record(ctx, lease, AuthRejected{Failure: canon.Failure{
+				Reason: canon.FailUnauthorized, Provider: &canon.ProviderError{Status: 401},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			a := p.Snapshot().Accounts[0]
+			request := pin("current", "a")
+			request.Provider = a.Provider
+			if _, err := p.Acquire(ctx, request); err != nil {
+				t.Fatalf("stale invalidation blocked current account: %v", err)
+			}
+		})
 	}
 }

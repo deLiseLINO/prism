@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p renderer/tsconfig.json",
     "build": "node build.mjs",
-    "dev": "npm run build && electron .",
+    "dev": "node build.mjs --dev && electron .",
     "test": "vitest run",
     "verify": "bash ../../verify/scripts/quality-gate.sh local",
     "verify:live": "bash ../../verify/scripts/quality-gate.sh live"

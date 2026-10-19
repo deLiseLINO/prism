@@ -199,6 +199,9 @@ func (e *streamEncoder) ResponseFailure(terminal canon.Event) (canon.Failure, bo
 		if reason, incomplete := t.Status.Reason(); incomplete {
 			unsafe := reason != canon.IncompleteMaxOutputTokens && reason != canon.IncompleteContentFilter
 			for _, block := range e.blocks {
+				if reason == canon.IncompleteMaxOutputTokens && block.kind == blockToolUse {
+					continue
+				}
 				unsafe = unsafe || block.kind != blockText
 			}
 			if unsafe {
@@ -293,6 +296,9 @@ func (e *streamEncoder) closeOpenBlocks() error {
 	clear(e.blocks)
 	for _, b := range open {
 		if !e.streaming {
+			if b.kind == blockToolUse {
+				continue
+			}
 			if e.finished == nil {
 				e.finished = make(map[int]any)
 			}
@@ -310,8 +316,6 @@ func partialBlockWire(b *openBlock) any {
 	switch b.kind {
 	case blockThinking:
 		return thinkingBlockWire{Type: "thinking", Thinking: b.text.String()}
-	case blockToolUse:
-		return toolUseBlockWire{Type: "tool_use", Input: json.RawMessage(`{}`)}
 	}
 	return textBlockWire{Type: "text", Text: b.text.String()}
 }
@@ -575,8 +579,11 @@ func (e *streamEncoder) writeJSON(payload any) error {
 
 func stopReason(s canon.Status, toolUse bool) string {
 	if s.Kind() == canon.StatusIncomplete {
-		if reason, _ := s.Reason(); reason == canon.IncompleteMaxOutputTokens {
+		switch reason, _ := s.Reason(); reason {
+		case canon.IncompleteMaxOutputTokens:
 			return "max_tokens"
+		case canon.IncompleteContentFilter:
+			return "refusal"
 		}
 		return "end_turn"
 	}
@@ -587,18 +594,24 @@ func stopReason(s canon.Status, toolUse bool) string {
 }
 
 func messagesErrorWire(f canon.Failure) any {
-	if !f.HasProvider() || len(f.Provider.Error) == 0 {
+	if !f.HasProvider() {
 		return errorWire{Type: "error", Error: errorBody{Type: failureErrorType(f.Reason), Message: f.Message}}
 	}
-	raw := bytes.TrimSpace(f.Provider.Error)
+	raw := f.Provider.Error
+	if len(raw) == 0 {
+		raw = f.Provider.StatusDetails
+	}
+	raw = bytes.TrimSpace(raw)
 	if len(raw) > 0 && raw[0] == '{' {
 		return map[string]any{"type": "error", "error": json.RawMessage(raw)}
 	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return errorWire{Type: "error", Error: errorBody{Message: s}}
+	if len(raw) > 0 && raw[0] == '"' {
+		var message string
+		if json.Unmarshal(raw, &message) == nil {
+			return errorWire{Type: "error", Error: errorBody{Message: message}}
+		}
 	}
-	return errorWire{Type: "error", Error: errorBody{Message: f.Message}}
+	return map[string]any{"type": "error", "error": map[string]any{"message": f.Message, "details": json.RawMessage(raw)}}
 }
 
 func failureErrorType(r canon.FailureReason) string {

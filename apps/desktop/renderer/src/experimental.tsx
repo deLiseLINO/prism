@@ -6,31 +6,26 @@ export type ExperimentalFlag = 'remoteInstall' | 'agentActions' | 'visionSidecar
 
 const FLAGS: readonly ExperimentalFlag[] = ['remoteInstall', 'agentActions', 'visionSidecar', 'otherAgents', 'rcChannel']
 
-export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: string; description: string }[] = [
+export const EXPERIMENTAL_FLAGS: readonly { flag: ExperimentalFlag; label: string }[] = [
   {
     flag: 'agentActions',
     label: 'Agent install and update',
-    description: 'Install, reinstall, and update agent binaries (codex, grok, omp, …) from the Integrations tab.',
   },
   {
     flag: 'otherAgents',
     label: 'Other agents',
-    description: 'Show agents other than OMP and OpenCode in Integrations.',
   },
   {
     flag: 'visionSidecar',
     label: 'Vision sidecar',
-    description: 'The vision sidecar card on Overview: describes images with a vision model before they reach text-only models.',
   },
   {
     flag: 'remoteInstall',
     label: 'Remote machines and daemon install',
-    description: 'The Machines tab and one-click daemon install on a remote host over key-auth ssh.',
   },
   {
     flag: 'rcChannel',
     label: 'RC update channel',
-    description: 'Check GitHub Releases for newer RC builds. Off follows stable releases.',
   },
 ]
 

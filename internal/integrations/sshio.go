@@ -65,6 +65,11 @@ func (s *SshIO) FileExists(path string) bool {
 	return err == nil
 }
 
+func (s *SshIO) CreateBackup(path, content string) error {
+	_, err := s.runWithStdin(context.Background(), base64.StdEncoding.EncodeToString([]byte(content)), backupScript(path))
+	return err
+}
+
 func (s *SshIO) StageWrite(path string, content string) error {
 	staged := StagedPath(path)
 	script := stageScript(path, staged)
@@ -135,10 +140,28 @@ func stageScript(path string, staged string) string {
 	return fmt.Sprintf("umask 077; mkdir -p %s && base64 -d > %s && sync -f %s || exit 1; d=%s; while test -n \"$d\"; do sync -f \"$d\" || exit 1; test \"$d\" = / && break; next=$(dirname -- \"$d\"); test \"$next\" = \"$d\" && break; d=$next; done", shq(shDir(path)), shq(staged), shq(staged), shq(shDir(path)))
 }
 
+func backupScript(path string) string {
+	return fmt.Sprintf(`umask 077
+p=%s
+d=%s
+test -d "$d" && test -r "$d" && test -w "$d" && test -x "$d" || exit 1
+if test -e "$p" || test -L "$p"; then exit 1; fi
+tmp=$(mktemp "$d/.prism-backup-XXXXXX") || exit 1
+trap 'rm -f -- "$tmp"' 0
+trap 'exit 1' HUP INT TERM
+base64 -d > "$tmp" || exit 1
+set -C
+cat -- "$tmp" > "$p" || exit 1
+sync -f "$p" && sync -f "$d"`, shq(path), shq(shDir(path)))
+}
+
 func shDir(path string) string {
 	idx := strings.LastIndex(path, "/")
-	if idx <= 0 {
+	if idx < 0 {
 		return "."
+	}
+	if idx == 0 {
+		return "/"
 	}
 	return path[:idx]
 }

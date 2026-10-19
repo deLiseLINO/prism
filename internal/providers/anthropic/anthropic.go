@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -19,15 +18,14 @@ import (
 )
 
 const (
-	DefaultBaseURL     = "https://api.anthropic.com"
-	DefaultAPIVersion  = "2023-06-01"
-	defaultMaxTokens   = 8192
-	maxTokensCeiling   = 32000
-	thinkingHeadroom   = 8192
-	minThinkingBudget  = 1024
-	maxErrorBodyBytes  = 1 << 20
-	stateStoreName     = "anthropic"
-	promptCacheKeyNote = "anthropic: prompt_cache_key accepted but not forwarded; client x-session-id forwarded on the messages run path when non-empty; no cache_control synthesis"
+	DefaultBaseURL        = "https://api.anthropic.com"
+	DefaultAPIVersion     = "2023-06-01"
+	unknownModelMaxTokens = 64000
+	thinkingHeadroom      = 8192
+	minThinkingBudget     = 1024
+	maxErrorBodyBytes     = 1 << 20
+	stateStoreName        = "anthropic"
+	promptCacheKeyNote    = "anthropic: prompt_cache_key accepted but not forwarded; client x-session-id forwarded on the messages run path when non-empty; no cache_control synthesis"
 )
 
 type Options struct {
@@ -183,7 +181,7 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 }
 
 func (r *Runner) buildRequest(req provider.RunRequest) (*outbound, error) {
-	out, err := r.render(req.Request, true)
+	out, err := r.render(req.Request, req.Target.MaxOutputTokens, true)
 	if err != nil {
 		return nil, err
 	}
@@ -200,28 +198,17 @@ func buildFailure(err error) *provider.RunError {
 }
 
 func upstreamError(resp *http.Response) *provider.RunError {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-	message, errType := parseErrorBody(body)
+	captured, _ := openaierr.Capture(resp)
+	message := openaierr.Text(captured.Reported)
 	if message == "" {
 		message = fmt.Sprintf("upstream status %d", resp.StatusCode)
 	}
-	cause := fmt.Errorf("anthropic: %s (type=%s status=%d)", message, errType, resp.StatusCode)
+	cause := fmt.Errorf("anthropic: %s (status=%d)", message, resp.StatusCode)
 	class := errorClassForStatus(resp.StatusCode)
 	if class == provider.ClassInvalidRequest && openaierr.ContextOverflow(message) {
 		class = provider.ClassContextLength
 	}
-	return &provider.RunError{Kind: provider.TerminalOmitted, Class: class, RetryAfter: provider.HTTPRetryAfterDelay(resp), Cause: cause}
-}
-
-func parseErrorBody(body []byte) (string, string) {
-	payload, err := decodeJSON(body)
-	if err != nil {
-		return "", ""
-	}
-	errObj, _ := payload["error"].(map[string]any)
-	message, _ := errObj["message"].(string)
-	errType, _ := errObj["type"].(string)
-	return message, errType
+	return &provider.RunError{Kind: provider.TerminalOmitted, Class: class, RetryAfter: provider.HTTPRetryAfterDelay(resp), Cause: cause, Reported: &captured.Reported}
 }
 
 func errorClassForStatus(status int) provider.ErrorClass {

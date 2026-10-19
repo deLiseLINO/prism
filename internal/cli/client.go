@@ -278,9 +278,13 @@ func (c *client) integrationApply(ctx context.Context, clientID string, force bo
 	return out, err
 }
 
-func (c *client) integrationRollback(ctx context.Context, clientID string) (integrationsApplyJSON, error) {
+func (c *client) integrationRollback(ctx context.Context, clientID string, force bool) (integrationsApplyJSON, error) {
 	var out integrationsApplyJSON
-	err := c.call(ctx, http.MethodPost, "/api/v1/integrations/"+escapePath(clientID)+"/rollback", nil, &out)
+	path := "/api/v1/integrations/" + escapePath(clientID) + "/rollback"
+	if force {
+		path += "?force=true"
+	}
+	err := c.call(ctx, http.MethodPost, path, nil, &out)
 	return out, err
 }
 

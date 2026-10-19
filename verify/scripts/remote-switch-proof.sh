@@ -144,7 +144,7 @@ cdp_eval "await (async () => {
     await sleep(100)
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Experimental') throw new Error('Experimental view did not open')
-  const card = [...document.querySelectorAll('.cards .card')].find((node) => node.textContent.includes('Remote machines'))
+  const card = [...document.querySelectorAll('.experimental-flag')].find((node) => node.textContent.includes('Remote machines'))
   if (!card) throw new Error('remote machines flag card not rendered')
   const toggle = card.querySelector('input[type=checkbox]')
   if (!toggle) throw new Error('machines toggle not rendered')
@@ -164,7 +164,7 @@ cdp_eval "await (async () => {
     await sleep(100)
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Machines') throw new Error('Machines view did not open')
-  const selfRow = [...document.querySelectorAll('.int-row-wrap')].find((n) => n.querySelector('.int-name')?.textContent.trim() === 'self')
+  const selfRow = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
   if (!selfRow) throw new Error('self row not found; is daemonPort missing from the seeded host?')
   const manageBtn = [...selfRow.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Manage')
   if (!manageBtn) throw new Error('Manage button not found on the self row')

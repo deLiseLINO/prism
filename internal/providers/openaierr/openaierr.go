@@ -4,6 +4,7 @@
 package openaierr
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,43 +15,44 @@ import (
 	"github.com/deLiseLINO/prism/internal/provider"
 )
 
-// HTTPError reads an OpenAI-compatible error response and returns a typed
-// provider.RunError. The cause carries the upstream message, never headers
-// or credentials.
+type Captured struct {
+	Body     []byte
+	Reported canon.ProviderError
+}
+
+func Capture(resp *http.Response) (Captured, error) {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	reported, ok := Parse(body)
+	if !ok && len(body) > 0 {
+		if raw := bytes.TrimSpace(body); json.Valid(raw) {
+			reported.Error = raw
+		} else {
+			reported.Error, _ = json.Marshal(string(body))
+		}
+	}
+	reported.Status = resp.StatusCode
+	return Captured{Body: body, Reported: reported}, err
+}
+
+// HTTPError captures the upstream response without coupling its status to retry classification.
 func HTTPError(resp *http.Response, runner string) error {
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		payload = nil
+	captured, _ := Capture(resp)
+	msg := Text(captured.Reported)
+	if msg == "" {
+		msg = fmt.Sprintf("upstream http %d", resp.StatusCode)
 	}
-	var parsed struct {
-		Error   json.RawMessage `json:"error"`
-		Message string          `json:"message"`
-	}
-	msg := fmt.Sprintf("upstream http %d", resp.StatusCode)
-	code := ""
-	accepted := resp.StatusCode >= 500
-	var reported *canon.ProviderError
-	if providerErr, ok := Parse(payload); ok {
-		copied := providerErr
-		reported = &copied
-		if text := Text(providerErr); text != "" {
-			msg = text
-		}
-		code = stringCode(providerErr.Error)
-		if code == "" && ContextOverflow(msg) {
-			code = codeContextLength
-		}
-	} else if json.Unmarshal(payload, &parsed) == nil && parsed.Message != "" {
-		msg = parsed.Message
+	code := Code(captured.Reported)
+	if code == "" && ContextOverflow(msg) {
+		code = codeContextLength
 	}
 	return provider.RunError{
 		Kind:       provider.Retryable,
 		Class:      ClassForStatus(resp.StatusCode, code),
-		Accepted:   accepted,
+		Accepted:   resp.StatusCode >= 500,
 		ReplaySafe: true,
 		RetryAfter: provider.HTTPRetryAfterDelay(resp),
 		Cause:      fmt.Errorf("%s: %s", runner, msg),
-		Reported:   reported,
+		Reported:   &captured.Reported,
 	}
 }
 

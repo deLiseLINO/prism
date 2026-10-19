@@ -85,26 +85,60 @@ func ompManagedRead(content string) ManagedRead {
 }
 
 func WriteOmpConfig(io FileIO, options OmpOptions) WriteOutcome {
+	return writeOmpConfig(io, options, false)
+}
+
+func writeOmpConfig(io FileIO, options OmpOptions, force bool) WriteOutcome {
 	models, refusal := resolveModels(options.Models, options.ModelsSource, Omp)
 	if refusal != "" {
 		return WriteOutcome{Kind: OutcomeRefused, Reason: refusal}
 	}
+	unlock := lockMutation(options.ModelsPath)
+	defer unlock()
 	spec := NewOmpSpec(options.Port, models)
-	outcome, err := applyRestoration(io, options.ModelsPath, func(current string) ConfigTransform {
+	transform := func(current string) ConfigTransform {
 		return toTransform(UpsertProviderLeaf(current, "prism", spec))
-	}, nil, options.CrashBeforeRename)
+	}
+	if force {
+		if err := inspectJournal(io, options.ModelsPath, nil); err != nil {
+			refusal := recoveryRefusal("omp apply", err)
+			if refusal.Conflict != ConflictJournal {
+				return refusal
+			}
+			outcome, err := recoverRestorationUnlocked(io, options.ModelsPath, nil, nil, transform, nil, false)
+			return withRecoveryBackups(outcome, outcome, "omp apply", err)
+		}
+	}
+	outcome, err := applyRestorationUnlocked(io, options.ModelsPath, transform, nil, options.CrashBeforeRename, nil)
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("omp apply", err)}
+		return recoveryRefusal("omp apply", err)
 	}
 	return outcome
 }
 
 func StripOmpConfig(io FileIO, modelsPath string) WriteOutcome {
-	outcome, err := rollbackRestoration(io, modelsPath, func(current string) ConfigTransform {
+	return stripOmpConfig(io, modelsPath, false)
+}
+
+func stripOmpConfig(io FileIO, modelsPath string, force bool) WriteOutcome {
+	unlock := lockMutation(modelsPath)
+	defer unlock()
+	transform := func(current string) ConfigTransform {
 		return toTransform(RemoveProviderLeaf(current, "prism"))
-	})
+	}
+	if force {
+		if err := inspectJournal(io, modelsPath, nil); err != nil {
+			refusal := recoveryRefusal("omp rollback", err)
+			if refusal.Conflict != ConflictJournal {
+				return refusal
+			}
+			outcome, err := recoverRestorationUnlocked(io, modelsPath, nil, nil, transform, nil, true)
+			return withRecoveryBackups(outcome, outcome, "omp rollback", err)
+		}
+	}
+	outcome, err := rollbackRestorationUnlocked(io, modelsPath, transform)
 	if err != nil {
-		return WriteOutcome{Kind: OutcomeRefused, Reason: failureReason("omp rollback", err)}
+		return recoveryRefusal("omp rollback", err)
 	}
 	return outcome
 }
@@ -113,18 +147,22 @@ func RecoverOmpConfig(io FileIO, modelsPath string) bool {
 	return recoverConfigStage(io, modelsPath)
 }
 
-func (o *OmpIntegration) Apply() ApplyResult {
+func (o *OmpIntegration) Apply() ApplyResult { return o.applyWith(false) }
+
+func (o *OmpIntegration) ApplyForced() ApplyResult { return o.applyWith(true) }
+
+func (o *OmpIntegration) applyWith(force bool) ApplyResult {
 	_, modelsPath, err := o.paths()
 	if err != nil {
-		return ApplyResult{OK: false, ID: o.id, Reason: failureReason("omp apply", err)}
+		return ToApplyResult(o.id, recoveryRefusal("omp apply", err))
 	}
-	return ToApplyResult(o.id, WriteOmpConfig(o.io, OmpOptions{ModelsPath: modelsPath, Port: o.port, Models: o.models, ModelsSource: o.modelsSrc}))
+	return ToApplyResult(o.id, writeOmpConfig(o.io, OmpOptions{ModelsPath: modelsPath, Port: o.port, Models: o.models, ModelsSource: o.modelsSrc}, force))
 }
 
 func (o *OmpIntegration) Status() Status {
 	agentDir, modelsPath, err := o.paths()
 	if err != nil {
-		return Status{ID: o.id, Installed: false, Managed: false, TargetPath: nil, Endpoint: nil, Drift: false, Detail: failureReason("omp status", err)}
+		return Status{ID: o.id, Installed: false, Managed: false, TargetPath: nil, Endpoint: nil, Drift: false, Detail: failureReason("omp status", err), Blocked: true}
 	}
 	return ObservedIntegrationStatus(o.io, o.id, modelsPath, []string{agentDir}, func(path string) ManagedRead {
 		content, ok, err := o.io.ReadText(path)
@@ -138,10 +176,14 @@ func (o *OmpIntegration) Status() Status {
 	}, ProviderBaseUrl(o.port))
 }
 
-func (o *OmpIntegration) Rollback() ApplyResult {
+func (o *OmpIntegration) Rollback() ApplyResult { return o.rollbackWith(false) }
+
+func (o *OmpIntegration) RollbackForced() ApplyResult { return o.rollbackWith(true) }
+
+func (o *OmpIntegration) rollbackWith(force bool) ApplyResult {
 	_, modelsPath, err := o.paths()
 	if err != nil {
-		return ApplyResult{OK: false, ID: o.id, Reason: failureReason("omp rollback", err)}
+		return ToRollbackResult(o.id, recoveryRefusal("omp rollback", err))
 	}
-	return ToRollbackResult(o.id, StripOmpConfig(o.io, modelsPath))
+	return ToRollbackResult(o.id, stripOmpConfig(o.io, modelsPath, force))
 }

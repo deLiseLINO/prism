@@ -5,6 +5,15 @@ type ItemID string
 type CallID string
 type ToolName string
 
+type CacheHint uint8
+
+const (
+	CacheNone CacheHint = iota
+	CacheDefault
+	Cache5m
+	Cache1h
+)
+
 // StoreWire marks an OpaqueRef whose Key is the client-visible encrypted
 // payload itself (Responses encrypted_content), so it round-trips through the
 // client without a server-side store.
@@ -20,6 +29,7 @@ func (r OpaqueRef) IsEmpty() bool { return r.Store == "" && r.Key == "" }
 type Request struct {
 	Model           ModelID
 	Stream          bool
+	Cache           CacheHint
 	Instructions    []Content
 	Input           []Item
 	Tools           []Tool
@@ -66,12 +76,16 @@ type TextFormat struct {
 
 type Content interface{ content() }
 
-type TextContent struct{ Text string }
+type TextContent struct {
+	Text  string
+	Cache CacheHint
+}
 
 type ImageContent struct {
 	MIMEType string
 	Data     []byte
 	Detail   string
+	Cache    CacheHint
 }
 
 func (TextContent) content()  {}
@@ -116,12 +130,14 @@ type FunctionCall struct {
 	Name      ToolName
 	Arguments []byte
 	State     OpaqueRef
+	Cache     CacheHint
 }
 
 type FunctionOutput struct {
 	ID     ItemID
 	CallID CallID
 	Output []Content
+	Cache  CacheHint
 }
 
 type CustomToolCall struct {
@@ -195,6 +211,7 @@ type FunctionTool struct {
 	Description string
 	Parameters  []byte
 	Strict      bool
+	Cache       CacheHint
 }
 
 type CustomToolDef struct {
@@ -401,6 +418,7 @@ type Failure struct {
 type ProviderError struct {
 	Error         []byte
 	StatusDetails []byte
+	Status        int
 }
 
 func (f Failure) HasProvider() bool {
@@ -426,6 +444,7 @@ const (
 	FailTimeout
 	FailUnknown
 	FailClientClosed
+	FailAccountUnavailable
 )
 
 type Usage struct {

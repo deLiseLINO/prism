@@ -40,6 +40,9 @@ type WriteOutcome struct {
 	Kind      string
 	Reason    string
 	Retryable bool
+	Conflict  string
+	Backup    string
+	Backups   []string
 }
 
 // ApplyConfigTransform is one apply pass over a config file: read, normalize
@@ -125,12 +128,12 @@ func ToRollbackResult(id ID, outcome WriteOutcome) ApplyResult {
 
 func ToApplyResult(id ID, outcome WriteOutcome) ApplyResult {
 	if outcome.Kind == OutcomeRefused {
-		return ApplyResult{OK: false, ID: id, Reason: outcome.Reason, Retryable: outcome.Retryable}
+		return ApplyResult{OK: false, ID: id, Reason: outcome.Reason, Retryable: outcome.Retryable, Conflict: outcome.Conflict, Backup: outcome.Backup, Backups: outcome.Backups}
 	}
 	if outcome.Kind == OutcomeCrashed {
 		return ApplyResult{OK: false, ID: id, Reason: "prism: config write staged but not committed (crash simulation); recovery discards it"}
 	}
-	return ApplyResult{OK: true, ID: id}
+	return ApplyResult{OK: true, ID: id, Backup: outcome.Backup, Backups: outcome.Backups}
 }
 
 var tomlStringFieldRe = func(key string) *regexp.Regexp {
@@ -172,10 +175,20 @@ type ManagedRead struct {
 func ObservedIntegrationStatus(io FileIO, id ID, targetPath string, detectDirs []string, read func(path string) ManagedRead, requestedEndpoint string) Status {
 	unlock := lockMutation(targetPath)
 	defer unlock()
-	if _, _, err := io.ReadText(targetPath); err != nil {
-		return Status{ID: id, Installed: true, TargetPath: strPtr(targetPath), Detail: failureReason("status read", err)}
+	status := observedIntegrationStatusUnlocked(io, id, targetPath, detectDirs, read, requestedEndpoint)
+	return journalStatus(io, targetPath, nil, status)
+}
+
+func observedIntegrationStatusUnlocked(io FileIO, id ID, targetPath string, detectDirs []string, read func(string) ManagedRead, requestedEndpoint string) Status {
+	content, configPresent, err := io.ReadText(targetPath)
+	if err != nil {
+		return Status{ID: id, Installed: true, TargetPath: strPtr(targetPath), Detail: failureReason("status read", err), Blocked: true}
 	}
-	configPresent := io.FileExists(targetPath)
+	if configPresent {
+		if err := inspectConfig(targetPath, content); err != nil {
+			return Status{ID: id, Installed: true, TargetPath: strPtr(targetPath), Detail: failureReason("status read", err), Blocked: true}
+		}
+	}
 	installed := configPresent
 	for _, dir := range detectDirs {
 		if io.FileExists(dir) {
@@ -199,7 +212,7 @@ func ObservedIntegrationStatus(io FileIO, id ID, targetPath string, detectDirs [
 		if detail == "" {
 			detail = "prism-owned bytes could not be read"
 		}
-		return Status{ID: id, Installed: installed, Managed: found.Kind == ManagedDamaged, TargetPath: strPtr(targetPath), Endpoint: nil, Drift: false, Detail: detail}
+		return Status{ID: id, Installed: installed, Managed: found.Kind == ManagedDamaged, TargetPath: strPtr(targetPath), Endpoint: nil, Drift: false, Detail: detail, Blocked: true}
 	}
 	drift := found.Endpoint != nil && *found.Endpoint != requestedEndpoint
 	detail := "managed by prism"

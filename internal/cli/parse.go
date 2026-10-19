@@ -241,7 +241,7 @@ var helpRoutes = `Usage: prism routes list [--json]
 
 var helpIntegrations = `Usage: prism integrations status [codex|grok|omp] [--json]
        prism integrations apply <codex|grok|omp> [--force] [--json]
-       prism integrations rollback <codex|grok|omp> [--json]
+       prism integrations rollback <codex|grok|omp> [--force] [--json]
 `
 
 var helpAgents = `Usage: prism agents [status] [codex|claude|grok|omp|pi|opencode|hermes] [--json]
@@ -713,11 +713,7 @@ func parseIntegrations(args []string, spec map[string]bool) (*command, error) {
 			return nil, usageFail(helpIntegrations, "unknown integration client %q (want codex, grok, or omp)", pos[0])
 		}
 		cmd.clientID = pos[0]
-		if sub == "apply" {
-			cmd.force = fs.has("force")
-		} else if fs.has("force") {
-			return nil, usageFail(helpIntegrations, "integrations rollback takes no --force flag")
-		}
+		cmd.force = fs.has("force")
 		return cmd, nil
 	default:
 		return nil, usageFail(helpIntegrations, "unknown integrations subcommand %q", sub)

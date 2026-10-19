@@ -219,6 +219,9 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		if !known {
 			return s.failUnknown(fmt.Sprintf("upstream finish reason %q is not representable", reason))
 		}
+		if reason == "length" {
+			s.tools = nil
+		}
 		if err := s.finishItems(); err != nil {
 			return err
 		}
@@ -229,15 +232,6 @@ func (s *streamer) handleFrame(f sseFrame) error {
 }
 
 func (s *streamer) handleDelta(delta map[string]any) error {
-	if text, ok := delta["content"].(string); ok && text != "" {
-		if err := s.ensureMessageOpen(); err != nil {
-			return err
-		}
-		s.msgText.WriteString(text)
-		if err := s.emit(canon.TextDelta{ItemID: s.msgID, Text: text}); err != nil {
-			return err
-		}
-	}
 	if text := reasoningDelta(delta); text != "" {
 		if err := s.ensureReasoningOpen(); err != nil {
 			return err
@@ -247,7 +241,16 @@ func (s *streamer) handleDelta(delta map[string]any) error {
 			return err
 		}
 	}
-	if raw, present := delta["tool_calls"]; present {
+	if text, ok := delta["content"].(string); ok && text != "" {
+		if err := s.ensureMessageOpen(); err != nil {
+			return err
+		}
+		s.msgText.WriteString(text)
+		if err := s.emit(canon.TextDelta{ItemID: s.msgID, Text: text}); err != nil {
+			return err
+		}
+	}
+	if raw, present := delta["tool_calls"]; present && raw != nil {
 		rawCalls, ok := raw.([]any)
 		if !ok {
 			return s.protocolError("upstream tool_calls delta is not an array")
@@ -372,7 +375,7 @@ func (s *streamer) handleToolCallDelta(call map[string]any) error {
 	}
 	for _, fields := range []map[string]any{call, fn} {
 		for _, key := range []string{"id", "name", "arguments"} {
-			if value, present := fields[key]; present {
+			if value, present := fields[key]; present && value != nil {
 				if _, ok := value.(string); !ok {
 					return s.protocolError("upstream tool call " + key + " is not a string")
 				}

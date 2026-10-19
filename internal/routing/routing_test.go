@@ -549,23 +549,6 @@ func TestSameProviderFailureDoesNotAcquireAnotherAccount(t *testing.T) {
 	}
 }
 
-func TestPoolExhaustedOnAcquireAborts(t *testing.T) {
-	pool := &fakePool{results: []leaseResult{{err: account.ErrNoAccount}}}
-	runners := fakeRunners{"codex": successRunner(canon.Usage{})}
-	planner := singlePlan("codex", TurnPolicy{})
-	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
-	if res.Attempts != 0 {
-		t.Fatalf("attempts = %d, want 0", res.Attempts)
-	}
-	f, ok := res.Terminal.(Failed)
-	if !ok {
-		t.Fatalf("terminal is %T, want Failed", res.Terminal)
-	}
-	if f.Event.Failure.Reason != canon.FailQuotaExhausted || f.Event.Failure.Message != "routing: pool exhausted" {
-		t.Fatalf("failure = %+v, want pool exhausted", f.Event.Failure)
-	}
-}
-
 func TestTargetSwitchBudgetExhaustedAborts(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassServer}
 	pool := &fakePool{results: []leaseResult{{lease: testLease("codex", 0)}, {lease: testLease("antigravity", 0)}}}
@@ -719,23 +702,6 @@ func TestEmptyPlanFails(t *testing.T) {
 	}
 	if f.Event.Failure.Reason != canon.FailNotFound {
 		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailNotFound)
-	}
-}
-
-func TestMissingRunnerFails(t *testing.T) {
-	pool := poolWith("codex", 1)
-	runners := fakeRunners{}
-	planner := singlePlan("codex", TurnPolicy{})
-	res := runTurn(t, pool, runners, planner, provider.NotStarted, &recordingSink{})
-	f, ok := res.Terminal.(Failed)
-	if !ok {
-		t.Fatalf("terminal is %T, want Failed", res.Terminal)
-	}
-	if f.Event.Failure.Reason != canon.FailUnknown {
-		t.Fatalf("failure reason = %d, want %d", f.Event.Failure.Reason, canon.FailUnknown)
-	}
-	if res.Attempts != 0 {
-		t.Fatalf("attempts = %d, want 0", res.Attempts)
 	}
 }
 

@@ -349,7 +349,7 @@ func TestResponsesRequireSelectionAndKeepSelectedAccountAfterFailure(t *testing.
 	request := func() *httptest.ResponseRecorder {
 		return postJSON(t, h, "/v1/responses", `{"model":"test-model","input":"hi"}`)
 	}
-	if rec := request(); !strings.Contains(rec.Body.String(), "pool exhausted") || selected.runner.callsMade() != 0 {
+	if rec := request(); rec.Code != http.StatusServiceUnavailable || selected.runner.callsMade() != 0 {
 		t.Fatalf("unselected request = %d %s, runner calls=%d", rec.Code, rec.Body.String(), selected.runner.callsMade())
 	}
 	plan.Targets[0].Policy.PinnedAccount = "a1"

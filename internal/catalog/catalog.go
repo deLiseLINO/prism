@@ -21,6 +21,7 @@ const cacheName = "model-catalog.json"
 
 type Facts struct {
 	ContextWindow int      `json:"contextWindow,omitempty"`
+	MaxOutput     int      `json:"maxOutput,omitempty"`
 	Image         *bool    `json:"image,omitempty"`
 	Efforts       []string `json:"efforts,omitempty"`
 }
@@ -142,12 +143,14 @@ func (f fieldVote[T]) decided() (T, bool) {
 
 type providerSlot struct {
 	window  fieldVote[int]
+	output  fieldVote[int]
 	image   fieldVote[bool]
 	efforts fieldVote[string]
 }
 
 type vote struct {
 	windows map[int]int
+	outputs map[int]int
 	images  map[bool]int
 	efforts map[string]int
 }
@@ -162,6 +165,9 @@ func tally[K comparable](counts *map[K]int, key K) {
 func (v *vote) add(row Facts) {
 	if row.ContextWindow > 0 {
 		tally(&v.windows, row.ContextWindow)
+	}
+	if row.MaxOutput > 0 {
+		tally(&v.outputs, row.MaxOutput)
 	}
 	if row.Image != nil {
 		tally(&v.images, *row.Image)
@@ -193,6 +199,9 @@ func (v vote) facts() Facts {
 	out := Facts{}
 	if n, ok := majority(v.windows); ok {
 		out.ContextWindow = n
+	}
+	if n, ok := majority(v.outputs); ok {
+		out.MaxOutput = n
 	}
 	if on, ok := majority(v.images); ok {
 		out.Image = &on
@@ -232,6 +241,7 @@ func Parse(body []byte) (map[string]Facts, error) {
 					local[match] = slot
 				}
 				slot.window.add(row.facts.ContextWindow, row.facts.ContextWindow > 0)
+				slot.output.add(row.facts.MaxOutput, row.facts.MaxOutput > 0)
 				if row.facts.Image != nil {
 					slot.image.add(*row.facts.Image, true)
 				}
@@ -243,13 +253,16 @@ func Parse(body []byte) (map[string]Facts, error) {
 			if n, ok := slot.window.decided(); ok {
 				ballot.ContextWindow = n
 			}
+			if n, ok := slot.output.decided(); ok {
+				ballot.MaxOutput = n
+			}
 			if on, ok := slot.image.decided(); ok {
 				ballot.Image = &on
 			}
 			if key, ok := slot.efforts.decided(); ok {
 				ballot.Efforts = strings.Split(key, ",")
 			}
-			if ballot.ContextWindow == 0 && ballot.Image == nil && len(ballot.Efforts) == 0 {
+			if ballot.ContextWindow == 0 && ballot.MaxOutput == 0 && ballot.Image == nil && len(ballot.Efforts) == 0 {
 				continue
 			}
 			v := acc[match]
@@ -263,7 +276,7 @@ func Parse(body []byte) (map[string]Facts, error) {
 	out := make(map[string]Facts, len(acc))
 	for id, v := range acc {
 		facts := v.facts()
-		if facts.ContextWindow == 0 && facts.Image == nil && len(facts.Efforts) == 0 {
+		if facts.ContextWindow == 0 && facts.MaxOutput == 0 && facts.Image == nil && len(facts.Efforts) == 0 {
 			continue
 		}
 		out[id] = facts
@@ -281,6 +294,7 @@ func parseModel(key string, raw json.RawMessage) (parsedModel, bool) {
 		ID    string `json:"id"`
 		Limit struct {
 			Context json.RawMessage `json:"context"`
+			Output  json.RawMessage `json:"output"`
 		} `json:"limit"`
 		Modalities struct {
 			Input json.RawMessage `json:"input"`
@@ -299,6 +313,7 @@ func parseModel(key string, raw json.RawMessage) (parsedModel, bool) {
 	}
 	return parsedModel{id: id, facts: Facts{
 		ContextWindow: windowVote(row.Limit.Context),
+		MaxOutput:     windowVote(row.Limit.Output),
 		Image:         imageVote(row.Modalities.Input),
 		Efforts:       effortVote(row.ReasoningOptions),
 	}}, true

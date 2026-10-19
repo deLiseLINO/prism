@@ -258,6 +258,40 @@ func TestReasoningEffortLadder(t *testing.T) {
 	}
 }
 
+func TestReasoningSummaryRequest(t *testing.T) {
+	cases := []struct {
+		name       string
+		fields     string
+		wantEffort canon.ReasoningEffort
+		wantSum    canon.ReasoningSummary
+	}{
+		{name: "nothing", fields: ``, wantSum: 0},
+		{name: "effort alone asks for a summary", fields: `,"reasoning_effort":"high"`, wantEffort: canon.EffortHigh, wantSum: canon.SummaryAuto},
+		{name: "effort off asks for nothing", fields: `,"reasoning_effort":"none"`, wantEffort: canon.EffortOff, wantSum: 0},
+		{name: "include_reasoning false", fields: `,"reasoning_effort":"high","include_reasoning":false`, wantEffort: canon.EffortHigh, wantSum: canon.SummaryNone},
+		{name: "include_reasoning true", fields: `,"include_reasoning":true`, wantSum: canon.SummaryAuto},
+		{name: "reasoning object", fields: `,"reasoning":{"effort":"low","summary":"detailed"}`, wantEffort: canon.EffortLow, wantSum: canon.SummaryDetailed},
+		{name: "reasoning summary beats include_reasoning", fields: `,"reasoning":{"summary":"concise"},"include_reasoning":false`, wantSum: canon.SummaryConcise},
+		{name: "top-level effort beats object effort", fields: `,"reasoning_effort":"high","reasoning":{"effort":"low"}`, wantEffort: canon.EffortHigh, wantSum: canon.SummaryAuto},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := mustParse(t, `{"model":"m","messages":[{"role":"user","content":"x"}]`+tc.fields+`}`)
+			if req.Reasoning.Effort != tc.wantEffort || req.Reasoning.Summary != tc.wantSum {
+				t.Fatalf("reasoning = %#v, want effort=%d summary=%d", req.Reasoning, tc.wantEffort, tc.wantSum)
+			}
+		})
+	}
+
+	t.Run("unknown summary is rejected", func(t *testing.T) {
+		_, _, err := parseBody(t, `{"model":"m","messages":[{"role":"user","content":"x"}],"reasoning":{"summary":"turbo"}}`, nil)
+		var pe *ParseError
+		if !errors.As(err, &pe) || pe.Field != "reasoning.summary" {
+			t.Fatalf("err = %v, want parse error on reasoning.summary", err)
+		}
+	})
+}
+
 func TestMaxCompletionTokensPrecedence(t *testing.T) {
 	tests := []struct {
 		name string

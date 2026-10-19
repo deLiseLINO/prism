@@ -7,15 +7,32 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/reasonenv"
 )
 
-type wireTextBlock struct {
+type wireCacheControl struct {
 	Type string `json:"type"`
-	Text string `json:"text"`
+	TTL  string `json:"ttl,omitempty"`
+}
+
+var wireCacheControls = [...]*wireCacheControl{
+	canon.CacheDefault: {Type: "ephemeral"},
+	canon.Cache5m:      {Type: "ephemeral", TTL: "5m"},
+	canon.Cache1h:      {Type: "ephemeral", TTL: "1h"},
+}
+
+func wireCache(hint canon.CacheHint) *wireCacheControl {
+	return wireCacheControls[hint]
+}
+
+type wireTextBlock struct {
+	Type         string            `json:"type"`
+	Text         string            `json:"text"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireImageSource struct {
@@ -25,17 +42,18 @@ type wireImageSource struct {
 }
 
 type wireBlock struct {
-	Type      string           `json:"type"`
-	Text      string           `json:"text,omitempty"`
-	Source    *wireImageSource `json:"source,omitempty"`
-	Thinking  *string          `json:"thinking,omitempty"`
-	Data      string           `json:"data,omitempty"`
-	Signature string           `json:"signature,omitempty"`
-	ID        string           `json:"id,omitempty"`
-	Name      string           `json:"name,omitempty"`
-	Input     json.RawMessage  `json:"input,omitempty"`
-	ToolUseID string           `json:"tool_use_id,omitempty"`
-	Content   []wireBlock      `json:"content,omitempty"`
+	Type         string            `json:"type"`
+	Text         string            `json:"text,omitempty"`
+	Source       *wireImageSource  `json:"source,omitempty"`
+	Thinking     *string           `json:"thinking,omitempty"`
+	Data         string            `json:"data,omitempty"`
+	Signature    string            `json:"signature,omitempty"`
+	ID           string            `json:"id,omitempty"`
+	Name         string            `json:"name,omitempty"`
+	Input        json.RawMessage   `json:"input,omitempty"`
+	ToolUseID    string            `json:"tool_use_id,omitempty"`
+	Content      []wireBlock       `json:"content,omitempty"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireMessage struct {
@@ -44,9 +62,10 @@ type wireMessage struct {
 }
 
 type wireTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	InputSchema  json.RawMessage   `json:"input_schema"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireToolChoice struct {
@@ -58,6 +77,7 @@ type wireToolChoice struct {
 type wireThinking struct {
 	Type         string `json:"type"`
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Display      string `json:"display,omitempty"`
 }
 
 type wireOutputFormat struct {
@@ -83,6 +103,7 @@ type wireRequest struct {
 	Stream        bool              `json:"stream,omitempty"`
 	Thinking      *wireThinking     `json:"thinking,omitempty"`
 	OutputConfig  *wireOutputConfig `json:"output_config,omitempty"`
+	CacheControl  *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type budgetRow map[canon.ReasoningEffort]int
@@ -103,7 +124,39 @@ var budgetTable = map[string]budgetRow{
 	"fable":  referenceBudgets,
 }
 
-var familyPattern = regexp.MustCompile(`(?:^|/)claude-([a-z]+)-\d+`)
+var familyPattern = regexp.MustCompile(`(?:^|/)claude-([a-z]+)-(\d+)`)
+
+// Models from generation 5 on return thinking text only when the request asks
+// for a summary, and Sonnet 5 accepts that request only in adaptive mode.
+const summaryMinGeneration = 5
+
+func modelGeneration(model canon.ModelID) int {
+	m := familyPattern.FindStringSubmatch(strings.ToLower(string(model)))
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[2])
+	return n
+}
+
+func usesAdaptiveThinking(model canon.ModelID) bool {
+	return modelFamily(model) == "sonnet" && modelGeneration(model) >= summaryMinGeneration
+}
+
+func adaptiveEffortName(effort canon.ReasoningEffort) string {
+	switch effort {
+	case canon.EffortMinimal, canon.EffortLow:
+		return "low"
+	case canon.EffortMedium:
+		return "medium"
+	case canon.EffortHigh:
+		return "high"
+	case canon.EffortXHigh:
+		return "xhigh"
+	default:
+		return "max"
+	}
+}
 
 func budgetFor(model canon.ModelID, effort canon.ReasoningEffort) (int, bool) {
 	row, ok := budgetTable[modelFamily(model)]
@@ -122,8 +175,8 @@ func modelFamily(model canon.ModelID) string {
 	return m[1]
 }
 
-func (r *Runner) render(request canon.Request, streaming bool) (*outbound, error) {
-	wr, err := r.buildWireRequest(request, streaming)
+func (r *Runner) render(request canon.Request, outputLimit int, streaming bool) (*outbound, error) {
+	wr, err := r.buildWireRequest(request, outputLimit, streaming)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +187,7 @@ func (r *Runner) render(request canon.Request, streaming bool) (*outbound, error
 	return &outbound{body: body}, nil
 }
 
-func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireRequest, error) {
+func (r *Runner) buildWireRequest(request canon.Request, outputLimit int, streaming bool) (*wireRequest, error) {
 	if request.Text.Verbosity != 0 && request.Text.Verbosity != canon.VerbosityDefault {
 		return nil, errors.New("anthropic: text verbosity is not representable on this wire")
 	}
@@ -194,9 +247,12 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 	if err != nil {
 		return nil, err
 	}
+	if outputLimit <= 0 {
+		outputLimit = unknownModelMaxTokens
+	}
 	maxTokens := request.MaxOutputTokens
 	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = outputLimit
 	}
 	wr := &wireRequest{
 		Model:         string(request.Model),
@@ -210,6 +266,7 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 		StopSequences: request.Sampling.Stop,
 		Stream:        streaming,
 		OutputConfig:  outputConfig,
+		CacheControl:  wireCache(request.Cache),
 	}
 	if request.Reasoning.BetweenTools {
 		wr.Thinking = &wireThinking{Type: "between_tools"}
@@ -234,22 +291,45 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 			}
 			wr.OutputConfig.Effort = effort
 		}
-	} else if request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff && !forcesToolUse(choice) {
+		return wr, nil
+	}
+	thinkingOn := request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff
+	if !thinkingOn && request.Reasoning.Effort == 0 && request.Reasoning.Summary != 0 && usesAdaptiveThinking(request.Model) {
+		thinkingOn = true
+	}
+	if thinkingOn && !forcesToolUse(choice) {
 		if request.Sampling.Temperature != nil || request.Sampling.TopP != nil {
 			return nil, errors.New("anthropic: sampling controls are not representable with extended thinking")
+		}
+		display := ""
+		if request.Reasoning.Summary != canon.SummaryNone && modelGeneration(request.Model) >= summaryMinGeneration {
+			display = "summarized"
+		}
+		if usesAdaptiveThinking(request.Model) {
+			wr.Thinking = &wireThinking{Type: "adaptive", Display: display}
+			if request.Reasoning.Effort != 0 {
+				if wr.OutputConfig == nil {
+					wr.OutputConfig = &wireOutputConfig{}
+				}
+				wr.OutputConfig.Effort = adaptiveEffortName(request.Reasoning.Effort)
+			}
+			wr.Temperature = nil
+			wr.TopP = nil
+			return wr, nil
 		}
 		budget, ok := budgetFor(request.Model, request.Reasoning.Effort)
 		if !ok {
 			return nil, fmt.Errorf("anthropic: no thinking budget for model %q effort %d", request.Model, request.Reasoning.Effort)
 		}
-		if budget < minThinkingBudget {
-			return nil, fmt.Errorf("anthropic: thinking budget %d below minimum %d", budget, minThinkingBudget)
-		}
-		wr.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget}
 		// Only a value prism raises is capped; the client's own limit stands.
-		if floor := min(budget+thinkingHeadroom, maxTokensCeiling); maxTokens < floor {
+		if floor := min(budget+thinkingHeadroom, outputLimit); maxTokens < floor {
 			maxTokens = floor
 		}
+		budget = min(budget, maxTokens-thinkingHeadroom)
+		if budget < minThinkingBudget {
+			return nil, fmt.Errorf("anthropic: thinking budget %d below minimum %d for max_tokens %d", budget, minThinkingBudget, maxTokens)
+		}
+		wr.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget, Display: display}
 		wr.MaxTokens = maxTokens
 		wr.Temperature = nil
 		wr.TopP = nil
@@ -290,7 +370,7 @@ func systemBlocks(contents []canon.Content) ([]wireTextBlock, error) {
 		if text.Text == "" {
 			continue
 		}
-		blocks = append(blocks, wireTextBlock{Type: "text", Text: text.Text})
+		blocks = append(blocks, wireTextBlock{Type: "text", Text: text.Text, CacheControl: wireCache(text.Cache)})
 	}
 	return blocks, nil
 }
@@ -314,9 +394,9 @@ func contentBlocks(contents []canon.Content) ([]wireBlock, error) {
 			if v.Text == "" {
 				continue
 			}
-			blocks = append(blocks, wireBlock{Type: "text", Text: v.Text})
+			blocks = append(blocks, wireBlock{Type: "text", Text: v.Text, CacheControl: wireCache(v.Cache)})
 		case canon.ImageContent:
-			blocks = append(blocks, wireBlock{Type: "image", Source: &wireImageSource{
+			blocks = append(blocks, wireBlock{Type: "image", CacheControl: wireCache(v.Cache), Source: &wireImageSource{
 				Type:      "base64",
 				MediaType: v.MIMEType,
 				Data:      base64.StdEncoding.EncodeToString(v.Data),
@@ -372,13 +452,13 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 			if !json.Valid(args) {
 				return nil, nil, fmt.Errorf("anthropic: tool call %q has malformed arguments", v.CallID)
 			}
-			appendBlock("assistant", wireBlock{Type: "tool_use", ID: string(v.CallID), Name: string(v.Name), Input: json.RawMessage(args)})
+			appendBlock("assistant", wireBlock{Type: "tool_use", ID: string(v.CallID), Name: string(v.Name), Input: json.RawMessage(args), CacheControl: wireCache(v.Cache)})
 		case canon.FunctionOutput:
 			blocks, err := contentBlocks(v.Output)
 			if err != nil {
 				return nil, nil, err
 			}
-			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks})
+			appendBlock("user", wireBlock{Type: "tool_result", ToolUseID: string(v.CallID), Content: blocks, CacheControl: wireCache(v.Cache)})
 		case canon.CustomToolCall:
 			if v.CallID == "" {
 				return nil, nil, errors.New("anthropic: custom tool call has no call id")
@@ -516,7 +596,7 @@ func toolsFrom(tools []canon.Tool) ([]wireTool, []string, error) {
 				skipped = append(skipped, string(v.Name))
 				continue
 			}
-			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema})
+			wire = append(wire, wireTool{Name: string(v.Name), Description: v.Description, InputSchema: schema, CacheControl: wireCache(v.Cache)})
 		case canon.CustomToolDef:
 			schema, err := customToolSchema(v.Name)
 			if err != nil {
