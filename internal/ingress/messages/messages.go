@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -660,6 +661,11 @@ func decodeThinking(raw json.RawMessage) (canon.ReasoningConfig, error) {
 	switch t.Type {
 	case "disabled":
 		return canon.ReasoningConfig{Effort: canon.EffortOff}, nil
+	case "between_tools":
+		if t.BudgetTokens != nil {
+			return canon.ReasoningConfig{}, &ParseError{Reason: ReasonInvalidField, Field: "thinking.budget_tokens", Err: errors.New("between_tools does not accept a thinking budget")}
+		}
+		return canon.ReasoningConfig{BetweenTools: true}, nil
 	case "enabled":
 		if t.BudgetTokens == nil {
 			return canon.ReasoningConfig{Summary: summary}, nil

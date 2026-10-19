@@ -190,6 +190,14 @@ func TestThinkingConfig(t *testing.T) {
 			t.Fatalf("parse error = %#v", pe)
 		}
 	})
+	t.Run("between-tools thinking refuses a budget", func(t *testing.T) {
+		body := `{"model":"mock-model","max_tokens":512,"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"between_tools","budget_tokens":1024}}`
+		_, _, err := parseBody(t, body, nil)
+		pe := parseErr(t, err)
+		if pe.Reason != ReasonInvalidField || pe.Field != "thinking.budget_tokens" {
+			t.Fatalf("parse error = %#v", pe)
+		}
+	})
 }
 
 func TestToolsAndToolChoice(t *testing.T) {

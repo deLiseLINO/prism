@@ -268,6 +268,31 @@ func (r *Runner) buildWireRequest(request canon.Request, outputLimit int, stream
 		OutputConfig:  outputConfig,
 		CacheControl:  wireCache(request.Cache),
 	}
+	if request.Reasoning.BetweenTools {
+		wr.Thinking = &wireThinking{Type: "between_tools"}
+		if request.Reasoning.Effort != 0 {
+			var effort string
+			switch request.Reasoning.Effort {
+			case canon.EffortLow:
+				effort = "low"
+			case canon.EffortMedium:
+				effort = "medium"
+			case canon.EffortHigh:
+				effort = "high"
+			case canon.EffortXHigh:
+				effort = "xhigh"
+			case canon.EffortMax:
+				effort = "max"
+			default:
+				return nil, fmt.Errorf("anthropic: effort %d is not representable with between_tools", request.Reasoning.Effort)
+			}
+			if wr.OutputConfig == nil {
+				wr.OutputConfig = &wireOutputConfig{}
+			}
+			wr.OutputConfig.Effort = effort
+		}
+		return wr, nil
+	}
 	thinkingOn := request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff
 	if !thinkingOn && request.Reasoning.Effort == 0 && request.Reasoning.Summary != 0 && usesAdaptiveThinking(request.Model) {
 		thinkingOn = true
