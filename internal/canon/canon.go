@@ -37,8 +37,9 @@ type ToolRoute struct {
 }
 
 type ReasoningConfig struct {
-	Effort  ReasoningEffort
-	Summary ReasoningSummary
+	Effort       ReasoningEffort
+	Summary      ReasoningSummary
+	BetweenTools bool
 }
 
 type Sampling struct {

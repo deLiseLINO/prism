@@ -35,3 +35,16 @@ func TestNativeThinkingSamplingRejectsBeforeDispatch(t *testing.T) {
 		t.Fatalf("error=%v calls=%d", err, calls)
 	}
 }
+
+func TestNativeBetweenToolsRejectsUnrepresentableEffortHTTP(t *testing.T) {
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer up.Close()
+	req := baseRequest()
+	req.Reasoning = canon.ReasoningConfig{BetweenTools: true, Effort: canon.EffortMinimal}
+	err := New(Options{HTTP: up.Client()}).Run(t.Context(), provider.RunRequest{Request: req, Target: provider.Target{BaseURL: up.URL}}, &collectingSink{})
+	var re *provider.RunError
+	if !errors.As(err, &re) || re.Class != provider.ClassInvalidRequest || calls != 0 {
+		t.Fatalf("error=%v calls=%d", err, calls)
+	}
+}

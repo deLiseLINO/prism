@@ -57,7 +57,7 @@ type wireToolChoice struct {
 
 type wireThinking struct {
 	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
 type wireOutputFormat struct {
@@ -66,7 +66,8 @@ type wireOutputFormat struct {
 }
 
 type wireOutputConfig struct {
-	Format wireOutputFormat `json:"format"`
+	Format *wireOutputFormat `json:"format,omitempty"`
+	Effort string            `json:"effort,omitempty"`
 }
 
 type wireRequest struct {
@@ -210,7 +211,30 @@ func (r *Runner) buildWireRequest(request canon.Request, streaming bool) (*wireR
 		Stream:        streaming,
 		OutputConfig:  outputConfig,
 	}
-	if request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff && !forcesToolUse(choice) {
+	if request.Reasoning.BetweenTools {
+		wr.Thinking = &wireThinking{Type: "between_tools"}
+		if request.Reasoning.Effort != 0 {
+			var effort string
+			switch request.Reasoning.Effort {
+			case canon.EffortLow:
+				effort = "low"
+			case canon.EffortMedium:
+				effort = "medium"
+			case canon.EffortHigh:
+				effort = "high"
+			case canon.EffortXHigh:
+				effort = "xhigh"
+			case canon.EffortMax:
+				effort = "max"
+			default:
+				return nil, fmt.Errorf("anthropic: effort %d is not representable with between_tools", request.Reasoning.Effort)
+			}
+			if wr.OutputConfig == nil {
+				wr.OutputConfig = &wireOutputConfig{}
+			}
+			wr.OutputConfig.Effort = effort
+		}
+	} else if request.Reasoning.Effort != 0 && request.Reasoning.Effort != canon.EffortOff && !forcesToolUse(choice) {
 		if request.Sampling.Temperature != nil || request.Sampling.TopP != nil {
 			return nil, errors.New("anthropic: sampling controls are not representable with extended thinking")
 		}
@@ -253,7 +277,7 @@ func outputConfigFrom(format *canon.TextFormat) (*wireOutputConfig, error) {
 	if json.Unmarshal(format.Schema, &schema) != nil || schema == nil {
 		return nil, errors.New("anthropic: output format requires a JSON schema object")
 	}
-	return &wireOutputConfig{Format: wireOutputFormat{Type: "json_schema", Schema: format.Schema}}, nil
+	return &wireOutputConfig{Format: &wireOutputFormat{Type: "json_schema", Schema: format.Schema}}, nil
 }
 
 func systemBlocks(contents []canon.Content) ([]wireTextBlock, error) {
