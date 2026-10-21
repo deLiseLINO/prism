@@ -124,23 +124,49 @@ var budgetTable = map[string]budgetRow{
 	"fable":  referenceBudgets,
 }
 
-var familyPattern = regexp.MustCompile(`(?:^|/)claude-([a-z]+)-(\d+)`)
+// familyPattern reads claude-<family>-<major>[-.<minor>]. The minor has at most
+// two digits and must end the version, so a date pin such as
+// claude-opus-4-20250514 reads as 4.0.
+var familyPattern = regexp.MustCompile(`(?:^|/)claude-([a-z]+)-(\d+)(?:[.-](\d{1,2}))?(?:$|[^\d])`)
 
-// Models from generation 5 on return thinking text only when the request asks
-// for a summary, and Sonnet 5 accepts that request only in adaptive mode.
-const summaryMinGeneration = 5
-
-func modelGeneration(model canon.ModelID) int {
-	m := familyPattern.FindStringSubmatch(strings.ToLower(string(model)))
-	if m == nil {
-		return 0
-	}
-	n, _ := strconv.Atoi(m[2])
-	return n
+type modelVersion struct {
+	family       string
+	major, minor int
+	ok           bool
 }
 
+func parseModelVersion(model canon.ModelID) modelVersion {
+	m := familyPattern.FindStringSubmatch(strings.ToLower(string(model)))
+	if m == nil {
+		return modelVersion{}
+	}
+	v := modelVersion{family: m[1], ok: true}
+	v.major, _ = strconv.Atoi(m[2])
+	if m[3] != "" {
+		v.minor, _ = strconv.Atoi(m[3])
+	}
+	return v
+}
+
+func (v modelVersion) atLeast(major, minor int) bool {
+	return v.ok && (v.major > major || (v.major == major && v.minor >= minor))
+}
+
+// usesAdaptiveThinking reports the Claude generations that take
+// thinking.type "adaptive": every family from 4.6, Haiku from 5.5. Fable and
+// newer Opus/Sonnet reject a budget; 4.6 models accept both.
 func usesAdaptiveThinking(model canon.ModelID) bool {
-	return modelFamily(model) == "sonnet" && modelGeneration(model) >= summaryMinGeneration
+	v := parseModelVersion(model)
+	if v.family == "haiku" {
+		return v.atLeast(5, 5)
+	}
+	return v.atLeast(4, 6)
+}
+
+// supportsThinkingDisplay reports adaptive models from 4.7 on. They omit
+// thinking text unless the request asks for a summary; 4.6 rejects the field.
+func supportsThinkingDisplay(model canon.ModelID) bool {
+	return usesAdaptiveThinking(model) && parseModelVersion(model).atLeast(4, 7)
 }
 
 func adaptiveEffortName(effort canon.ReasoningEffort) string {
@@ -168,11 +194,7 @@ func budgetFor(model canon.ModelID, effort canon.ReasoningEffort) (int, bool) {
 }
 
 func modelFamily(model canon.ModelID) string {
-	m := familyPattern.FindStringSubmatch(strings.ToLower(string(model)))
-	if m == nil {
-		return ""
-	}
-	return m[1]
+	return parseModelVersion(model).family
 }
 
 func (r *Runner) render(request canon.Request, outputLimit int, streaming bool) (*outbound, error) {
@@ -302,7 +324,7 @@ func (r *Runner) buildWireRequest(request canon.Request, outputLimit int, stream
 			return nil, errors.New("anthropic: sampling controls are not representable with extended thinking")
 		}
 		display := ""
-		if request.Reasoning.Summary != canon.SummaryNone && modelGeneration(request.Model) >= summaryMinGeneration {
+		if request.Reasoning.Summary != canon.SummaryNone && supportsThinkingDisplay(request.Model) {
 			display = "summarized"
 		}
 		if usesAdaptiveThinking(request.Model) {

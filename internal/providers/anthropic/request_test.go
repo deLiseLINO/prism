@@ -897,11 +897,14 @@ func TestThinkingSummaryRequest(t *testing.T) {
 			t.Fatalf("display sent despite omitted: %v", th)
 		}
 	})
-	t.Run("other generation 5 models keep a budget and ask for a summary", func(t *testing.T) {
+	t.Run("haiku before 5.5 keeps a budget without display", func(t *testing.T) {
 		body := thinkingBody(t, "claude-haiku-5", canon.ReasoningConfig{Effort: canon.EffortMedium, Summary: canon.SummaryAuto})
 		th, _ := body["thinking"].(map[string]any)
-		if th["type"] != "enabled" || th["budget_tokens"] != float64(8192) || th["display"] != "summarized" {
+		if th["type"] != "enabled" || th["budget_tokens"] != float64(8192) {
 			t.Fatalf("thinking = %v", th)
+		}
+		if _, has := th["display"]; has {
+			t.Fatalf("display sent on budget thinking: %v", th)
 		}
 	})
 	t.Run("older models never get display", func(t *testing.T) {
@@ -914,4 +917,40 @@ func TestThinkingSummaryRequest(t *testing.T) {
 			t.Fatalf("display sent to older model: %v", th)
 		}
 	})
+}
+
+func TestThinkingModeByModelVersion(t *testing.T) {
+	cases := []struct {
+		model    string
+		adaptive bool
+		display  bool
+	}{
+		{"claude-fable-5", true, true},
+		{"router/claude-fable-5-1", true, true},
+		{"claude-opus-5.5", true, true},
+		{"claude-opus-4-7", true, true},
+		{"claude-opus-4-6", true, false},
+		{"claude-sonnet-4-6", true, false},
+		{"claude-haiku-5-5", true, true},
+		{"claude-opus-4-5", false, false},
+		{"claude-haiku-4-5", false, false},
+		{"claude-opus-4-20250514", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.model, func(t *testing.T) {
+			body := thinkingBody(t, c.model, canon.ReasoningConfig{Effort: canon.EffortMedium, Summary: canon.SummaryAuto})
+			th, _ := body["thinking"].(map[string]any)
+			oc, _ := body["output_config"].(map[string]any)
+			if c.adaptive {
+				if th["type"] != "adaptive" || th["budget_tokens"] != nil || oc["effort"] != "medium" {
+					t.Fatalf("thinking = %v, output_config = %v; want adaptive with effort medium", th, oc)
+				}
+			} else if th["type"] != "enabled" || th["budget_tokens"] != float64(8192) {
+				t.Fatalf("thinking = %v; want a budget of 8192", th)
+			}
+			if _, has := th["display"]; has != c.display {
+				t.Fatalf("display present = %v, want %v: %v", has, c.display, th)
+			}
+		})
+	}
 }
