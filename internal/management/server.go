@@ -686,8 +686,20 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		next.DefaultModel = ""
 	}
 	doc.Providers[id] = next
-	if len(removed) > 0 {
-		dropRemovedModelTargets(&doc, id, removed)
+	// Image generation models cannot serve chat, so references to them in
+	// combos, routes, aliases and the vision sidecar go the same way as
+	// references to models the listing dropped.
+	unroutable := make(map[string]bool, len(removed))
+	for model := range removed {
+		unroutable[model] = true
+	}
+	for _, model := range next.Models {
+		if doc.ImageModel(id, model) {
+			unroutable[model] = true
+		}
+	}
+	if len(unroutable) > 0 {
+		dropRemovedModelTargets(&doc, id, unroutable)
 	}
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
@@ -769,6 +781,9 @@ func resolvedFacts(doc config.Document, id string, p config.Provider) map[string
 				facts.WireSource = "model"
 			}
 		}
+		if doc.ImageModel(id, model) {
+			facts.Kind = string(config.ModelKindImage)
+		}
 		out[model] = facts
 	}
 	return out
@@ -789,7 +804,8 @@ func discoveredFromList(remote []ListedModel) map[string]config.DiscoveredFacts 
 			v := *row.Image
 			facts.Image = &v
 		}
-		if facts.ContextWindow == nil && facts.Image == nil {
+		facts.Kind = row.Kind
+		if facts.ContextWindow == nil && facts.Image == nil && facts.Kind == "" {
 			continue
 		}
 		out[row.ID] = facts

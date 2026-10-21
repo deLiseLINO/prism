@@ -107,6 +107,51 @@ func withRoute(d Document, k, v string) Document {
 	return d
 }
 
+func TestValidateRejectsImageModelsAsChatTargets(t *testing.T) {
+	withImageModel := func() Document {
+		d := validDoc()
+		d.Providers["gw"] = Provider{
+			Wire:       WireOpenAIChat,
+			BaseURL:    "http://gw.example/v1",
+			Models:     []string{"chat-a", "img-model-a"},
+			Discovered: map[string]DiscoveredFacts{"img-model-a": {Kind: ModelKindImage, Image: boolPtr(true)}},
+		}
+		return d
+	}
+	if err := withRoute(withImageModel(), "talk", "gw/chat-a").validate(); err != nil {
+		t.Fatalf("chat model route rejected: %v", err)
+	}
+	combo := withImageModel()
+	combo.Combos["pics"] = Combo{Strategy: ComboFailover, Targets: []Target{{Provider: "gw", Model: "img-model-a"}}}
+	sidecar := withImageModel()
+	sidecar.VisionSidecar = VisionSidecarSettings{Enabled: true, Target: "gw/img-model-a"}
+	cases := map[string]Document{
+		"route":   withRoute(withImageModel(), "pic", "gw/img-model-a"),
+		"combo":   combo,
+		"sidecar": sidecar,
+	}
+	for name, d := range cases {
+		if err := d.validate(); !errors.Is(err, ErrInvalidTarget) {
+			t.Fatalf("%s: want ErrInvalidTarget, got %v", name, err)
+		}
+	}
+
+	var facts DiscoveredFacts
+	if err := json.Unmarshal([]byte(`{"kind":"image"}`), &facts); err != nil || facts.Kind != ModelKindImage {
+		t.Fatalf("kind round trip = %+v err=%v", facts, err)
+	}
+	if err := json.Unmarshal([]byte(`{"kind":"audio"}`), &facts); err != nil || facts.Kind != "" {
+		t.Fatalf("unknown kind kept: %+v err=%v", facts, err)
+	}
+	anthropic := withImageModel()
+	p := anthropic.Providers["gw"]
+	p.Wire = WireAnthropicMessages
+	anthropic.Providers["gw"] = p
+	if anthropic.ImageModel("gw", "img-model-a") {
+		t.Fatal("non OpenAI-compatible wire served an image model")
+	}
+}
+
 func TestValidateRejectsResponsesProviderWithoutBaseURL(t *testing.T) {
 	d := validDoc()
 	d.Providers["custom"] = Provider{Wire: WireOpenAIResponses}

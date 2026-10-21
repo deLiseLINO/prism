@@ -39,6 +39,7 @@ export function eligibleSidecarModels(providers: readonly ProviderView[]): strin
     if (provider.enabled === false) continue
     for (const model of provider.models ?? []) {
       if ((provider.disabledModels ?? []).includes(model)) continue
+      if (provider.resolvedFacts?.[model]?.kind === 'image') continue
       if (provider.resolvedImage?.[model] === true) ids.push(`${provider.id}/${model}`)
     }
   }

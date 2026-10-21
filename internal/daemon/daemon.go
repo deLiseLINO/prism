@@ -113,6 +113,7 @@ type listedModel struct {
 	ID            string
 	ContextWindow *int
 	Image         *bool
+	Kind          config.ModelKind
 }
 
 func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provider) (management.ModelListing, error) {
@@ -142,7 +143,7 @@ func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provi
 	}
 	out := make([]management.ListedModel, len(rows))
 	for i, row := range rows {
-		out[i] = management.ListedModel{ID: row.ID, ContextWindow: row.ContextWindow, Image: row.Image}
+		out[i] = management.ListedModel{ID: row.ID, ContextWindow: row.ContextWindow, Image: row.Image, Kind: row.Kind}
 	}
 	return management.ModelListing{Models: out}, nil
 }
@@ -422,7 +423,7 @@ func (c catalog) Models(ctx context.Context) ([]provider.Model, error) {
 			continue
 		}
 		for _, model := range p.Models {
-			if slices.Contains(p.DisabledModels, model) {
+			if slices.Contains(p.DisabledModels, model) || d.ImageModel(id, model) {
 				continue
 			}
 			out = append(out, provider.Model{ID: canon.ModelID(id + "/" + model)})
@@ -460,7 +461,7 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 				continue
 			}
 			for _, model := range p.Models {
-				if slices.Contains(p.DisabledModels, model) {
+				if slices.Contains(p.DisabledModels, model) || snap.Config.ImageModel(id, model) {
 					continue
 				}
 				efforts := snap.Config.ResolveReasoningEfforts(id, model)

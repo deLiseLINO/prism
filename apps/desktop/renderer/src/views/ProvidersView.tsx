@@ -403,6 +403,7 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
                     {fresh ? <span className="badge badge--ok">new</span> : null}
                     {manual ? <span className="badge badge--muted">manual</span> : null}
                     {wireTag !== null ? <span className="badge badge--muted">{wireTag}</span> : null}
+                    {facts?.kind === 'image' ? <span className="badge badge--muted">image</span> : null}
                   </div>
                   {rungs.length > 0 ? (
                     <span className="pm-rungs" aria-label={`Efforts for ${model}`}>

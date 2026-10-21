@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/config"
@@ -63,34 +64,57 @@ func parseOpenAIModelList(body []byte) ([]listedModel, error) {
 
 func parseOpenAIModel(raw json.RawMessage) (listedModel, bool) {
 	var row struct {
-		ID              string          `json:"id"`
-		MaxModelLen     json.RawMessage `json:"max_model_len"`
-		ContextLength   json.RawMessage `json:"context_length"`
-		Input           json.RawMessage `json:"input"`
-		InputModalities json.RawMessage `json:"input_modalities"`
-		Architecture    json.RawMessage `json:"architecture"`
+		ID               string          `json:"id"`
+		MaxModelLen      json.RawMessage `json:"max_model_len"`
+		ContextLength    json.RawMessage `json:"context_length"`
+		Input            json.RawMessage `json:"input"`
+		InputModalities  json.RawMessage `json:"input_modalities"`
+		OutputModalities json.RawMessage `json:"output_modalities"`
+		Architecture     json.RawMessage `json:"architecture"`
 	}
 	if err := json.Unmarshal(raw, &row); err != nil || row.ID == "" {
 		return listedModel{}, false
 	}
+	archInput, archOutput := architectureModalities(row.Architecture)
 	return listedModel{
 		ID:            row.ID,
 		ContextWindow: openAIWindow(row.MaxModelLen, row.ContextLength),
-		Image:         openAIImage(row.Input, row.InputModalities, architectureModalities(row.Architecture)),
+		Image:         openAIImage(row.Input, row.InputModalities, archInput),
+		Kind:          openAIKind(row.OutputModalities, archOutput),
 	}, true
 }
 
-func architectureModalities(raw json.RawMessage) json.RawMessage {
+func architectureModalities(raw json.RawMessage) (input, output json.RawMessage) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil
+		return nil, nil
 	}
 	var arch struct {
-		InputModalities json.RawMessage `json:"input_modalities"`
+		InputModalities  json.RawMessage `json:"input_modalities"`
+		OutputModalities json.RawMessage `json:"output_modalities"`
 	}
 	if err := json.Unmarshal(raw, &arch); err != nil {
-		return json.RawMessage(`"bad"`)
+		return json.RawMessage(`"bad"`), nil
 	}
-	return arch.InputModalities
+	return arch.InputModalities, arch.OutputModalities
+}
+
+// openAIKind marks a row whose declared output is images without text as an
+// image generation model; rows without an output declaration stay chat.
+func openAIKind(fields ...json.RawMessage) config.ModelKind {
+	for _, raw := range fields {
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var modalities []string
+		if err := json.Unmarshal(raw, &modalities); err != nil {
+			continue
+		}
+		if slices.Contains(modalities, "image") && !slices.Contains(modalities, "text") {
+			return config.ModelKindImage
+		}
+		return ""
+	}
+	return ""
 }
 
 func openAIWindow(maxModelLen, contextLength json.RawMessage) *int {

@@ -57,7 +57,7 @@ func modelsServer(t *testing.T, body string, check func(r *http.Request)) *httpt
 
 func TestFetchModelsParsesOpenAIList(t *testing.T) {
 	var auth string
-	srv := modelsServer(t, `{"object":"list","data":[{"id":"b"},{"id":"a"},{"id":"a"},{"id":""}]}`, func(r *http.Request) {
+	srv := modelsServer(t, `{"object":"list","data":[{"id":"b"},{"id":"a"},{"id":"a"},{"id":""},{"id":"img-model-a","output_modalities":["image"]}]}`, func(r *http.Request) {
 		auth = r.Header.Get("Authorization")
 	})
 	defer srv.Close()
@@ -66,8 +66,11 @@ func TestFetchModelsParsesOpenAIList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch models: %v", err)
 	}
-	if len(got) != 2 || got[0] != "b" || got[1] != "a" {
+	if len(got) != 3 || got[0].ID != "b" || got[1].ID != "a" || got[2].ID != "img-model-a" {
 		t.Fatalf("unexpected models: %v", got)
+	}
+	if got[0].Kind != "" || got[2].Kind != config.ModelKindImage {
+		t.Fatalf("kinds = %q %q, want chat and image", got[0].Kind, got[2].Kind)
 	}
 	if auth != "Bearer secret-key" {
 		t.Fatalf("auth header not forwarded: %q", auth)
@@ -149,6 +152,27 @@ func TestReconcileFillsEmptyModels(t *testing.T) {
 	}
 	if got := mgr.Get().Config.Providers["edge"].Models; len(got) != 1 || got[0] != "m2" {
 		t.Fatalf("removed model persisted: %v", got)
+	}
+}
+
+func TestReconcileDiscoveryMarksImageModels(t *testing.T) {
+	srv := modelsServer(t, `{"data":[{"id":"chat-a","output_modalities":["text"]},{"id":"img-model-a","output_modalities":["image"]}]}`, nil)
+	defer srv.Close()
+	env, mgr := testEnv(t, config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"edge": {Wire: config.WireOpenAIChat, BaseURL: srv.URL + "/v1"},
+		},
+	})
+	env.lastDiscover["edge"] = time.Now().Add(-10 * time.Minute)
+	env.reconcileOnce(context.Background())
+
+	doc := mgr.Get().Config
+	if got := doc.Providers["edge"].Models; len(got) != 2 {
+		t.Fatalf("models not discovered: %v", got)
+	}
+	if !doc.ImageModel("edge", "img-model-a") || doc.ImageModel("edge", "chat-a") {
+		t.Fatalf("discovered facts = %+v", doc.Providers["edge"].Discovered)
 	}
 }
 

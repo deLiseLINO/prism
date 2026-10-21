@@ -23,6 +23,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/providers/cline"
 	"github.com/deLiseLINO/prism/internal/providers/codex"
 	"github.com/deLiseLINO/prism/internal/providers/customchat"
+	"github.com/deLiseLINO/prism/internal/providers/customimages"
 	"github.com/deLiseLINO/prism/internal/providers/customresponses"
 )
 
@@ -228,6 +229,7 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 			responses: customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}),
 			chat:      customchat.New(customKey{e.creds}.Resolve, customchat.Options{}),
 			messages:  anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.streamClient}), creds: e.creds, provider: providerID},
+			images:    customimages.New(customKey{e.creds}.Resolve, e.streamClient),
 		}, nil
 	case config.WireCline:
 		return clineRunner(e, p), nil
@@ -350,8 +352,20 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 			e.saveDoc(id, p, doc, snap.Generation)
 			return
 		}
-		current.Models = models
-		current.SyncedModels = models
+		ids := make([]string, len(models))
+		discovered := maps.Clone(current.Discovered)
+		for i, m := range models {
+			ids[i] = m.ID
+			if m.Kind != "" {
+				if discovered == nil {
+					discovered = map[string]config.DiscoveredFacts{}
+				}
+				discovered[m.ID] = config.DiscoveredFacts{Kind: m.Kind}
+			}
+		}
+		current.Discovered = discovered
+		current.Models = ids
+		current.SyncedModels = ids
 		doc.Providers[id] = current
 		log.Printf("prism: provider %s models discovered (%d)", id, len(models))
 	}
@@ -383,7 +397,7 @@ func (e *daemonEnv) storedKey(ctx context.Context, providerID account.ProviderID
 	return string(b)
 }
 
-func fetchModels(ctx context.Context, client *http.Client, p config.Provider, apiKey string) ([]string, error) {
+func fetchModels(ctx context.Context, client *http.Client, p config.Provider, apiKey string) ([]listedModel, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -402,21 +416,20 @@ func fetchModels(ctx context.Context, client *http.Client, p config.Provider, ap
 		return nil, fmt.Errorf("models endpoint returned %s", resp.Status)
 	}
 	var list struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+		Data []json.RawMessage `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
 		return nil, err
 	}
 	seen := map[string]bool{}
-	out := make([]string, 0, len(list.Data))
-	for _, m := range list.Data {
-		if m.ID == "" || seen[m.ID] {
+	out := make([]listedModel, 0, len(list.Data))
+	for _, raw := range list.Data {
+		m, ok := parseOpenAIModel(raw)
+		if !ok || seen[m.ID] {
 			continue
 		}
 		seen[m.ID] = true
-		out = append(out, m.ID)
+		out = append(out, m)
 		if len(out) >= discoverModelCap {
 			break
 		}

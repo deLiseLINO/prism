@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
-import { ModelSelect } from '../renderer/src/views/OverviewView'
+import { ModelSelect, eligibleSidecarModels } from '../renderer/src/views/OverviewView'
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
@@ -209,5 +209,27 @@ describe('ModelSelect', () => {
     const options = Array.from(container?.querySelectorAll('.vsd__opt') ?? [])
     expect(options).toHaveLength(3)
     expect(options.every((option) => option.getAttribute('aria-selected') === 'false')).toBe(true)
+  })
+})
+
+describe('eligibleSidecarModels', () => {
+  it('offers image-input chat models and skips image generation models', () => {
+    const facts = {
+      contextWindow: 256000,
+      contextSource: 'global',
+      image: true,
+      imageSource: 'listing',
+    } as const
+    const ids = eligibleSidecarModels([
+      {
+        id: 'gw',
+        wire: 'chat',
+        models: ['chat-a', 'img-model-a'],
+        resolvedImage: { 'chat-a': true, 'img-model-a': true },
+        resolvedFacts: { 'chat-a': facts, 'img-model-a': { ...facts, kind: 'image' } },
+        credential: { state: 'set' },
+      },
+    ])
+    expect(ids).toEqual(['gw/chat-a'])
   })
 })

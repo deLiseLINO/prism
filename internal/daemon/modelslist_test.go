@@ -1,6 +1,10 @@
 package daemon
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/deLiseLINO/prism/internal/config"
+)
 
 func TestParseOpenAIModelList(t *testing.T) {
 	body := []byte(`{"object":"list","data":[
@@ -75,5 +79,38 @@ func TestParseOpenAIModelList(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("empty data = %v, want success with no rows", rows)
+	}
+}
+
+func TestParseOpenAIModelListMarksImageGenerationModels(t *testing.T) {
+	body := []byte(`{"object":"list","data":[
+		{"id":"img-model-a","object":"model","owned_by":"gw","output_modalities":["image"]},
+		{"id":"img-model-b","architecture":{"input_modalities":["text","image"],"output_modalities":["image"]}},
+		{"id":"chat-a","output_modalities":["text"]},
+		{"id":"mixed","output_modalities":["text","image"]},
+		{"id":"plain"},
+		{"id":"bad-out","output_modalities":"image"}
+	]}`)
+	rows, err := parseOpenAIModelList(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]config.ModelKind{}
+	for _, row := range rows {
+		kinds[row.ID] = row.Kind
+	}
+	want := map[string]config.ModelKind{
+		"img-model-a": config.ModelKindImage,
+		"img-model-b": config.ModelKindImage,
+		"chat-a":      "",
+		"mixed":       "",
+		"plain":       "",
+		"bad-out":     "",
+	}
+	for id, kind := range want {
+		got, ok := kinds[id]
+		if !ok || got != kind {
+			t.Fatalf("%s kind = %q (listed %v), want %q", id, got, ok, kind)
+		}
 	}
 }

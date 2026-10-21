@@ -51,6 +51,7 @@ type Options struct {
 
 type Server struct {
 	router    routing.Router
+	images    *routing.Images
 	rlog      *requestlog.Journal
 	planner   routing.Planner
 	registry  *provider.Registry
@@ -105,6 +106,7 @@ func New(opts Options) *Server {
 	}
 	s.rlog = rlog
 	s.router = routing.NewRouter(opts.Pool, opts.Registry, opts.Planner, group, rlog)
+	s.images = routing.NewImages(opts.Pool, opts.Registry, group, rlog)
 	s.ingressResponses = responses.New(func(warn responses.Warning) { s.onWarn(warn) })
 	return s
 }
@@ -116,6 +118,7 @@ var routeMethods = map[string]string{
 	"/v1/messages/count_tokens": http.MethodPost,
 	"/v1/responses/compact":     http.MethodPost,
 	"/v1/models":                http.MethodGet,
+	"/v1/images/generations":    http.MethodPost,
 }
 
 const maxRequestBodyBytes = 64 << 20
@@ -128,6 +131,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/messages/count_tokens", s.handleCountTokens)
 	mux.HandleFunc("POST /v1/responses/compact", s.handleCompact)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("POST /v1/images/generations", s.handleImageGenerations)
 	for path, method := range routeMethods {
 		mux.HandleFunc(path, methodNotAllowed(method))
 	}
