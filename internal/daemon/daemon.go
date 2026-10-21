@@ -483,6 +483,29 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 	}
 }
 
+// integrationImageModels lists the enabled image generation models under the
+// provider/model id the images route accepts, sorted so a rewrite of the
+// client config is stable. Only the omp integration publishes them.
+func integrationImageModels(m *config.Manager) func() []integrations.Model {
+	return func() []integrations.Model {
+		out := make([]integrations.Model, 0)
+		snap := m.Get()
+		for id, p := range snap.Config.Providers {
+			if !p.IsEnabled() {
+				continue
+			}
+			for _, model := range p.Models {
+				if slices.Contains(p.DisabledModels, model) || !snap.Config.ImageModel(id, model) {
+					continue
+				}
+				out = append(out, integrations.Model{ID: id + "/" + model, Name: id + "/" + model})
+			}
+		}
+		slices.SortFunc(out, func(a, b integrations.Model) int { return strings.Compare(a.ID, b.ID) })
+		return out
+	}
+}
+
 type anthropicRunner struct {
 	runner   *anthropic.Runner
 	creds    credentialStore
@@ -799,7 +822,8 @@ func run(opts options) error {
 	}
 	daemonEnv := agentinstall.WithUserPath(integrations.Environ(os.Environ()))
 	modelsSrc := integrationModels(cfg)
-	intg, codexIntegration, err := newIntegrationRegistry(daemonPortNum, daemonEnv, home, nil, modelsSrc)
+	imageModelsSrc := integrationImageModels(cfg)
+	intg, codexIntegration, err := newIntegrationRegistry(daemonPortNum, daemonEnv, home, nil, modelsSrc, imageModelsSrc)
 	if err != nil {
 		return err
 	}
@@ -814,7 +838,7 @@ func run(opts options) error {
 		return out
 	})
 	hostTable := management.NewHostRegistries(intg)
-	supervisor := newHostSupervisor(ctx, daemonPortNum, modelsSrc, hostTable)
+	supervisor := newHostSupervisor(ctx, daemonPortNum, modelsSrc, imageModelsSrc, hostTable)
 	for id, hostCfg := range d.Hosts {
 		hostTable.SetHostConfig(id, hostCfg)
 		if hostCfg.DaemonPort > 0 {

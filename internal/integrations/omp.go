@@ -4,11 +4,15 @@ import "path/filepath"
 
 const ompPrismApiKey = "prism-loopback"
 const ompPrismApi = "openai-completions"
+const ompImageApi = "openai-images"
 
 type OmpOptions struct {
-	Port              int
-	Models            []Model
-	ModelsSource      func() []Model
+	Port         int
+	Models       []Model
+	ModelsSource func() []Model
+	// ImageModelsSource lists the image generation models written beside the
+	// chat models; nil writes none.
+	ImageModelsSource func() []Model
 	AgentDir          string
 	ModelsPath        string
 	Env               Env
@@ -22,12 +26,13 @@ type OmpIntegration struct {
 	port      int
 	models    []Model
 	modelsSrc func() []Model
+	imagesSrc func() []Model
 	io        FileIO
 	options   OmpOptions
 }
 
 func NewOmp(options OmpOptions) *OmpIntegration {
-	return &OmpIntegration{id: Omp, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, io: withLocalIO(options.IO), options: options}
+	return &OmpIntegration{id: Omp, port: options.Port, models: options.Models, modelsSrc: options.ModelsSource, imagesSrc: options.ImageModelsSource, io: withLocalIO(options.IO), options: options}
 }
 
 func (o *OmpIntegration) ID() ID { return o.id }
@@ -96,6 +101,9 @@ func writeOmpConfig(io FileIO, options OmpOptions, force bool) WriteOutcome {
 	unlock := lockMutation(options.ModelsPath)
 	defer unlock()
 	spec := NewOmpSpec(options.Port, models)
+	if options.ImageModelsSource != nil {
+		spec.ImageModels = options.ImageModelsSource()
+	}
 	transform := func(current string) ConfigTransform {
 		return toTransform(UpsertProviderLeaf(current, "prism", spec))
 	}
@@ -156,7 +164,7 @@ func (o *OmpIntegration) applyWith(force bool) ApplyResult {
 	if err != nil {
 		return ToApplyResult(o.id, recoveryRefusal("omp apply", err))
 	}
-	return ToApplyResult(o.id, writeOmpConfig(o.io, OmpOptions{ModelsPath: modelsPath, Port: o.port, Models: o.models, ModelsSource: o.modelsSrc}, force))
+	return ToApplyResult(o.id, writeOmpConfig(o.io, OmpOptions{ModelsPath: modelsPath, Port: o.port, Models: o.models, ModelsSource: o.modelsSrc, ImageModelsSource: o.imagesSrc}, force))
 }
 
 func (o *OmpIntegration) Status() Status {

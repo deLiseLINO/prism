@@ -303,3 +303,62 @@ func TestOmpIntegrationModuleRoundTrip(t *testing.T) {
 		t.Fatal("rollback did not restore user yaml")
 	}
 }
+
+func TestOmpIntegrationPublishesImageModels(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, "agent")
+	modelsPath := tempFile(t, agentDir, "models.yml", userModelYaml)
+	chat := []Model{{ID: "gw/chat-a", Name: "gw/chat-a", ContextWindow: 128000}}
+	images := []Model{{ID: "gw/img-model-a", Name: "gw/img-model-a"}}
+	integration := NewOmp(OmpOptions{Port: testPort, AgentDir: agentDir, ModelsSource: func() []Model { return chat }, ImageModelsSource: func() []Model { return images }})
+	if result := integration.Apply(); !result.OK {
+		t.Fatalf("apply: %+v", result)
+	}
+	content := readFile(t, modelsPath)
+	image := "      - id: gw/img-model-a\n" +
+		"        name: gw/img-model-a\n" +
+		"        api: openai-images\n" +
+		"        input:\n" +
+		"          - text\n" +
+		"          - image\n"
+	if !strings.HasSuffix(content, image) {
+		t.Fatalf("image model entry missing or carries chat fields:\n%s", content)
+	}
+	if !strings.Contains(content, "      - id: gw/chat-a\n") || strings.Contains(content, "auth:") {
+		t.Fatalf("chat model entry changed:\n%s", content)
+	}
+	if result := integration.Apply(); !result.OK {
+		t.Fatalf("reapply: %+v", result)
+	}
+	if got := readFile(t, modelsPath); got != content {
+		t.Fatalf("reapply rewrote the file:\n%s", got)
+	}
+	status := integration.Status()
+	if !status.Managed || status.Drift || status.Endpoint == nil || *status.Endpoint != ProviderBaseUrl(testPort) {
+		t.Fatalf("status with image models: %+v", status)
+	}
+	if result := integration.Rollback(); !result.OK {
+		t.Fatalf("rollback: %+v", result)
+	}
+	if got := readFile(t, modelsPath); got != userModelYaml {
+		t.Fatalf("rollback left image models behind:\n%s", got)
+	}
+}
+
+func TestOmpImageModelsRefreshWithTheSource(t *testing.T) {
+	dir := t.TempDir()
+	modelsPath := tempFile(t, dir, "models.yml", "")
+	chat := func() []Model { return []Model{{ID: "gw/chat-a", Name: "gw/chat-a"}} }
+	images := []Model{{ID: "gw/img-model-a", Name: "gw/img-model-a"}}
+	options := OmpOptions{ModelsPath: modelsPath, Port: testPort, ModelsSource: chat, ImageModelsSource: func() []Model { return images }}
+	if outcome := WriteOmpConfig(LocalIO{}, options); outcome.Kind != OutcomeWritten {
+		t.Fatalf("apply: %+v", outcome)
+	}
+	images = nil
+	if outcome := WriteOmpConfig(LocalIO{}, options); outcome.Kind != OutcomeWritten {
+		t.Fatalf("apply after image model removal: %+v", outcome)
+	}
+	if got := readFile(t, modelsPath); strings.Contains(got, "img-model-a") || strings.Contains(got, "openai-images") {
+		t.Fatalf("removed image model still written:\n%s", got)
+	}
+}

@@ -12,6 +12,9 @@ type OmpProviderSpec struct {
 	API     string
 	APIKey  string
 	Models  []Model
+	// ImageModels are image generation models, written on the images api
+	// after the chat models; only their ID and Name are used.
+	ImageModels []Model
 }
 
 type YamlLeafPatch struct {
@@ -165,7 +168,7 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 		// an explicit auth mode turns that default off.
 		lines = append(lines, body+"auth: apiKey")
 	}
-	if len(spec.Models) == 0 {
+	if len(spec.Models) == 0 && len(spec.ImageModels) == 0 {
 		lines = append(lines, body+"models: []")
 	} else {
 		lines = append(lines, body+"models:")
@@ -202,6 +205,18 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 				}
 				lines = append(lines, fields+pad+"defaultLevel: "+rung)
 			}
+		}
+		for _, model := range spec.ImageModels {
+			// The images api marks an image generation model, served by the
+			// daemon's images route; it takes no chat fields.
+			lines = append(lines,
+				item+"- id: "+model.ID,
+				fields+"name: "+model.Name,
+				fields+"api: "+ompImageApi,
+				fields+"input:",
+				fields+pad+"- text",
+				fields+pad+"- image",
+			)
 		}
 	}
 	return strings.Join(lines, "\n")

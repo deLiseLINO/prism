@@ -3,9 +3,13 @@ package daemon
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -64,10 +68,15 @@ func TestChatModelSourcesExcludeImageGenerationModels(t *testing.T) {
 		Version: config.SchemaVersion,
 		Providers: map[string]config.Provider{
 			"gw": {
-				Wire:       config.WireOpenAIChat,
-				BaseURL:    "http://gw.example/v1",
-				Models:     []string{"chat-a", "img-model-a"},
-				Discovered: map[string]config.DiscoveredFacts{"img-model-a": {Kind: config.ModelKindImage}},
+				Wire:           config.WireOpenAIChat,
+				BaseURL:        "http://gw.example/v1",
+				Models:         []string{"chat-a", "img-model-a", "img-model-b", "img-model-off"},
+				DisabledModels: []string{"img-model-off"},
+				Discovered: map[string]config.DiscoveredFacts{
+					"img-model-a":   {Kind: config.ModelKindImage},
+					"img-model-b":   {Kind: config.ModelKindImage},
+					"img-model-off": {Kind: config.ModelKindImage},
+				},
 			},
 		},
 	}
@@ -84,6 +93,56 @@ func TestChatModelSourcesExcludeImageGenerationModels(t *testing.T) {
 	integrated := integrationModels(mgr)()
 	if len(integrated) != 1 || integrated[0].ID != "gw/chat-a" {
 		t.Fatalf("integration models = %+v, want only gw/chat-a", integrated)
+	}
+	images := integrationImageModels(mgr)()
+	want := []integrations.Model{{ID: "gw/img-model-a", Name: "gw/img-model-a"}, {ID: "gw/img-model-b", Name: "gw/img-model-b"}}
+	if !reflect.DeepEqual(images, want) {
+		t.Fatalf("image integration models = %+v, want %+v", images, want)
+	}
+}
+
+func TestOnlyOmpIntegrationPublishesImageModels(t *testing.T) {
+	home := t.TempDir()
+	chat := func() []integrations.Model { return []integrations.Model{{ID: "gw/chat-a", Name: "gw/chat-a"}} }
+	images := func() []integrations.Model { return []integrations.Model{{ID: "gw/img-model-a", Name: "gw/img-model-a"}} }
+	registry, _, err := newIntegrationRegistry(4101, integrations.Env{}, home, nil, chat, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range integrations.IDs {
+		if result := registry.Apply(id); !result.OK {
+			t.Fatalf("apply %s: %+v", id, result)
+		}
+	}
+	written := map[string]bool{}
+	err = filepath.WalkDir(home, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(body), "gw/chat-a") {
+			written[path] = strings.Contains(string(body), "img-model-a")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ompModels := filepath.Join(home, ".omp", "agent", "models.yml")
+	if !written[ompModels] {
+		t.Fatalf("omp models.yml lacks the image model; written files: %v", written)
+	}
+	ompDir := filepath.Join(home, ".omp") + string(filepath.Separator)
+	for path, hasImage := range written {
+		if !strings.HasPrefix(path, ompDir) && hasImage {
+			t.Fatalf("%s carries an image generation model", path)
+		}
+	}
+	if len(written) < len(integrations.IDs) {
+		t.Fatalf("not every client config carries the chat model: %v", written)
 	}
 }
 
