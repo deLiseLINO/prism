@@ -13,8 +13,9 @@ import (
 )
 
 // newIntegrationRegistry builds one full client registry against a transport:
-// nil io is the local disk, a remote host passes its SshIO and home.
-func newIntegrationRegistry(port int, env integrations.Env, home string, io integrations.FileIO, modelsSrc func() []integrations.Model) (*integrations.Registry, *integrations.CodexIntegration, error) {
+// nil io is the local disk, a remote host passes its SshIO and home. Image
+// generation models go to the omp integration only.
+func newIntegrationRegistry(port int, env integrations.Env, home string, io integrations.FileIO, modelsSrc, imageModelsSrc func() []integrations.Model) (*integrations.Registry, *integrations.CodexIntegration, error) {
 	registry := integrations.NewRegistry()
 	models := integrations.DefaultPrismModels
 	codexIntegration := integrations.NewCodex(integrations.CodexOptions{Port: port, Models: models, ModelsSource: modelsSrc, Env: env, Home: home, IO: io})
@@ -24,7 +25,7 @@ func newIntegrationRegistry(port int, env integrations.Env, home string, io inte
 	if err := registry.Register(integrations.NewGrok(integrations.GrokOptions{Port: port, Models: models, ModelsSource: modelsSrc, Env: env, Home: home, IO: io})); err != nil {
 		return nil, nil, err
 	}
-	if err := registry.Register(integrations.NewOmp(integrations.OmpOptions{Port: port, Models: models, ModelsSource: modelsSrc, Env: env, Home: home, IO: io})); err != nil {
+	if err := registry.Register(integrations.NewOmp(integrations.OmpOptions{Port: port, Models: models, ModelsSource: modelsSrc, ImageModelsSource: imageModelsSrc, Env: env, Home: home, IO: io})); err != nil {
 		return nil, nil, err
 	}
 	if err := registry.Register(integrations.NewClaude(integrations.ClaudeOptions{Port: port, Models: models, ModelsSource: modelsSrc, Env: env, Home: home, IO: io})); err != nil {
@@ -83,17 +84,18 @@ func superviseReverseTunnel(ctx context.Context, address string, port int) {
 // writer behind management's HostLifecycle, so config mutations and runtime
 // state never race on the same host id.
 type hostSupervisor struct {
-	baseCtx context.Context
-	port    int
-	models  func() []integrations.Model
-	table   *management.HostRegistries
+	baseCtx     context.Context
+	port        int
+	models      func() []integrations.Model
+	imageModels func() []integrations.Model
+	table       *management.HostRegistries
 
 	mu      sync.Mutex
 	cancels map[string]func()
 }
 
-func newHostSupervisor(ctx context.Context, port int, models func() []integrations.Model, table *management.HostRegistries) *hostSupervisor {
-	return &hostSupervisor{baseCtx: ctx, port: port, models: models, table: table, cancels: map[string]func(){}}
+func newHostSupervisor(ctx context.Context, port int, models, imageModels func() []integrations.Model, table *management.HostRegistries) *hostSupervisor {
+	return &hostSupervisor{baseCtx: ctx, port: port, models: models, imageModels: imageModels, table: table, cancels: map[string]func(){}}
 }
 
 func (h *hostSupervisor) Ensure(ctx context.Context, id string, address string) error {
@@ -105,7 +107,7 @@ func (h *hostSupervisor) Ensure(ctx context.Context, id string, address string) 
 		h.table.SetUnresolved(id, err.Error())
 		return err
 	}
-	remoteRegistry, _, err := newIntegrationRegistry(h.port, integrations.Env{}, remoteHome, integrations.NewSshIO(address), h.models)
+	remoteRegistry, _, err := newIntegrationRegistry(h.port, integrations.Env{}, remoteHome, integrations.NewSshIO(address), h.models, h.imageModels)
 	if err != nil {
 		h.table.SetUnresolved(id, err.Error())
 		return err

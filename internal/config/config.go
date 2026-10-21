@@ -137,7 +137,7 @@ type ModelSettings struct {
 type ModelKind string
 
 // ModelKindImage marks a model that only generates images; it is served by
-// the images route and kept out of chat routing and client integrations.
+// the images route and kept out of chat routing and chat client models.
 const ModelKindImage ModelKind = "image"
 
 type DiscoveredFacts struct {

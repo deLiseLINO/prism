@@ -161,3 +161,25 @@ func TestYamlLeafNoAuthWithoutPerModelAPI(t *testing.T) {
 		t.Fatalf("auth written without a per-model api:\n%s", got)
 	}
 }
+
+func TestYamlLeafImageModelsOnly(t *testing.T) {
+	spec := NewOmpSpec(testPort, nil)
+	spec.ImageModels = []Model{{ID: "gw/img-model-a", Name: "gw/img-model-a", ContextWindow: 128000, API: "anthropic-messages"}}
+	got := RenderProviderLeaf("prism", spec, 2)
+	want := strings.Join([]string{
+		"  prism:",
+		"    baseUrl: http://127.0.0.1:8787/v1",
+		"    api: openai-completions",
+		"    apiKey: prism-loopback",
+		"    models:",
+		"      - id: gw/img-model-a",
+		"        name: gw/img-model-a",
+		"        api: openai-images",
+		"        input:",
+		"          - text",
+		"          - image",
+	}, "\n")
+	if got != want {
+		t.Fatalf("image-only leaf:\n%s\nwant:\n%s", got, want)
+	}
+}
