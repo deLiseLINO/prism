@@ -212,6 +212,28 @@ type TokenCounter interface {
 	CountTokens(ctx context.Context, req CountTokensRequest) (TokenCount, error)
 }
 
+// ImageRequest is one standalone image generation call. Body is the client's
+// JSON request with model already set to the upstream model id.
+type ImageRequest struct {
+	Target          Target
+	Lease           account.Lease
+	Body            []byte
+	AttemptObserver func(NetworkAttempt)
+}
+
+// ImageResponse is the upstream answer, success or error, as received.
+type ImageResponse struct {
+	Status int
+	Body   []byte
+}
+
+// ImageGenerator is implemented by runners whose upstream serves the images
+// route. Generation is paid and not idempotent: one call is one upstream
+// attempt, never retried by the implementation.
+type ImageGenerator interface {
+	GenerateImage(ctx context.Context, req ImageRequest) (ImageResponse, error)
+}
+
 type Registry struct {
 	mu      sync.RWMutex
 	runners map[account.ProviderID]Runner

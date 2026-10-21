@@ -132,15 +132,25 @@ type ModelSettings struct {
 	Wire             Wire     `json:"wire,omitempty"`
 }
 
+// ModelKind separates listed models that do not serve chat turns from the
+// chat models every other surface routes to. The zero value is a chat model.
+type ModelKind string
+
+// ModelKindImage marks a model that only generates images; it is served by
+// the images route and kept out of chat routing and client integrations.
+const ModelKindImage ModelKind = "image"
+
 type DiscoveredFacts struct {
-	ContextWindow *int  `json:"contextWindow,omitempty"`
-	Image         *bool `json:"image,omitempty"`
+	ContextWindow *int      `json:"contextWindow,omitempty"`
+	Image         *bool     `json:"image,omitempty"`
+	Kind          ModelKind `json:"kind,omitempty"`
 }
 
 func (d *DiscoveredFacts) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		ContextWindow *int  `json:"contextWindow"`
-		Image         *bool `json:"image"`
+		ContextWindow *int      `json:"contextWindow"`
+		Image         *bool     `json:"image"`
+		Kind          ModelKind `json:"kind"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -149,7 +159,25 @@ func (d *DiscoveredFacts) UnmarshalJSON(b []byte) error {
 	if raw.ContextWindow != nil && *raw.ContextWindow > 0 {
 		d.ContextWindow = raw.ContextWindow
 	}
+	d.Kind = ""
+	if raw.Kind == ModelKindImage {
+		d.Kind = raw.Kind
+	}
 	return nil
+}
+
+// ImageModel reports whether a configured model of an OpenAI-compatible
+// provider was listed as an image generation model.
+func (d Document) ImageModel(providerID, model string) bool {
+	p, ok := d.Providers[providerID]
+	if !ok || !slices.Contains(p.Models, model) || p.Discovered[model].Kind != ModelKindImage {
+		return false
+	}
+	switch d.ResolveWire(providerID, model) {
+	case WireOpenAIChat, WireOpenAIResponses:
+		return true
+	}
+	return false
 }
 
 type catalogLookup interface {
@@ -515,6 +543,9 @@ func (d Document) validateRouteValue(v string) error {
 	if len(p.Models) > 0 && !contains(p.Models, model) {
 		return fmt.Errorf("%w: unknown model %q for provider %q", ErrInvalidTarget, model, provider)
 	}
+	if d.ImageModel(provider, model) {
+		return fmt.Errorf("%w: model %q of provider %q generates images, not chat", ErrInvalidTarget, model, provider)
+	}
 	return nil
 }
 
@@ -528,6 +559,9 @@ func (d Document) validateTarget(provider, model string) error {
 	}
 	if len(p.Models) > 0 && !contains(p.Models, model) {
 		return fmt.Errorf("%w: unknown model %q for provider %q", ErrInvalidTarget, model, provider)
+	}
+	if d.ImageModel(provider, model) {
+		return fmt.Errorf("%w: model %q of provider %q generates images, not chat", ErrInvalidTarget, model, provider)
 	}
 	return nil
 }
@@ -574,6 +608,9 @@ func (d Document) validateVisionSidecar() error {
 	}
 	if len(p.Models) > 0 && !contains(p.Models, model) {
 		return fmt.Errorf("%w: visionSidecar.target unknown model %q for provider %q", ErrInvalidTarget, model, providerID)
+	}
+	if d.ImageModel(providerID, model) {
+		return fmt.Errorf("%w: visionSidecar.target model %q generates images, not chat", ErrInvalidTarget, model)
 	}
 	if contains(p.DisabledModels, model) {
 		return fmt.Errorf("%w: visionSidecar.target model %q is disabled", ErrInvalidTarget, model)

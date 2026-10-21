@@ -109,6 +109,22 @@ func comboPlan(d config.Document, c config.Combo) routing.Plan {
 }
 
 func targetFor(d config.Document, providerID, model string) (provider.Target, error) {
+	if d.ImageModel(providerID, model) {
+		return provider.Target{}, config.ErrInvalidTarget
+	}
+	return enabledTarget(d, providerID, model)
+}
+
+// imageTargetFor resolves a model the images route may serve: an enabled
+// image generation model of an OpenAI-compatible provider.
+func imageTargetFor(d config.Document, providerID, model string) (provider.Target, error) {
+	if !d.ImageModel(providerID, model) {
+		return provider.Target{}, config.ErrInvalidTarget
+	}
+	return enabledTarget(d, providerID, model)
+}
+
+func enabledTarget(d config.Document, providerID, model string) (provider.Target, error) {
 	p, ok := d.Providers[providerID]
 	if !ok {
 		return provider.Target{}, config.ErrInvalidTarget

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1402,6 +1403,61 @@ func TestSyncModelsReplacesDiscoveredAndKeepsOverrides(t *testing.T) {
 	}
 	if stored.ModelSettings["kept"].ImageInput == stored.Discovered["kept"].Image {
 		t.Fatal("override pointer aliased discovered image")
+	}
+}
+
+func TestSyncModelsMarksImageModelsAndDropsChatReferences(t *testing.T) {
+	m, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"gw": {Wire: config.WireOpenAIChat, BaseURL: "http://up.example/v1", Models: []string{"chat-a", "img-model-a"}},
+		},
+		Combos: map[string]config.Combo{
+			"mix": {Strategy: config.ComboFailover, Targets: []config.Target{{Provider: "gw", Model: "chat-a"}, {Provider: "gw", Model: "img-model-a"}}},
+		},
+		Routes: map[string]string{"pic": "gw/img-model-a", "talk": "gw/chat-a"},
+	}
+	snap, err := m.Update(seed, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}},
+		&fakeAuth{}, integrations.NewRegistry(), &fakeSyncer{models: map[string][]ListedModel{
+			"gw": {{ID: "chat-a"}, {ID: "img-model-a", Kind: config.ModelKindImage}},
+		}}, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/providers/gw/sync-models?expectedGeneration="+
+		strconv.FormatUint(snap.Generation, 10), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	doc := m.Get().Config
+	stored := doc.Providers["gw"]
+	if !slices.Contains(stored.Models, "img-model-a") || stored.Discovered["img-model-a"].Kind != config.ModelKindImage {
+		t.Fatalf("image model not stored as image kind: models=%v discovered=%+v", stored.Models, stored.Discovered)
+	}
+	if stored.Discovered["chat-a"].Kind != "" {
+		t.Fatalf("chat model marked %q", stored.Discovered["chat-a"].Kind)
+	}
+	if got := doc.Combos["mix"].Targets; len(got) != 1 || got[0].Model != "chat-a" {
+		t.Fatalf("combo targets = %+v, want only the chat model", got)
+	}
+	if _, ok := doc.Routes["pic"]; ok {
+		t.Fatalf("route to the image model survived: %v", doc.Routes)
+	}
+	if doc.Routes["talk"] != "gw/chat-a" {
+		t.Fatalf("chat route lost: %v", doc.Routes)
+	}
+	var body ProviderMutationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Provider.ResolvedFacts["img-model-a"].Kind != "image" || body.Provider.ResolvedFacts["chat-a"].Kind != "" {
+		t.Fatalf("resolved kinds = %+v", body.Provider.ResolvedFacts)
 	}
 }
 

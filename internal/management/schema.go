@@ -79,12 +79,14 @@ type ResolvedFacts struct {
 	EffortsSource string   `json:"effortsSource"`
 	Wire          string   `json:"wire,omitempty"`
 	WireSource    string   `json:"wireSource,omitempty"`
+	Kind          string   `json:"kind,omitempty"`
 }
 
 type ListedModel struct {
 	ID            string
 	ContextWindow *int
 	Image         *bool
+	Kind          config.ModelKind
 }
 
 type ProviderModeWrite struct {

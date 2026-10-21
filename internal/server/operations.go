@@ -24,10 +24,12 @@ import (
 )
 
 type modelWire struct {
-	Type        string `json:"type"`
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
-	Object      string `json:"object"`
+	Type             string   `json:"type"`
+	ID               string   `json:"id"`
+	DisplayName      string   `json:"display_name"`
+	Object           string   `json:"object"`
+	OwnedBy          string   `json:"owned_by,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
 }
 
 type modelsWire struct {
@@ -56,13 +58,25 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	// Claude Code discovers routed models through this endpoint when gateway
 	// model discovery is on: every enabled provider/model pair is listed under
-	// its claude alias so the native model picker accepts them.
+	// its claude alias so the native model picker accepts them. Image
+	// generation models are listed under their provider/model id instead,
+	// marked by output_modalities, for clients of the images route.
+	images := map[string]string{}
 	for providerName, p := range d.Providers {
 		if !p.IsEnabled() {
 			continue
 		}
 		for _, model := range p.Models {
 			if slices.Contains(p.DisabledModels, model) {
+				continue
+			}
+			if d.ImageModel(providerName, model) {
+				id := providerName + "/" + model
+				if _, exists := ids[id]; !exists {
+					keys = append(keys, id)
+					ids[id] = struct{}{}
+					images[id] = providerName
+				}
 				continue
 			}
 			alias := "claude-" + providerName + "--" + model
@@ -78,7 +92,12 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(keys)
 	data := make([]modelWire, 0, len(keys))
 	for _, k := range keys {
-		data = append(data, modelWire{Type: "model", ID: k, DisplayName: k, Object: "model"})
+		row := modelWire{Type: "model", ID: k, DisplayName: k, Object: "model"}
+		if owner, ok := images[k]; ok {
+			row.OwnedBy = owner
+			row.OutputModalities = []string{"image"}
+		}
+		data = append(data, row)
 	}
 	writeJSON(w, http.StatusOK, modelsWire{Object: "list", Data: data})
 }

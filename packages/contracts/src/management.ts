@@ -94,6 +94,7 @@ export interface ContextWindowWrite {
 export interface DiscoveredFacts {
   readonly contextWindow?: number
   readonly image?: boolean
+  readonly kind?: 'image'
 }
 
 export interface ResolvedFacts {
@@ -103,6 +104,7 @@ export interface ResolvedFacts {
   readonly imageSource: 'manual' | 'listing' | 'catalog' | 'none'
   readonly wire?: string
   readonly wireSource?: 'model' | 'provider'
+  readonly kind?: 'image'
 }
 
 export interface ModelSettingsView {

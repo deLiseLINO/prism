@@ -55,6 +55,38 @@ func TestCatalogExcludesDisabledProvidersAndModels(t *testing.T) {
 	}
 }
 
+func TestChatModelSourcesExcludeImageGenerationModels(t *testing.T) {
+	mgr, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("open config: %v", err)
+	}
+	doc := config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"gw": {
+				Wire:       config.WireOpenAIChat,
+				BaseURL:    "http://gw.example/v1",
+				Models:     []string{"chat-a", "img-model-a"},
+				Discovered: map[string]config.DiscoveredFacts{"img-model-a": {Kind: config.ModelKindImage}},
+			},
+		},
+	}
+	if _, err := mgr.Update(doc, 0); err != nil {
+		t.Fatalf("update config: %v", err)
+	}
+	models, err := catalog{cfg: mgr}.Models(context.Background())
+	if err != nil {
+		t.Fatalf("catalog models: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "gw/chat-a" {
+		t.Fatalf("catalog = %+v, want only gw/chat-a", models)
+	}
+	integrated := integrationModels(mgr)()
+	if len(integrated) != 1 || integrated[0].ID != "gw/chat-a" {
+		t.Fatalf("integration models = %+v, want only gw/chat-a", integrated)
+	}
+}
+
 func TestQuotaTableMirrorsPoolAndSkipsWarningOnlySnapshots(t *testing.T) {
 	pool := account.New()
 	pool.Register(account.Account{ID: "codex:a", Provider: "codex", State: account.Active, CredGen: 1, Version: 1})
