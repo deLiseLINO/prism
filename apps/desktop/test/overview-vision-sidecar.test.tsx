@@ -217,6 +217,8 @@ describe('eligibleSidecarModels', () => {
     const facts = {
       contextWindow: 256000,
       contextSource: 'global',
+      maxOutput: 0,
+      maxOutputSource: 'none',
       image: true,
       imageSource: 'listing',
     } as const

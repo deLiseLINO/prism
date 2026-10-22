@@ -491,6 +491,8 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
           fallbackContextWindow={provider.resolvedFacts?.[modalModel]?.contextWindow ?? globalContextWindow}
           providerWire={provider.wire}
           contextSource={provider.resolvedFacts?.[modalModel]?.contextSource ?? 'global'}
+          fallbackMaxOutput={provider.resolvedFacts?.[modalModel]?.maxOutput ?? 0}
+          maxOutputSource={provider.resolvedFacts?.[modalModel]?.maxOutputSource ?? 'none'}
           resolvedImage={provider.resolvedImage?.[modalModel] === true}
           initial={modalNew ? undefined : settings[modalModel]}
           busy={task.running}
