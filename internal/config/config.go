@@ -127,6 +127,7 @@ const DefaultContextWindow = 256000
 
 type ModelSettings struct {
 	ContextWindow    int      `json:"contextWindow,omitempty"`
+	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
 	ImageInput       *bool    `json:"imageInput,omitempty"`
 	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
 	Wire             Wire     `json:"wire,omitempty"`
@@ -142,6 +143,7 @@ const ModelKindImage ModelKind = "image"
 
 type DiscoveredFacts struct {
 	ContextWindow *int      `json:"contextWindow,omitempty"`
+	MaxOutput     *int      `json:"maxOutput,omitempty"`
 	Image         *bool     `json:"image,omitempty"`
 	Kind          ModelKind `json:"kind,omitempty"`
 }
@@ -149,6 +151,7 @@ type DiscoveredFacts struct {
 func (d *DiscoveredFacts) UnmarshalJSON(b []byte) error {
 	var raw struct {
 		ContextWindow *int      `json:"contextWindow"`
+		MaxOutput     *int      `json:"maxOutput"`
 		Image         *bool     `json:"image"`
 		Kind          ModelKind `json:"kind"`
 	}
@@ -158,6 +161,9 @@ func (d *DiscoveredFacts) UnmarshalJSON(b []byte) error {
 	d.Image = raw.Image
 	if raw.ContextWindow != nil && *raw.ContextWindow > 0 {
 		d.ContextWindow = raw.ContextWindow
+	}
+	if raw.MaxOutput != nil && *raw.MaxOutput > 0 {
+		d.MaxOutput = raw.MaxOutput
 	}
 	d.Kind = ""
 	if raw.Kind == ModelKindImage {
@@ -203,8 +209,26 @@ func (d Document) ResolveContextWindow(providerID, model string) int {
 	return n
 }
 
-func (d Document) ResolveMaxOutput(model string) int {
-	return d.catalogFacts(model).MaxOutput
+func (d Document) ResolveMaxOutput(providerID, model string) int {
+	n, _ := d.maxOutputFallback(providerID, model, true)
+	return n
+}
+
+func (d Document) maxOutputFallback(providerID, model string, includeManual bool) (int, string) {
+	if p, ok := d.Providers[providerID]; ok {
+		if includeManual {
+			if s, ok := p.ModelSettings[model]; ok && s.MaxOutputTokens > 0 {
+				return s.MaxOutputTokens, "manual"
+			}
+		}
+		if facts, ok := p.Discovered[model]; ok && facts.MaxOutput != nil && *facts.MaxOutput > 0 {
+			return *facts.MaxOutput, "listing"
+		}
+	}
+	if n := d.catalogFacts(model).MaxOutput; n > 0 {
+		return n, "catalog"
+	}
+	return 0, "none"
 }
 
 func (d Document) contextFallback(providerID, model string, includeManual bool) (int, string) {
@@ -265,6 +289,11 @@ type ImageSource struct {
 	Source string
 }
 
+type MaxOutputSource struct {
+	MaxOutput int
+	Source    string
+}
+
 func (d Document) ResolveContextSource(providerID, model string) ContextSource {
 	n, src := d.contextFallback(providerID, model, false)
 	return ContextSource{Window: n, Source: src}
@@ -273,6 +302,11 @@ func (d Document) ResolveContextSource(providerID, model string) ContextSource {
 func (d Document) ResolveImageSource(providerID, model string) ImageSource {
 	on, src := d.imageResolution(providerID, model)
 	return ImageSource{Image: on, Source: src}
+}
+
+func (d Document) ResolveMaxOutputSource(providerID, model string) MaxOutputSource {
+	n, src := d.maxOutputFallback(providerID, model, false)
+	return MaxOutputSource{MaxOutput: n, Source: src}
 }
 
 type EffortsSource struct {
@@ -477,6 +511,10 @@ func (p Provider) validateModelSettings(providerID string) error {
 
 		if s.ContextWindow < 0 {
 			return fmt.Errorf("%w: providers.%s.modelSettings[%s].contextWindow", ErrInvalidValue, providerID, model)
+		}
+
+		if s.MaxOutputTokens < 0 {
+			return fmt.Errorf("%w: providers.%s.modelSettings[%s].maxOutputTokens", ErrInvalidValue, providerID, model)
 		}
 
 		for _, e := range s.ReasoningEfforts {

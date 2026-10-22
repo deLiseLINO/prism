@@ -18,7 +18,7 @@ func renderOpencodeModernLeaf(port int, models []Model, indent int) string {
 		}
 		entry := map[string]any{"name": m.Name, "capabilities": map[string][]string{"input": input, "output": {"text"}}}
 		if m.ContextWindow > 0 {
-			entry["limit"] = map[string]int{"context": m.ContextWindow, "output": maxTokensFor(m.ContextWindow)}
+			entry["limit"] = map[string]int{"context": m.ContextWindow, "output": maxTokensFor(m)}
 		}
 		efforts := effortsFor(m, chatEffortVocabulary)
 		variants := make([]any, 0, len(efforts))
@@ -77,7 +77,7 @@ func RenderOpencodeModels(models []Model, inner string, item string, field strin
 			lines = append(lines,
 				field+`"limit": {`,
 				field+`  "context": `+strconv.Itoa(model.ContextWindow)+`,`,
-				field+`  "output": `+strconv.Itoa(maxTokensFor(model.ContextWindow)),
+				field+`  "output": `+strconv.Itoa(maxTokensFor(model)),
 				limitClose,
 			)
 		}

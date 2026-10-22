@@ -93,6 +93,7 @@ export interface ContextWindowWrite {
 
 export interface DiscoveredFacts {
   readonly contextWindow?: number
+  readonly maxOutput?: number
   readonly image?: boolean
   readonly kind?: 'image'
 }
@@ -100,6 +101,8 @@ export interface DiscoveredFacts {
 export interface ResolvedFacts {
   readonly contextWindow: number
   readonly contextSource: 'listing' | 'catalog' | 'global'
+  readonly maxOutput: number
+  readonly maxOutputSource: 'listing' | 'catalog' | 'none'
   readonly image: boolean
   readonly imageSource: 'manual' | 'listing' | 'catalog' | 'none'
   readonly wire?: string
@@ -109,6 +112,7 @@ export interface ResolvedFacts {
 
 export interface ModelSettingsView {
   readonly contextWindow?: number
+  readonly maxOutputTokens?: number
   readonly imageInput?: boolean
   readonly reasoningEfforts?: readonly string[]
   readonly wire?: 'responses' | 'chat' | 'messages'

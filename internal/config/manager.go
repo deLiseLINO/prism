@@ -279,6 +279,7 @@ func cloneDiscovered(m map[string]DiscoveredFacts) map[string]DiscoveredFacts {
 	out := make(map[string]DiscoveredFacts, len(m))
 	for k, v := range m {
 		v.ContextWindow = cloneInt(v.ContextWindow)
+		v.MaxOutput = cloneInt(v.MaxOutput)
 		v.Image = cloneBool(v.Image)
 		out[k] = v
 	}

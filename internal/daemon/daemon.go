@@ -112,6 +112,7 @@ type modelSyncer struct {
 type listedModel struct {
 	ID            string
 	ContextWindow *int
+	MaxOutput     *int
 	Image         *bool
 	Kind          config.ModelKind
 }
@@ -143,7 +144,7 @@ func (m modelSyncer) RemoteModels(ctx context.Context, id string, p config.Provi
 	}
 	out := make([]management.ListedModel, len(rows))
 	for i, row := range rows {
-		out[i] = management.ListedModel{ID: row.ID, ContextWindow: row.ContextWindow, Image: row.Image, Kind: row.Kind}
+		out[i] = management.ListedModel{ID: row.ID, ContextWindow: row.ContextWindow, MaxOutput: row.MaxOutput, Image: row.Image, Kind: row.Kind}
 	}
 	return management.ModelListing{Models: out}, nil
 }
@@ -469,6 +470,7 @@ func integrationModels(m *config.Manager) func() []integrations.Model {
 					ID:                     id + "/" + model,
 					Name:                   id + "/" + model,
 					ContextWindow:          snap.Config.ResolveContextWindow(id, model),
+					MaxOutputTokens:        snap.Config.ResolveMaxOutput(id, model),
 					ImageInput:             snap.Config.ResolveImageInput(id, model),
 					ReasoningEfforts:       efforts,
 					DefaultReasoningEffort: defaultReasoningEffort(efforts),

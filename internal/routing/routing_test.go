@@ -253,6 +253,38 @@ func TestTurnSendsTargetModelOnTheWire(t *testing.T) {
 	}
 }
 
+func TestTurnClampsClientMaxOutputToTargetLimit(t *testing.T) {
+	cases := []struct {
+		name          string
+		limit, client int
+		want          int
+	}{
+		{"above limit lowered", 32000, 100000, 32000},
+		{"below limit kept", 32000, 4096, 4096},
+		{"unset kept", 32000, 0, 0},
+		{"unknown limit untouched", 0, 100000, 100000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got canon.Request
+			runner := runnerFunc(func(req provider.RunRequest, sink provider.Sink) error {
+				got = req.Request
+				return sink.Emit(canon.TurnFinished{Status: canon.Completed(), Usage: canon.Usage{InputTokens: 1, TotalTokens: 1}})
+			})
+			pool := poolWith("codex", 1)
+			runners := fakeRunners{"codex": runner}
+			planner := fakePlanner{"codex/gpt-5.6": Plan{Targets: []provider.Target{{Provider: "codex", Model: "gpt-5.6", MaxOutputTokens: c.limit}}}}
+			res := NewRouter(pool, runners, planner, "default", testJournal(t)).Turn(context.Background(), canon.Request{Model: "codex/gpt-5.6", MaxOutputTokens: c.client}, testFacts(), fakeLifecycle{state: provider.NotStarted}, &recordingSink{})
+			if _, ok := res.Terminal.(Finished); !ok {
+				t.Fatalf("terminal is %T, want Finished", res.Terminal)
+			}
+			if got.MaxOutputTokens != c.want {
+				t.Fatalf("wire max output = %d, want %d", got.MaxOutputTokens, c.want)
+			}
+		})
+	}
+}
+
 func TestRateLimitRecordsRequestRejectedOnSelectedAccount(t *testing.T) {
 	runErr := provider.RunError{Kind: provider.Retryable, Class: provider.ClassRateLimited, ReplaySafe: true, RetryAfter: 7 * time.Second}
 	pool := poolWith("codex", 2)

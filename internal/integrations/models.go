@@ -27,6 +27,7 @@ type Model struct {
 	ID                     string
 	Name                   string
 	ContextWindow          int
+	MaxOutputTokens        int
 	ImageInput             bool
 	ReasoningEfforts       []string
 	DefaultReasoningEffort string
@@ -63,11 +64,16 @@ var piThinkingLevels = []string{"off", "minimal", "low", "medium", "high", "xhig
 const maxOutputTokenBudget = 32000
 
 // maxTokensFor is the output budget written beside a known context window;
-// client schemas require a value. It never exceeds half the window: an output
+// client schemas require a value. It is the model's own output limit when
+// known, else a fixed budget, and never exceeds half the window: an output
 // cap equal to the window leaves the client no input room, so its compaction
 // re-triggers on every turn and loops without ever reaching the model's answer.
-func maxTokensFor(contextWindow int) int {
-	return min(maxOutputTokenBudget, contextWindow/2)
+func maxTokensFor(model Model) int {
+	budget := maxOutputTokenBudget
+	if model.MaxOutputTokens > 0 {
+		budget = model.MaxOutputTokens
+	}
+	return min(budget, model.ContextWindow/2)
 }
 
 // effortsFor projects a model's declared reasoning ladder onto the vocabulary
