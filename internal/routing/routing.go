@@ -213,6 +213,9 @@ func (r *router) turn(ctx context.Context, req canon.Request, f execution.Facts,
 		trace = append(trace, AttemptTrace{Provider: target.Provider, Model: target.Model, Outcome: "failed"})
 		wireReq := req
 		wireReq.Model = target.Model
+		if target.MaxOutputTokens > 0 && wireReq.MaxOutputTokens > target.MaxOutputTokens {
+			wireReq.MaxOutputTokens = target.MaxOutputTokens
+		}
 		started := j.Now()
 		capture := &captureSink{next: sink}
 		var network []requestlog.NetworkAttemptInfo
