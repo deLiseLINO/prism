@@ -24,14 +24,6 @@ describe('model settings draft', () => {
     expect(draftToSettings({ ...draft, contextWindow: null }, 'responses')).toEqual({ imageInput: true })
   })
 
-  it('round-trips a max output override and omits it when cleared', () => {
-    const draft = draftFromSettings({ maxOutputTokens: 32000 })
-    expect(draft.maxOutputTokens).toBe(32000)
-    expect(draftToSettings(draft, 'responses')).toEqual({ maxOutputTokens: 32000 })
-    expect(draftToSettings({ ...draft, maxOutputTokens: null }, 'responses')).toEqual({})
-    expect(draftFromSettings(undefined).maxOutputTokens).toBeNull()
-  })
-
   it('reset keeps a saved image override when the listing is silent', () => {
     const draft = draftFromSettings({ imageInput: true }, false)
     expect(draft.imageTouched).toBe(true)

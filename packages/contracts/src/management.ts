@@ -112,7 +112,6 @@ export interface ResolvedFacts {
 
 export interface ModelSettingsView {
   readonly contextWindow?: number
-  readonly maxOutputTokens?: number
   readonly imageInput?: boolean
   readonly reasoningEfforts?: readonly string[]
   readonly wire?: 'responses' | 'chat' | 'messages'

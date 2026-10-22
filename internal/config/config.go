@@ -127,7 +127,6 @@ const DefaultContextWindow = 256000
 
 type ModelSettings struct {
 	ContextWindow    int      `json:"contextWindow,omitempty"`
-	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
 	ImageInput       *bool    `json:"imageInput,omitempty"`
 	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
 	Wire             Wire     `json:"wire,omitempty"`
@@ -210,25 +209,17 @@ func (d Document) ResolveContextWindow(providerID, model string) int {
 }
 
 func (d Document) ResolveMaxOutput(providerID, model string) int {
-	n, _ := d.maxOutputFallback(providerID, model, true)
-	return n
+	return d.ResolveMaxOutputSource(providerID, model).MaxOutput
 }
 
-func (d Document) maxOutputFallback(providerID, model string, includeManual bool) (int, string) {
-	if p, ok := d.Providers[providerID]; ok {
-		if includeManual {
-			if s, ok := p.ModelSettings[model]; ok && s.MaxOutputTokens > 0 {
-				return s.MaxOutputTokens, "manual"
-			}
-		}
-		if facts, ok := p.Discovered[model]; ok && facts.MaxOutput != nil && *facts.MaxOutput > 0 {
-			return *facts.MaxOutput, "listing"
-		}
+func (d Document) ResolveMaxOutputSource(providerID, model string) MaxOutputSource {
+	if facts, ok := d.Providers[providerID].Discovered[model]; ok && facts.MaxOutput != nil && *facts.MaxOutput > 0 {
+		return MaxOutputSource{MaxOutput: *facts.MaxOutput, Source: "listing"}
 	}
 	if n := d.catalogFacts(model).MaxOutput; n > 0 {
-		return n, "catalog"
+		return MaxOutputSource{MaxOutput: n, Source: "catalog"}
 	}
-	return 0, "none"
+	return MaxOutputSource{Source: "none"}
 }
 
 func (d Document) contextFallback(providerID, model string, includeManual bool) (int, string) {
@@ -302,11 +293,6 @@ func (d Document) ResolveContextSource(providerID, model string) ContextSource {
 func (d Document) ResolveImageSource(providerID, model string) ImageSource {
 	on, src := d.imageResolution(providerID, model)
 	return ImageSource{Image: on, Source: src}
-}
-
-func (d Document) ResolveMaxOutputSource(providerID, model string) MaxOutputSource {
-	n, src := d.maxOutputFallback(providerID, model, false)
-	return MaxOutputSource{MaxOutput: n, Source: src}
 }
 
 type EffortsSource struct {
@@ -511,10 +497,6 @@ func (p Provider) validateModelSettings(providerID string) error {
 
 		if s.ContextWindow < 0 {
 			return fmt.Errorf("%w: providers.%s.modelSettings[%s].contextWindow", ErrInvalidValue, providerID, model)
-		}
-
-		if s.MaxOutputTokens < 0 {
-			return fmt.Errorf("%w: providers.%s.modelSettings[%s].maxOutputTokens", ErrInvalidValue, providerID, model)
 		}
 
 		for _, e := range s.ReasoningEfforts {
