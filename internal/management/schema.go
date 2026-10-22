@@ -71,20 +71,23 @@ type Provider struct {
 }
 
 type ResolvedFacts struct {
-	ContextWindow int      `json:"contextWindow"`
-	ContextSource string   `json:"contextSource"`
-	Image         bool     `json:"image"`
-	ImageSource   string   `json:"imageSource"`
-	Efforts       []string `json:"efforts,omitempty"`
-	EffortsSource string   `json:"effortsSource"`
-	Wire          string   `json:"wire,omitempty"`
-	WireSource    string   `json:"wireSource,omitempty"`
-	Kind          string   `json:"kind,omitempty"`
+	ContextWindow   int      `json:"contextWindow"`
+	ContextSource   string   `json:"contextSource"`
+	MaxOutput       int      `json:"maxOutput"`
+	MaxOutputSource string   `json:"maxOutputSource"`
+	Image           bool     `json:"image"`
+	ImageSource     string   `json:"imageSource"`
+	Efforts         []string `json:"efforts,omitempty"`
+	EffortsSource   string   `json:"effortsSource"`
+	Wire            string   `json:"wire,omitempty"`
+	WireSource      string   `json:"wireSource,omitempty"`
+	Kind            string   `json:"kind,omitempty"`
 }
 
 type ListedModel struct {
 	ID            string
 	ContextWindow *int
+	MaxOutput     *int
 	Image         *bool
 	Kind          config.ModelKind
 }

@@ -207,8 +207,8 @@ func TestOpencodeApplyWritesLoadableV1Provider(t *testing.T) {
 
 func TestOutputBudgetLeavesInputRoomInSmallWindows(t *testing.T) {
 	for window, want := range map[int]int{8000: 4000, 64000: 32000, 400000: 32000} {
-		if got := maxTokensFor(window); got != want {
-			t.Errorf("maxTokensFor(%d) = %d, want %d", window, got, want)
+		if got := maxTokensFor(Model{ContextWindow: window}); got != want {
+			t.Errorf("maxTokensFor(window %d) = %d, want %d", window, got, want)
 		}
 	}
 	dir := tempDir(t)
@@ -219,5 +219,29 @@ func TestOutputBudgetLeavesInputRoomInSmallWindows(t *testing.T) {
 	}
 	if got := readText(t, path); !strings.Contains(got, `"output": 4000`) || strings.Contains(got, `"output": 8000`) {
 		t.Fatalf("output cap must leave input room:\n%s", got)
+	}
+}
+
+func TestOutputBudgetUsesKnownModelLimitCappedAtHalfWindow(t *testing.T) {
+	cases := []struct {
+		window, limit, want int
+	}{
+		{window: 400000, limit: 128000, want: 128000},
+		{window: 400000, limit: 8192, want: 8192},
+		{window: 200000, limit: 128000, want: 100000},
+	}
+	for _, c := range cases {
+		if got := maxTokensFor(Model{ContextWindow: c.window, MaxOutputTokens: c.limit}); got != c.want {
+			t.Errorf("maxTokensFor(window %d, limit %d) = %d, want %d", c.window, c.limit, got, c.want)
+		}
+	}
+	dir := tempDir(t)
+	path := tempFile(t, dir, "opencode.json", opencodeUserSeed)
+	integration := NewOpencode(OpencodeOptions{Port: testPort, Models: []Model{{ID: "r/big", Name: "r/big", ContextWindow: 400000, MaxOutputTokens: 128000}}, ConfigPath: path})
+	if result := integration.Apply(); !result.OK {
+		t.Fatalf("apply: %+v", result)
+	}
+	if got := readText(t, path); !strings.Contains(got, `"output": 128000`) {
+		t.Fatalf("known model limit not exported:\n%s", got)
 	}
 }

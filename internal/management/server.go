@@ -764,15 +764,18 @@ func resolvedFacts(doc config.Document, id string, p config.Provider) map[string
 	out := make(map[string]ResolvedFacts, len(p.Models))
 	for _, model := range p.Models {
 		ctx := doc.ResolveContextSource(id, model)
+		limit := doc.ResolveMaxOutputSource(id, model)
 		img := doc.ResolveImageSource(id, model)
 		eff := doc.ResolveEffortsSource(id, model)
 		facts := ResolvedFacts{
-			ContextWindow: ctx.Window,
-			ContextSource: ctx.Source,
-			Image:         img.Image,
-			ImageSource:   img.Source,
-			Efforts:       eff.Efforts,
-			EffortsSource: eff.Source,
+			ContextWindow:   ctx.Window,
+			ContextSource:   ctx.Source,
+			MaxOutput:       limit.MaxOutput,
+			MaxOutputSource: limit.Source,
+			Image:           img.Image,
+			ImageSource:     img.Source,
+			Efforts:         eff.Efforts,
+			EffortsSource:   eff.Source,
 		}
 		if p.Wire.Custom() {
 			facts.Wire = string(doc.ResolveWire(id, model))
@@ -800,12 +803,16 @@ func discoveredFromList(remote []ListedModel) map[string]config.DiscoveredFacts 
 			n := *row.ContextWindow
 			facts.ContextWindow = &n
 		}
+		if row.MaxOutput != nil && *row.MaxOutput > 0 {
+			n := *row.MaxOutput
+			facts.MaxOutput = &n
+		}
 		if row.Image != nil {
 			v := *row.Image
 			facts.Image = &v
 		}
 		facts.Kind = row.Kind
-		if facts.ContextWindow == nil && facts.Image == nil && facts.Kind == "" {
+		if facts.ContextWindow == nil && facts.MaxOutput == nil && facts.Image == nil && facts.Kind == "" {
 			continue
 		}
 		out[row.ID] = facts
@@ -840,6 +847,9 @@ func foldDiscovered(doc *config.Document, id string) {
 func fillUnknown(base, overlay config.DiscoveredFacts) config.DiscoveredFacts {
 	if overlay.ContextWindow != nil {
 		base.ContextWindow = overlay.ContextWindow
+	}
+	if overlay.MaxOutput != nil {
+		base.MaxOutput = overlay.MaxOutput
 	}
 	if overlay.Image != nil {
 		base.Image = overlay.Image

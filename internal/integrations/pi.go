@@ -72,7 +72,7 @@ func RenderPiLeaf(port int, models []Model, leafIndent int) string {
 				lines[len(lines)-1] += ","
 				lines = append(lines,
 					field+`"contextWindow": `+strconv.Itoa(model.ContextWindow)+`,`,
-					field+`"maxTokens": `+strconv.Itoa(maxTokensFor(model.ContextWindow)),
+					field+`"maxTokens": `+strconv.Itoa(maxTokensFor(model)),
 				)
 			}
 			lines = append(lines, item+`}`+comma)

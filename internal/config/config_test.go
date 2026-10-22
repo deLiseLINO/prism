@@ -443,6 +443,55 @@ func TestCatalogFillsUnknownAndLosesToListing(t *testing.T) {
 	}
 }
 
+func TestResolveMaxOutputPrecedence(t *testing.T) {
+	listed := 64000
+	bad := 0
+	doc := Document{
+		Providers: map[string]Provider{
+			"p": {
+				Models: []string{"manual", "listed", "bad", "bare", "unknown"},
+				ModelSettings: map[string]ModelSettings{
+					"manual": {MaxOutputTokens: 16000},
+				},
+				Discovered: map[string]DiscoveredFacts{
+					"manual": {MaxOutput: &listed},
+					"listed": {MaxOutput: &listed},
+					"bad":    {MaxOutput: &bad},
+				},
+			},
+		},
+	}
+	doc.setCatalog(staticCatalog{
+		"manual": {MaxOutput: 128000},
+		"listed": {MaxOutput: 128000},
+		"bad":    {MaxOutput: 128000},
+		"bare":   {MaxOutput: 128000},
+	})
+	cases := []struct {
+		model  string
+		want   int
+		view   int
+		source string
+	}{
+		{"manual", 16000, 64000, "listing"},
+		{"listed", 64000, 64000, "listing"},
+		{"bad", 128000, 128000, "catalog"},
+		{"bare", 128000, 128000, "catalog"},
+		{"unknown", 0, 0, "none"},
+	}
+	for _, c := range cases {
+		if got := doc.ResolveMaxOutput("p", c.model); got != c.want {
+			t.Fatalf("ResolveMaxOutput(%s) = %d, want %d", c.model, got, c.want)
+		}
+		if got := doc.ResolveMaxOutputSource("p", c.model); got.MaxOutput != c.view || got.Source != c.source {
+			t.Fatalf("ResolveMaxOutputSource(%s) = %+v, want %d/%s", c.model, got, c.view, c.source)
+		}
+	}
+	if got := doc.ResolveMaxOutput("other", "bare"); got != 128000 {
+		t.Fatalf("unknown provider = %d, want catalog 128000", got)
+	}
+}
+
 func TestDiscoveredFactsDropsNonPositiveWindow(t *testing.T) {
 	var facts DiscoveredFacts
 	if err := json.Unmarshal([]byte(`{"contextWindow":0,"image":false}`), &facts); err != nil {

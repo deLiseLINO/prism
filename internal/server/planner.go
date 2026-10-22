@@ -139,7 +139,7 @@ func enabledTarget(d config.Document, providerID, model string) (provider.Target
 		APIKeyRef:       p.APIKeyRef,
 		Model:           canon.ModelID(model),
 		ImageInput:      d.ResolveImageInput(providerID, model),
-		MaxOutputTokens: d.ResolveMaxOutput(model),
+		MaxOutputTokens: d.ResolveMaxOutput(providerID, model),
 		Policy:          selectionPolicy(p.Pool),
 		Wait:            waitPolicy(p.Wait),
 	}, nil

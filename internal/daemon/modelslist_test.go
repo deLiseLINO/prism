@@ -114,3 +114,32 @@ func TestParseOpenAIModelListMarksImageGenerationModels(t *testing.T) {
 		}
 	}
 }
+
+func TestParseOpenAIModelListReadsMaxOutput(t *testing.T) {
+	body := []byte(`{"object":"list","data":[
+		{"id":"output","max_output_tokens":64000,"max_completion_tokens":32000},
+		{"id":"completion","max_output_tokens":0,"max_completion_tokens":32000},
+		{"id":"top","context_length":200000,"top_provider":{"context_length":200000,"max_completion_tokens":16384}},
+		{"id":"bare","context_length":131072,"max_tokens":131072},
+		{"id":"null-top","top_provider":null},
+		{"id":"bad-top","top_provider":"x","max_completion_tokens":-1}
+	]}`)
+	rows, err := parseOpenAIModelList(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]*int{}
+	for _, row := range rows {
+		got[row.ID] = row.MaxOutput
+	}
+	want := map[string]int{"output": 64000, "completion": 32000, "top": 16384, "bare": 0, "null-top": 0, "bad-top": 0}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %d, want %d", len(got), len(want))
+	}
+	for id, n := range want {
+		v := got[id]
+		if n == 0 && v != nil || n > 0 && (v == nil || *v != n) {
+			t.Fatalf("%s max output = %v, want %d", id, v, n)
+		}
+	}
+}

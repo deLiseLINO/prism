@@ -64,13 +64,16 @@ func parseOpenAIModelList(body []byte) ([]listedModel, error) {
 
 func parseOpenAIModel(raw json.RawMessage) (listedModel, bool) {
 	var row struct {
-		ID               string          `json:"id"`
-		MaxModelLen      json.RawMessage `json:"max_model_len"`
-		ContextLength    json.RawMessage `json:"context_length"`
-		Input            json.RawMessage `json:"input"`
-		InputModalities  json.RawMessage `json:"input_modalities"`
-		OutputModalities json.RawMessage `json:"output_modalities"`
-		Architecture     json.RawMessage `json:"architecture"`
+		ID                  string          `json:"id"`
+		MaxModelLen         json.RawMessage `json:"max_model_len"`
+		ContextLength       json.RawMessage `json:"context_length"`
+		MaxOutputTokens     json.RawMessage `json:"max_output_tokens"`
+		MaxCompletionTokens json.RawMessage `json:"max_completion_tokens"`
+		TopProvider         json.RawMessage `json:"top_provider"`
+		Input               json.RawMessage `json:"input"`
+		InputModalities     json.RawMessage `json:"input_modalities"`
+		OutputModalities    json.RawMessage `json:"output_modalities"`
+		Architecture        json.RawMessage `json:"architecture"`
 	}
 	if err := json.Unmarshal(raw, &row); err != nil || row.ID == "" {
 		return listedModel{}, false
@@ -79,9 +82,31 @@ func parseOpenAIModel(raw json.RawMessage) (listedModel, bool) {
 	return listedModel{
 		ID:            row.ID,
 		ContextWindow: openAIWindow(row.MaxModelLen, row.ContextLength),
+		MaxOutput:     openAIMaxOutput(row.MaxOutputTokens, row.MaxCompletionTokens, row.TopProvider),
 		Image:         openAIImage(row.Input, row.InputModalities, archInput),
 		Kind:          openAIKind(row.OutputModalities, archOutput),
 	}, true
+}
+
+// openAIMaxOutput ignores a bare max_tokens because some gateways mirror the
+// context length there.
+func openAIMaxOutput(maxOutputTokens, maxCompletionTokens, topProvider json.RawMessage) *int {
+	if n := positiveNumber(maxOutputTokens); n != nil {
+		return n
+	}
+	if n := positiveNumber(maxCompletionTokens); n != nil {
+		return n
+	}
+	if len(topProvider) == 0 || string(topProvider) == "null" {
+		return nil
+	}
+	var top struct {
+		MaxCompletionTokens json.RawMessage `json:"max_completion_tokens"`
+	}
+	if err := json.Unmarshal(topProvider, &top); err != nil {
+		return nil
+	}
+	return positiveNumber(top.MaxCompletionTokens)
 }
 
 func architectureModalities(raw json.RawMessage) (input, output json.RawMessage) {

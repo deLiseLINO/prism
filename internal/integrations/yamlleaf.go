@@ -184,7 +184,7 @@ func RenderProviderLeaf(providerID string, spec OmpProviderSpec, indent int) str
 			if model.ContextWindow > 0 {
 				lines = append(lines,
 					fields+"contextWindow: "+fmt.Sprintf("%d", model.ContextWindow),
-					fields+"maxTokens: "+fmt.Sprintf("%d", maxTokensFor(model.ContextWindow)),
+					fields+"maxTokens: "+fmt.Sprintf("%d", maxTokensFor(model)),
 				)
 			}
 			efforts := effortsFor(model, ompThinkingEfforts)
