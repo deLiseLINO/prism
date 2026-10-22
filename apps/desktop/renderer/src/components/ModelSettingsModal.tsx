@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent } from 'react'
+import { useState, type MouseEvent } from 'react'
 import type { ModelSettingsView } from '@prism/contracts'
 import { Button, Toggle } from './Ui'
 import { Dialog, DialogSection } from './Patterns'
@@ -20,19 +20,12 @@ export function contextCaption(source: ContextSource, n: number): string {
   return `${source} ${fmt(n)}`
 }
 
-export type MaxOutputSource = 'listing' | 'catalog' | 'none'
-
-export function maxOutputCaption(source: MaxOutputSource, n: number): string {
-  return source === 'none' || n <= 0 ? 'auto' : `${source} ${fmt(n)}`
-}
-
 function fmt(n: number): string {
   return n.toLocaleString('en-US')
 }
 
 export interface ModelSettingsDraft {
   readonly contextWindow: number | null
-  readonly maxOutputTokens: number | null
   readonly imageInput: boolean
   readonly imageTouched: boolean
   readonly effortsOverride: boolean
@@ -46,7 +39,6 @@ export function draftFromSettings(
 ): ModelSettingsDraft {
   return {
     contextWindow: settings?.contextWindow ?? null,
-    maxOutputTokens: settings?.maxOutputTokens ?? null,
     imageInput: settings?.imageInput ?? resolvedImage,
     imageTouched: settings?.imageInput !== undefined,
     effortsOverride: (settings?.reasoningEfforts?.length ?? 0) > 0,
@@ -58,7 +50,6 @@ export function draftFromSettings(
 export function draftToSettings(draft: ModelSettingsDraft, providerWire: string): ModelSettingsView {
   return {
     ...(draft.contextWindow === null ? {} : { contextWindow: draft.contextWindow }),
-    ...(draft.maxOutputTokens === null ? {} : { maxOutputTokens: draft.maxOutputTokens }),
     ...(draft.imageTouched ? { imageInput: draft.imageInput } : {}),
     ...(draft.effortsOverride ? { reasoningEfforts: [...draft.efforts] } : {}),
     ...(draft.wireOverride === null || draft.wireOverride === providerWire ? {} : { wire: draft.wireOverride }),
@@ -72,8 +63,6 @@ export interface ModelSettingsModalProps {
   readonly fallbackContextWindow: number
   readonly providerWire: string
   readonly contextSource?: ContextSource
-  readonly fallbackMaxOutput?: number
-  readonly maxOutputSource?: MaxOutputSource
   readonly resolvedImage?: boolean
   readonly initial: ModelSettingsView | undefined
   readonly busy: boolean
@@ -88,8 +77,6 @@ export function ModelSettingsModal({
   fallbackContextWindow,
   providerWire,
   contextSource = 'global',
-  fallbackMaxOutput = 0,
-  maxOutputSource = 'none',
   resolvedImage = false,
   initial,
   busy,
@@ -102,10 +89,6 @@ export function ModelSettingsModal({
     const preset = CONTEXT_PRESETS.find((p) => p.value === value)
     return preset === undefined && value !== undefined ? String(value) : ''
   })
-  const [maxOutputText, setMaxOutputText] = useState(() =>
-    initial?.maxOutputTokens === undefined ? '' : String(initial.maxOutputTokens),
-  )
-  const maxOutputInput = useRef<HTMLInputElement>(null)
 
   function setContextOverride(on: boolean): void {
     if (!on) {
@@ -148,17 +131,6 @@ export function ModelSettingsModal({
     setDraft((d) => ({ ...d, contextWindow: digits === '' ? null : Number(digits) }))
   }
 
-  function onMaxOutputInput(raw: string): void {
-    const digits = raw.replace(/[^0-9]/g, '').slice(0, 9)
-    setMaxOutputText(digits)
-    setDraft((d) => ({ ...d, maxOutputTokens: digits === '' || Number(digits) === 0 ? null : Number(digits) }))
-  }
-
-  function resetDraft(): void {
-    setDraft(draftFromSettings(initial, resolvedImage))
-    setMaxOutputText(initial?.maxOutputTokens === undefined ? '' : String(initial.maxOutputTokens))
-  }
-
   function rowToggle(event: MouseEvent<HTMLDivElement>, apply: () => void): void {
     if ((event.target as HTMLElement).closest('.toggle') !== null) return
     apply()
@@ -168,8 +140,6 @@ export function ModelSettingsModal({
   const ctxOver = draft.contextWindow !== null
   const wireOver = draft.wireOverride !== null
   const isPreset = CONTEXT_PRESETS.some((p) => p.value === draft.contextWindow)
-  const outOver = draft.maxOutputTokens !== null
-  const effectiveOut = draft.maxOutputTokens ?? fallbackMaxOutput
   const saveDisabled = busy || (draft.effortsOverride && draft.efforts.size === 0)
 
   return (
@@ -180,7 +150,7 @@ export function ModelSettingsModal({
       onClose={onCancel}
       footer={
         <>
-          <Button tone="ghost" onClick={resetDraft} disabled={busy}>
+          <Button tone="ghost" onClick={() => setDraft(draftFromSettings(initial, resolvedImage))} disabled={busy}>
             Reset to defaults
           </Button>
           <span className="ctl-spacer" />
@@ -265,40 +235,6 @@ export function ModelSettingsModal({
                 {ctxOver
                   ? ' · applies to this model'
                   : ` · ${contextCaption(contextSource, fallbackContextWindow)}`}
-              </p>
-            </div>
-          </DialogSection>
-          <DialogSection label="Max output" meta={<>
-                <span className="msm-tag num">{outOver ? 'custom' : 'default'}</span>
-                <span className="msm-k">Effective</span>
-                <span className="msm-v num">{effectiveOut > 0 ? fmt(effectiveOut) : 'auto'}</span>
-              </>}>
-            <div className={'msm-ctx' + (outOver ? ' msm-ctx--over' : '')}>
-              <div
-                className="msm-row msm-row--click"
-                onClick={(event) => {
-                  if (event.target !== maxOutputInput.current) maxOutputInput.current?.focus()
-                }}
-              >
-                <span>
-                  <span className="msm-row-name">Max output tokens</span>
-                </span>
-                <span className="msm-row-right">
-                  <input
-                    ref={maxOutputInput}
-                    className="text-input text-input--num"
-                    value={maxOutputText}
-                    onChange={(event) => onMaxOutputInput(event.target.value)}
-                    inputMode="numeric"
-                    placeholder={fallbackMaxOutput > 0 ? String(fallbackMaxOutput) : 'auto'}
-                    aria-label="Max output tokens"
-                  />
-                  <span className="msm-suffix">tokens</span>
-                </span>
-              </div>
-              <p className="msm-note">
-                Effective <b className="num">{effectiveOut > 0 ? `${fmt(effectiveOut)} tokens` : 'auto'}</b>
-                {outOver ? ' · applies to this model' : ` · ${maxOutputCaption(maxOutputSource, fallbackMaxOutput)}`}
               </p>
             </div>
           </DialogSection>

@@ -449,12 +449,8 @@ func TestResolveMaxOutputPrecedence(t *testing.T) {
 	doc := Document{
 		Providers: map[string]Provider{
 			"p": {
-				Models: []string{"manual", "listed", "bad", "bare", "unknown"},
-				ModelSettings: map[string]ModelSettings{
-					"manual": {MaxOutputTokens: 16000},
-				},
+				Models: []string{"listed", "bad", "bare", "unknown"},
 				Discovered: map[string]DiscoveredFacts{
-					"manual": {MaxOutput: &listed},
 					"listed": {MaxOutput: &listed},
 					"bad":    {MaxOutput: &bad},
 				},
@@ -462,7 +458,6 @@ func TestResolveMaxOutputPrecedence(t *testing.T) {
 		},
 	}
 	doc.setCatalog(staticCatalog{
-		"manual": {MaxOutput: 128000},
 		"listed": {MaxOutput: 128000},
 		"bad":    {MaxOutput: 128000},
 		"bare":   {MaxOutput: 128000},
@@ -470,21 +465,19 @@ func TestResolveMaxOutputPrecedence(t *testing.T) {
 	cases := []struct {
 		model  string
 		want   int
-		view   int
 		source string
 	}{
-		{"manual", 16000, 64000, "listing"},
-		{"listed", 64000, 64000, "listing"},
-		{"bad", 128000, 128000, "catalog"},
-		{"bare", 128000, 128000, "catalog"},
-		{"unknown", 0, 0, "none"},
+		{"listed", 64000, "listing"},
+		{"bad", 128000, "catalog"},
+		{"bare", 128000, "catalog"},
+		{"unknown", 0, "none"},
 	}
 	for _, c := range cases {
 		if got := doc.ResolveMaxOutput("p", c.model); got != c.want {
 			t.Fatalf("ResolveMaxOutput(%s) = %d, want %d", c.model, got, c.want)
 		}
-		if got := doc.ResolveMaxOutputSource("p", c.model); got.MaxOutput != c.view || got.Source != c.source {
-			t.Fatalf("ResolveMaxOutputSource(%s) = %+v, want %d/%s", c.model, got, c.view, c.source)
+		if got := doc.ResolveMaxOutputSource("p", c.model); got.MaxOutput != c.want || got.Source != c.source {
+			t.Fatalf("ResolveMaxOutputSource(%s) = %+v, want %d/%s", c.model, got, c.want, c.source)
 		}
 	}
 	if got := doc.ResolveMaxOutput("other", "bare"); got != 128000 {
