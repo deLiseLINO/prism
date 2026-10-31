@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,9 @@ func TestAccountPathsAvoidWindowsReservedCharacters(t *testing.T) {
 }
 
 func TestMigrateLegacyLayoutKeepsCredentials(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy directories named by raw account IDs cannot exist on Windows")
+	}
 	s := newStore(t)
 	ctx := context.Background()
 	legacy := filepath.Join(s.root, "codex", "codex:acc")

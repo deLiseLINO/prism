@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -331,7 +332,12 @@ func writeTemp(dir string, blob []byte) (string, error) {
 	return name, nil
 }
 
+// syncDir is a no-op on Windows: FlushFileBuffers on a directory handle fails
+// with "Access is denied", and NTFS journals the directory entry itself.
 func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
