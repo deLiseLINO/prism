@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -69,7 +70,7 @@ func (LocalIO) CreateBackup(path, content string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := d.Sync(); err != nil {
+	if err := syncDir(d); err != nil {
 		return err
 	}
 	return d.Close()
@@ -218,12 +219,21 @@ func syncDirectoryChecked(path string) error {
 	if err != nil {
 		return err
 	}
-	err = d.Sync()
+	err = syncDir(d)
 	closeErr := d.Close()
 	if err != nil {
 		return err
 	}
 	return closeErr
+}
+
+// syncDir is a no-op on Windows: FlushFileBuffers on a directory handle fails
+// with "Access is denied", and NTFS journals the directory entry itself.
+func syncDir(d *os.File) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return d.Sync()
 }
 
 func failureReason(scope string, err error) string {

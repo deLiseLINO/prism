@@ -71,6 +71,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - run: go test ./internal/store
       - run: npm ci
       - run: npm run build --workspace @prism/desktop
       - run: npx --workspace @prism/desktop electron-builder --win dir --x64 --publish never
