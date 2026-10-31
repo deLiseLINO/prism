@@ -771,7 +771,11 @@ func run(opts options) error {
 	cfg.SetCatalog(modelCatalog)
 	d := cfg.Get().Config
 	pool := account.New()
-	creds := credentialStore{file: store.NewFileCredentialStore(opts.credentialPath), pool: pool, publication: &credentialPublication{cfg: cfg, refs: map[string]string{}}}
+	credFile := store.NewFileCredentialStore(opts.credentialPath)
+	if err := credFile.MigrateLegacyLayout(); err != nil {
+		return err
+	}
+	creds := credentialStore{file: credFile, pool: pool, publication: &credentialPublication{cfg: cfg, refs: map[string]string{}}}
 	registry := provider.NewRegistry()
 	client := &http.Client{Timeout: 30 * time.Second}
 	quotas := newQuotaTable(pool, cfg, client)

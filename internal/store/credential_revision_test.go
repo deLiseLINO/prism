@@ -41,7 +41,7 @@ func TestStagedCredentialRevisionsPreserveLegacyAndRestart(t *testing.T) {
 		t.Fatalf("same key changed revision=%q err=%v", same, err)
 	}
 	legacyUUID := "00000000-0000-4000-8000-000000000000"
-	path := filepath.Join(root, "edge", "edge:default", "key-"+legacyUUID+".blob")
+	path := filepath.Join(s.accountDir("edge", "edge:default"), "key-"+legacyUUID+".blob")
 	if err := os.WriteFile(path, []byte("prior-revision"), 0o600); err != nil {
 		t.Fatal(err)
 	}
