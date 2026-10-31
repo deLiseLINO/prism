@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,44 @@ var (
 func newStore(t *testing.T) *FileCredentialStore {
 	t.Helper()
 	return NewFileCredentialStore(t.TempDir())
+}
+
+func TestAccountPathsAvoidWindowsReservedCharacters(t *testing.T) {
+	s := newStore(t)
+	rel, err := filepath.Rel(s.root, s.blobPath("aside", "aside:default", gen1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(rel, `<>:"|?*`) {
+		t.Fatalf("path %q has a character Windows rejects", rel)
+	}
+	if s.accountDir("aside", "aside:default") == s.accountDir("aside", "aside_default") {
+		t.Fatal("distinct account IDs share a directory")
+	}
+}
+
+func TestMigrateLegacyLayoutKeepsCredentials(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	legacy := filepath.Join(s.root, "codex", "codex:acc")
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "gen-2.blob"), blobA, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.MigrateLegacyLayout(); err != nil {
+			t.Fatalf("migrate: %v", err)
+		}
+	}
+	got, ok, err := s.Get(ctx, "codex", "codex:acc", gen2)
+	if err != nil || !ok || !bytes.Equal(got, blobA) {
+		t.Fatalf("migrated blob=%q ok=%v err=%v", got, ok, err)
+	}
+	if _, err := os.Lstat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy dir still present: %v", err)
+	}
 }
 
 func TestPutGetRoundtrip(t *testing.T) {

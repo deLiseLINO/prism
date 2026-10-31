@@ -67,8 +67,68 @@ func NewFileCredentialStore(root string) *FileCredentialStore {
 	return &FileCredentialStore{root: root, now: time.Now}
 }
 
+// accountDir maps IDs to portable names: account IDs such as "codex:acc"
+// contain ':', which Windows rejects in path components.
 func (s *FileCredentialStore) accountDir(p account.ProviderID, a account.AccountID) string {
-	return filepath.Join(s.root, string(p), string(a))
+	return filepath.Join(s.root, safeProviderDir(string(p)), accountDirName(a))
+}
+
+func safeProviderDir(p string) string {
+	b := []byte(p)
+	for i, c := range b {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			b[i] = '_'
+		}
+	}
+	return string(b)
+}
+
+func accountDirName(a account.AccountID) string {
+	sum := sha256.Sum256([]byte(a))
+	return hex.EncodeToString(sum[:12])
+}
+
+// MigrateLegacyLayout renames account directories created before accountDir
+// hashed account IDs, where the directory name was the raw account ID.
+func (s *FileCredentialStore) MigrateLegacyLayout() error {
+	providers, err := os.ReadDir(s.root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, p := range providers {
+		if !p.IsDir() || p.Name() == "accounts" || p.Name() == "locks" {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(s.root, p.Name()))
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if !e.IsDir() || !strings.Contains(e.Name(), ":") {
+				continue
+			}
+			from := filepath.Join(s.root, p.Name(), e.Name())
+			to := s.accountDir(account.ProviderID(p.Name()), account.AccountID(e.Name()))
+			if _, err := os.Lstat(to); err == nil {
+				return fmt.Errorf("store: migrate %s: %s already exists", from, to)
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+				return err
+			}
+			if err := os.Rename(from, to); err != nil {
+				return err
+			}
+			if err := syncDir(filepath.Dir(to)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *FileCredentialStore) blobPath(p account.ProviderID, a account.AccountID, g account.CredentialGeneration) string {
