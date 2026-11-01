@@ -96,16 +96,17 @@ type openBlock struct {
 }
 
 type streamState struct {
-	sink      provider.Sink
-	custom    customTools
-	store     *stateStore
-	log       *slog.Logger
-	msgID     string
-	blocks    map[string]*openBlock
-	usage     wireUsage
-	stopSeen  bool
-	stopValue string
-	terminal  bool
+	sink        provider.Sink
+	custom      customTools
+	store       *stateStore
+	log         *slog.Logger
+	msgID       string
+	blocks      map[string]*openBlock
+	usage       wireUsage
+	stopSeen    bool
+	stopValue   string
+	stopDetails string
+	terminal    bool
 }
 
 type wireUsage struct {
@@ -586,6 +587,14 @@ func (s *streamState) messageDelta(payload map[string]any) error {
 	}
 	s.stopSeen = true
 	s.stopValue = stopReason
+	s.stopDetails = ""
+	if details, ok := delta["stop_details"].(map[string]any); ok {
+		raw, err := json.Marshal(details)
+		if err != nil {
+			return err
+		}
+		s.stopDetails = string(raw)
+	}
 	return nil
 }
 
@@ -595,7 +604,7 @@ func (s *streamState) mapStopReason(reason string) canon.Status {
 		return canon.Completed()
 	case "max_tokens", "model_context_window_exceeded":
 		return canon.Incomplete(canon.IncompleteMaxOutputTokens)
-	case "refusal", "content_filter":
+	case "refusal", "sensitive", "content_filter":
 		return canon.Incomplete(canon.IncompleteContentFilter)
 	default:
 		s.log.Warn("anthropic: unknown stop_reason", slog.String("stop_reason", reason))
@@ -611,7 +620,7 @@ func (s *streamState) messageStop() error {
 	if len(s.blocks) != 0 {
 		return s.protocolFailure(errors.New("anthropic: message_stop with unfinished content blocks"))
 	}
-	if err := s.emit(canon.TurnFinished{Status: s.mapStopReason(s.stopValue), Usage: s.usage.canonUsage()}); err != nil {
+	if err := s.emit(canon.TurnFinished{Status: s.mapStopReason(s.stopValue), Usage: s.usage.canonUsage(), StopDetails: s.stopDetails}); err != nil {
 		return err
 	}
 	return errTerminalDone

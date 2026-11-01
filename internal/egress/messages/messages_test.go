@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -203,11 +204,13 @@ func TestEventMapping(t *testing.T) {
 }
 
 func TestStopReasonTranslation(t *testing.T) {
+	const refusalDetails = `{"type":"refusal","category":"cyber","explanation":"blocked","fallback_credit_token":"tok","fallback_has_prefill_claim":false}`
 	cases := []struct {
-		name     string
-		evs      []canon.Event
-		terminal canon.Event
-		want     string
+		name        string
+		evs         []canon.Event
+		terminal    canon.Event
+		want        string
+		wantDetails string
 	}{
 		{
 			name:     "completed text turn",
@@ -234,6 +237,13 @@ func TestStopReasonTranslation(t *testing.T) {
 			name:     "content filter",
 			terminal: canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteContentFilter)},
 			want:     "refusal",
+		},
+		{
+			name:        "refusal during reasoning keeps details",
+			evs:         []canon.Event{canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1"}}, canon.ReasoningDelta{ItemID: "r1", Text: "thinking"}},
+			terminal:    canon.TurnFinished{Status: canon.Incomplete(canon.IncompleteContentFilter), StopDetails: refusalDetails},
+			want:        "refusal",
+			wantDetails: refusalDetails,
 		},
 	}
 	for _, tc := range cases {
@@ -269,6 +279,20 @@ func TestStopReasonTranslation(t *testing.T) {
 				}
 				if got := message["stop_reason"]; got != tc.want {
 					t.Fatalf("stop_reason = %v, want %v", got, tc.want)
+				}
+				got, present := message["stop_details"]
+				if tc.wantDetails == "" {
+					if present {
+						t.Fatalf("stop_details = %v, want absent", got)
+					}
+					return
+				}
+				var want any
+				if err := json.Unmarshal([]byte(tc.wantDetails), &want); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("stop_details = %v, want %v", got, want)
 				}
 			})
 		}

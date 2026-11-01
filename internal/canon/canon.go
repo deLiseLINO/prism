@@ -357,6 +357,10 @@ type ItemFinished struct{ Item Item }
 type TurnFinished struct {
 	Status Status
 	Usage  Usage
+	// StopDetails is the upstream stop_details JSON object of a refused
+	// turn, kept verbatim so Messages clients receive the refusal category,
+	// explanation and fallback fields. A string keeps events comparable.
+	StopDetails string
 }
 
 type TurnFailed struct {

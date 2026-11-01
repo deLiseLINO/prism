@@ -9,6 +9,7 @@ A generated config must work in the real client. Parsing a file does not prove i
 - A thinking assertion requires a displayed thinking block. Reasoning token usage alone is not that proof.
 - A chat chunk containing both reasoning and answer text emits reasoning first. The transition must not insert a reasoning block between consecutive answer fragments.
 - Messages responses preserve an upstream content filter as `stop_reason: "refusal"` in both streaming and JSON output. Clients can distinguish a blocked request from a normal turn completion.
+- An Anthropic upstream's `stop_details` object reaches Messages clients unchanged, so the client can show the refusal category and explanation. A refusal that arrives after thinking or tool blocks still ends with `stop_reason: "refusal"` instead of an interrupted-response error. Anthropic `sensitive` stops count as a content filter.
 - The repeated-request matrix exercises selected client and model pairs over an aggregate duration. Each command invocation is fresh.
 - Other supported clients need separate real inference runs. A structural config loader or two-client matrix does not cover them.
 
