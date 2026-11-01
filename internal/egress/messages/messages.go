@@ -196,8 +196,11 @@ func (e *streamEncoder) ResponseFailure(terminal canon.Event) (canon.Failure, bo
 	case canon.TurnFailed:
 		return t.Failure, true
 	case canon.TurnFinished:
-		if reason, incomplete := t.Status.Reason(); incomplete {
-			unsafe := reason != canon.IncompleteMaxOutputTokens && reason != canon.IncompleteContentFilter
+		if reason, incomplete := t.Status.Reason(); incomplete && reason != canon.IncompleteContentFilter {
+			// A refusal ends the turn wherever it lands; the client sees the
+			// refusal stop reason, so partial blocks are not mistaken for a
+			// finished answer.
+			unsafe := reason != canon.IncompleteMaxOutputTokens
 			for _, block := range e.blocks {
 				if reason == canon.IncompleteMaxOutputTokens && block.kind == blockToolUse {
 					continue
@@ -255,19 +258,21 @@ func (e *streamEncoder) Flush() error {
 				}
 			}
 			return e.writeJSON(messageWire{
-				ID:         e.id,
-				Type:       "message",
-				Role:       "assistant",
-				Model:      e.model,
-				Content:    e.content,
-				StopReason: &stop,
-				Usage:      e.usage,
+				ID:          e.id,
+				Type:        "message",
+				Role:        "assistant",
+				Model:       e.model,
+				Content:     e.content,
+				StopReason:  &stop,
+				StopDetails: json.RawMessage(t.StopDetails),
+				Usage:       e.usage,
 			})
 		}
 		if err := e.write("message_delta", messageDeltaWire{
 			Type: "message_delta",
 			Delta: messageDeltaBody{
-				StopReason: stopReason(t.Status, e.toolUse),
+				StopReason:  stopReason(t.Status, e.toolUse),
+				StopDetails: json.RawMessage(t.StopDetails),
 			},
 			Usage: e.usage,
 		}); err != nil {
@@ -676,14 +681,15 @@ type messageStartWire struct {
 }
 
 type messageWire struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Role         string    `json:"role"`
-	Model        string    `json:"model"`
-	Content      []any     `json:"content"`
-	StopReason   *string   `json:"stop_reason"`
-	StopSequence *int      `json:"stop_sequence"`
-	Usage        usageWire `json:"usage"`
+	ID           string          `json:"id"`
+	Type         string          `json:"type"`
+	Role         string          `json:"role"`
+	Model        string          `json:"model"`
+	Content      []any           `json:"content"`
+	StopReason   *string         `json:"stop_reason"`
+	StopSequence *int            `json:"stop_sequence"`
+	StopDetails  json.RawMessage `json:"stop_details,omitempty"`
+	Usage        usageWire       `json:"usage"`
 }
 
 type blockStartWire struct {
@@ -710,8 +716,9 @@ type messageDeltaWire struct {
 }
 
 type messageDeltaBody struct {
-	StopReason   string `json:"stop_reason"`
-	StopSequence *int   `json:"stop_sequence"`
+	StopReason   string          `json:"stop_reason"`
+	StopSequence *int            `json:"stop_sequence"`
+	StopDetails  json.RawMessage `json:"stop_details,omitempty"`
 }
 
 type terminalWire struct {

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -138,6 +140,7 @@ func TestStopReasonMapping(t *testing.T) {
 		{"model_context_window_exceeded", canon.StatusIncomplete, canon.IncompleteMaxOutputTokens},
 		{"refusal", canon.StatusIncomplete, canon.IncompleteContentFilter},
 		{"content_filter", canon.StatusIncomplete, canon.IncompleteContentFilter},
+		{"sensitive", canon.StatusIncomplete, canon.IncompleteContentFilter},
 		{"weird", canon.StatusCompleted, 0},
 	}
 	for _, tc := range cases {
@@ -160,6 +163,43 @@ func TestStopReasonMapping(t *testing.T) {
 				if !ok || reason != tc.why {
 					t.Fatalf("reason = %d %t, want %d", reason, ok, tc.why)
 				}
+			}
+		})
+	}
+}
+
+func TestRefusalKeepsStopDetails(t *testing.T) {
+	const details = `{"type":"refusal","category":"cyber","explanation":"blocked","fallback_credit_token":"tok","fallback_has_prefill_claim":false}`
+	bodies := map[string]struct{ contentType, body string }{
+		"stream": {"text/event-stream", sse(
+			ssePart("message_start", `{"type":"message_start","message":{}}`),
+			ssePart("message_delta", `{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":`+details+`}}`),
+			ssePart("message_stop", `{"type":"message_stop"}`),
+		)},
+		"document": {"application/json", `{"type":"message","id":"m","content":[],"stop_reason":"refusal","stop_details":` + details + `}`},
+	}
+	for name, tc := range bodies {
+		t.Run(name, func(t *testing.T) {
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				io.WriteString(w, tc.body)
+			}))
+			defer up.Close()
+			sink := &collectingSink{}
+			if err := New(Options{HTTP: up.Client()}).Run(t.Context(), provider.RunRequest{Request: baseRequest(), Target: provider.Target{BaseURL: up.URL}}, sink); err != nil {
+				t.Fatal(err)
+			}
+			terminal := sink.events[len(sink.events)-1].(canon.TurnFinished)
+			if reason, _ := terminal.Status.Reason(); reason != canon.IncompleteContentFilter {
+				t.Fatalf("status = %+v", terminal.Status)
+			}
+			var got, want any
+			if err := json.Unmarshal([]byte(terminal.StopDetails), &got); err != nil {
+				t.Fatalf("stop details %q: %v", terminal.StopDetails, err)
+			}
+			json.Unmarshal([]byte(details), &want)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("stop details = %v, want %v", got, want)
 			}
 		})
 	}

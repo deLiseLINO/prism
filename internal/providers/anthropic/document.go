@@ -45,6 +45,9 @@ func (r *Runner) streamDocument(body io.Reader, sink provider.Sink, custom custo
 		frames = append(frames, blockFrames(i, block)...)
 	}
 	delta := map[string]any{"stop_reason": doc["stop_reason"]}
+	if details, ok := doc["stop_details"]; ok {
+		delta["stop_details"] = details
+	}
 	frames = append(frames,
 		map[string]any{"type": "message_delta", "delta": delta, "usage": doc["usage"]},
 		map[string]any{"type": "message_stop"},
