@@ -1,105 +1,36 @@
 package management
 
 import (
-	"context"
+	"maps"
 	"net/http"
-	"sync"
+	"slices"
 
 	"github.com/deLiseLINO/prism/internal/config"
-	"github.com/deLiseLINO/prism/internal/integrations"
+	"github.com/deLiseLINO/prism/internal/hostsync"
 )
 
 // HostIDLocal names the always-present local machine.
 const HostIDLocal = "local"
 
-// HostRegistries is the host table the integrations endpoints dispatch on:
-// one registry per configured host, with the local machine always present.
-// A host that is unreachable or unresolved keeps a nil registry and surfaces
-// an honest status rather than a guess.
-type HostRegistries struct {
-	mu         sync.Mutex
-	local      *integrations.Registry
-	remote     map[string]*integrations.Registry
-	unresolved map[string]string
-	external   map[string]bool
-	addresses  map[string]config.Host
+// HostSync reports each host's last config push. The pusher watches config
+// changes itself, so host mutations need no extra signal.
+type HostSync interface {
+	Status(id string, host config.Host) hostsync.Status
 }
 
-func NewHostRegistries(local *integrations.Registry) *HostRegistries {
-	return &HostRegistries{local: local, remote: make(map[string]*integrations.Registry), unresolved: make(map[string]string), external: make(map[string]bool), addresses: make(map[string]config.Host)}
-}
-
-// SetRemote installs or replaces the registry for one remote host.
-func (h *HostRegistries) SetRemote(id string, registry *integrations.Registry) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.remote[id] = registry
-	delete(h.unresolved, id)
-	delete(h.external, id)
-}
-
-// SetHostConfig records a host's config and classifies it: a host with its
-// own daemon port runs its own prismd, so it is external — listed as ok with
-// no local registry and no reverse tunnel. Plain hosts stay managed by the
-// supervisor's Ensure.
-func (h *HostRegistries) SetHostConfig(id string, host config.Host) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.addresses[id] = host
-	if host.DaemonPort > 0 {
-		h.external[id] = true
-		delete(h.remote, id)
-		delete(h.unresolved, id)
-	} else {
-		delete(h.external, id)
-	}
-}
-
-// SetUnresolved records why a host has no registry (probe failed, host down).
-func (h *HostRegistries) SetUnresolved(id string, reason string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.unresolved[id] = reason
-	delete(h.remote, id)
-	delete(h.external, id)
-}
-
-// Forget drops a host's live state (registry, tunnel, status) but keeps its
-// configured address: the supervisor calls this when re-bringing a host up,
-// and the config entry still exists. ForgetConfig additionally drops the
-// address book entry; the hosts endpoint calls it when the config entry is
-// deleted.
-func (h *HostRegistries) Forget(id string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	delete(h.remote, id)
-	delete(h.unresolved, id)
-	delete(h.external, id)
-}
-
-func (h *HostRegistries) ForgetConfig(id string) {
-	h.Forget(id)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	delete(h.addresses, id)
-}
-
-type HostLifecycle interface {
-	// Ensure brings one host to life after its config entry was written:
-	// probe, registry, tunnel. Returning an error records an unresolved host
-	// rather than rolling the config back.
-	Ensure(ctx context.Context, id string, address string) error
-	// Remove tears down whatever Ensure started.
-	Remove(id string)
+// SetHostSync wires the pusher whose status the hosts list shows.
+func (s *Server) SetHostSync(sync HostSync) {
+	s.hostSync = sync
 }
 
 type HostView struct {
-	ID         string `json:"id"`
-	Local      bool   `json:"local"`
-	Status     string `json:"status"`
-	Detail     string `json:"detail,omitempty"`
-	Address    string `json:"address,omitempty"`
-	DaemonPort int    `json:"daemonPort,omitempty"`
+	ID         string           `json:"id"`
+	Local      bool             `json:"local"`
+	Status     string           `json:"status"`
+	Address    string           `json:"address,omitempty"`
+	DaemonPort int              `json:"daemonPort,omitempty"`
+	AutoSync   *bool            `json:"autoSync,omitempty"`
+	Sync       *hostsync.Status `json:"sync,omitempty"`
 }
 
 type HostsResponse struct {
@@ -118,23 +49,39 @@ type HostMutationResponse struct {
 	Host       HostView `json:"host"`
 }
 
-func (h *HostRegistries) List() []HostView {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+type HostReplaceWrite struct {
+	Address            string `json:"address"`
+	DaemonPort         int    `json:"daemonPort,omitempty"`
+	ExpectedGeneration uint64 `json:"expectedGeneration"`
+}
+
+type HostAutoSyncWrite struct {
+	Enabled            bool   `json:"enabled"`
+	ExpectedGeneration uint64 `json:"expectedGeneration"`
+}
+
+// hostView describes one configured host. A host is ok once its own prism
+// daemon is registered; until then it is not_installed and gets no pushes.
+func (s *Server) hostView(id string, host config.Host) HostView {
+	enabled := host.SyncEnabled()
+	v := HostView{ID: id, Status: "not_installed", Address: host.Address, DaemonPort: host.DaemonPort, AutoSync: &enabled}
+	if host.DaemonPort > 0 {
+		v.Status = "ok"
+		if s.hostSync != nil {
+			st := s.hostSync.Status(id, host)
+			v.Sync = &st
+		}
+	}
+	return v
+}
+
+func (s *Server) hostsList(w http.ResponseWriter, r *http.Request) {
+	hosts := s.cfg.Get().Config.Hosts
 	out := []HostView{{ID: HostIDLocal, Local: true, Status: "ok"}}
-	for id := range h.remote {
-		hc := h.addresses[id]
-		out = append(out, HostView{ID: id, Status: "ok", Address: hc.Address, DaemonPort: hc.DaemonPort})
+	for _, id := range slices.Sorted(maps.Keys(hosts)) {
+		out = append(out, s.hostView(id, hosts[id]))
 	}
-	for id := range h.external {
-		hc := h.addresses[id]
-		out = append(out, HostView{ID: id, Status: "ok", Address: hc.Address, DaemonPort: hc.DaemonPort})
-	}
-	for id, reason := range h.unresolved {
-		hc := h.addresses[id]
-		out = append(out, HostView{ID: id, Status: "unresolved", Detail: reason, Address: hc.Address, DaemonPort: hc.DaemonPort})
-	}
-	return out
+	writeJSON(w, http.StatusOK, HostsResponse{Hosts: out})
 }
 
 func (s *Server) hostsCreate(w http.ResponseWriter, r *http.Request) {
@@ -169,14 +116,7 @@ func (s *Server) hostsCreate(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, err)
 		return
 	}
-	s.hosts.SetHostConfig(body.ID, doc.Hosts[body.ID])
-	s.ensureHost(w, r, body.ID, body.Address, body.DaemonPort, updated)
-}
-
-type HostReplaceWrite struct {
-	Address            string `json:"address"`
-	DaemonPort         int    `json:"daemonPort,omitempty"`
-	ExpectedGeneration uint64 `json:"expectedGeneration"`
+	writeJSON(w, http.StatusOK, HostMutationResponse{Generation: updated.Generation, Host: s.hostView(body.ID, updated.Config.Hosts[body.ID])})
 }
 
 func (s *Server) hostsReplace(w http.ResponseWriter, r *http.Request) {
@@ -198,22 +138,46 @@ func (s *Server) hostsReplace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap := s.cfg.Get()
-	if _, exists := snap.Config.Hosts[id]; !exists {
+	current, exists := snap.Config.Hosts[id]
+	if !exists {
 		writeError(w, http.StatusNotFound, "not_found", "host "+id+" not found")
 		return
 	}
 	doc := snap.Config
-	doc.Hosts[id] = config.Host{Address: body.Address, DaemonPort: body.DaemonPort}
+	doc.Hosts[id] = config.Host{Address: body.Address, DaemonPort: body.DaemonPort, AutoSync: current.AutoSync}
 	updated, err := s.cfg.Update(doc, body.ExpectedGeneration)
 	if err != nil {
 		writeConfigError(w, err)
 		return
 	}
-	if s.lifecycle != nil && body.DaemonPort > 0 {
-		s.lifecycle.Remove(id)
+	writeJSON(w, http.StatusOK, HostMutationResponse{Generation: updated.Generation, Host: s.hostView(id, updated.Config.Hosts[id])})
+}
+
+func (s *Server) hostsAutoSync(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("host")
+	body, ok := decodeJSON[HostAutoSyncWrite](w, r)
+	if !ok {
+		return
 	}
-	s.hosts.SetHostConfig(id, doc.Hosts[id])
-	s.ensureHost(w, r, id, body.Address, body.DaemonPort, updated)
+	if id == HostIDLocal {
+		writeError(w, http.StatusBadRequest, "invalid_document", "this machine is the sync source")
+		return
+	}
+	snap := s.cfg.Get()
+	host, exists := snap.Config.Hosts[id]
+	if !exists {
+		writeError(w, http.StatusNotFound, "not_found", "host "+id+" not found")
+		return
+	}
+	doc := snap.Config
+	host.AutoSync = &body.Enabled
+	doc.Hosts[id] = host
+	updated, err := s.cfg.Update(doc, body.ExpectedGeneration)
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, HostMutationResponse{Generation: updated.Generation, Host: s.hostView(id, updated.Config.Hosts[id])})
 }
 
 func (s *Server) hostsDelete(w http.ResponseWriter, r *http.Request) {
@@ -238,41 +202,5 @@ func (s *Server) hostsDelete(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, err)
 		return
 	}
-	if s.lifecycle != nil {
-		s.lifecycle.Remove(id)
-	}
-	s.hosts.ForgetConfig(id)
 	writeJSON(w, http.StatusOK, GenerationResponse{Generation: updated.Generation})
-}
-
-func (s *Server) ensureHost(w http.ResponseWriter, r *http.Request, id string, address string, daemonPort int, updated config.Snapshot) {
-	if s.lifecycle == nil || daemonPort > 0 {
-		writeJSON(w, http.StatusOK, HostMutationResponse{Generation: updated.Generation, Host: HostView{ID: id, Status: "ok", Address: address, DaemonPort: daemonPort}})
-		return
-	}
-	if err := s.lifecycle.Ensure(r.Context(), id, address); err != nil {
-		writeJSON(w, http.StatusOK, HostMutationResponse{Generation: updated.Generation, Host: HostView{ID: id, Status: "unresolved", Detail: err.Error()}})
-		return
-	}
-	writeJSON(w, http.StatusOK, HostMutationResponse{Generation: updated.Generation, Host: HostView{ID: id, Status: "ok"}})
-}
-
-// Lookup resolves a host id onto its registry; ok=false means the id is
-// unknown or the host is unresolved, with detail saying which.
-func (h *HostRegistries) Lookup(id string) (registry *integrations.Registry, ok bool, detail string) {
-	if id == "" || id == HostIDLocal {
-		return h.local, true, ""
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if registry, present := h.remote[id]; present {
-		return registry, true, ""
-	}
-	if reason, present := h.unresolved[id]; present {
-		return nil, false, "host is unresolved: " + reason
-	}
-	if h.external[id] {
-		return nil, false, "host " + id + " runs its own daemon; reach it through its management API"
-	}
-	return nil, false, "unknown host " + id
 }

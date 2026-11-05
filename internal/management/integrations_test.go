@@ -1,7 +1,6 @@
 package management
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/hostsync"
 	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
@@ -307,70 +307,6 @@ func TestIntegrationsListUnregisteredNeverOverlayEnabled(t *testing.T) {
 	}
 }
 
-func TestHostScopedIntegrationsReportEnabledFalse(t *testing.T) {
-	ts, m, registry, _ := toggleEnv(t)
-	registerSandbox(t, registry, t.TempDir())
-	remote := integrations.NewRegistry()
-	registerSandbox(t, remote, t.TempDir())
-	registry.SetEnabledSource(func() map[integrations.ID]bool {
-		out := make(map[integrations.ID]bool)
-		for id, settings := range m.Get().Config.Integrations {
-			if settings.Enabled {
-				out[integrations.ID(id)] = true
-			}
-		}
-		return out
-	})
-	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, registry, nil, nil)
-	table := NewHostRegistries(registry)
-	table.SetRemote("workmac", remote)
-	srv.SetHostRegistries(table)
-	hostTS := httptest.NewServer(srv.Handler())
-	t.Cleanup(hostTS.Close)
-
-	gen := m.Get().Generation
-	res := putJSON(t, ts.URL+"/api/v1/integrations/codex/enabled",
-		fmt.Sprintf(`{"enabled":true,"expectedGeneration":%d}`, gen))
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("toggle on: status %d", res.StatusCode)
-	}
-
-	localRes, err := http.Get(hostTS.URL + "/api/v1/hosts/local/integrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var localBody IntegrationsResponse
-	if err := json.NewDecoder(localRes.Body).Decode(&localBody); err != nil {
-		t.Fatal(err)
-	}
-	localRes.Body.Close()
-	var codexEnabled bool
-	for _, status := range localBody.Integrations {
-		if status.ID == integrations.Codex {
-			codexEnabled = status.Enabled
-		}
-	}
-	if !codexEnabled {
-		t.Fatal("local host-scoped list did not overlay codex as enabled")
-	}
-
-	remoteRes, err := http.Get(hostTS.URL + "/api/v1/hosts/workmac/integrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer remoteRes.Body.Close()
-	var remoteBody IntegrationsResponse
-	if err := json.NewDecoder(remoteRes.Body).Decode(&remoteBody); err != nil {
-		t.Fatal(err)
-	}
-	for _, status := range remoteBody.Integrations {
-		if status.Enabled {
-			t.Fatalf("remote %s overlaid as enabled: %+v", status.ID, status)
-		}
-	}
-}
-
 func TestHostsListIncludesLocalAlways(t *testing.T) {
 	ts, _ := integrationEnv(t)
 	res, err := http.Get(ts.URL + "/api/v1/hosts")
@@ -387,107 +323,55 @@ func TestHostsListIncludesLocalAlways(t *testing.T) {
 	}
 }
 
-func TestHostScopedIntegrationsRouteToRemoteRegistry(t *testing.T) {
-	dir := t.TempDir()
-	_, registry := integrationEnv(t)
-	registerSandbox(t, registry, dir)
-	remote := integrations.NewRegistry()
-	remoteDir := filepath.Join(dir, "remote")
-	registerSandbox(t, remote, remoteDir)
-	srv := New(&fakePool{}, nil, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, registry, nil, nil)
-	table := NewHostRegistries(registry)
-	table.SetRemote("workmac", remote)
-	table.SetUnresolved("deadhost", "ssh: connection refused")
-	srv.SetHostRegistries(table)
-	hostTS := httptest.NewServer(srv.Handler())
-	t.Cleanup(hostTS.Close)
-
-	res, err := http.Get(hostTS.URL + "/api/v1/hosts/local/integrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var localBody IntegrationsResponse
-	if err := json.NewDecoder(res.Body).Decode(&localBody); err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if len(localBody.Integrations) != 7 {
-		t.Fatalf("local host: expected 7 statuses, got %d", len(localBody.Integrations))
-	}
-
-	res, err = http.Get(hostTS.URL + "/api/v1/hosts/workmac/integrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var remoteBody IntegrationsResponse
-	if err := json.NewDecoder(res.Body).Decode(&remoteBody); err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if len(remoteBody.Integrations) != 7 {
-		t.Fatalf("remote host: expected 7 statuses, got %d", len(remoteBody.Integrations))
-	}
-	for _, status := range remoteBody.Integrations {
-		if status.TargetPath == nil || !strings.Contains(*status.TargetPath, "remote"+string(filepath.Separator)) {
-			t.Fatalf("remote status routed to the local sandbox: %+v", status)
-		}
-	}
-
-	res, err = http.Get(hostTS.URL + "/api/v1/hosts/deadhost/integrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("unresolved host: status %d, want 503", res.StatusCode)
-	}
-	res, err = http.Get(hostTS.URL + "/api/v1/hosts/nope/integrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("unknown host: status %d, want 503", res.StatusCode)
-	}
-}
-
-type recordingLifecycle struct {
-	ensured  []string
-	removed  []string
-	ensureEr func(id string) error
-}
-
-func (l *recordingLifecycle) Ensure(ctx context.Context, id string, address string) error {
-	l.ensured = append(l.ensured, id+"="+address)
-	if l.ensureEr != nil {
-		return l.ensureEr(id)
-	}
-	return nil
-}
-
-func (l *recordingLifecycle) Remove(id string) {
-	l.removed = append(l.removed, id)
-}
-
-func hostsCrudEnv(t *testing.T, lifecycle HostLifecycle) (*httptest.Server, *config.Manager, *HostRegistries) {
+func hostsCrudEnv(t *testing.T) (*httptest.Server, *config.Manager) {
 	t.Helper()
 	m, err := config.Open(filepath.Join(t.TempDir(), "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry := integrations.NewRegistry()
-	table := NewHostRegistries(registry)
-	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, registry, nil, nil)
-	srv.SetHostRegistries(table)
-	srv.SetHostLifecycle(lifecycle)
+	srv := New(&fakePool{}, m, &fakeCatalog{}, &fakeQuotaSource{}, &fakeCreds{store: map[string][]byte{}}, &fakeAuth{}, integrations.NewRegistry(), nil, nil)
+	srv.SetHostSync(hostsync.NewPusher(hostsync.Options{}))
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return ts, m, table
+	return ts, m
 }
 
-func TestHostsCreatePersistsAndTriggersLifecycle(t *testing.T) {
-	lifecycle := &recordingLifecycle{}
-	ts, m, table := hostsCrudEnv(t, lifecycle)
+func listHosts(t *testing.T, ts *httptest.Server) map[string]HostView {
+	t.Helper()
+	res, err := http.Get(ts.URL + "/api/v1/hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var body HostsResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]HostView{}
+	for _, h := range body.Hosts {
+		out[h.ID] = h
+	}
+	return out
+}
+
+func putHost(t *testing.T, ts *httptest.Server, path, body string) (*http.Response, HostMutationResponse) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, ts.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var out HostMutationResponse
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	return res, out
+}
+
+func TestHostsCreatePersistsAsNotInstalled(t *testing.T) {
+	ts, m := hostsCrudEnv(t)
 	gen := m.Get().Generation
 
 	res, err := http.Post(ts.URL+"/api/v1/hosts", "application/json",
@@ -500,14 +384,14 @@ func TestHostsCreatePersistsAndTriggersLifecycle(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
 		t.Fatal(err)
 	}
-	if res.StatusCode != http.StatusOK || created.Host.ID != "workmac" || created.Host.Status != "ok" {
+	if res.StatusCode != http.StatusOK || created.Host.ID != "workmac" || created.Host.Status != "not_installed" {
 		t.Fatalf("create: status %d, body %+v", res.StatusCode, created)
+	}
+	if created.Host.AutoSync == nil || !*created.Host.AutoSync || created.Host.Sync != nil {
+		t.Fatalf("a new host has auto sync on and no sync state before its daemon exists: %+v", created.Host)
 	}
 	if created.Generation != gen+1 {
 		t.Fatalf("generation did not advance: %d", created.Generation)
-	}
-	if len(lifecycle.ensured) != 1 || lifecycle.ensured[0] != "workmac=user@10.0.0.4" {
-		t.Fatalf("lifecycle not triggered: %+v", lifecycle.ensured)
 	}
 	if _, exists := m.Get().Config.Hosts["workmac"]; !exists {
 		t.Fatal("host not persisted to config")
@@ -522,12 +406,10 @@ func TestHostsCreatePersistsAndTriggersLifecycle(t *testing.T) {
 	if res2.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate create must conflict, got %d", res2.StatusCode)
 	}
-	_ = table
 }
 
 func TestHostsCreateRefusesReservedAndEmpty(t *testing.T) {
-	lifecycle := &recordingLifecycle{}
-	ts, m, _ := hostsCrudEnv(t, lifecycle)
+	ts, m := hostsCrudEnv(t)
 	gen := m.Get().Generation
 	for _, body := range []string{
 		fmt.Sprintf(`{"id":"local","address":"x","expectedGeneration":%d}`, gen),
@@ -543,14 +425,13 @@ func TestHostsCreateRefusesReservedAndEmpty(t *testing.T) {
 			t.Fatalf("expected 400 for %s, got %d", body, res.StatusCode)
 		}
 	}
-	if len(lifecycle.ensured) != 0 {
-		t.Fatalf("lifecycle must not run for refused writes: %+v", lifecycle.ensured)
+	if len(m.Get().Config.Hosts) != 0 {
+		t.Fatalf("refused writes persisted hosts: %+v", m.Get().Config.Hosts)
 	}
 }
 
 func TestHostsCreateStaleGenerationConflicts(t *testing.T) {
-	lifecycle := &recordingLifecycle{}
-	ts, _, _ := hostsCrudEnv(t, lifecycle)
+	ts, _ := hostsCrudEnv(t)
 	res, err := http.Post(ts.URL+"/api/v1/hosts", "application/json",
 		strings.NewReader(`{"id":"workmac","address":"x","expectedGeneration":99}`))
 	if err != nil {
@@ -560,50 +441,16 @@ func TestHostsCreateStaleGenerationConflicts(t *testing.T) {
 	if res.StatusCode != http.StatusConflict {
 		t.Fatalf("stale generation must conflict, got %d", res.StatusCode)
 	}
-	if len(lifecycle.ensured) != 0 {
-		t.Fatal("lifecycle must not run on a refused write")
-	}
 }
 
-func TestHostsCreateUnreachableHostIsHonest(t *testing.T) {
-	lifecycle := &recordingLifecycle{ensureEr: func(id string) error {
-		return fmt.Errorf("ssh %s: connection timed out", id)
-	}}
-	ts, m, _ := hostsCrudEnv(t, lifecycle)
-	gen := m.Get().Generation
-
+func TestHostsDeleteRemovesConfig(t *testing.T) {
+	ts, m := hostsCrudEnv(t)
 	res, err := http.Post(ts.URL+"/api/v1/hosts", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"id":"deadhost","address":"10.9.9.9","expectedGeneration":%d}`, gen)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	var created HostMutationResponse
-	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("config write must succeed even when the probe fails, got %d", res.StatusCode)
-	}
-	if created.Host.Status != "unresolved" || created.Host.Detail == "" {
-		t.Fatalf("unreachable host must be reported unresolved with a reason, got %+v", created.Host)
-	}
-	if _, exists := m.Get().Config.Hosts["deadhost"]; !exists {
-		t.Fatal("host must persist despite probe failure")
-	}
-}
-
-func TestHostsDeleteRemovesConfigAndTearsDown(t *testing.T) {
-	lifecycle := &recordingLifecycle{}
-	ts, m, table := hostsCrudEnv(t, lifecycle)
-	gen := m.Get().Generation
-	res, err := http.Post(ts.URL+"/api/v1/hosts", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"id":"workmac","address":"x","expectedGeneration":%d}`, gen)))
+		strings.NewReader(fmt.Sprintf(`{"id":"workmac","address":"x","expectedGeneration":%d}`, m.Get().Generation)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	table.SetRemote("workmac", integrations.NewRegistry())
 
 	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/hosts/workmac?expectedGeneration="+
 		fmt.Sprint(m.Get().Generation), nil)
@@ -621,19 +468,13 @@ func TestHostsDeleteRemovesConfigAndTearsDown(t *testing.T) {
 	if _, exists := m.Get().Config.Hosts["workmac"]; exists {
 		t.Fatal("host still in config after delete")
 	}
-	if len(lifecycle.removed) != 1 || lifecycle.removed[0] != "workmac" {
-		t.Fatalf("lifecycle teardown not triggered: %+v", lifecycle.removed)
-	}
-	for _, view := range table.List() {
-		if view.ID == "workmac" {
-			t.Fatal("deleted host still listed")
-		}
+	if _, listed := listHosts(t, ts)["workmac"]; listed {
+		t.Fatal("deleted host still listed")
 	}
 }
 
 func TestHostsDeleteRefusesLocalAndUnknown(t *testing.T) {
-	lifecycle := &recordingLifecycle{}
-	ts, _, _ := hostsCrudEnv(t, lifecycle)
+	ts, _ := hostsCrudEnv(t)
 	for path, want := range map[string]int{
 		"/api/v1/hosts/local?expectedGeneration=1": http.StatusBadRequest,
 		"/api/v1/hosts/ghost?expectedGeneration=1": http.StatusNotFound,
@@ -653,55 +494,71 @@ func TestHostsDeleteRefusesLocalAndUnknown(t *testing.T) {
 	}
 }
 
-func TestHostsReplaceFlipsToExternalAndTearsDown(t *testing.T) {
-	lifecycle := &recordingLifecycle{}
-	ts, m, table := hostsCrudEnv(t, lifecycle)
-	gen := m.Get().Generation
+func TestHostsReplaceRegistersDaemonAndKeepsAutoSync(t *testing.T) {
+	ts, m := hostsCrudEnv(t)
 	res, err := http.Post(ts.URL+"/api/v1/hosts", "application/json",
-		strings.NewReader(fmt.Sprintf(`{"id":"workmac","address":"x","expectedGeneration":%d}`, gen)))
+		strings.NewReader(fmt.Sprintf(`{"id":"workmac","address":"x","expectedGeneration":%d}`, m.Get().Generation)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	table.SetRemote("workmac", integrations.NewRegistry())
+	if res, _ := putHost(t, ts, "/api/v1/hosts/workmac/auto-sync", fmt.Sprintf(`{"enabled":false,"expectedGeneration":%d}`, m.Get().Generation)); res.StatusCode != http.StatusOK {
+		t.Fatalf("auto sync off: status %d", res.StatusCode)
+	}
 
-	body := fmt.Sprintf(`{"address":"x","daemonPort":10200,"expectedGeneration":%d}`, m.Get().Generation)
-	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/hosts/workmac", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	res2, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res2.Body.Close()
+	res2, replaced := putHost(t, ts, "/api/v1/hosts/workmac", fmt.Sprintf(`{"address":"x","daemonPort":10200,"expectedGeneration":%d}`, m.Get().Generation))
 	if res2.StatusCode != http.StatusOK {
 		t.Fatalf("replace: status %d", res2.StatusCode)
 	}
-	if got := m.Get().Config.Hosts["workmac"]; got.DaemonPort != 10200 || got.Address != "x" {
-		t.Fatalf("config after replace: %+v", got)
+	if got := m.Get().Config.Hosts["workmac"]; got.DaemonPort != 10200 || got.SyncEnabled() {
+		t.Fatalf("registering the daemon must keep auto sync off: %+v", got)
 	}
-	if len(lifecycle.removed) != 1 || lifecycle.removed[0] != "workmac" {
-		t.Fatalf("lifecycle removals after replace: %v", lifecycle.removed)
+	if replaced.Host.Status != "ok" || replaced.Host.Sync == nil || replaced.Host.Sync.State != hostsync.StateOff {
+		t.Fatalf("installed host with auto sync off: %+v", replaced.Host)
 	}
-	if _, ok, _ := table.Lookup("workmac"); ok {
+}
 
-		t.Fatal("external host must not resolve to a registry")
+func TestHostsAutoSyncToggle(t *testing.T) {
+	ts, m := hostsCrudEnv(t)
+	res, err := http.Post(ts.URL+"/api/v1/hosts", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"id":"workmac","address":"x","daemonPort":10200,"expectedGeneration":%d}`, m.Get().Generation)))
+	if err != nil {
+		t.Fatal(err)
 	}
-	external := false
-	for _, view := range table.List() {
-		if view.ID == "workmac" && view.DaemonPort == 10200 && view.Status == "ok" {
-			external = true
+	res.Body.Close()
+	if st := listHosts(t, ts)["workmac"].Sync; st == nil || st.State != hostsync.StatePending {
+		t.Fatalf("an installed host waits for its first push: %+v", st)
+	}
+
+	res, off := putHost(t, ts, "/api/v1/hosts/workmac/auto-sync", fmt.Sprintf(`{"enabled":false,"expectedGeneration":%d}`, m.Get().Generation))
+	if res.StatusCode != http.StatusOK || off.Host.AutoSync == nil || *off.Host.AutoSync || off.Host.Sync.State != hostsync.StateOff {
+		t.Fatalf("turn off: status %d, host %+v", res.StatusCode, off.Host)
+	}
+	if m.Get().Config.Hosts["workmac"].SyncEnabled() {
+		t.Fatal("auto sync off was not persisted")
+	}
+	res, on := putHost(t, ts, "/api/v1/hosts/workmac/auto-sync", fmt.Sprintf(`{"enabled":true,"expectedGeneration":%d}`, m.Get().Generation))
+	if res.StatusCode != http.StatusOK || !*on.Host.AutoSync || on.Host.Sync.State != hostsync.StatePending {
+		t.Fatalf("turn on: status %d, host %+v", res.StatusCode, on.Host)
+	}
+
+	for _, tc := range []struct {
+		path string
+		body string
+		want int
+	}{
+		{"/api/v1/hosts/local/auto-sync", fmt.Sprintf(`{"enabled":false,"expectedGeneration":%d}`, m.Get().Generation), http.StatusBadRequest},
+		{"/api/v1/hosts/ghost/auto-sync", fmt.Sprintf(`{"enabled":false,"expectedGeneration":%d}`, m.Get().Generation), http.StatusNotFound},
+		{"/api/v1/hosts/workmac/auto-sync", `{"enabled":false,"expectedGeneration":99}`, http.StatusConflict},
+	} {
+		if res, _ := putHost(t, ts, tc.path, tc.body); res.StatusCode != tc.want {
+			t.Fatalf("PUT %s: expected %d, got %d", tc.path, tc.want, res.StatusCode)
 		}
-	}
-	if !external {
-		t.Fatal("replaced host must list as ok with its daemon port")
 	}
 }
 
 func TestHostsReplaceRefusesLocalUnknownAndBadPort(t *testing.T) {
-	lifecycle := &recordingLifecycle{}
-	ts, m, _ := hostsCrudEnv(t, lifecycle)
+	ts, m := hostsCrudEnv(t)
 	gen := m.Get().Generation
 	for _, tc := range []struct {
 		path string
@@ -712,16 +569,7 @@ func TestHostsReplaceRefusesLocalUnknownAndBadPort(t *testing.T) {
 		{"/api/v1/hosts/ghost", `{"address":"x","expectedGeneration":1}`, http.StatusNotFound},
 		{"/api/v1/hosts/workmac", fmt.Sprintf(`{"address":"x","daemonPort":70000,"expectedGeneration":%d}`, gen), http.StatusBadRequest},
 	} {
-		req, err := http.NewRequest(http.MethodPut, ts.URL+tc.path, strings.NewReader(tc.body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		res.Body.Close()
-		if res.StatusCode != tc.want {
+		if res, _ := putHost(t, ts, tc.path, tc.body); res.StatusCode != tc.want {
 			t.Fatalf("PUT %s: expected %d, got %d", tc.path, tc.want, res.StatusCode)
 		}
 	}

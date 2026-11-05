@@ -76,10 +76,16 @@ type IntegrationSettings struct {
 	Enabled bool `json:"enabled"`
 }
 
+// Host is a remote machine that runs its own prismd. DaemonPort is zero until
+// that daemon is installed and registered. AutoSync nil means on: the main
+// daemon pushes its portable config to the host.
 type Host struct {
 	Address    string `json:"address"`
 	DaemonPort int    `json:"daemonPort,omitempty"`
+	AutoSync   *bool  `json:"autoSync,omitempty"`
 }
+
+func (h Host) SyncEnabled() bool { return h.AutoSync == nil || *h.AutoSync }
 
 type Daemon struct {
 	Listen string `json:"listen"`

@@ -68,10 +68,6 @@ func watchEnv(t *testing.T, doc config.Document) (*config.Manager, *integrations
 		}
 		return out
 	})
-	select {
-	case <-mgr.Changes():
-	default:
-	}
 	return mgr, registry, stub
 }
 
@@ -82,7 +78,7 @@ func TestWatchIntegrationsAppliesConfigChange(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchIntegrations(ctx, mgr, registry)
+	go watchIntegrations(ctx, mgr.Subscribe(), registry)
 	waitFor(t, time.Second, func() bool { return stub.applyCount() >= 1 })
 
 	doc := mgr.Get().Config
@@ -102,7 +98,7 @@ func TestWatchIntegrationsSkipsDisabledAtStartup(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		watchIntegrations(ctx, mgr, registry)
+		watchIntegrations(ctx, mgr.Subscribe(), registry)
 		close(done)
 	}()
 
@@ -126,7 +122,7 @@ func TestWatchIntegrationsLogsRefusedApplyAndSurvives(t *testing.T) {
 	stub.refuse = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchIntegrations(ctx, mgr, registry)
+	go watchIntegrations(ctx, mgr.Subscribe(), registry)
 
 	doc := mgr.Get().Config
 	if _, err := mgr.Update(doc, mgr.Get().Generation); err != nil {
@@ -163,17 +159,14 @@ func TestSaveDocNoChangeFiresNothing(t *testing.T) {
 		}
 		return out
 	})
-	select {
-	case <-mgr.Changes():
-	default:
-	}
-	go watchIntegrations(ctx, mgr, registry)
+	probe := mgr.Subscribe()
+	go watchIntegrations(ctx, mgr.Subscribe(), registry)
 	waitFor(t, time.Second, func() bool { return stub.applyCount() >= 1 })
 
 	snap := mgr.Get()
 	env.saveDoc("edge", config.Provider{}, snap.Config, snap.Generation)
 	select {
-	case <-mgr.Changes():
+	case <-probe:
 		t.Fatal("no-op saveDoc notified a change")
 	default:
 	}

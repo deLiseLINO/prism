@@ -70,12 +70,9 @@ export function registerIpc(wiring: IpcWiring): void {
     trustedSender(event)
     return wiring.integrations.rollback(parseIntegrationRequest(input))
   })
-  ipcMain.handle(IpcChannel.integrationStatus, (event, host: unknown) => {
+  ipcMain.handle(IpcChannel.integrationStatus, (event) => {
     trustedSender(event)
-    if (host !== undefined && typeof host !== 'string') {
-      throw new Error('prism: integration host must be a string')
-    }
-    return wiring.integrations.status(host)
+    return wiring.integrations.status()
   })
   ipcMain.handle(IpcChannel.hostsList, (event) => {
     trustedSender(event)

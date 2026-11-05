@@ -1,12 +1,32 @@
-import { useEffect, useState } from 'react'
-import type { HostView } from '@prism/contracts'
-import { api, ApiError } from '../api'
+import { useEffect, useState, type MouseEvent } from 'react'
+import type { HostSyncView, HostView } from '@prism/contracts'
+import { api } from '../api'
 import { useActiveHost } from '../ActiveHost'
-import { useExperimentalFlags } from '../experimental'
 import { getInstallRun, onInstallSettled, startInstall, useInstallRun } from '../installRuns'
-import { AsyncBoundary, Button, Confirm, Empty, Field, TextInput } from '../components/Ui'
+import { AsyncBoundary, Button, Confirm, Empty, Field, TextInput, Toggle } from '../components/Ui'
 import { PageHeader, Section, StatusChip } from '../components/Patterns'
 import { describeError, useAsync, useTask } from '../useAsync'
+
+const SYNC_PENDING_POLL_MS = 3_000
+
+function relativeTime(iso: string, now: number): string {
+  const at = new Date(iso).getTime()
+  if (Number.isNaN(at)) return 'at an unknown time'
+  const seconds = Math.max(0, Math.round((now - at) / 1000))
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  return `${Math.floor(hours / 24)} d ago`
+}
+
+export function syncLabel(sync: HostSyncView | undefined, autoSync: boolean, now: number): string {
+  if (!autoSync || sync?.state === 'off') return 'Auto sync off'
+  if (sync === undefined || sync.state === 'pending') return 'Waiting for first sync'
+  if (sync.state === 'failed') return `Sync failed: ${sync.error ?? 'reason not reported'}`
+  return sync.at === undefined ? 'Synced' : `Synced ${relativeTime(sync.at, now)}`
+}
 
 interface MachineRowProps {
   readonly host: HostView
@@ -14,34 +34,35 @@ interface MachineRowProps {
   readonly onChanged: () => void
   readonly active: boolean
   readonly onManage: (host: string) => void
-  readonly allowInstall: boolean
 }
 
-function MachineRow({ host, generation, onChanged, active, onManage, allowInstall }: MachineRowProps): JSX.Element {
-
+function MachineRow({ host, generation, onChanged, active, onManage }: MachineRowProps): JSX.Element {
   const [pendingDelete, setPendingDelete] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
   const task = useTask()
+  const syncTask = useTask()
   const installRun = useInstallRun(host.id)
   const installing = installRun.phase !== null
   const busy = task.running || installing
 
   async function installDaemon(): Promise<void> {
-    setActionError(null)
     await startInstall(host.id)
     if (getInstallRun(host.id).done) onChanged()
   }
 
   async function remove(): Promise<void> {
     const result = await task.run(() => api.localDeleteHost(host.id, generation))
-
     if (result === undefined) return
     setPendingDelete(false)
-    setActionError(null)
     onChanged()
   }
 
-  if (host.local) {
+  async function setAutoSync(enabled: boolean): Promise<void> {
+    const result = await syncTask.run(() => api.localSetHostAutoSync(host.id, { enabled, expectedGeneration: generation }))
+    if (result === undefined) return
+    onChanged()
+  }
+
+  if (host.local === true) {
     return (
       <div className="lrow lrow--nolead">
         <div className="lrow__main">
@@ -60,44 +81,59 @@ function MachineRow({ host, generation, onChanged, active, onManage, allowInstal
     )
   }
 
-  const ok = host.status === 'ok'
+  const installed = host.status === 'ok'
+  const autoSync = host.autoSync !== false
+  const syncText = syncLabel(host.sync, autoSync, Date.now())
+  const syncFailed = autoSync && host.sync?.state === 'failed'
+  const toggleRow = (event: MouseEvent<HTMLDivElement>): void => {
+    if (syncTask.running || (event.target as HTMLElement).closest('.toggle') !== null) return
+    void setAutoSync(!autoSync)
+  }
   return (
     <div className="mach-item">
       <div className="lrow lrow--nolead">
         <div className="lrow__main">
           <div className="lrow__title">
             <span>{host.id}</span>
-            <StatusChip tone={ok ? 'ok' : 'warn'}>{host.status}</StatusChip>
+            <StatusChip tone={installed ? 'ok' : 'warn'}>
+              {installing ? 'installing' : installed ? 'installed' : 'not installed'}
+            </StatusChip>
           </div>
-          <span className="lrow__sub lrow__sub--mono lrow__sub--clamp" title={host.detail ?? ''}>{host.detail ?? host.status}</span>
+          <span className="lrow__sub lrow__sub--mono lrow__sub--clamp" title={host.address ?? ''}>
+            {host.address ?? ''}
+          </span>
         </div>
         <div className="lrow__side">
-          <Button
-            tone={active ? 'primary' : 'ghost'}
-            onClick={() => onManage(host.id)}
-            disabled={host.status !== 'ok'}
-          >
+          <Button tone={active ? 'primary' : 'ghost'} onClick={() => onManage(host.id)} disabled={!installed}>
             {active ? 'Managing' : 'Manage'}
           </Button>
-          {allowInstall && (host.daemonPort ?? 0) === 0 ? (
-            <Button
-              tone="ghost"
-              onClick={() => void installDaemon()}
-              disabled={busy}
-              busy={installing}
-            >
-              {installing ? 'Installing…' : installRun.error !== null ? 'Retry install' : 'Install daemon'}
+          {!installed || installing ? (
+            <Button tone="ghost" onClick={() => void installDaemon()} disabled={busy} busy={installing}>
+              {installing ? 'Installing…' : installRun.error !== null ? 'Retry install' : 'Install prismd'}
             </Button>
           ) : null}
-          <Button
-            tone="ghost"
-            onClick={() => setPendingDelete(true)}
-            disabled={busy}
-          >
+          <Button tone="ghost" onClick={() => setPendingDelete(true)} disabled={busy}>
             Remove
           </Button>
         </div>
       </div>
+      {installed ? (
+        <div
+          className={`mach-sync${syncTask.running ? ' mach-sync--busy' : ''}`}
+          onClick={toggleRow}
+          aria-disabled={syncTask.running}
+        >
+          <Toggle checked={autoSync} onChange={(next) => void setAutoSync(next)} label="Auto sync" disabled={syncTask.running} />
+          <span className={`mach-sync__status${syncFailed ? ' mach-sync__status--failed' : ''}`} title={syncText}>
+            {syncText}
+          </span>
+        </div>
+      ) : null}
+      {syncTask.error !== null ? (
+        <div className="lrow-note" role="alert">
+          <span className="lrow-note__msg">{describeError(syncTask.error)}</span>
+        </div>
+      ) : null}
       {task.error !== null ? (
         <div className="lrow-note" role="alert">
           <span className="lrow-note__msg">{describeError(task.error)}</span>
@@ -112,7 +148,7 @@ function MachineRow({ host, generation, onChanged, active, onManage, allowInstal
         <div className="lrow-confirm">
           <Confirm
             title={`Remove machine ${host.id}?`}
-            detail="The config entry and the SSH tunnel go away. Client configs already written on that machine stay as they are."
+            detail="The config entry goes away and settings stop syncing to that machine. Its daemon and the config it already has stay as they are."
             confirmLabel="Remove"
             busy={busy}
             onCancel={() => setPendingDelete(false)}
@@ -125,11 +161,9 @@ function MachineRow({ host, generation, onChanged, active, onManage, allowInstal
 }
 
 export function MachinesView(): JSX.Element {
-  const { flags } = useExperimentalFlags()
-  const { host: activeHost, setHost } = useActiveHost()
+  const { host: activeHost, setHost, setHosts } = useActiveHost()
   const [id, setId] = useState('')
   const [address, setAddress] = useState('')
-  const [addError, setAddError] = useState<string | null>(null)
   const addTask = useTask()
   const hosts = useAsync<readonly HostView[]>(async () => {
     const view = await api.localHosts()
@@ -145,26 +179,34 @@ export function MachinesView(): JSX.Element {
     generation.refresh()
   }), [hosts.refresh, generation.refresh])
 
+  const list = hosts.state.kind === 'ready' ? hosts.state.value : null
+
+  useEffect(() => {
+    if (list !== null) setHosts(list)
+  }, [list, setHosts])
+
+  const syncPending = list?.some((host) => host.status === 'ok' && host.autoSync !== false && host.sync?.state === 'pending') === true
+  useEffect(() => {
+    if (!syncPending) return
+    const timer = window.setInterval(() => hosts.refresh(), SYNC_PENDING_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [syncPending, hosts.refresh])
 
   const busy = addTask.running
   const gen = generation.state.kind === 'ready' ? generation.state.value : 0
 
   async function add(): Promise<void> {
-    setAddError(null)
     const result = await addTask.run(() => api.localCreateHost({
-
       id: id.trim(),
       address: address.trim(),
       expectedGeneration: gen,
     }))
     if (result === undefined) return
-    if (result.host.status !== 'ok') {
-      setAddError(`Saved, but the machine did not answer: ${result.host.detail ?? 'ssh probe failed'}`)
-    }
     setId('')
     setAddress('')
     hosts.refresh()
     generation.refresh()
+    if (result.host.status === 'not_installed') void startInstall(result.host.id)
   }
 
   const canAdd = id.trim() !== '' && address.trim() !== '' && generation.state.kind === 'ready' && !busy
@@ -205,12 +247,9 @@ export function MachinesView(): JSX.Element {
           </Button>
         </form>
       </Section>
-      {addError !== null ? (
+      {addTask.error !== null ? (
         <div className="lrow-note lrow-note--card" role="alert">
-          <span className="lrow-note__msg">{addError}</span>
-          <button type="button" className="lrow-note__close" aria-label="Dismiss" onClick={() => setAddError(null)}>
-            ×
-          </button>
+          <span className="lrow-note__msg">{describeError(addTask.error)}</span>
         </div>
       ) : null}
       <div>
@@ -220,9 +259,9 @@ export function MachinesView(): JSX.Element {
           empty={<Empty icon="#i-cube" title="No machines yet.">Add one above; it needs key-auth SSH from this machine.</Empty>}
           onRetry={() => hosts.refresh()}
         >
-          {(list) => (
+          {(rows) => (
             <div className="list">
-              {list.map((host) => (
+              {rows.map((host) => (
                 <MachineRow
                   key={host.id}
                   host={host}
@@ -230,7 +269,6 @@ export function MachinesView(): JSX.Element {
                   onChanged={() => { hosts.refresh(); generation.refresh() }}
                   active={activeHost === host.id}
                   onManage={setHost}
-                  allowInstall={flags.remoteInstall}
                 />
               ))}
             </div>

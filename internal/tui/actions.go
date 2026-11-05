@@ -313,7 +313,7 @@ func (m Model) beginIntegrationsFlow() (tea.Model, tea.Cmd) {
 	m.IntegrationsVisible = true
 	m.IntegrationsCursor = 0
 	m.IntegrationConfirm = ""
-	return m, tea.Batch(FetchHostsCmd(m.api), FetchHostIntegrationsCmd(m.api, m.activeHostID()))
+	return m, FetchIntegrationsCmd(m.api)
 }
 
 func (m Model) beginStatsFlow() (tea.Model, tea.Cmd) {

@@ -20,7 +20,7 @@ export interface PrismBridge {
   readonly integrations: {
     readonly apply: (request: IntegrationRequest) => Promise<IntegrationApplyResult>
     readonly rollback: (request: IntegrationRequest) => Promise<IntegrationApplyResult>
-    readonly status: (host?: string) => Promise<readonly IntegrationStatus[]>
+    readonly status: () => Promise<readonly IntegrationStatus[]>
     readonly hosts: () => Promise<HostsView>
     readonly installDaemon: (request: HostInstallRequest) => Promise<HostInstallReply>
   }

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useEffect, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IntegrationApplyResult, IntegrationId, IntegrationStatus } from '@prism/contracts'
 import { IntegrationsView } from '../renderer/src/views/IntegrationsView'
 import { ExperimentalFlagsProvider } from '../renderer/src/experimental'
 import { api } from '../renderer/src/api'
+import { ActiveHostProvider, useActiveHost } from '../renderer/src/ActiveHost'
 
 vi.mock('../renderer/src/bridge', () => ({
   bridge: { agents: { status: async () => ({ agents: [] }) } },
@@ -192,5 +193,36 @@ describe('confirmed integration recovery', () => {
     const paths = Array.from(element.querySelectorAll('.lrow-note')).find((node) => node.textContent?.includes('Bulk operation backups'))
     expect(Array.from(paths?.querySelectorAll('dd') ?? []).map((node) => node.textContent)).toEqual(['/saved/first.bak', '/saved/second.bak'])
     expect(element.textContent).toContain('write refused')
+  })
+})
+
+function ManagedRemote({ autoSync, children }: { readonly autoSync: boolean; readonly children: ReactNode }): JSX.Element | null {
+  const { host, setHost, setHosts } = useActiveHost()
+  useEffect(() => {
+    setHosts([{ id: 'edge', local: false, status: 'ok', daemonPort: 10200, autoSync, sync: autoSync ? { state: 'synced' } : { state: 'off' } }])
+    setHost('edge')
+    return () => setHost('local')
+  }, [])
+  return host === 'edge' ? <>{children}</> : null
+}
+
+describe('auto-apply on a managed remote machine', () => {
+  it.each([true, false])('locks the switch only while that machine syncs from here (autoSync=%s)', async (autoSync) => {
+    rows = [status({ drift: false, conflict: undefined })]
+    const toggle = vi.spyOn(api, 'integrationToggle').mockResolvedValue({ generation: 2, enabled: false })
+    await act(async () => {
+      root.render(
+        <ExperimentalFlagsProvider>
+          <ActiveHostProvider>
+            <ManagedRemote autoSync={autoSync}><IntegrationsView /></ManagedRemote>
+          </ActiveHostProvider>
+        </ExperimentalFlagsProvider>,
+      )
+    })
+    const input = card().querySelector<HTMLInputElement>('input[type=checkbox]')
+    expect(input?.disabled).toBe(autoSync)
+    expect(card().textContent?.includes('Synced from this machine')).toBe(autoSync)
+    await act(async () => input?.click())
+    expect(toggle).toHaveBeenCalledTimes(autoSync ? 0 : 1)
   })
 })

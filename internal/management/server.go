@@ -15,6 +15,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/auth"
 	"github.com/deLiseLINO/prism/internal/buildinfo"
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/hostsync"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/antigravity"
@@ -69,8 +70,7 @@ type Server struct {
 	creds     CredentialStore
 	auth      Auth
 	ints      *integrations.Registry
-	hosts     *HostRegistries
-	lifecycle HostLifecycle
+	hostSync  HostSync
 	routes    [][]string
 	store     AccountStore
 	stats     UsageSource
@@ -81,18 +81,7 @@ type Server struct {
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer, installer Installer) *Server {
-	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, hosts: NewHostRegistries(ints), routes: [][]string{}, syncer: syncer, installer: installer}
-}
-
-// SetHostRegistries overrides the host table (tests inject a populated one).
-func (s *Server) SetHostRegistries(h *HostRegistries) {
-	s.hosts = h
-}
-
-// SetHostLifecycle wires the daemon-side host supervisor (probe, registry,
-// tunnel) that host mutations trigger after the config write commits.
-func (s *Server) SetHostLifecycle(l HostLifecycle) {
-	s.lifecycle = l
+	return &Server{pool: pool, cfg: cfg, catalog: catalog, quota: qs, creds: creds, auth: auth, ints: ints, routes: [][]string{}, syncer: syncer, installer: installer}
 }
 
 func (s *Server) SetID(id string) {
@@ -142,11 +131,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/hosts", s.hostsCreate)
 	mux.HandleFunc("PUT /api/v1/hosts/{host}", s.hostsReplace)
 	mux.HandleFunc("DELETE /api/v1/hosts/{host}", s.hostsDelete)
+	mux.HandleFunc("PUT /api/v1/hosts/{host}/auto-sync", s.hostsAutoSync)
+	mux.HandleFunc("PUT "+hostsync.ConfigPath, s.syncConfigApply)
 
-	mux.HandleFunc("GET /api/v1/hosts/{host}/integrations", s.hostIntegrationsList)
-	mux.HandleFunc("GET /api/v1/hosts/{host}/integrations/{client}", s.hostIntegrationGet)
-	mux.HandleFunc("POST /api/v1/hosts/{host}/integrations/{client}/apply", s.hostIntegrationApply)
-	mux.HandleFunc("POST /api/v1/hosts/{host}/integrations/{client}/rollback", s.hostIntegrationRollback)
 	mux.HandleFunc("GET /api/v1/integrations", s.integrationsList)
 	mux.HandleFunc("GET /api/v1/integrations/{client}", s.integrationGet)
 	mux.HandleFunc("POST /api/v1/integrations/{client}/apply", s.integrationApply)
@@ -196,10 +183,8 @@ var routeTemplates = []string{
 	"/api/v1/auth/{provider}/status",
 	"/api/v1/hosts",
 	"/api/v1/hosts/{host}",
-	"/api/v1/hosts/{host}/integrations",
-	"/api/v1/hosts/{host}/integrations/{client}",
-	"/api/v1/hosts/{host}/integrations/{client}/apply",
-	"/api/v1/hosts/{host}/integrations/{client}/rollback",
+	"/api/v1/hosts/{host}/auto-sync",
+	"/api/v1/sync/config",
 	"/api/v1/integrations",
 	"/api/v1/integrations/{client}",
 	"/api/v1/integrations/{client}/apply",

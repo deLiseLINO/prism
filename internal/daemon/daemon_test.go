@@ -105,7 +105,7 @@ func TestOnlyOmpIntegrationPublishesImageModels(t *testing.T) {
 	home := t.TempDir()
 	chat := func() []integrations.Model { return []integrations.Model{{ID: "gw/chat-a", Name: "gw/chat-a"}} }
 	images := func() []integrations.Model { return []integrations.Model{{ID: "gw/img-model-a", Name: "gw/img-model-a"}} }
-	registry, _, err := newIntegrationRegistry(4101, integrations.Env{}, home, nil, chat, images)
+	registry, _, err := newIntegrationRegistry(4101, integrations.Env{}, home, chat, images)
 	if err != nil {
 		t.Fatal(err)
 	}

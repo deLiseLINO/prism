@@ -10,7 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/deLiseLINO/prism/internal/config"
-	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/management"
 )
 
@@ -266,14 +265,6 @@ func CopyToClipboardCmd(text string) tea.Cmd {
 }
 
 func FetchIntegrationsCmd(client Client) tea.Cmd {
-	return fetchHostIntegrationsCmd(client, managementHostLocal)
-}
-
-func FetchHostIntegrationsCmd(client Client, host string) tea.Cmd {
-	return fetchHostIntegrationsCmd(client, host)
-}
-
-func fetchHostIntegrationsCmd(client Client, host string) tea.Cmd {
 	if client == nil {
 		return nil
 	}
@@ -281,34 +272,11 @@ func fetchHostIntegrationsCmd(client Client, host string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		var (
-			items []integrations.Status
-			err   error
-		)
-		if host == "" || host == managementHostLocal {
-			items, err = client.IntegrationsList(ctx)
-		} else {
-			items, err = client.HostIntegrationsList(ctx, host)
-		}
+		items, err := client.IntegrationsList(ctx)
 		if err != nil {
 			return ErrMsg{Err: fmt.Errorf("failed to load integrations: %w", err)}
 		}
-		return IntegrationsMsg{Host: host, Integrations: integrationStatusesFromList(items)}
-	}
-}
-
-func FetchHostsCmd(client Client) tea.Cmd {
-	if client == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		hosts, err := client.HostsList(ctx)
-		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("failed to load hosts: %w", err)}
-		}
-		return HostsMsg{Hosts: hostsFromList(hosts.Hosts)}
+		return IntegrationsMsg{Integrations: integrationStatusesFromList(items)}
 	}
 }
 
@@ -329,10 +297,6 @@ func FetchStatsCmd(client Client, statsRange string) tea.Cmd {
 }
 
 func ApplyIntegrationCmd(client Client, id string) tea.Cmd {
-	return ApplyHostIntegrationCmd(client, managementHostLocal, id)
-}
-
-func ApplyHostIntegrationCmd(client Client, host, id string) tea.Cmd {
 	if client == nil || id == "" {
 		return nil
 	}
@@ -340,15 +304,7 @@ func ApplyHostIntegrationCmd(client Client, host, id string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		var (
-			result integrations.ApplyResult
-			err    error
-		)
-		if host == "" || host == managementHostLocal {
-			result, err = client.IntegrationApply(ctx, id)
-		} else {
-			result, err = client.HostIntegrationApply(ctx, host, id)
-		}
+		result, err := client.IntegrationApply(ctx, id)
 		if err != nil {
 			return IntegrationApplyResultMsg{ID: id, OK: false, Err: fmt.Errorf("failed to apply integration: %w", err)}
 		}

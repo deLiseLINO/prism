@@ -59,12 +59,7 @@ type PinnedAccountsMsg struct {
 }
 
 type IntegrationsMsg struct {
-	Host         string
 	Integrations []integrationStatus
-}
-
-type HostsMsg struct {
-	Hosts []hostView
 }
 
 type IntegrationApplyResultMsg struct {
