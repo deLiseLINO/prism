@@ -1,14 +1,11 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import type {
-  StatsModelView,
-  StatsProviderView,
-  StatsRange,
-  StatsResponseView,
-} from '@prism/contracts'
+import type { StatsModelView, StatsRange } from '@prism/contracts'
 import { AsyncBoundary, Empty } from '../components/Ui'
 import { Metric, PageHeader, Section } from '../components/Patterns'
+import { loadAcross, MachineFailures, MachineLegend, MachineMenu, scopeKey, StackBar, useMachineScope } from '../components/MachineScope'
 import { useAsync, type AsyncState } from '../useAsync'
 import { api } from '../api'
+import { mergeStats, scopeCount, type Machine, type MergedModel, type MergedProvider, type MergedStats } from '../machines'
 
 export const STATS_RANGES: readonly {
   readonly value: StatsRange
@@ -62,11 +59,13 @@ function StatsRow({
   tag,
   row,
   max,
+  stack,
 }: {
   readonly name: string
   readonly tag?: string
-  readonly row: StatsProviderView | StatsModelView
+  readonly row: MergedProvider | MergedModel
   readonly max: number
+  readonly stack: readonly Machine[] | null
 }): JSX.Element {
   return (
     <div className="drow">
@@ -75,12 +74,16 @@ function StatsRow({
         {tag !== undefined ? <span className="drow__tag">{tag}</span> : null}
       </div>
       <span className="num drow__tok">{fmt(row.total_tokens)}</span>
-      <span className="bar">
-        <span
-          className="bar-fill"
-          style={{ '--w': barRatio(row.total_tokens, max) } as CSSProperties}
-        />
-      </span>
+      {stack !== null ? (
+        <StackBar byMachine={row.byMachine} machines={stack} max={max} />
+      ) : (
+        <span className="bar">
+          <span
+            className="bar-fill"
+            style={{ '--w': barRatio(row.total_tokens, max) } as CSSProperties}
+          />
+        </span>
+      )}
       <span className="drow__counts">{counts(row)}</span>
     </div>
   )
@@ -95,19 +98,22 @@ function StatsPanel({
   loadingLabel,
   onRetry,
   state,
+  stack,
 }: {
   readonly title: string
-  readonly rows: readonly (StatsProviderView | StatsModelView)[]
+  readonly rows: readonly (MergedProvider | MergedModel)[]
   readonly max: number
-  readonly nameOf: (row: StatsProviderView | StatsModelView) => string
+  readonly nameOf: (row: MergedProvider | MergedModel) => string
   readonly tagOf?: (row: StatsModelView) => string
   readonly loadingLabel: string
   readonly onRetry: () => void
-  readonly state: AsyncState<StatsResponseView>
+  readonly state: AsyncState<MergedStats>
+  // Machines in stack order when bars split by machine; null draws plain bars.
+  readonly stack: readonly Machine[] | null
 }): JSX.Element {
   return (
-    <Section title={title}>
-      <AsyncBoundary<StatsResponseView>
+    <Section title={title} action={stack !== null ? <MachineLegend machines={stack} /> : undefined}>
+      <AsyncBoundary<MergedStats>
         state={state}
         loadingLabel={loadingLabel}
         empty={<Empty icon="#i-usage" title="No stats yet." />}
@@ -124,15 +130,19 @@ function StatsPanel({
                 <span>Share</span>
                 <span>Requests</span>
               </div>
-              {rows.map((row) => (
-                <StatsRow
-                  key={nameOf(row)}
-                  name={nameOf(row)}
-                  tag={tagOf === undefined ? undefined : tagOf(row as StatsModelView)}
-                  row={row}
-                  max={max}
-                />
-              ))}
+              {rows.map((row) => {
+                const tag = tagOf === undefined ? undefined : tagOf(row as StatsModelView)
+                return (
+                  <StatsRow
+                    key={`${nameOf(row)} ${tag ?? ''}`}
+                    name={nameOf(row)}
+                    tag={tag}
+                    row={row}
+                    max={max}
+                    stack={stack}
+                  />
+                )
+              })}
             </div>
           )
         }
@@ -143,7 +153,11 @@ function StatsPanel({
 
 export function StatsView(): JSX.Element {
   const [range, setRange] = useState<StatsRange>(storedRange)
-  const stats = useAsync<StatsResponseView>(() => api.stats(range), [range])
+  const machineScope = useMachineScope()
+  const stats = useAsync<MergedStats>(
+    () => loadAcross({ state: machineScope, load: (host) => api.stats(range, host), merge: mergeStats }),
+    [range, scopeKey(machineScope)],
+  )
 
   useEffect(() => {
     try {
@@ -156,6 +170,8 @@ export function StatsView(): JSX.Element {
   const overview = value?.overview
   const providers = value?.providers ?? []
   const models = (value?.models ?? []).slice(0, MAX_MODELS)
+  const machines = machineScope.kind === 'scoped' ? machineScope.machines : []
+  const stack = machineScope.kind === 'scoped' && machineScope.scope.kind === 'all' ? machineScope.machines : null
 
   useEffect(() => {
     const refresh = (): void => stats.refresh()
@@ -187,21 +203,32 @@ export function StatsView(): JSX.Element {
         icon="#i-usage"
         title="Stats"
         actions={
-          <div className="seg" role="group" aria-label="Stats time range">
-            {STATS_RANGES.map((entry) => (
-              <button
-                key={entry.value}
-                type="button"
-                className="seg-btn"
-                aria-pressed={range === entry.value}
-                onClick={() => setRange(entry.value)}
-              >
-                {entry.label}
-              </button>
-            ))}
-          </div>
+          <>
+            {machineScope.kind === 'scoped' ? (
+              <MachineMenu
+                machines={machineScope.machines}
+                scope={machineScope.scope}
+                onChange={machineScope.setScope}
+                countOf={(scope) => (value === null ? undefined : scopeCount(scope, value.counts, machineScope.machines))}
+              />
+            ) : null}
+            <div className="seg" role="group" aria-label="Stats time range">
+              {STATS_RANGES.map((entry) => (
+                <button
+                  key={entry.value}
+                  type="button"
+                  className="seg-btn"
+                  aria-pressed={range === entry.value}
+                  onClick={() => setRange(entry.value)}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+          </>
         }
       />
+      {value !== null ? <MachineFailures failures={value.failures} machines={machines} /> : null}
       {stats.state.kind === 'error' ? (
         <div className="state--error" role="alert">
           <div className="state__headline">Stats unavailable</div>
@@ -250,6 +277,7 @@ export function StatsView(): JSX.Element {
         loadingLabel="Loading stats…"
         onRetry={stats.refresh}
         state={stats.state}
+        stack={stack}
       />
       <StatsPanel
         title="Models"
@@ -260,6 +288,7 @@ export function StatsView(): JSX.Element {
         loadingLabel="Loading stats…"
         onRetry={stats.refresh}
         state={stats.state}
+        stack={stack}
       />
     </section>
   )

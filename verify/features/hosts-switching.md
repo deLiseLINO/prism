@@ -19,6 +19,7 @@ The Machines screen lists this machine and every host in the daemon's `hosts` co
 - While a remote host is active, a banner reads `Managing <host>` with a `Back to this machine` button. When that host has auto sync on, the banner adds `Settings sync from this machine. Changes made here are replaced on the next sync.` Clicking `Back to this machine` restores local data.
 - There is no reverse tunnel and no host-scoped integration route. The main daemon never edits client config files on a remote machine.
 - There is no host selector on the Integrations screen.
+- Logs and Stats have their own machine menu (`All machines`, `This machine`, then each installed remote host) when at least one remote host is installed. The list always comes from the local daemon. `All machines` loads every machine in parallel over the same SSH forwards. Logs merges the rows newest first and adds a `Machine` column; Stats sums the totals, groups providers and models across machines, and splits each share bar by machine with a legend. A machine that does not answer gets a `Could not load <machine>: <error>` warning while the others still show. Picking one machine shows only its data. The choice is remembered and does not change the active host; when a remote host is active, the pages start on it. The web UI has no menu, because its proxy cannot reach remote machines.
 
 ## How to get to it (user POV)
 
@@ -38,3 +39,4 @@ Enable the `remoteInstall` experimental flag. Click `Machines` in the left navig
 - Settings changed while managing a synced machine are overwritten by the next push. Turn auto sync off on that row first to keep them.
 - `remote-install-proof.sh` installs into the real `~/.prism/remote` of the SSH target, including its user service, and removes both on exit. A prism already installed there for another port is replaced.
 - The host list syncs on a 30 second interval in the main process. A newly installed host may take a moment to become routable for Manage.
+- The machine menu in Logs and Stats is hidden until a remote host is installed and the `remoteInstall` flag is on. Its counts come from the latest load, so options for machines that were not loaded show no count.
