@@ -177,9 +177,9 @@ p, .note, .lrow__sub, .banner__detail, .confirm__detail, .empty__body { text-wra
 .shell[data-sidebar="open"] .rail-btn { width: 100%; height: 36px; justify-content: flex-start; padding: 0 9px; border-radius: 10px; }
 .shell[data-sidebar="open"] .rail-label { display: block; }
 .shell[data-sidebar="open"] .rail-foot { align-items: stretch; }
-.shell[data-sidebar="open"] .shell[data-sidebar="open"] .shell[data-sidebar="open"] .rail .update-mini { width: 100%; height: 36px; border-radius: 10px; flex-direction: row; justify-content: flex-start; padding: 0 9px; gap: 10px; font-size: 13px; }
-.shell[data-sidebar="open"] .rail .update-mini > span:not(.dot) { display: inline; }
-.shell[data-sidebar="open"] .rail .update-mini .btn--primary { width: auto; height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12px; background-image: none; margin-left: auto; }
+.shell[data-sidebar="open"] .rail .update-mini { width: 100%; height: 36px; border-radius: 10px; flex-direction: row; justify-content: flex-start; padding: 0 9px; gap: 10px; font-size: 13px; background: none; color: var(--fg-muted); }
+.shell[data-sidebar="open"] .rail .update-mini > span:not(.dot) { display: inline; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shell[data-sidebar="open"] .rail .update-mini .btn--primary { width: auto; height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12px; background-image: none; margin-left: auto; flex: none; }
 .shell[data-sidebar="open"] .rail .update-mini::before { display: none; }
 
 .app {
