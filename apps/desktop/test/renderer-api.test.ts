@@ -312,6 +312,16 @@ describe('renderer api wrapper', () => {
     })
   })
 
+  it('routes stats and requests to an explicit host instead of the active one', async () => {
+    const { api } = await loadApi()
+    setReply({ ok: true, status: 200, body: { requests: [], dropped: 0 } })
+    await api.requests(undefined, 'edge')
+    await api.stats('24h', 'local')
+    expect(recorded[0]).toMatchObject({ method: 'GET', path: '/api/v1/requests', host: 'edge' })
+    expect(recorded[1]).toMatchObject({ method: 'GET', path: '/api/v1/stats?range=24h' })
+    expect(recorded[1]).not.toHaveProperty('host')
+  })
+
   it('preserves hidden apiKeyRef and pool durations when editing through the fetch-write seam', async () => {
     const { api } = await loadApi()
     const existingPool = {

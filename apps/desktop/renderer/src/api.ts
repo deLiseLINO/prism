@@ -5,6 +5,7 @@ import type {
   AuthStartView,
   AuthStatusView,
   HostAutoSyncWrite,
+  HostId,
   HostMutationResponse,
   HostsView,
   HostWrite,
@@ -70,13 +71,22 @@ function unwrap<T>(reply: ManagementReply, expected = 200): T {
   throw asError(reply)
 }
 
-async function call<T>(
+function call<T>(
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
   expectedStatus = 200,
 ): Promise<T> {
-  const host = currentHost()
+  return callOn(currentHost(), method, path, body, expectedStatus)
+}
+
+async function callOn<T>(
+  host: HostId,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+  expectedStatus = 200,
+): Promise<T> {
   const reply = await bridge.management.call({
     method,
     path,
@@ -178,12 +188,12 @@ export const api = {
   deleteHost(id: string, expectedGeneration: number): Promise<{ generation: number }> {
     return call('DELETE', `/api/v1/hosts/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`)
   },
-  stats(range: StatsRange): Promise<StatsResponseView> {
-    return call('GET', `/api/v1/stats?range=${encodeURIComponent(range)}`)
+  stats(range: StatsRange, host: HostId = currentHost()): Promise<StatsResponseView> {
+    return callOn(host, 'GET', `/api/v1/stats?range=${encodeURIComponent(range)}`)
   },
-  requests(limit?: number): Promise<RequestsView> {
+  requests(limit?: number, host: HostId = currentHost()): Promise<RequestsView> {
     const query = limit === undefined ? '' : `?limit=${limit}`
-    return call('GET', `/api/v1/requests${query}`)
+    return callOn(host, 'GET', `/api/v1/requests${query}`)
   },
 
   authStart(provider: string): Promise<AuthStartView> {
