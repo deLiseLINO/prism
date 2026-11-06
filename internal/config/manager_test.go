@@ -243,6 +243,8 @@ func TestChangesCoalescesBurstAndNeverBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	changes := m.Subscribe()
+	other := m.Subscribe()
 	if _, err := m.Update(validDoc(), 0); err != nil {
 		t.Fatal(err)
 	}
@@ -252,14 +254,19 @@ func TestChangesCoalescesBurstAndNeverBlocks(t *testing.T) {
 		}
 	}
 	select {
-	case <-m.Changes():
+	case <-changes:
 	default:
 		t.Fatal("three updates left the channel empty")
 	}
 	select {
-	case <-m.Changes():
+	case <-changes:
 		t.Fatal("buffered channel did not coalesce the burst")
 	default:
+	}
+	select {
+	case <-other:
+	default:
+		t.Fatal("a second subscriber missed the signal the first one took")
 	}
 	done := make(chan struct{})
 	go func() {
@@ -283,10 +290,7 @@ func TestChangesSignalsAfterAdoptedDiskReload(t *testing.T) {
 	if _, err := m.Update(validDoc(), 0); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-m.Changes():
-	default:
-	}
+	changes := m.Subscribe()
 
 	other, err := Open(path)
 	if err != nil {
@@ -304,7 +308,7 @@ func TestChangesSignalsAfterAdoptedDiskReload(t *testing.T) {
 		t.Fatalf("want ErrStaleGeneration, got %v", err)
 	}
 	select {
-	case <-m.Changes():
+	case <-changes:
 	default:
 		t.Fatal("adopted disk reload left the change channel empty")
 	}

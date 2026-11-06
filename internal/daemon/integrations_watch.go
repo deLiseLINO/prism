@@ -4,21 +4,21 @@ import (
 	"context"
 	"log"
 
-	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/integrations"
 )
 
 // watchIntegrations keeps applied client configs converged on the enabled set:
 // an apply pass runs at startup so a daemon restart lands every enabled module,
-// and every config change replays the pass, so toggles and hand-edits alike
-// reach the files. Refusals are logged, never fatal.
-func watchIntegrations(ctx context.Context, cfg *config.Manager, ints *integrations.Registry) {
+// and every config change replays the pass, so toggles, hand-edits, and
+// configs pushed by the main machine alike reach the files. Refusals are
+// logged, never fatal.
+func watchIntegrations(ctx context.Context, changes <-chan struct{}, ints *integrations.Registry) {
 	applyEnabled(ints)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-cfg.Changes():
+		case <-changes:
 			applyEnabled(ints)
 		}
 	}

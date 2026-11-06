@@ -54,7 +54,7 @@ const webManagement: PrismBridge['management'] = {
 const webIntegrations: PrismBridge['integrations'] = {
   apply: (request) => integrationsApi.apply(request),
   rollback: (request) => integrationsApi.rollback(request),
-  status: (host) => integrationsApi.status(host),
+  status: () => integrationsApi.status(),
   hosts: async (): Promise<HostsView> => {
     const reply = await proxy.call({ method: 'GET', path: '/api/v1/hosts' })
     if (!reply.ok || reply.status !== 200) {

@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
 # Machines CRUD proof for the Prism desktop: adds a machine through the real
-# form, asserts it lands in the list and the daemon config, then removes it
-# through the real Remove button + confirm, and asserts the teardown.
-# The proof host is "self" -> localhost, so the SSH probe succeeds for real.
+# form, asserts it lands in the list and the daemon config as not_installed,
+# that the install starts on its own and its failure shows Retry install, then
+# removes it through the real Remove button + confirm, and asserts the teardown.
+# The proof host "self" points at an unresolvable name, so the automatic
+# install fails at the ssh probe and nothing is written to any machine.
 set -euo pipefail
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
-run_with_timeout() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 GO_ROOT="${GO_ROOT:-$REPO_ROOT}"
-REAL_HOME=$HOME
 PORT="${PRISM_PORT:-18796}"
 CDP_PORT="${PRISM_CDP_PORT:-19224}"
 HEADLESS="${PRISM_HEADLESS:-1}"
 if curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$PORT/api/v1/health" 2>/dev/null; then
   fail "a daemon is already bound to port $PORT; stop it before verification"
 fi
-if ! run_with_timeout 5 ssh -o BatchMode=yes -o ConnectTimeout=3 localhost true 2>/dev/null; then
-  fail "ssh localhost is not reachable; this proof needs a working key-auth loopback ssh"
-fi
+PROOF_ADDRESS="self.invalid"
 
 RUNDIR=$(mktemp -d /tmp/prism-verify.XXXXXX)
 EVID_WORK="$RUNDIR/evidence"
@@ -90,7 +88,7 @@ done
 WS=$(node "$REPO_ROOT/verify/scripts/cdp-ws.mjs" "$CDP_PORT") || fail "no Electron CDP page target"
 
 cdp_eval() {
-  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1"
+  node "$REPO_ROOT/verify/scripts/cdp-eval.mjs" "$WS" "$1" "${2:-10000}"
 }
 
 echo "==> enabling the experimental machines flag"
@@ -134,25 +132,46 @@ cdp_eval "await (async () => {
     el.dispatchEvent(new Event('input', {bubbles: true}))
   }
   setNative(idInput, 'self')
-  setNative(addressInput, 'localhost')
+  setNative(addressInput, '$PROOF_ADDRESS')
   for (let i = 0; i < 40; i++) {
     const btn = [...document.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Add machine')
     if (btn && !btn.disabled) { btn.click(); break }
     await sleep(100)
   }
-  await sleep(3000)
+  let row = null
+  for (let i = 0; i < 50; i++) {
+    row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
+    if (row && /installing/i.test(row.innerText)) break
+    await sleep(100)
+  }
+  if (!row) throw new Error('added machine row not rendered')
+  const startedText = row.innerText.replace(/\n/g, ' | ')
+  if (!/installing/i.test(startedText) && !/retry install/i.test(startedText)) throw new Error('install did not start after adding: ' + startedText)
+  let failure = ''
+  for (let i = 0; i < 100; i++) {
+    row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
+    failure = row?.querySelector('.lrow-note__msg')?.textContent ?? ''
+    const retry = row && [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Retry install')
+    if (failure !== '' && retry) break
+    await sleep(300)
+  }
+  if (failure === '') throw new Error('install failure was not shown on the row')
+  if (![...row.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Retry install')) throw new Error('Retry install button not shown after the failed install')
+  const manage = [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Manage')
+  if (!manage || !manage.disabled) throw new Error('Manage must stay disabled while prismd is not installed')
+  if (row.querySelector('.mach-sync')) throw new Error('auto sync control rendered for a machine without prismd')
   const rows = [...document.querySelectorAll('.lrow__title > span:first-child')].map((n) => n.textContent.trim())
-  return {before, rows, body: document.querySelector('main')?.innerText}
-})()" > "$EVID_WORK/machine-add.json" || fail "adding a machine through the form failed"
+  return {before, rows, startedText, failure, rowText: row.innerText.replace(/\n/g, ' | ')}
+})()" 45000 > "$EVID_WORK/machine-add.json" || fail "adding a machine through the form failed"
 
 grep -q '"self"' "$EVID_WORK/machine-add.json" || fail "added machine does not appear in the list"
 
 echo "==> cross-checking the daemon state"
 curl -sf "http://127.0.0.1:$PORT/api/v1/hosts" > "$EVID_WORK/hosts-after-add.json" || fail "hosts route failed after add"
 grep -q '"id":"self"' "$EVID_WORK/hosts-after-add.json" || fail "daemon does not list the added host"
-grep -q '"status":"ok"' "$EVID_WORK/hosts-after-add.json" || fail "added host did not resolve (expected ok for localhost)"
+grep -q '"status":"not_installed"' "$EVID_WORK/hosts-after-add.json" || fail "added host is not reported as not_installed"
 grep -q '"self":' "$RUNDIR/.prism/prism.json" || fail "host not persisted in the daemon config file"
-grep -q '"address": "localhost"' "$RUNDIR/.prism/prism.json" || fail "host address not persisted in the daemon config file"
+grep -q "\"address\": \"$PROOF_ADDRESS\"" "$RUNDIR/.prism/prism.json" || fail "host address not persisted in the daemon config file"
 
 node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/machines-added.png"
 

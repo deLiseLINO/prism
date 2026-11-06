@@ -30,6 +30,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/canon"
 	modelcat "github.com/deLiseLINO/prism/internal/catalog"
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/hostsync"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/management"
 	"github.com/deLiseLINO/prism/internal/provider"
@@ -829,7 +830,7 @@ func run(opts options) error {
 	daemonEnv := agentinstall.WithUserPath(integrations.Environ(os.Environ()))
 	modelsSrc := integrationModels(cfg)
 	imageModelsSrc := integrationImageModels(cfg)
-	intg, codexIntegration, err := newIntegrationRegistry(daemonPortNum, daemonEnv, home, nil, modelsSrc, imageModelsSrc)
+	intg, codexIntegration, err := newIntegrationRegistry(daemonPortNum, daemonEnv, home, modelsSrc, imageModelsSrc)
 	if err != nil {
 		return err
 	}
@@ -843,18 +844,17 @@ func run(opts options) error {
 		}
 		return out
 	})
-	hostTable := management.NewHostRegistries(intg)
-	supervisor := newHostSupervisor(ctx, daemonPortNum, modelsSrc, imageModelsSrc, hostTable)
-	for id, hostCfg := range d.Hosts {
-		hostTable.SetHostConfig(id, hostCfg)
-		if hostCfg.DaemonPort > 0 {
-			continue
-		}
-		if err := supervisor.Ensure(ctx, id, hostCfg.Address); err != nil {
-			log.Printf("prism: host %s (%s) unresolved: %v", id, hostCfg.Address, err)
-		}
-	}
-
+	pusher := hostsync.NewPusher(hostsync.Options{
+		Config: cfg,
+		Secrets: func(ctx context.Context, id, ref string) ([]byte, bool, error) {
+			return credFile.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
+		},
+		Transport: hostsync.SSHTransport("ssh"),
+		Interval:  time.Minute,
+		Settle:    500 * time.Millisecond,
+		Timeout:   30 * time.Second,
+		Now:       time.Now,
+	})
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
 	planner := server.NewConfigPlanner(cfg)
 	if err := os.MkdirAll(opts.credentialPath, 0o700); err != nil {
@@ -870,8 +870,7 @@ func run(opts options) error {
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, pool: pool, refresher: refresher, client: client}, installer)
 	mgmt.SetID(daemonID)
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
-	mgmt.SetHostRegistries(hostTable)
-	mgmt.SetHostLifecycle(supervisor)
+	mgmt.SetHostSync(pusher)
 	mgmt.SetUsageStore(usageStore)
 	mgmt.SetRequestLog(rlog)
 	var webUI http.Handler
@@ -883,7 +882,8 @@ func run(opts options) error {
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
 	env.reconcileOnce(ctx)
 	go env.loop(ctx)
-	go watchIntegrations(ctx, cfg, intg)
+	go watchIntegrations(ctx, cfg.Subscribe(), intg)
+	go pusher.Run(ctx, cfg.Subscribe())
 	go refreshModelCatalog(ctx, modelCatalog, client)
 	ln, err := net.Listen("tcp", opts.listen)
 	if err != nil {

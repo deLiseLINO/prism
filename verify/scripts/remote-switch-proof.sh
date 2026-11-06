@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Remote daemon switching proof for the Prism desktop. Launches two prism daemon
-# instances (the app's local one and a "remote" one reached over the loopback
-# ssh forward), seeds a host with daemonPort, then drives the real UI:
-# Manage switches every view to the remote daemon; the banner shows the remote
-# host; Back to this machine restores local data.
+# Remote daemon switching and auto sync proof for the Prism desktop. Launches
+# two prism daemon instances (the app's local one and a "remote" one reached
+# over the loopback ssh forward), seeds a host with daemonPort and auto sync
+# off, then drives the real UI: Manage switches every view to the remote
+# daemon; the banner shows the remote host; Back to this machine restores local
+# data. Then clicking the Auto sync row turns sync on, the row reports Synced,
+# the remote daemon holds this machine's config, and the banner warns that the
+# remote settings are replaced on the next sync.
 set -euo pipefail
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -64,7 +67,7 @@ cat > "$RUNDIR/.prism/prism.json" <<CONFIG
     "routes": {},
     "aliases": {},
     "hosts": {
-      "self": {"address": "localhost", "daemonPort": $REMOTE_PORT}
+      "self": {"address": "localhost", "daemonPort": $REMOTE_PORT, "autoSync": false}
     }
   }
 }
@@ -165,14 +168,20 @@ cdp_eval "await (async () => {
   }
   if (document.querySelector('main h1')?.textContent.trim() !== 'Machines') throw new Error('Machines view did not open')
   const selfRow = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
-  if (!selfRow) throw new Error('self row not found; is daemonPort missing from the seeded host?')
+  if (!selfRow) throw new Error('self row not found')
+  const sync = selfRow.querySelector('.mach-sync')
+  if (!sync) throw new Error('Auto sync control not rendered on an installed machine')
+  if (sync.querySelector('input[type=checkbox]').checked) throw new Error('Auto sync is on although the seeded host has it off')
+  if (!sync.innerText.includes('Auto sync off')) throw new Error('sync status does not read Auto sync off: ' + sync.innerText)
   const manageBtn = [...selfRow.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Manage')
   if (!manageBtn) throw new Error('Manage button not found on the self row')
   if (manageBtn.disabled) throw new Error('Manage button disabled; host status should be ok')
   manageBtn.click()
   await sleep(5000)
   const banner = document.querySelector('.banner__title')?.textContent.trim() ?? ''
-  return {banner, body: document.querySelector('main')?.innerText}
+  const bannerText = document.querySelector('.banner')?.innerText ?? ''
+  if (bannerText.includes('Settings sync from this machine')) throw new Error('sync note shown although auto sync is off')
+  return {banner, bannerText, body: document.querySelector('main')?.innerText}
 })()" > "$EVID_WORK/manage-switch.json" || fail "switching to the remote machine failed"
 
 grep -q 'Managing self' "$EVID_WORK/manage-switch.json" || fail "remote banner did not appear after Manage"
@@ -223,5 +232,58 @@ cdp_eval "await (async () => {
 
 node "$REPO_ROOT/verify/scripts/cdp-screenshot.mjs" "$WS" "$EVID_WORK/local-providers.png"
 
+echo "==> turning auto sync on by clicking the setting row"
+cdp_eval "await (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const nav = [...document.querySelectorAll('nav button')].find((node) => node.textContent.includes('Machines'))
+  if (!nav) throw new Error('Machines navigation button not found')
+  nav.click()
+  for (let i = 0; i < 40; i++) {
+    if (document.querySelector('main h1')?.textContent.trim() === 'Machines') break
+    await sleep(100)
+  }
+  const findSync = () => [...document.querySelectorAll('.mach-item')]
+    .find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
+    ?.querySelector('.mach-sync')
+  const sync = findSync()
+  if (!sync) throw new Error('Auto sync control not rendered')
+  sync.querySelector('.mach-sync__status').click()
+  let text = ''
+  for (let i = 0; i < 150; i++) {
+    await sleep(400)
+    const current = findSync()
+    text = current?.innerText ?? ''
+    if (current?.querySelector('input[type=checkbox]').checked && /Synced|Sync failed/.test(text)) break
+  }
+  const current = findSync()
+  if (!current?.querySelector('input[type=checkbox]').checked) throw new Error('clicking the row did not turn auto sync on')
+  if (!/^Synced/.test(current.querySelector('.mach-sync__status').textContent.trim())) throw new Error('sync did not succeed: ' + text)
+  return {text}
+})()" 70000 > "$EVID_WORK/auto-sync-on.json" || fail "turning auto sync on through the UI failed"
 
-echo "VERIFIED remote daemon switching in the real UI"
+curl -sf "http://127.0.0.1:$PORT/api/v1/hosts" > "$EVID_WORK/hosts-after-sync.json" || fail "hosts route failed after enabling sync"
+grep -q '"autoSync":true' "$EVID_WORK/hosts-after-sync.json" || fail "daemon does not report auto sync on"
+grep -q '"state":"synced"' "$EVID_WORK/hosts-after-sync.json" || fail "daemon does not report the host as synced"
+curl -sf "http://127.0.0.1:$REMOTE_PORT/api/v1/providers" > "$EVID_WORK/remote-providers-after-sync.json" || fail "remote providers after sync"
+grep -q 'gpt-5.6-luna' "$EVID_WORK/remote-providers-after-sync.json" || fail "remote daemon did not receive this machine's providers"
+
+echo "==> the banner warns that remote settings are replaced on the next sync"
+cdp_eval "await (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const selfRow = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
+  const manageBtn = selfRow && [...selfRow.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Manage')
+  if (!manageBtn || manageBtn.disabled) throw new Error('Manage button not available on the synced row')
+  manageBtn.click()
+  for (let i = 0; i < 40; i++) {
+    if ((document.querySelector('.banner')?.innerText ?? '').includes('Settings sync from this machine')) break
+    await sleep(200)
+  }
+  const bannerText = document.querySelector('.banner')?.innerText ?? ''
+  if (!bannerText.includes('Managing self')) throw new Error('remote banner did not appear')
+  if (!bannerText.includes('Settings sync from this machine. Changes made here are replaced on the next sync.')) throw new Error('sync note missing from the banner: ' + bannerText)
+  const back = [...document.querySelectorAll('.banner__action button')].find((n) => n.textContent.trim() === 'Back to this machine')
+  if (back) back.click()
+  return {bannerText}
+})()" 15000 > "$EVID_WORK/banner-sync-note.json" || fail "banner sync note check failed"
+
+echo "VERIFIED remote daemon switching and auto sync in the real UI"

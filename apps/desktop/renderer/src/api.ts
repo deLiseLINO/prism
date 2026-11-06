@@ -4,6 +4,7 @@ import type {
   AccountsView,
   AuthStartView,
   AuthStatusView,
+  HostAutoSyncWrite,
   HostMutationResponse,
   HostsView,
   HostWrite,
@@ -221,6 +222,10 @@ export const api = {
 
   localDeleteHost(id: string, expectedGeneration: number): Promise<{ generation: number }> {
     return localCall('DELETE', `/api/v1/hosts/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`)
+  },
+
+  localSetHostAutoSync(id: string, body: HostAutoSyncWrite): Promise<HostMutationResponse> {
+    return localCall('PUT', `/api/v1/hosts/${encodeURIComponent(id)}/auto-sync`, body)
   },
 }
 

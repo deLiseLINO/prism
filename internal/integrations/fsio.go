@@ -15,10 +15,10 @@ import (
 )
 
 // FileIO is the transport every config read and write goes through: the local
-// disk (LocalIO) or a remote host (SshIO). Implementations keep the staged
-// atomic-write contract: StageWrite leaves the target untouched, CommitStaged
-// swaps in the complete next state in one step, RecoverStaged discards an
-// orphaned stage file, never promoting it.
+// disk (LocalIO) in production, fault-injecting fakes in tests.
+// Implementations keep the staged atomic-write contract: StageWrite leaves the
+// target untouched, CommitStaged swaps in the complete next state in one step,
+// RecoverStaged discards an orphaned stage file, never promoting it.
 type FileIO interface {
 	ReadText(path string) (string, bool, error)
 	FileExists(path string) bool

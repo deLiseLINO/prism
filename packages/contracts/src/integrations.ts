@@ -3,19 +3,28 @@ export type IntegrationId = 'codex' | 'grok' | 'omp' | 'claude' | 'pi' | 'openco
 export interface IntegrationRequest {
   readonly id: IntegrationId
   readonly force?: boolean
-  readonly host?: HostId
 }
 
-
 export type HostId = string
+
+export type HostStatus = 'ok' | 'not_installed'
+
+export type HostSyncState = 'pending' | 'synced' | 'failed' | 'off'
+
+export interface HostSyncView {
+  readonly state: HostSyncState
+  readonly at?: string
+  readonly error?: string
+}
 
 export interface HostView {
   readonly id: HostId
   readonly local: boolean
-  readonly status: string
-  readonly detail?: string
+  readonly status: HostStatus
   readonly address?: string
   readonly daemonPort?: number
+  readonly autoSync?: boolean
+  readonly sync?: HostSyncView
 }
 
 export interface HostsView {
@@ -32,6 +41,11 @@ export interface HostWrite {
 export interface HostMutationResponse {
   readonly generation: number
   readonly host: HostView
+}
+
+export interface HostAutoSyncWrite {
+  readonly enabled: boolean
+  readonly expectedGeneration: number
 }
 
 export type IntegrationConflict = 'journal'

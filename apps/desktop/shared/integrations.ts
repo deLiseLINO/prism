@@ -24,11 +24,7 @@ export function parseIntegrationRequest(input: unknown): IntegrationRequest {
   if (force !== undefined && typeof force !== 'boolean') {
     throw new Error('prism: integration force must be a boolean')
   }
-  const host = record['host']
-  if (host !== undefined && (typeof host !== 'string' || host === '')) {
-    throw new Error('prism: integration host must be a non-empty string')
-  }
-  const picked: IntegrationRequest = { id: id as IntegrationId, ...(force === undefined ? {} : { force }), ...(host === undefined ? {} : { host }) }
+  const picked: IntegrationRequest = { id: id as IntegrationId, ...(force === undefined ? {} : { force }) }
   return picked
 }
 
@@ -39,7 +35,7 @@ export class IntegrationApi {
     const query = request.force === true ? '?force=true' : ''
     const reply = await this.management.call({
       method: 'POST',
-      path: `/api/v1${hostSegment(request.host)}/integrations/${request.id}/apply${query}`,
+      path: `/api/v1/integrations/${request.id}/apply${query}`,
     })
     return this.result(request.id, reply)
   }
@@ -48,13 +44,13 @@ export class IntegrationApi {
     const query = request.force === true ? '?force=true' : ''
     const reply = await this.management.call({
       method: 'POST',
-      path: `/api/v1${hostSegment(request.host)}/integrations/${request.id}/rollback${query}`,
+      path: `/api/v1/integrations/${request.id}/rollback${query}`,
     })
     return this.result(request.id, reply)
   }
 
-  async status(host?: string): Promise<readonly IntegrationStatus[]> {
-    const reply = await this.management.call({ method: 'GET', path: `/api/v1${hostSegment(host)}/integrations` })
+  async status(): Promise<readonly IntegrationStatus[]> {
+    const reply = await this.management.call({ method: 'GET', path: '/api/v1/integrations' })
     if (!reply.ok || reply.status !== 200) {
       throw new Error(
         errorDetail(reply) ?? `prism: integrations status failed with status ${reply.status}`,
@@ -86,11 +82,6 @@ export class IntegrationApi {
     const message = errorDetail(reply)
     return { ok: false, id, reason: message === null ? `prism: ${id} request failed` : message }
   }
-}
-
-function hostSegment(host: string | undefined): string {
-  if (host === undefined || host === '' || host === 'local') return ''
-  return `/hosts/${encodeURIComponent(host)}`
 }
 
 function errorDetail(reply: ManagementReply): string | null {

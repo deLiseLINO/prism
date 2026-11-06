@@ -723,6 +723,11 @@ p, .note, .lrow__sub, .banner__detail, .confirm__detail, .empty__body { text-wra
 .int-install .btn { --ctl-h: inherit; }
 .mach-add { padding: 14px; display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .mach-add .field { flex: 1 1 180px; }
+.mach-sync { display: flex; align-items: center; gap: 16px; padding: 8px 14px; font-size: 12.5px; cursor: pointer; transition: background var(--dur) var(--ease); }
+.mach-sync:hover { background: var(--row-hover); }
+.mach-sync--busy { cursor: default; }
+.mach-sync__status { flex: 1; min-width: 0; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mach-sync__status--failed { color: var(--danger); }
 
 /* Experimental */
 .experimental-flag { display: flex; align-items: center; gap: 16px; padding: 12px 14px; cursor: pointer; transition: background var(--dur) var(--ease); }

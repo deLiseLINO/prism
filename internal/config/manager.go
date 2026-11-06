@@ -21,11 +21,11 @@ type Snapshot struct {
 }
 
 type Manager struct {
-	mu         sync.Mutex
-	path       string
-	snap       Snapshot
-	configJSON []byte
-	notify     chan struct{}
+	mu          sync.Mutex
+	path        string
+	snap        Snapshot
+	configJSON  []byte
+	subscribers []chan struct{}
 }
 
 type fileFormat struct {
@@ -40,7 +40,7 @@ func Open(path string) (*Manager, error) {
 		return nil, err
 	}
 	path = absolute
-	m := &Manager{path: path, notify: make(chan struct{}, 1)}
+	m := &Manager{path: path}
 	snap, err := loadSnapshot(path)
 	if err != nil {
 		return nil, err
@@ -163,14 +163,23 @@ func (m *Manager) SetCatalog(c catalogLookup) {
 }
 
 func (m *Manager) notifyChanged() {
-	select {
-	case m.notify <- struct{}{}:
-	default:
+	for _, ch := range m.subscribers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
 	}
 }
 
-func (m *Manager) Changes() <-chan struct{} {
-	return m.notify
+// Subscribe returns a channel that receives one coalesced signal after any
+// number of config changes. Each consumer subscribes once, so one reader
+// never takes another reader's signal.
+func (m *Manager) Subscribe() <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ch := make(chan struct{}, 1)
+	m.subscribers = append(m.subscribers, ch)
+	return ch
 }
 
 func writeAtomic(path string, f fileFormat) error {
@@ -204,6 +213,20 @@ func writeAtomic(path string, f fileFormat) error {
 		d.Close()
 	}
 	return nil
+}
+
+// Equivalent reports whether two documents persist to the same bytes. It
+// compares normalized copies, so an empty map and a missing one are equal.
+func Equivalent(a, b Document) bool {
+	left, err := json.Marshal(cloneDocument(a))
+	if err != nil {
+		return false
+	}
+	right, err := json.Marshal(cloneDocument(b))
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(left, right)
 }
 
 func cloneSnapshot(s Snapshot) Snapshot {
@@ -248,6 +271,10 @@ func cloneDocument(d Document) Document {
 	for id, c := range d.Combos {
 		c.Targets = append([]Target(nil), c.Targets...)
 		out.Combos[id] = c
+	}
+	for id, h := range d.Hosts {
+		h.AutoSync = cloneBool(h.AutoSync)
+		out.Hosts[id] = h
 	}
 	return out
 }

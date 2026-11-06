@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react'
 
 import type { DaemonStatus, UpdaterStatus } from '@prism/contracts'
-import { ActiveHostProvider, useActiveHost } from './ActiveHost'
+import { ActiveHostProvider, RemoteBanner, useActiveHost } from './ActiveHost'
 import { AppearanceProvider } from './useAppearance'
 import { ExperimentalFlagsProvider, useExperimentalFlags } from './experimental'
 import { VIEWS, hashFor, navigateTo, readCurrentView, rememberView, type View, type ViewEntry } from './routing'
@@ -334,21 +334,4 @@ function daemonPillState(
   if (status.state === 'ready') return { label: 'Ready', tone: 'ok', dot: 'dot dot-ok dot-pulse' }
   if (status.state === 'failed') return { label: 'Failed', tone: 'danger', dot: 'dot dot-danger' }
   return { label: 'Starting', tone: 'warn', dot: 'dot dot-warn' }
-}
-
-function RemoteBanner(): JSX.Element {
-  const { host, setHost } = useActiveHost()
-
-  if (host === 'local') return <></>
-  return (
-    <div className="banner banner--spaced" role="status">
-      <div>
-        <p className="banner__title">Managing {host}</p>
-        <p className="banner__detail">Views and actions go to that machine's daemon over SSH.</p>
-      </div>
-      <div className="banner__action">
-        <button type="button" className="btn" onClick={() => setHost('local')}>Back to this machine</button>
-      </div>
-    </div>
-  )
 }

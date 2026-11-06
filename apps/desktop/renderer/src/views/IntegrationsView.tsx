@@ -115,7 +115,7 @@ interface IntegrationCardProps {
   readonly agent: AgentStatus | undefined
   readonly bulkBusy: boolean
   readonly generation: number
-  readonly remote: boolean
+  readonly synced: boolean
   readonly onChanged: () => void
 }
 function IntegrationCard({
@@ -123,7 +123,7 @@ function IntegrationCard({
   agent,
   bulkBusy,
   generation,
-  remote,
+  synced,
   onChanged,
 }: IntegrationCardProps): JSX.Element {
 
@@ -237,11 +237,12 @@ function IntegrationCard({
           )}
         </div>
         <div className="lrow__side">
+          {synced ? <span className="note">Synced from this machine</span> : null}
           <Toggle
             checked={status.enabled}
             onChange={(next) => void toggle(status.id, next, generation)}
             label="Auto-apply"
-            disabled={!status.installed || remote || busy}
+            disabled={!status.installed || synced || busy}
           />
           <Button
             tone={status.managed ? 'ghost' : 'primary'}
@@ -350,11 +351,11 @@ interface IntegrationsBoardProps {
   readonly list: readonly IntegrationStatus[]
   readonly byAgent: ReadonlyMap<string, AgentStatus>
   readonly generation: number
-  readonly remote: boolean
+  readonly synced: boolean
   readonly onChanged: () => void
 }
 
-function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: IntegrationsBoardProps): JSX.Element {
+function IntegrationsBoard({ list, byAgent, generation, synced, onChanged }: IntegrationsBoardProps): JSX.Element {
   const applyAllTask = useTask()
   const rollbackAllTask = useTask()
   const bulkBusy = applyAllTask.running || rollbackAllTask.running
@@ -459,7 +460,7 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
             agent={byAgent.get(status.id)}
             bulkBusy={bulkBusy}
             generation={generation}
-            remote={remote}
+            synced={synced}
             onChanged={onChanged}
           />
         ))}
@@ -469,7 +470,8 @@ function IntegrationsBoard({ list, byAgent, generation, remote, onChanged }: Int
 }
 
 export function IntegrationsView(): JSX.Element {
-  const { host: selected } = useActiveHost()
+  const { host: selected, hosts } = useActiveHost()
+  const synced = selected !== 'local' && hosts.find((entry) => entry.id === selected)?.autoSync === true
   const { flags } = useExperimentalFlags()
   const statuses = useAsync<IntegrationsViewData>(() => api.integrationsStatus(), [selected])
   const agents = useAsync<AgentsView>(
@@ -494,7 +496,7 @@ export function IntegrationsView(): JSX.Element {
             list={visibleIntegrations(all.integrations, flags.otherAgents)}
             byAgent={byAgent}
             generation={all.generation}
-            remote={selected !== 'local'}
+            synced={synced}
             onChanged={() => {
               statuses.refresh()
               agents.refresh()

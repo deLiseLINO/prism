@@ -65,9 +65,6 @@ type Model struct {
 	Integrations        []integrationStatus
 	IntegrationsCursor  int
 	IntegrationConfirm  string
-	HostsView           []hostView
-	HostsCursor         int
-	ActiveHost          string
 	StatsVisible        bool
 	StatsRange          string
 	StatsData           *management.StatsResponse
@@ -113,7 +110,6 @@ func InitialModel(client Client, compactMode bool) Model {
 		CompactMode:          compact,
 		Settings:             settings,
 		ProviderFilter:       normalizeProviderFilter(uiState.ProviderFilter),
-		ActiveHost:           managementHostLocal,
 		UsageData:            make(map[string][]quotaWindow),
 		LoadingMap:           make(map[string]bool),
 		ErrorsMap:            make(map[string]error),
@@ -464,9 +460,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case IntegrationsMsg:
-		if msg.Host != m.activeHostID() {
-			return m, nil
-		}
 		m.Integrations = msg.Integrations
 		if m.IntegrationsCursor >= len(m.Integrations) {
 			m.IntegrationsCursor = 0
@@ -475,15 +468,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Err = nil
 		return m, nil
 
-	case HostsMsg:
-		m.HostsView = msg.Hosts
-		if len(msg.Hosts) == 0 {
-			m.HostsView = []hostView{{ID: managementHostLocal, Local: true, Status: "ok"}}
-		}
-		if m.HostsCursor >= len(m.HostsView) {
-			m.HostsCursor = 0
-		}
-		return m, nil
 	case StatsMsg:
 		m.statsFetchInflight = false
 		if !m.StatsVisible {
@@ -519,12 +503,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.Reason = "unknown reason"
 			}
 			m.Err = fmt.Errorf("apply failed: %s", msg.Reason)
-			return m, FetchHostIntegrationsCmd(m.api, m.activeHostID())
+			return m, FetchIntegrationsCmd(m.api)
 		}
 		m.Err = nil
-		m.Notice = "integration applied: " + msg.ID + " on " + m.activeHostLabel()
+		m.Notice = "integration applied: " + msg.ID
 		m.noticeSeq++
-		return m, tea.Batch(scheduleNoticeClearCmd(m.noticeSeq), FetchHostIntegrationsCmd(m.api, m.activeHostID()))
+		return m, tea.Batch(scheduleNoticeClearCmd(m.noticeSeq), FetchIntegrationsCmd(m.api))
 
 	case AnimationFrameMsg:
 		if !m.advanceAnimations(msg.Now) {
