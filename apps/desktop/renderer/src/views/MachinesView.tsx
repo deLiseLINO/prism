@@ -144,6 +144,11 @@ function MachineRow({ host, generation, onChanged, active, onManage }: MachineRo
           <span className="lrow-note__msg">{installRun.error}</span>
         </div>
       ) : null}
+      {installRun.notice !== null ? (
+        <div className="lrow-note lrow-note--warn" role="status">
+          <span className="lrow-note__msg">{installRun.notice}</span>
+        </div>
+      ) : null}
       {pendingDelete ? (
         <div className="lrow-confirm">
           <Confirm

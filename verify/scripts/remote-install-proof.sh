@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Remote daemon install proof for the Prism desktop. Adds a machine pointing at
 # loopback ssh through the real Machines form, then asserts the install starts
-# on its own: the bundled binary is streamed over ssh and started, the host
+# on its own: prism is installed over ssh as a user service, the host
 # gets its daemon port, auto sync is on and pushes this machine's config to the
 # new daemon, and Manage routes through the freshly installed daemon.
 set -euo pipefail
@@ -37,6 +37,7 @@ cleanup() {
     kill -TERM "$APP_PID" 2>/dev/null
     wait "$APP_PID" 2>/dev/null
   fi
+  ssh -o BatchMode=yes localhost 'systemctl --user disable --now prism-remote.service; rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/prism-remote.service"; launchctl bootout "gui/$(id -u)/sh.prism.remote"; rm -f ~/Library/LaunchAgents/sh.prism.remote.plist' >/dev/null 2>&1
   INSTALLED_PID=$(pgrep -f "prism.* daemon --listen 127.0.0.1:$REMOTE_PORT" | head -1 || true)
   [ -n "$INSTALLED_PID" ] && kill -TERM "$INSTALLED_PID" 2>/dev/null
   ssh -o BatchMode=yes localhost "rm -rf ~/.prism/remote" 2>/dev/null
@@ -175,7 +176,7 @@ cdp_eval "await (async () => {
   if (document.querySelector('main h1')?.textContent.trim() !== 'Machines') throw new Error('Machines view did not reopen mid-install')
   const row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
   if (!row) throw new Error('self row not rendered after tab switch')
-  const refusal = row.querySelector('.lrow-note__msg')?.textContent ?? ''
+  const refusal = row.querySelector('.lrow-note[role=alert] .lrow-note__msg')?.textContent ?? ''
   if (/already running/i.test(refusal)) throw new Error('already-running error surfaced after a tab switch: ' + refusal)
   const install = [...row.querySelectorAll('button')].find((b) => /installing|install prismd/i.test(b.textContent))
   if (!install) return {settled: true, rowText: row.innerText.replace(/\n/g, ' | ')}
@@ -191,7 +192,7 @@ cdp_eval "await (async () => {
   for (let i = 0; i < 120; i++) {
     const row = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
     if (!row) throw new Error('self row vanished during install')
-    const refusal = row.querySelector('.lrow-note__msg')?.textContent ?? ''
+    const refusal = row.querySelector('.lrow-note[role=alert] .lrow-note__msg')?.textContent ?? ''
     if (refusal !== '') throw new Error('install failed: ' + refusal)
     const install = [...row.querySelectorAll('button')].find((b) => /installing|install prismd|retry/i.test(b.textContent))
     if (!install) return {done: true, rowText: row.innerText.replace(/\n/g, ' | ')}
@@ -209,8 +210,8 @@ grep -q '"autoSync":true' "$EVID_WORK/hosts-after.json" || fail "auto sync is no
 
 curl -sf "http://127.0.0.1:$REMOTE_PORT/api/v1/health" > "$EVID_WORK/installed-health.json" || fail "the installed daemon is not answering on $REMOTE_PORT"
 grep -q '"status":"ok"' "$EVID_WORK/installed-health.json" || fail "installed daemon health is not ok"
-ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/prism && tail -c 2000 ~/.prism/remote/prism.log" > "$EVID_WORK/installed-daemon.log" 2>/dev/null || true
-ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/prism" || fail "prism binary was not placed in ~/.prism/remote on the ssh target"
+ssh -o BatchMode=yes localhost "tail -c 2000 ~/.prism/remote/prism.log" > "$EVID_WORK/installed-daemon.log" 2>/dev/null || true
+ssh -o BatchMode=yes localhost "test -x ~/.prism/remote/current/prism" || fail "prism was not installed under ~/.prism/remote/current on the ssh target"
 
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
