@@ -440,6 +440,20 @@ p, .note, .lrow__sub, .banner__detail, .confirm__detail, .empty__body { text-wra
 .toolbar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
 .toolbar__count { font-size: 12px; color: var(--fg-subtle); white-space: nowrap; padding: 0 4px; }
 
+/* Machine scope menu for Logs and Stats. */
+.machine-menu { position: relative; flex: none; }
+.machine-menu__btn { gap: 8px; border-color: var(--border); }
+.machine-menu__dots { display: inline-flex; gap: 2px; }
+.machine-menu__list { position: absolute; left: 0; top: calc(100% + 6px); z-index: var(--z-popover); display: grid; min-width: 280px; max-height: 320px; overflow-y: auto; padding: 4px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--panel-bg); box-shadow: var(--shadow-md); }
+.machine-menu__opt { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border-radius: 6px; font-size: 13px; color: var(--fg); text-align: left; }
+.machine-menu__opt:hover, .machine-menu__opt:focus-visible { background: var(--row-hover); }
+.machine-menu__opt[aria-selected="true"] { background: var(--row-active); }
+.machine-menu__check { font-size: 12px; color: var(--fg-muted); }
+.machine-menu__name { display: grid; min-width: 0; font-weight: 500; }
+.machine-menu__note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 400; color: var(--fg-subtle); }
+.machine-menu__count { font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
+.machine-failures { display: grid; gap: 8px; }
+
 /* Section: titled group of rows (used across settings and list views). */
 .st-section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .st-section + .st-section { margin-top: 0; }
@@ -683,6 +697,11 @@ p, .note, .lrow__sub, .banner__detail, .confirm__detail, .empty__body { text-wra
 .drow__tok { text-align: right; }
 .drow__counts { font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
 .drow .bar { min-width: 0; }
+.stack-bar { display: flex; gap: 1px; }
+.stack-bar__seg { display: block; flex: none; width: calc(var(--w, 0) * 100%); height: 100%; background: color-mix(in srgb, var(--fg) var(--shade, 55%), transparent); }
+.machine-legend { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 14px; padding: 0 8px; font-size: 12px; color: var(--fg-muted); }
+.machine-legend__item { display: inline-flex; align-items: center; gap: 6px; }
+.machine-legend__swatch { width: 10px; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--fg) var(--shade, 55%), transparent); }
 
 /* Logs */
 .logs-tbl { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 13px; }
@@ -702,6 +721,7 @@ p, .note, .lrow__sub, .banner__detail, .confirm__detail, .empty__body { text-wra
 .logs-wrap > table > thead > tr:first-child > th:last-child { border-top-right-radius: 11px; }
 .logs-reason { margin-left: 8px; color: var(--fg-subtle); }
 .logs-sub { color: var(--fg-subtle); }
+.machine-tag { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); }
 
 /* Integrations and Machines: list-detail rows */
 .int-stats { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

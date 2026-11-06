@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { AttemptView, RequestView, RequestsView } from '@prism/contracts'
+import type { AttemptView, RequestView } from '@prism/contracts'
 import { api } from '../api'
 import { useAsync } from '../useAsync'
 import { AsyncBoundary, Button, Empty, SearchInput } from '../components/Ui'
 import { Metric, PageHeader, Toolbar, ToolbarSpacer } from '../components/Patterns'
+import { loadAcross, MachineFailures, MachineMenu, MachineTag, scopeKey, useMachineScope } from '../components/MachineScope'
+import { machineLabel, mergeRequests, scopeCount, type MachineRequest, type MergedRequests } from '../machines'
 
 const AUTO_REFRESH_ACTIVE_MS = 1_000
 const AUTO_REFRESH_BACKGROUND_MS = 30_000
@@ -71,11 +73,17 @@ function outcomeTone(outcome: string): 'ok' | 'warn' | 'error' | 'muted' {
 }
 
 export function LogsView(): JSX.Element {
-  const logs = useAsync<RequestsView>(() => api.requests(), [])
+  const machineScope = useMachineScope()
+  const logs = useAsync<MergedRequests>(
+    () => loadAcross({ state: machineScope, load: (host) => api.requests(undefined, host), merge: mergeRequests }),
+    [scopeKey(machineScope)],
+  )
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [expandedSeq, setExpandedSeq] = useState<number | null>(null)
-  const [copiedSeq, setCopiedSeq] = useState<number | null>(null)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const machines = machineScope.kind === 'scoped' ? machineScope.machines : []
+  const showMachine = machineScope.kind === 'scoped' && machineScope.scope.kind === 'all'
 
   useEffect(() => {
     const refresh = (): void => logs.refresh()
@@ -94,10 +102,11 @@ export function LogsView(): JSX.Element {
     }
   }, [logs])
 
-  const requests = logs.state.kind === 'ready' ? logs.state.value.requests : []
-  const dropped = logs.state.kind === 'ready' ? logs.state.value.dropped : 0
+  const value = logs.state.kind === 'ready' ? logs.state.value : null
+  const requests = value?.requests ?? []
+  const dropped = value?.dropped ?? 0
 
-  const filtered = useMemo<readonly RequestView[]>(() => {
+  const filtered = useMemo<readonly MachineRequest[]>(() => {
     const byStatus =
       statusFilter === 'all' ? requests : requests.filter((row) => row.status === statusFilter)
     const needle = query.trim().toLowerCase()
@@ -107,9 +116,10 @@ export function LogsView(): JSX.Element {
         (row.requestId ?? '').toLowerCase().includes(needle) ||
         row.model.toLowerCase().includes(needle) ||
         row.client.toLowerCase().includes(needle) ||
-        row.attempts.some((attempt) => attempt.provider.toLowerCase().includes(needle)),
+        row.attempts.some((attempt) => attempt.provider.toLowerCase().includes(needle)) ||
+        (showMachine && machineLabel(machines, row.machine).toLowerCase().includes(needle)),
     )
-  }, [requests, query, statusFilter])
+  }, [requests, query, statusFilter, showMachine, machines])
 
   const totals = useMemo(() => {
     let errors = 0
@@ -121,16 +131,26 @@ export function LogsView(): JSX.Element {
     return { errors, tokens }
   }, [requests])
 
-  async function copyRequestId(request: RequestView): Promise<void> {
+  async function copyRequestId(request: RequestView, key: string): Promise<void> {
     if (request.requestId === undefined) return
     try {
       await navigator.clipboard.writeText(request.requestId)
-      setCopiedSeq(request.seq)
-      window.setTimeout(() => setCopiedSeq(null), 1_500)
+      setCopiedKey(key)
+      window.setTimeout(() => setCopiedKey(null), 1_500)
     } catch {
-      setCopiedSeq(null)
+      setCopiedKey(null)
     }
   }
+
+  const menu =
+    machineScope.kind === 'scoped' ? (
+      <MachineMenu
+        machines={machineScope.machines}
+        scope={machineScope.scope}
+        onChange={machineScope.setScope}
+        countOf={(scope) => (value === null ? undefined : scopeCount(scope, value.counts, machineScope.machines))}
+      />
+    ) : null
 
   return (
     <section className="screen logs-page" aria-labelledby="h-logs">
@@ -144,7 +164,9 @@ export function LogsView(): JSX.Element {
           </Button>
         }
       />
-      <AsyncBoundary<RequestsView>
+      {menu !== null && requests.length === 0 ? <Toolbar label="Request filters">{menu}</Toolbar> : null}
+      {value !== null ? <MachineFailures failures={value.failures} machines={machines} /> : null}
+      <AsyncBoundary<MergedRequests>
         state={logs.state}
         loadingLabel="Loading requests…"
         onRetry={() => logs.refresh()}
@@ -170,11 +192,12 @@ export function LogsView(): JSX.Element {
                 <Metric label="Tokens" value={String(totals.tokens)} />
               </div>
               <Toolbar label="Request filters">
+                {menu}
                 <SearchInput
                   id="logs-search"
                   value={query}
                   onChange={setQuery}
-                  placeholder="Filter by request id, model, or provider"
+                  placeholder={showMachine ? 'Filter by request id, model, provider, or machine' : 'Filter by request id, model, or provider'}
                   hotkey
                 />
                 <div className="seg" role="group" aria-label="Filter requests by status">
@@ -200,6 +223,7 @@ export function LogsView(): JSX.Element {
                 <table className="logs-tbl">
                   <colgroup>
                     <col style={{ width: 168 }} />
+                    {showMachine ? <col style={{ width: 128 }} /> : null}
                     <col />
                     <col style={{ width: 88 }} />
                     <col style={{ width: 170 }} />
@@ -211,6 +235,7 @@ export function LogsView(): JSX.Element {
                   <thead>
                     <tr>
                       <th scope="col">Time</th>
+                      {showMachine ? <th scope="col">Machine</th> : null}
                       <th scope="col">Request</th>
                       <th scope="col">Client</th>
                       <th scope="col">Model</th>
@@ -223,23 +248,25 @@ export function LogsView(): JSX.Element {
                   <tbody>
                     {filtered.length === 0 ? (
                       <tr>
-                        <td colSpan={8}>
+                        <td colSpan={showMachine ? 9 : 8}>
                           <Empty inline icon="#i-logs" title="No requests match the filter." />
                         </td>
                       </tr>
                     ) : (
-                      filtered.map((row) => (
-                        <RequestRow
-                          key={row.seq}
-                          request={row}
-                          expanded={expandedSeq === row.seq}
-                          copied={copiedSeq === row.seq}
-                          onToggle={() =>
-                            setExpandedSeq(expandedSeq === row.seq ? null : row.seq)
-                          }
-                          onCopy={() => void copyRequestId(row)}
-                        />
-                      ))
+                      filtered.map((row) => {
+                        const key = `${row.machine} ${row.seq}`
+                        return (
+                          <RequestRow
+                            key={key}
+                            request={row}
+                            machine={showMachine ? machineLabel(machines, row.machine) : null}
+                            expanded={expandedKey === key}
+                            copied={copiedKey === key}
+                            onToggle={() => setExpandedKey(expandedKey === key ? null : key)}
+                            onCopy={() => void copyRequestId(row, key)}
+                          />
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
@@ -254,6 +281,8 @@ export function LogsView(): JSX.Element {
 
 interface RequestRowProps {
   readonly request: RequestView
+  // Label for the Machine column and detail row; null hides both.
+  readonly machine: string | null
   readonly expanded: boolean
   readonly copied: boolean
   readonly onToggle: () => void
@@ -262,6 +291,7 @@ interface RequestRowProps {
 
 function RequestRow({
   request,
+  machine,
   expanded,
   copied,
   onToggle,
@@ -290,6 +320,11 @@ function RequestRow({
             {formatTime(request.startedAt)}
           </span>
         </td>
+        {machine !== null ? (
+          <td>
+            <MachineTag label={machine} />
+          </td>
+        ) : null}
         <td className="td-strong" title={request.requestId ?? ''}>
           <span className="num">{request.requestId ?? '-'}</span>
           {request.session !== undefined && request.session !== '' ? (
@@ -325,8 +360,16 @@ function RequestRow({
       </tr>
       {expanded ? (
         <tr>
-          <td colSpan={8} className="logs-detail">
+          <td colSpan={machine !== null ? 9 : 8} className="logs-detail">
             <div className="kv">
+              {machine !== null ? (
+                <div className="kv-row">
+                  <span className="kv-k">Machine</span>
+                  <span className="kv-v">
+                    <MachineTag label={machine} />
+                  </span>
+                </div>
+              ) : null}
               {request.requestId !== undefined ? (
                 <div className="kv-row">
                   <span className="kv-k">Request id</span>
