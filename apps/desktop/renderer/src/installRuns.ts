@@ -7,6 +7,8 @@ export interface InstallRun {
   readonly host: HostId
   readonly phase: InstallPhase | null
   readonly error: string | null
+  // Advice from the last successful install, e.g. prism will not start after a reboot.
+  readonly notice: string | null
   readonly done: boolean
 }
 
@@ -33,7 +35,7 @@ export function onInstallSettled(listener: (host: HostId, ok: boolean) => void):
   }
 }
 
-const EMPTY_RUN: InstallRun = { host: '' as HostId, phase: null, error: null, done: false }
+const EMPTY_RUN: InstallRun = { host: '' as HostId, phase: null, error: null, notice: null, done: false }
 
 export function getInstallRun(host: HostId): InstallRun {
   return runs.get(host) ?? EMPTY_RUN
@@ -50,17 +52,17 @@ export function useInstallRun(host: HostId): InstallRun {
 export async function startInstall(host: HostId): Promise<void> {
   const current = runs.get(host)
   if (current !== undefined && current.phase !== null) return
-  runs.set(host, { host, phase: 'probe', error: null, done: false })
+  runs.set(host, { host, phase: 'probe', error: null, notice: null, done: false })
   emit()
   const reply: HostInstallReply | undefined = await window.prism.integrations.installDaemon({ host })
   let ok = false
   if (reply !== undefined && reply.ok) {
-    runs.set(host, { host, phase: null, error: null, done: true })
+    runs.set(host, { host, phase: null, error: null, notice: reply.notice, done: true })
     ok = true
   } else if (reply !== undefined) {
-    runs.set(host, { host, phase: null, error: reply.reason, done: false })
+    runs.set(host, { host, phase: null, error: reply.reason, notice: null, done: false })
   } else {
-    runs.set(host, { host, phase: null, error: 'the install request failed', done: false })
+    runs.set(host, { host, phase: null, error: 'the install request failed', notice: null, done: false })
   }
   emit()
   for (const listener of settledListeners) listener(host, ok)

@@ -76,6 +76,14 @@ function bundledDaemonPath(platform: NodeJS.Platform = process.platform, arch: s
     : path.join(app.getAppPath(), 'resources', 'prism', bundledDaemonBinary(platform, arch))
 }
 
+// bundledRemoteBinary returns the binary this app carries for a remote
+// machine's os_arch target, or null when the build did not include it.
+export function bundledRemoteBinary(target: `${'linux' | 'darwin'}_${'amd64' | 'arm64'}`): string | null {
+  const [os, goarch] = target.split('_') as ['linux' | 'darwin', 'amd64' | 'arm64']
+  const binary = bundledDaemonPath(os, goarch === 'amd64' ? 'x64' : 'arm64')
+  return existsSync(binary) ? binary : null
+}
+
 export function locateWebui(configured: string | null): string | null {
   if (configured !== null && configured !== '') {
     return existsSync(configured) ? configured : null

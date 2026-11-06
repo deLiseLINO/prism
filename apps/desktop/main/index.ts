@@ -13,6 +13,8 @@ import { ManagementProxy } from '../shared/management'
 import { TrayController } from './tray'
 import { UpdaterService } from './updater/updater'
 import { locateResource } from './daemon/resources'
+import { bundledRemoteBinary } from './daemon/locate'
+import { maintainHostDaemons, type HostInstallDeps } from './hosts/install'
 import { createMainWindow } from './window'
 
 const COMMAND_TIMEOUT_MS = 20_000
@@ -22,6 +24,8 @@ const RESTART_BASE_MS = 500
 const RESTART_MAX_MS = 10_000
 const MAX_RESTARTS = 5
 const STABILITY_WINDOW_MS = 60_000
+// Remote machines install prism from the release matching this app's version.
+const RELEASE_DOWNLOAD_URL = 'https://github.com/deLiseLINO/prism/releases/download'
 
 async function bootstrap(): Promise<void> {
   const env = process.env
@@ -116,7 +120,14 @@ async function bootstrap(): Promise<void> {
 
 
   void app.whenReady().then(() => {
-    registerIpc({ supervisor, proxies, integrations, updater, agents, hostInstaller: { management, onRegistered: () => { void proxies.sync() } } })
+    const hostInstaller: HostInstallDeps = {
+      management,
+      onRegistered: () => { void proxies.sync() },
+      version: appVersion(),
+      releaseBaseUrl: RELEASE_DOWNLOAD_URL,
+      bundledBinary: bundledRemoteBinary,
+    }
+    registerIpc({ supervisor, proxies, integrations, updater, agents, hostInstaller })
 
 
     proxies.start()
@@ -141,7 +152,9 @@ async function bootstrap(): Promise<void> {
       }
     })
     mainWindow = window
-    void supervisor.start()
+    void supervisor.start().then((status) => {
+      if (status.state === 'ready') void maintainHostDaemons(hostInstaller)
+    })
     updater.start()
   })
 }
