@@ -12,6 +12,7 @@ import (
 func TestChatUsageRejectsInvalidSnapshotsAtHTTPBoundary(t *testing.T) {
 	for _, usage := range []string{
 		`{"prompt_tokens":7,"completion_tokens":2,"total_tokens":3}`,
+		`{"prompt_tokens":7,"completion_tokens":2,"total_tokens":20,"completion_tokens_details":{"reasoning_tokens":3}}`,
 		`{"prompt_tokens":9223372036854775807,"completion_tokens":1}`,
 		`{"prompt_tokens":null,"completion_tokens":1}`,
 		`{"prompt_tokens":"bad","completion_tokens":1}`,
