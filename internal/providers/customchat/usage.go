@@ -70,6 +70,10 @@ func mergeChatUsage(value any, previous canon.Usage) (canon.Usage, error) {
 	total := next.InputTokens + next.OutputTokens
 	if _, supplied := fields["total_tokens"]; !supplied {
 		next.TotalTokens = total
+	} else if next.ReasoningTokens > 0 && next.TotalTokens > total && next.TotalTokens-total == next.ReasoningTokens {
+		// Some upstreams count reasoning in total_tokens but not in completion_tokens.
+		next.OutputTokens += next.ReasoningTokens
+		total = next.TotalTokens
 	}
 	if next.TotalTokens != total {
 		return previous, errors.New("usage total does not match token counts")

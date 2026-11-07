@@ -565,6 +565,39 @@ func TestStreamIncompleteLength(t *testing.T) {
 	}
 }
 
+func TestUsageWithReasoningOutsideCompletionTokens(t *testing.T) {
+	const usage = `{"prompt_tokens":13,"completion_tokens":175,"total_tokens":561,"completion_tokens_details":{"reasoning_tokens":373}}`
+	for _, streaming := range []bool{true, false} {
+		t.Run(fmt.Sprintf("stream=%t", streaming), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if streaming {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, `data: {"id":"chatcmpl-3","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`+"\n\n")
+					fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-3\",\"choices\":[],\"usage\":%s}\n\n", usage)
+					fmt.Fprint(w, "data: [DONE]\n\n")
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"id":"chatcmpl-3","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":%s}`, usage)
+			}))
+			defer srv.Close()
+			request := testRequest(streaming)
+			request.Model = "model"
+			events := &collector{}
+			if err := New(staticKey, Options{}).Run(context.Background(), provider.RunRequest{Request: request, Target: testTarget(srv.URL)}, events); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			finish, ok := events.All()[len(events.All())-1].(canon.TurnFinished)
+			if !ok || finish.Status.Kind() != canon.StatusCompleted {
+				t.Fatalf("terminal = %+v", events.All()[len(events.All())-1])
+			}
+			if finish.Usage != (canon.Usage{InputTokens: 13, OutputTokens: 548, ReasoningTokens: 373, TotalTokens: 561}) {
+				t.Fatalf("usage = %+v", finish.Usage)
+			}
+		})
+	}
+}
+
 func TestMalformedFunctionArgumentsOnNaturalFinish(t *testing.T) {
 	for _, streaming := range []bool{true, false} {
 		for _, reason := range []string{"stop", "tool_calls"} {
