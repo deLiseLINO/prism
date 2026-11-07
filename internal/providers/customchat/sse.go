@@ -357,16 +357,18 @@ func reasoningDelta(delta map[string]any) string {
 }
 
 func (s *streamer) handleToolCallDelta(call map[string]any) error {
-	if typ, present := call["type"]; present && typ != "function" {
+	// Continuation deltas may repeat already-sent fields as null or an empty
+	// type; both mean no update, as a missing key does.
+	if typ := call["type"]; typ != nil && typ != "" && typ != "function" {
 		return s.protocolError("upstream tool call type is not function")
 	}
-	if raw, supplied := call["index"]; supplied {
+	if raw := call["index"]; raw != nil {
 		if _, ok := streamIndex(raw); !ok {
 			return s.protocolError("invalid tool call index")
 		}
 	}
 	fn := map[string]any{}
-	if raw, present := call["function"]; present {
+	if raw := call["function"]; raw != nil {
 		var ok bool
 		fn, ok = raw.(map[string]any)
 		if !ok {
