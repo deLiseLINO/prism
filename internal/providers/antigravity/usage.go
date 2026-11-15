@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 const quotaTimeout = 8 * time.Second
@@ -36,7 +37,7 @@ func FetchQuota(ctx context.Context, client *http.Client, baseURL string, cred C
 	}
 	ctx, cancel := context.WithTimeout(ctx, quotaTimeout)
 	defer cancel()
-	body, err := json.Marshal(map[string]string{"project": cred.ProjectID})
+	body, err := wirejson.Marshal(map[string]string{"project": cred.ProjectID})
 	if err != nil {
 		return QuotaWindows{}, fmt.Errorf("antigravity: quota request encode: %w", err)
 	}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strconv"
+
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 var schemaErrorPattern = regexp.MustCompile(`(?:input[_ ]schema|json schema|function[_ ]declarations?|x-mcp-header)`)
@@ -44,7 +46,7 @@ func repairEnvelope(body []byte, errorPayload string) ([]byte, bool) {
 	if !changed {
 		return nil, false
 	}
-	repaired, err := marshalCompact(env)
+	repaired, err := wirejson.Marshal(env)
 	if err != nil {
 		return nil, false
 	}

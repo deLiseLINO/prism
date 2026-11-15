@@ -16,6 +16,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/routing"
 	"github.com/deLiseLINO/prism/internal/usage"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 const imagesProtocol = "images"
@@ -54,13 +55,13 @@ func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) 
 		writeImageError(w, http.StatusNotFound, "model_not_found", "model", "model "+strconv.Quote(model)+" is not an image generation model")
 		return
 	}
-	rewritten, err := json.Marshal(string(target.Model))
+	rewritten, err := wirejson.Marshal(string(target.Model))
 	if err != nil {
 		writeImageError(w, http.StatusInternalServerError, "internal", "", err.Error())
 		return
 	}
 	body["model"] = rewritten
-	upstream, err := json.Marshal(body)
+	upstream, err := wirejson.Marshal(body)
 	if err != nil {
 		writeImageError(w, http.StatusInternalServerError, "internal", "", err.Error())
 		return

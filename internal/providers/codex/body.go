@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/deLiseLINO/prism/internal/canon"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 type wireBody struct {
@@ -149,7 +150,7 @@ func BuildRequestBody(req canon.Request) (BuildResult, error) {
 			if kind == "" {
 				return BuildResult{}, fmt.Errorf("codex: named tool %q has no declaration", named.Name)
 			}
-			tc, _ = json.Marshal(struct {
+			tc, _ = wirejson.Marshal(struct {
 				Type string `json:"type"`
 				Name string `json:"name"`
 			}{kind, string(named.Name)})
@@ -175,7 +176,7 @@ func BuildRequestBody(req canon.Request) (BuildResult, error) {
 		if allowed.Mode == canon.AllowedRequired {
 			mode = "required"
 		}
-		body.ToolChoice, _ = json.Marshal(struct {
+		body.ToolChoice, _ = wirejson.Marshal(struct {
 			Type  string              `json:"type"`
 			Mode  string              `json:"mode"`
 			Tools []map[string]string `json:"tools"`
@@ -199,7 +200,7 @@ func BuildRequestBody(req canon.Request) (BuildResult, error) {
 		s := "priority"
 		body.ServiceTier = &s
 	}
-	raw, err := json.Marshal(body)
+	raw, err := wirejson.Marshal(body)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("codex body: %w", err)
 	}
@@ -464,7 +465,7 @@ func toolChoiceFrom(tc canon.ToolChoice) (json.RawMessage, bool) {
 	case canon.ToolRequired:
 		return json.RawMessage(`"required"`), true
 	case canon.ToolNamed:
-		raw, _ := json.Marshal(struct {
+		raw, _ := wirejson.Marshal(struct {
 			Type string `json:"type"`
 			Name string `json:"name"`
 		}{Type: "function", Name: string(t.Name)})

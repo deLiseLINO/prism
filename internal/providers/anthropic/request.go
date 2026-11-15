@@ -12,6 +12,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/reasonenv"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 type wireCacheControl struct {
@@ -202,7 +203,7 @@ func (r *Runner) render(request canon.Request, outputLimit int, streaming bool) 
 	if err != nil {
 		return nil, err
 	}
-	body, err := json.Marshal(wr)
+	body, err := wirejson.Marshal(wr)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: encode request: %w", err)
 	}
@@ -485,7 +486,7 @@ func (r *Runner) messagesFromItems(items []canon.Item) ([]wireMessage, []canon.C
 			if v.CallID == "" {
 				return nil, nil, errors.New("anthropic: custom tool call has no call id")
 			}
-			input, err := json.Marshal(customToolInput{Input: v.Input})
+			input, err := wirejson.Marshal(customToolInput{Input: v.Input})
 			if err != nil {
 				return nil, nil, fmt.Errorf("anthropic: encode custom tool call %q: %w", v.CallID, err)
 			}
@@ -597,7 +598,7 @@ func customToolSchema(name canon.ToolName) (json.RawMessage, error) {
 	if name == applyPatchToolName {
 		desc = applyPatchInputDesc
 	}
-	return json.Marshal(customInputSchema{
+	return wirejson.Marshal(customInputSchema{
 		Type:       "object",
 		Properties: map[string]customInputProperty{"input": {Type: "string", Description: desc}},
 		Required:   []string{"input"},
@@ -713,20 +714,20 @@ func objectSchema(params []byte) (json.RawMessage, error) {
 		delete(root, key)
 	}
 	root["type"] = json.RawMessage(`"object"`)
-	encodedProperties, err := json.Marshal(properties)
+	encodedProperties, err := wirejson.Marshal(properties)
 	if err != nil {
 		return nil, err
 	}
 	root["properties"] = encodedProperties
 	delete(root, "required")
 	if len(required) > 0 {
-		encodedRequired, err := json.Marshal(required)
+		encodedRequired, err := wirejson.Marshal(required)
 		if err != nil {
 			return nil, err
 		}
 		root["required"] = encodedRequired
 	}
-	return json.Marshal(root)
+	return wirejson.Marshal(root)
 }
 
 func rawObject(raw json.RawMessage) map[string]json.RawMessage {

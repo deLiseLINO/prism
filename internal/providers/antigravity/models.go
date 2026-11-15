@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 type ModelCatalog struct{ present map[string]bool }
@@ -67,7 +69,7 @@ func FetchModels(ctx context.Context, client *http.Client, baseURL string, cred 
 	}
 	ctx, cancel := context.WithTimeout(ctx, quotaTimeout)
 	defer cancel()
-	body, err := json.Marshal(map[string]string{"project": cred.ProjectID})
+	body, err := wirejson.Marshal(map[string]string{"project": cred.ProjectID})
 	if err != nil {
 		return ModelCatalog{}, err
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 const (
@@ -79,7 +81,7 @@ func marshalSchemaValue(m map[string]any) ([]byte, error) {
 			buf.WriteByte(',')
 		}
 		first = false
-		keyJSON, _ := json.Marshal(key)
+		keyJSON, _ := wirejson.Marshal(key)
 		buf.Write(keyJSON)
 		buf.WriteByte(':')
 		encoded, err := marshalSchemaField(key, v)
@@ -102,7 +104,7 @@ func marshalSchemaField(key string, v any) ([]byte, error) {
 func marshalPropertyBag(v any) ([]byte, error) {
 	props, ok := v.(map[string]any)
 	if !ok {
-		return json.Marshal(v)
+		return wirejson.Marshal(v)
 	}
 	names := make([]string, 0, len(props))
 	for name := range props {
@@ -115,7 +117,7 @@ func marshalPropertyBag(v any) ([]byte, error) {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		nameJSON, _ := json.Marshal(name)
+		nameJSON, _ := wirejson.Marshal(name)
 		buf.Write(nameJSON)
 		buf.WriteByte(':')
 		encoded, err := marshalSchemaNode(props[name])
@@ -133,7 +135,7 @@ func marshalSchemaNode(v any) ([]byte, error) {
 	case map[string]any:
 		return marshalSchemaValue(t)
 	default:
-		return json.Marshal(v)
+		return wirejson.Marshal(v)
 	}
 }
 

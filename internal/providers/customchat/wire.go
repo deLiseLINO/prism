@@ -8,6 +8,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 type body struct {
@@ -181,7 +182,7 @@ func buildBody(req canon.Request) ([]byte, error) {
 	} else if ok {
 		out.ToolChoice = choice
 	}
-	return json.Marshal(out)
+	return wirejson.Marshal(out)
 }
 
 func messagesFrom(req canon.Request) ([]message, error) {
@@ -256,7 +257,7 @@ func standaloneCalls(items []canon.Item, i int) ([]toolCall, int, error) {
 		case canon.FunctionCall:
 			call = toolCall{ID: string(item.CallID), Type: "function", Function: funcCallWire{Name: string(item.Name), Arguments: string(item.Arguments)}}
 		case canon.CustomToolCall:
-			arguments, err := json.Marshal(customToolInput{Input: item.Input})
+			arguments, err := wirejson.Marshal(customToolInput{Input: item.Input})
 			if err != nil {
 				return nil, 0, err
 			}
@@ -494,7 +495,7 @@ func toolChoiceFrom(tc canon.ToolChoice) (json.RawMessage, bool, error) {
 	case canon.ToolRequired:
 		return json.RawMessage(`"required"`), true, nil
 	case canon.ToolNamed:
-		raw, err := json.Marshal(namedToolChoice{Type: "function", Function: namedFunction{Name: string(t.Name)}})
+		raw, err := wirejson.Marshal(namedToolChoice{Type: "function", Function: namedFunction{Name: string(t.Name)}})
 		if err != nil {
 			return nil, false, err
 		}
