@@ -17,6 +17,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 type Runner struct {
@@ -310,7 +311,7 @@ func compactBody(req provider.CompactRequest) ([]byte, error) {
 			body.Instructions += t.Text
 		}
 	}
-	return json.Marshal(body)
+	return wirejson.Marshal(body)
 }
 
 func decodeCompact(payload []byte) (provider.CompactResult, error) {

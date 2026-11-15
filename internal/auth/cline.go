@@ -12,6 +12,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/providers/cline"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 const clineRefreshSkew = 2 * time.Minute
@@ -178,7 +179,7 @@ func (f *clineFlow) pollDevice(ctx context.Context, deviceCode string) (workosTo
 }
 
 func (f *clineFlow) registerDevice(ctx context.Context, tokens workosTokens) (account.Credential, error) {
-	body, err := json.Marshal(map[string]string{
+	body, err := wirejson.Marshal(map[string]string{
 		"accessToken":  tokens.Access,
 		"refreshToken": tokens.Refresh,
 	})
@@ -267,7 +268,7 @@ func (f *clineFlow) Refresh(ctx context.Context, prev account.Credential) (accou
 	if prev.Refresh == "" {
 		return account.Credential{}, fmt.Errorf("cline credential has no refresh grant; re-login with the cline CLI")
 	}
-	body, err := json.Marshal(map[string]string{
+	body, err := wirejson.Marshal(map[string]string{
 		"refreshToken": prev.Refresh,
 		"grantType":    "refresh_token",
 	})

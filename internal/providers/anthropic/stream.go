@@ -20,6 +20,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/usagewire"
 	"github.com/deLiseLINO/prism/internal/reasonenv"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 var errTerminalDone = errors.New("anthropic: terminal emitted")
@@ -686,7 +687,7 @@ func (r *Runner) CountTokens(ctx context.Context, req provider.CountTokensReques
 	}
 	wr.MaxTokens = 0
 	wr.Stream = false
-	body, err := json.Marshal(wr)
+	body, err := wirejson.Marshal(wr)
 	if err != nil {
 		return provider.TokenCount{}, buildFailure(fmt.Errorf("anthropic: encode count_tokens request: %w", err))
 	}

@@ -1,7 +1,6 @@
 package antigravity
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 type envelope struct {
@@ -181,7 +181,7 @@ func BuildEnvelope(req canon.Request, project, requestID, sessionID string, sele
 		RequestID:   requestID,
 		Request:     body,
 	}
-	return marshalCompact(env)
+	return wirejson.Marshal(env)
 }
 
 func (g *geminiGenerationConfig) empty() bool {
@@ -190,16 +190,6 @@ func (g *geminiGenerationConfig) empty() bool {
 
 func isClaudeModel(model string) bool {
 	return strings.Contains(strings.ToLower(model), "claude")
-}
-
-func marshalCompact(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 func (b *envelopeBuilder) systemInstruction(instructions []canon.Content) (*geminiContent, error) {

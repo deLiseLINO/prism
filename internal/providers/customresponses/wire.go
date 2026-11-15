@@ -8,6 +8,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/canon"
 	"github.com/deLiseLINO/prism/internal/providers/openaierr"
+	"github.com/deLiseLINO/prism/internal/wirejson"
 )
 
 type body struct {
@@ -169,7 +170,7 @@ func buildBody(req canon.Request) ([]byte, error) {
 		if named, ok := req.ToolChoice.(canon.ToolNamed); ok {
 			for _, tool := range out.Tools {
 				if tool.Name == string(named.Name) && tool.Type == "custom" {
-					out.ToolChoice, _ = json.Marshal(map[string]any{"type": "custom", "name": string(named.Name)})
+					out.ToolChoice, _ = wirejson.Marshal(map[string]any{"type": "custom", "name": string(named.Name)})
 				}
 			}
 		}
@@ -180,7 +181,7 @@ func buildBody(req canon.Request) ([]byte, error) {
 	} else {
 		out.Text = cfg
 	}
-	return json.Marshal(out)
+	return wirejson.Marshal(out)
 }
 
 func textConfigFrom(t canon.TextOutput) (*textConfig, error) {
@@ -402,7 +403,7 @@ func toolChoiceFrom(tc canon.ToolChoice) (json.RawMessage, bool) {
 	case canon.ToolRequired:
 		return json.RawMessage(`"required"`), true
 	case canon.ToolNamed:
-		raw, _ := json.Marshal(map[string]any{"type": "function", "name": string(t.Name)})
+		raw, _ := wirejson.Marshal(map[string]any{"type": "function", "name": string(t.Name)})
 		return raw, true
 	default:
 		return nil, false
