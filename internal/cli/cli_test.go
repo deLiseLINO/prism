@@ -809,6 +809,8 @@ func (r docRenamer) Rename(_ context.Context, from, to string, expected uint64, 
 	return rename.Result{Generation: updated.Generation, Plan: plan}, err
 }
 
+func (docRenamer) Replay(context.Context, []config.ProviderRename) error { return nil }
+
 func TestProvidersRename(t *testing.T) {
 	env := newDaemonEnv(t, nil)
 	srv := management.New(env.pool, env.cfg, &fakeCatalog{}, nil, &fakeCreds{store: map[string][]byte{}}, env.auth, env.registry, nil, nil)

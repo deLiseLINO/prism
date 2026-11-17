@@ -15,6 +15,7 @@ import (
 
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/hostsync"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/management"
 	"github.com/deLiseLINO/prism/internal/provider"
@@ -316,5 +317,144 @@ func TestRenameThroughTheManagementAPI(t *testing.T) {
 	retry := m.api(t, http.MethodPost, "/api/v1/providers/gw/rename", fmt.Sprintf(`{"to":"edge","expectedGeneration":%d}`, gen))
 	if body := decodeAs[management.ProviderRenameResponse](t, retry); retry.Code != http.StatusOK || !body.AlreadyApplied || m.cfg.Get().Generation != gen+1 {
 		t.Fatalf("retried rename = %d %s", retry.Code, retry.Body.String())
+	}
+}
+
+// seedSyncedMachine writes the config both machines share before the
+// rename: a sign-in provider gw and a custom provider router with its key.
+func seedSyncedMachine(t *testing.T, dir, upstream, key string) {
+	t.Helper()
+	mgr, err := config.Open(filepath.Join(dir, "prism.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.NewFileCredentialStore(filepath.Join(dir, "credentials")).StageCustomDefaultSecret(context.Background(), "router", "", []byte(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := config.Document{Version: config.SchemaVersion, Providers: map[string]config.Provider{
+		"gw":     {Wire: config.WireCodex, Models: []string{"m1"}},
+		"router": {Wire: config.WireOpenAIChat, BaseURL: upstream + "/v1", Models: []string{"m1"}, APIKeyRef: ref},
+	}}
+	if _, err := mgr.Update(doc, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (m *renameMachine) bundle(t *testing.T) hostsync.Bundle {
+	t.Helper()
+	b, err := hostsync.Portable(context.Background(), m.cfg.Get().Config, func(ctx context.Context, id, ref string) ([]byte, bool, error) {
+		return m.env.creds.file.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func (m *renameMachine) sync(t *testing.T, body []byte) hostsync.ApplyResponse {
+	t.Helper()
+	rec := m.api(t, http.MethodPut, hostsync.ConfigPath, string(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync = %d %s", rec.Code, rec.Body.String())
+	}
+	return decodeAs[hostsync.ApplyResponse](t, rec)
+}
+
+func TestSyncedHostReplaysRenamesBeforeMerging(t *testing.T) {
+	ctx := context.Background()
+	up, hits := keyedUpstream(t, "sk-router")
+	mainDir, hostDir := t.TempDir(), t.TempDir()
+	seedSyncedMachine(t, mainDir, up.URL, "sk-router")
+	seedSyncedMachine(t, hostDir, up.URL, "sk-router")
+	// Only the host has an account signed in under gw, and usage for it.
+	hostCreds := store.NewFileCredentialStore(filepath.Join(hostDir, "credentials"))
+	if err := hostCreds.Put(ctx, "gw", "gw:alice", 1, []byte("token-alice")); err != nil {
+		t.Fatal(err)
+	}
+	if err := account.OpenMeta(filepath.Join(hostDir, "credentials", "accounts", "gw.json")).CASLoginGeneration("gw", "gw:alice", 0, 1, "alice@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	main, host := openRenameMachine(t, mainDir), openRenameMachine(t, hostDir)
+	if err := host.usage.Insert(ctx, usage.Record{RequestID: "host-1", Timestamp: time.Now().Add(-time.Minute), Model: "gw/m1", Protocol: "chat", Status: "completed", Attempts: []usage.Attempt{{Provider: "gw", Model: "m1", Outcome: "completed"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newProviderRenamer(main.env, nil)
+	for _, step := range [][2]string{{"gw", "edge"}, {"router", "relay"}} {
+		if _, err := r.Rename(ctx, step[0], step[1], main.cfg.Get().Generation, false); err != nil {
+			t.Fatalf("rename %s: %v", step[0], err)
+		}
+	}
+	raw, err := json.Marshal(main.bundle(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := host.sync(t, raw); !res.Changed {
+		t.Fatal("first sync changed nothing")
+	}
+
+	doc := host.cfg.Get().Config
+	for _, old := range []string{"gw", "router"} {
+		if _, ok := doc.Providers[old]; ok {
+			t.Fatalf("host kept %s next to its new id: %v", old, doc.Providers)
+		}
+		if _, ok := host.env.registry.Lookup(account.ProviderID(old)); ok {
+			t.Fatalf("host still runs %s", old)
+		}
+	}
+	if len(doc.ProviderRenames) != 2 {
+		t.Fatalf("host ledger = %+v", doc.ProviderRenames)
+	}
+	rows, err := account.OpenMeta(host.env.accountsPath("edge", nil)).Load("edge")
+	if err != nil || len(rows) != 1 || rows[0].ID != "edge:alice" {
+		t.Fatalf("host edge accounts = %+v, %v", rows, err)
+	}
+	if blob, ok, err := hostCreds.Get(ctx, "edge", "edge:alice", 1); err != nil || !ok || string(blob) != "token-alice" {
+		t.Fatalf("edge:alice credential = %q %v %v", blob, ok, err)
+	}
+	if ok, _ := hostCreds.AccountPresent("gw", "gw:alice"); ok {
+		t.Fatal("gw:alice credentials left behind")
+	}
+	inPool := false
+	for _, a := range host.env.pool.Snapshot().Accounts {
+		if a.Provider == "gw" || a.Provider == "router" {
+			t.Fatalf("host pool kept %+v", a)
+		}
+		inPool = inPool || a.ID == "edge:alice"
+	}
+	if !inPool {
+		t.Fatal("edge:alice is not in the host pool")
+	}
+	if got := host.providerRequests(t, 1); got["edge"] != 1 || got["gw"] != 0 {
+		t.Fatalf("host usage by provider = %v", got)
+	}
+	if rec := host.chat(t, "relay/m1"); rec.Code != http.StatusOK {
+		t.Fatalf("relay/m1 on the host: %d %s", rec.Code, rec.Body.String())
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("upstream hits = %d", hits.Load())
+	}
+
+	gen := host.cfg.Get().Generation
+	if res := host.sync(t, raw); res.Changed || res.Generation != gen {
+		t.Fatalf("second sync = %+v, want a no-op at generation %d", res, gen)
+	}
+
+	// A main machine on an older build sends no ledger.
+	var old map[string]any
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	delete(old["document"].(map[string]any), "providerRenames")
+	legacy, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := host.sync(t, legacy); res.Changed || res.Generation != gen {
+		t.Fatalf("sync without a ledger = %+v", res)
+	}
+	if got := host.cfg.Get().Config.ProviderRenames; len(got) != 2 {
+		t.Fatalf("sync without a ledger dropped the host ledger: %+v", got)
 	}
 }

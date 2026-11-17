@@ -274,3 +274,19 @@ func TestSSHTransportKeepsTheRequestAliveUntilTheResponse(t *testing.T) {
 		t.Fatalf("a closed daemon port must surface ssh's error, got %v", err)
 	}
 }
+
+func TestMergeUnionsRenameLedgersKeepingTheHostRecords(t *testing.T) {
+	hostAt, mainAt := time.Date(2026, 11, 4, 12, 5, 0, 0, time.UTC), time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	local := mainDoc(nil)
+	local.ProviderRenames = []config.ProviderRename{{ID: "a", From: "gw", To: "edge", At: hostAt}}
+	incoming := mainDoc(nil)
+	incoming.ProviderRenames = []config.ProviderRename{{ID: "a", From: "gw", To: "edge", At: mainAt}, {ID: "b", From: "router", To: "relay", At: mainAt}}
+	got := hostsync.Merge(local, incoming).ProviderRenames
+	want := []config.ProviderRename{local.ProviderRenames[0], incoming.ProviderRenames[1]}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("merged ledger = %+v, want %+v", got, want)
+	}
+	if got := hostsync.Merge(local, mainDoc(nil)).ProviderRenames; len(got) != 1 || got[0] != local.ProviderRenames[0] {
+		t.Fatalf("a bundle without a ledger must keep the host ledger, got %+v", got)
+	}
+}

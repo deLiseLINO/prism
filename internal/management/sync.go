@@ -14,11 +14,21 @@ import (
 // this daemon's document. API keys go through the credential store, so the
 // document only ever holds this machine's own references. An identical
 // result writes nothing, which keeps the integration watcher quiet between
-// periodic pushes.
+// periodic pushes. Renames in the pushed ledger are replayed first, so
+// this machine's own data under an old provider id moves with it; a rename
+// this machine refuses blocks the whole sync until the conflict is fixed,
+// because merging without it would leave the old provider beside the new.
 func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 	body, ok := decodeJSON[hostsync.Bundle](w, r)
 	if !ok {
 		return
+	}
+	start := s.cfg.Get().Generation
+	if s.renamer != nil && len(body.Document.ProviderRenames) > 0 {
+		if err := s.renamer.Replay(r.Context(), body.Document.ProviderRenames); err != nil {
+			writeRenameError(w, err, s.cfg.Get().Generation)
+			return
+		}
 	}
 	for range 3 {
 		snap := s.cfg.Get()
@@ -37,7 +47,7 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 			next.Providers[id] = p
 		}
 		if config.Equivalent(next, snap.Config) {
-			writeJSON(w, http.StatusOK, hostsync.ApplyResponse{Generation: snap.Generation})
+			writeJSON(w, http.StatusOK, hostsync.ApplyResponse{Changed: snap.Generation != start, Generation: snap.Generation})
 			return
 		}
 		updated, err := s.cfg.Update(next, snap.Generation)

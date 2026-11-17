@@ -18,8 +18,9 @@ type ProviderRename struct {
 	ID   string `json:"id"`
 	From string `json:"from"`
 	To   string `json:"to"`
-	// At is when the rename was committed. Usage recorded after it under the
-	// old id stays there: such requests never reached the provider.
+	// At is when this machine committed the rename; a synced host stamps its
+	// own replay time. Usage recorded after it under the old id stays there:
+	// such requests never reached the provider.
 	At time.Time `json:"at"`
 }
 

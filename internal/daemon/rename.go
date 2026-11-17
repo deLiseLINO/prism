@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -132,6 +133,51 @@ func (r *providerRenamer) preflight(ctx context.Context, doc config.Document, fr
 		conflicts = append(conflicts, config.RenameConflict{Kind: config.ConflictAuthPending, Detail: fmt.Sprintf("a sign-in for %q is open; finish or cancel it first", from)})
 	}
 	return plan, conflicts, nil
+}
+
+// Replay applies the renames of ledger that this machine has not recorded
+// yet and whose old id it still has, through the same commit and data move
+// as a local rename. A host runs it before merging a synced config, so its
+// own sign-in accounts and usage history follow the provider and the merge
+// finds no old id left to keep. Each replayed record keeps its id and gets
+// this machine's commit time: usage recorded here before the replay was
+// still served under the old id.
+func (r *providerRenamer) Replay(ctx context.Context, ledger []config.ProviderRename) error {
+	r.busy.Lock()
+	defer r.busy.Unlock()
+	r.env.renameMu.Lock()
+	defer r.env.renameMu.Unlock()
+	for _, rec := range ledger {
+		if err := r.replay(ctx, rec); err != nil {
+			return fmt.Errorf("replay rename %s -> %s: %w", rec.From, rec.To, err)
+		}
+	}
+	return nil
+}
+
+func (r *providerRenamer) replay(ctx context.Context, rec config.ProviderRename) error {
+	for range 3 {
+		snap := r.env.cfg.Get()
+		if _, ok := snap.Config.Providers[rec.From]; !ok || slices.ContainsFunc(snap.Config.ProviderRenames, func(x config.ProviderRename) bool { return x.ID == rec.ID }) {
+			return nil
+		}
+		_, conflicts, err := r.preflight(ctx, snap.Config, rec.From, rec.To)
+		if err != nil {
+			return err
+		}
+		if len(conflicts) > 0 {
+			return conflicts
+		}
+		updated, err := r.commit(snap.Config, rec.From, rec.To, rec.ID, r.now(), snap.Generation)
+		if errors.Is(err, config.ErrStaleGeneration) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		return r.finish(ctx, updated)
+	}
+	return config.ErrStaleGeneration
 }
 
 // commit writes the renamed document and drops the old id from the
