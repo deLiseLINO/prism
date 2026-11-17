@@ -58,6 +58,8 @@ func (m Model) confirmActionMenu() (tea.Model, tea.Cmd) {
 		return m.toggleViewMode()
 	case actionMenuProvider:
 		return m.beginProviderSwitch()
+	case actionMenuRename:
+		return m.beginRenameFlow()
 	case actionMenuSettings:
 		m.openSettingsOverlay()
 		return m, nil

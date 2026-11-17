@@ -123,6 +123,52 @@ type GenerationResponse struct {
 	Generation uint64 `json:"generation"`
 }
 
+// ProviderRenameWrite renames the provider in the path to To. DryRun runs
+// every check and reports the plan without changing anything.
+type ProviderRenameWrite struct {
+	To                 string `json:"to"`
+	ExpectedGeneration uint64 `json:"expectedGeneration"`
+	DryRun             bool   `json:"dryRun,omitempty"`
+}
+
+type RenameIssue struct {
+	Kind   string `json:"kind"`
+	Detail string `json:"detail"`
+}
+
+type RenamePlan struct {
+	ConfigRefs    int      `json:"configRefs"`
+	Accounts      []string `json:"accounts"`
+	UsageAttempts int64    `json:"usageAttempts"`
+}
+
+// ProviderRenameResponse answers a rename or its dry run. Provider is the
+// renamed provider, absent on a dry run.
+type ProviderRenameResponse struct {
+	Generation     uint64        `json:"generation"`
+	From           string        `json:"from"`
+	To             string        `json:"to"`
+	DryRun         bool          `json:"dryRun,omitempty"`
+	AlreadyApplied bool          `json:"alreadyApplied,omitempty"`
+	Plan           RenamePlan    `json:"plan"`
+	Warnings       []RenameIssue `json:"warnings,omitempty"`
+	Provider       *Provider     `json:"provider,omitempty"`
+}
+
+// RenameConflictBody is the 409 body of a refused rename: nothing changed.
+type RenameConflictBody struct {
+	Error      ErrorDetail   `json:"error"`
+	Generation uint64        `json:"generation"`
+	Conflicts  []RenameIssue `json:"conflicts"`
+}
+
+// RenameIncompleteBody is the 500 body of a rename whose config committed
+// at Generation while its local data is still moving; the daemon retries.
+type RenameIncompleteBody struct {
+	Error      ErrorDetail `json:"error"`
+	Generation uint64      `json:"generation"`
+}
+
 type ProviderWrite struct {
 	ID                 string                           `json:"id"`
 	Wire               string                           `json:"wire"`

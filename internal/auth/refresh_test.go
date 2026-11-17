@@ -802,7 +802,7 @@ func TestPoolLaggingBehindRepositoryAligned(t *testing.T) {
 func TestContextCancellationEndsRefreshWait(t *testing.T) {
 	h := newRefreshHarness(t, "codex")
 	h.seed(expiringCodex())
-	lock, err := h.file.AcquireRefreshLock(context.Background(), refreshFingerprint(h.provider, h.acc))
+	lock, err := h.file.AcquireRefreshLock(context.Background(), store.RefreshFingerprint(h.provider, h.acc))
 	if err != nil {
 		t.Fatalf("hold lock: %v", err)
 	}

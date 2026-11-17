@@ -36,6 +36,8 @@ type command struct {
 	credFile     string
 	credStdin    bool
 	enable       bool
+	renameTo     string
+	dryRun       bool
 
 	// combos / routes
 	comboID  string
@@ -158,6 +160,7 @@ func globalFlags() map[string]bool {
 		"target":          true,
 		"force":           false,
 		"range":           true,
+		"dry-run":         false,
 	}
 }
 
@@ -170,7 +173,7 @@ Commands:
   doctor                    connectivity, version, and config sanity report
   auth login|status         browser OAuth login or session/provider status
   accounts <sub>            list/pause/resume/priority/quota/remove/select
-  providers <sub>           list/add/edit/enable/disable/remove
+  providers <sub>           list/add/edit/enable/disable/remove/rename
   models <sub>              list/enable/disable
   combos <sub>              list/set/remove
   routes <sub>              list/set/remove
@@ -219,6 +222,7 @@ var helpProviders = `Usage: prism providers list [--json]
        prism providers enable <id> [--json]
        prism providers disable <id> [--json]
        prism providers remove <id> [--json]
+       prism providers rename <id> <new-id> [--dry-run] [--json]
 Wires: codex, antigravity, responses, chat, messages
 `
 
@@ -514,6 +518,13 @@ func parseProviders(args []string, spec map[string]bool) (*command, error) {
 			return nil, usageFail(helpProviders, "providers remove requires exactly one provider id")
 		}
 		cmd.id = pos[0]
+		return cmd, nil
+	case "rename":
+		if len(pos) != 2 {
+			return nil, usageFail(helpProviders, "providers rename requires the current and the new provider id")
+		}
+		cmd.id, cmd.renameTo = pos[0], pos[1]
+		cmd.dryRun = fs.has("dry-run")
 		return cmd, nil
 	default:
 		return nil, usageFail(helpProviders, "unknown providers subcommand %q", sub)

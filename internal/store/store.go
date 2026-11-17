@@ -71,10 +71,11 @@ func NewFileCredentialStore(root string) *FileCredentialStore {
 // accountDir maps IDs to portable names: account IDs such as "codex:acc"
 // contain ':', which Windows rejects in path components.
 func (s *FileCredentialStore) accountDir(p account.ProviderID, a account.AccountID) string {
-	return filepath.Join(s.root, safeProviderDir(string(p)), accountDirName(a))
+	return filepath.Join(s.root, SafeProviderDir(string(p)), accountDirName(a))
 }
 
-func safeProviderDir(p string) string {
+// SafeProviderDir is the directory name of provider p's credentials.
+func SafeProviderDir(p string) string {
 	b := []byte(p)
 	for i, c := range b {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {

@@ -25,6 +25,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/providers/customchat"
 	"github.com/deLiseLINO/prism/internal/providers/customimages"
 	"github.com/deLiseLINO/prism/internal/providers/customresponses"
+	"github.com/deLiseLINO/prism/internal/rename"
 )
 
 const (
@@ -51,6 +52,10 @@ type daemonEnv struct {
 	lastDiscover   map[account.ProviderID]time.Time
 	codex          *integrations.CodexIntegration
 	now            func() time.Time
+	// renameMu orders rename cutovers against reconcile passes, so a pass
+	// never builds a renamed provider before its data has moved.
+	renameMu sync.Mutex
+	renames  rename.Stores
 }
 
 func newDaemonEnv(credentialPath string, cfg *config.Manager, pool auth.PoolRegistrar, quotas *quotaTable, registry *provider.Registry, creds credentialStore, client, streamClient *http.Client) *daemonEnv {
@@ -125,15 +130,16 @@ func (e *daemonEnv) ensureRepo(providerID account.ProviderID, pool *config.PoolS
 	if repo, ok := e.repos[providerID]; ok {
 		return repo
 	}
-	repoPath := ""
-	if pool != nil && pool.AccountsPath != "" {
-		repoPath = pool.AccountsPath
-	} else {
-		repoPath = filepath.Join(e.credentialPath, "accounts", string(providerID)+".json")
-	}
-	repo := account.OpenMeta(repoPath)
+	repo := account.OpenMeta(e.accountsPath(string(providerID), pool))
 	e.repos[providerID] = repo
 	return repo
+}
+
+func (e *daemonEnv) accountsPath(provider string, pool *config.PoolSettings) string {
+	if pool != nil && pool.AccountsPath != "" {
+		return pool.AccountsPath
+	}
+	return filepath.Join(e.credentialPath, "accounts", provider+".json")
 }
 
 func (e *daemonEnv) noteStoredAccount(providerID account.ProviderID) {
@@ -288,13 +294,19 @@ func (r clineAuthRunner) Run(ctx context.Context, req provider.RunRequest, sink 
 }
 
 func (e *daemonEnv) reconcileOnce(ctx context.Context) {
+	e.renameMu.Lock()
+	defer e.renameMu.Unlock()
 	snap := e.cfg.Get()
+	blocked := e.converge(ctx, snap.Config)
 	if e.codex != nil && snap.Config.Integrations["codex"].Enabled && e.codex.ManagedBinding() {
 		if err := e.codex.RefreshCatalog(); err != nil {
 			log.Printf("prism: reconcile codex catalog: %v", err)
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(snap.Config.Providers)) {
+		if blocked[id] != nil {
+			continue
+		}
 		p := snap.Config.Providers[id]
 		providerID := account.ProviderID(id)
 		if _, ok := e.registry.Lookup(providerID); !ok {

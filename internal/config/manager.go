@@ -235,17 +235,18 @@ func cloneSnapshot(s Snapshot) Snapshot {
 
 func cloneDocument(d Document) Document {
 	out := Document{
-		Version:       d.Version,
-		Daemon:        d.Daemon,
-		ContextWindow: d.ContextWindow,
-		Providers:     cloneMap(d.Providers),
-		Combos:        cloneMap(d.Combos),
-		Routes:        cloneMap(d.Routes),
-		Aliases:       cloneMap(d.Aliases),
-		Hosts:         cloneMap(d.Hosts),
-		Integrations:  cloneMap(d.Integrations),
-		VisionSidecar: d.VisionSidecar,
-		catalog:       d.catalog,
+		Version:         d.Version,
+		Daemon:          d.Daemon,
+		ContextWindow:   d.ContextWindow,
+		Providers:       cloneMap(d.Providers),
+		Combos:          cloneMap(d.Combos),
+		Routes:          cloneMap(d.Routes),
+		Aliases:         cloneMap(d.Aliases),
+		Hosts:           cloneMap(d.Hosts),
+		Integrations:    cloneMap(d.Integrations),
+		VisionSidecar:   d.VisionSidecar,
+		ProviderRenames: append([]ProviderRename(nil), d.ProviderRenames...),
+		catalog:         d.catalog,
 	}
 	for id, p := range d.Providers {
 		p.Models = append([]string(nil), p.Models...)

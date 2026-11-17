@@ -40,6 +40,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/providers/codex"
 	"github.com/deLiseLINO/prism/internal/providers/openaierr"
 	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/rename"
 	"github.com/deLiseLINO/prism/internal/requestlog"
 	"github.com/deLiseLINO/prism/internal/server"
 	"github.com/deLiseLINO/prism/internal/service"
@@ -801,7 +802,22 @@ func run(opts options) error {
 	env.ensureFlows("codex", config.WireCodex)
 	env.ensureFlows("antigravity", config.WireAntigravity)
 	env.ensureFlows("cline", config.WireCline)
+	if err := os.MkdirAll(opts.credentialPath, 0o700); err != nil {
+		return fmt.Errorf("prism: credential store directory: %w", err)
+	}
+	usageStore, err := usage.Open(filepath.Join(opts.credentialPath, "usage.db"))
+	if err != nil {
+		return fmt.Errorf("prism: usage store: %w", err)
+	}
+	defer usageStore.Close()
+	env.renames = rename.Stores{Creds: credFile, AccountsPath: env.accountsPath, Usage: usageStore}
+	// A rename committed before a crash finishes here, before any provider
+	// reads its credentials or accounts.
+	blocked := env.converge(ctx, d)
 	for _, id := range slices.Sorted(maps.Keys(d.Providers)) {
+		if blocked[id] != nil {
+			continue
+		}
 		if err := env.ensureProvider(ctx, id, d.Providers[id]); err != nil {
 			return err
 		}
@@ -857,14 +873,6 @@ func run(opts options) error {
 	})
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
 	planner := server.NewConfigPlanner(cfg)
-	if err := os.MkdirAll(opts.credentialPath, 0o700); err != nil {
-		return fmt.Errorf("prism: credential store directory: %w", err)
-	}
-	usageStore, err := usage.Open(filepath.Join(opts.credentialPath, "usage.db"))
-	if err != nil {
-		return fmt.Errorf("prism: usage store: %w", err)
-	}
-	defer usageStore.Close()
 	rlog := requestlog.New(500, time.Now)
 	daemonID := uuid.NewString()
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, pool: pool, refresher: refresher, client: client}, installer)
@@ -873,6 +881,11 @@ func run(opts options) error {
 	mgmt.SetHostSync(pusher)
 	mgmt.SetUsageStore(usageStore)
 	mgmt.SetRequestLog(rlog)
+	var signingIn func(account.ProviderID) bool
+	if authService != nil {
+		signingIn = authService.Pending
+	}
+	mgmt.SetRenamer(newProviderRenamer(env, signingIn))
 	var webUI http.Handler
 	if opts.webuiDir != "" {
 		webUI = webui.New(opts.webuiDir)

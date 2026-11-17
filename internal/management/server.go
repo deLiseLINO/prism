@@ -76,6 +76,7 @@ type Server struct {
 	stats     UsageSource
 	syncer    ModelSyncer
 	reqlog    *requestlog.Journal
+	renamer   ProviderRenamer
 	installer Installer
 	id        string
 }
@@ -105,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/providers/{id}", s.providersReplace)
 	mux.HandleFunc("POST /api/v1/providers/{id}/sync-models", s.providersSyncModels)
 	mux.HandleFunc("PUT /api/v1/providers/{id}/model-mode", s.providersModelMode)
+	mux.HandleFunc("POST /api/v1/providers/{id}/rename", s.providersRename)
 	mux.HandleFunc("DELETE /api/v1/providers/{id}", s.providersDelete)
 	mux.HandleFunc("PUT /api/v1/vision-sidecar", s.visionSidecarPut)
 	mux.HandleFunc("PUT /api/v1/context-window", s.contextWindowPut)
@@ -163,6 +165,7 @@ var routeTemplates = []string{
 	"/api/v1/providers",
 	"/api/v1/providers/{id}",
 	"/api/v1/providers/{id}/sync-models",
+	"/api/v1/providers/{id}/rename",
 	"/api/v1/providers/{id}/model-mode",
 	"/api/v1/accounts",
 	"/api/v1/accounts/{id}",
@@ -289,8 +292,8 @@ func (s *Server) providersCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if body.ID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_document", "provider id required")
+	if !config.ValidProviderID(body.ID) {
+		writeError(w, http.StatusBadRequest, "invalid_document", "provider id may use only letters, digits, '_' and '-'")
 		return
 	}
 	snap := s.cfg.Get()
@@ -445,32 +448,6 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
 }
 
-func dropTargetsOf(targets map[string]string, providerID string) {
-	prefix := providerID + "/"
-	for key, value := range targets {
-		if strings.HasPrefix(value, prefix) {
-			delete(targets, key)
-		}
-	}
-}
-
-func dropCombosOf(doc *config.Document, providerID string) {
-	for id, combo := range doc.Combos {
-		kept := combo.Targets[:0]
-		for _, target := range combo.Targets {
-			if target.Provider != providerID {
-				kept = append(kept, target)
-			}
-		}
-		if len(kept) == 0 {
-			delete(doc.Combos, id)
-			continue
-		}
-		combo.Targets = kept
-		doc.Combos[id] = combo
-	}
-}
-
 func (s *Server) providersDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	expected, ok := generationFromQuery(w, r)
@@ -482,11 +459,7 @@ func (s *Server) providersDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "provider "+id+" not found")
 		return
 	}
-	doc := snap.Config
-	delete(doc.Providers, id)
-	dropTargetsOf(doc.Routes, id)
-	dropTargetsOf(doc.Aliases, id)
-	dropCombosOf(&doc, id)
+	doc := config.DeleteProvider(snap.Config, id)
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
 		writeConfigError(w, err)

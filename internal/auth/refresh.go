@@ -16,13 +16,6 @@ import (
 // store's own bounded retry budget is exhausted.
 const refreshWait = 25 * time.Millisecond
 
-// refreshFingerprint keys the cross-process refresh lock by stable
-// provider/account identity, so a re-login that rotates the refresh grant
-// serializes against in-flight refreshes instead of racing them.
-func refreshFingerprint(p account.ProviderID, id account.AccountID) []byte {
-	return []byte("prismd-refresh:" + string(p) + ":" + string(id))
-}
-
 // RefreshPool is the runtime pool surface the refresher needs.
 type RefreshPool interface {
 	AdvanceGeneration(id account.AccountID, gen account.CredentialGeneration) error
@@ -178,7 +171,7 @@ type credentialPublication struct {
 }
 
 func lockPublication(ctx context.Context, file *store.FileCredentialStore, p account.ProviderID, id account.AccountID, wait time.Duration) (credentialPublication, error) {
-	fp := refreshFingerprint(p, id)
+	fp := store.RefreshFingerprint(p, id)
 	for {
 		lock, err := file.AcquireRefreshLock(ctx, fp)
 		if err == nil {

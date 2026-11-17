@@ -6,6 +6,7 @@ import { useAsync, useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
 import { ModelSettingsModal, draftToSettings, type ModelSettingsDraft } from '../components/ModelSettingsModal'
 import { ProviderModal } from '../components/ProviderModal'
+import { RenameProviderModal } from '../components/RenameProviderModal'
 import { wireLabel } from '../wires'
 
 function buildWrite(provider: ProviderView, generation: number, patch: Partial<ProviderWrite>): ProviderWrite {
@@ -114,10 +115,11 @@ interface DetailProps {
   readonly onOptimistic: (id: string, patch: Partial<ProviderView>) => void
   readonly onMutated: () => void
   readonly onEdit: () => void
+  readonly onRename: () => void
   readonly onDelete: () => void
   readonly onToggleProvider: (provider: ProviderView) => void
 }
-function ProviderDetail({ provider, generation, globalContextWindow, modelFilter, onOptimistic, onMutated, onEdit, onDelete, onToggleProvider }: DetailProps): JSX.Element {
+function ProviderDetail({ provider, generation, globalContextWindow, modelFilter, onOptimistic, onMutated, onEdit, onRename, onDelete, onToggleProvider }: DetailProps): JSX.Element {
   const [confirming, setConfirming] = useState(false)
   const [addModel, setAddModel] = useState('')
   const [modalModel, setModalModel] = useState<string | null>(null)
@@ -285,6 +287,9 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
           />
           <Button tone="ghost" onClick={onEdit} disabled={task.running}>
             Edit
+          </Button>
+          <Button tone="ghost" onClick={onRename} disabled={task.running}>
+            Rename…
           </Button>
           <Button tone="danger" onClick={() => setConfirming(true)} disabled={task.running || confirming}>
             Delete
@@ -541,6 +546,7 @@ export function ProvidersView(): JSX.Element {
   const providers = useAsync<ProvidersViewData>(() => api.providers(), [])
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const deleteTask = useTask()
@@ -634,6 +640,7 @@ export function ProvidersView(): JSX.Element {
                 onOptimistic={applyOptimistic}
                 onMutated={() => providers.refresh()}
                 onEdit={() => setEditing(active.id)}
+                onRename={() => setRenaming(active.id)}
                 onDelete={() => void remove(active.id, all.generation)}
                 onToggleProvider={(p) => void toggleProvider(p, all.generation)}
               />
@@ -719,6 +726,22 @@ export function ProvidersView(): JSX.Element {
           )
         }}
       </AsyncBoundary>
+      {renaming !== null && providers.state.kind === 'ready' ? (() => {
+        const target = providers.state.value.providers.find((p) => p.id === renaming)
+        if (target === undefined) return null
+        return (
+          <RenameProviderModal
+            provider={target}
+            generation={providers.state.value.generation}
+            onCancel={() => setRenaming(null)}
+            onRenamed={(to) => {
+              setRenaming(null)
+              setSelected(to)
+              providers.refresh()
+            }}
+          />
+        )
+      })() : null}
       {creating || editing !== null ? (
         <AsyncBoundary<ProvidersViewData>
           state={providers.state}

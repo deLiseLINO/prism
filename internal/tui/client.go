@@ -26,6 +26,7 @@ type Client interface {
 	IntegrationApply(ctx context.Context, id string) (integrations.ApplyResult, error)
 	ProvidersList(ctx context.Context) (management.ProvidersResponse, error)
 	ProvidersReplace(ctx context.Context, id string, w management.ProviderWrite) (management.ProviderMutationResponse, error)
+	RenameProvider(ctx context.Context, id string, w management.ProviderRenameWrite) (management.ProviderRenameResponse, *management.RenameConflictBody, error)
 	Stats(ctx context.Context, statsRange string) (management.StatsResponse, error)
 }
 

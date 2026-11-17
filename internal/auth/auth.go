@@ -288,6 +288,20 @@ func (s *Service) Status(ctx context.Context, provider account.ProviderID, sessi
 	return AuthStatus{State: state}, nil
 }
 
+// Pending reports whether a sign-in for provider is still open. A rename
+// waits for it: the flow is bound to the provider id it started under.
+func (s *Service) Pending(provider account.ProviderID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweepLocked(s.opts.Now())
+	for _, rec := range s.pending {
+		if rec.provider == provider && (rec.status == StatusPending || rec.status == statusExchanging) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
 	closing := s.loopbacks

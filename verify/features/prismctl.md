@@ -8,7 +8,7 @@ The `prism` executable exposes the daemon management CLI, plus doctor, usage, st
 - `doctor` — connectivity, CLI version, and config sanity (flags wire/endpoint mistakes).
 - `auth login <codex|antigravity> [--no-open]` / `auth status [session]` — browser OAuth or provider/session state.
 - `accounts list|pause|resume|priority|quota|remove|select` — the account family. `select <provider> <account>` pins a stored account for that provider. `auto` is a usage error.
-- `providers list|add|edit|enable|disable|remove` — provider CRUD (`--wire`, `--endpoint`/`--base-url`, `--default-model`, `--model`). `add` and `edit` take the credential from `--credential-file PATH` or `--stdin`. Both together is a usage error. Empty stdin exits 1. The secret never enters argv and is never printed.
+- `providers list|add|edit|enable|disable|remove|rename` — provider CRUD (`--wire`, `--endpoint`/`--base-url`, `--default-model`, `--model`). `add` and `edit` take the credential from `--credential-file PATH` or `--stdin`. Both together is a usage error. Empty stdin exits 1. The secret never enters argv and is never printed. `rename <id> <new-id> [--dry-run]` prints the config references, accounts and usage attempts that move, and the warnings; `--dry-run` changes nothing. A refused rename lists every conflict and exits 4; a repeated rename reports `already applied`.
 - `models list|enable|disable` — catalog and per-provider model toggles.
 - `combos list|set|remove` — `--strategy failover|round_robin`, `--target provider/model[:weight]`, `--sticky-limit`, `--alias`.
 - `routes list|set|remove` — alias -> provider/model or combo id.
@@ -17,7 +17,7 @@ The `prism` executable exposes the daemon management CLI, plus doctor, usage, st
 - `stats [--range 1h|24h|7d|30d|all]` — request and token statistics across providers and models. Default range is 24h. A bad range exits 2.
 - `agents [status] [codex|claude|grok|omp|pi|opencode|hermes]` — agent binary status. `agents install <agent> [--force]`, `agents update <agent>`, and `agents job <agent>` manage install jobs. An unknown agent or subcommand exits 2.
 - Data-producing commands take `--json` for machine-stable output; `help` is plain text.
-- Exit codes: 0 ok; 1 operational failure; 2 usage; 3 stale generation/version CAS (re-run hint); 4 integration refusal; 5 daemon unreachable; 6 malformed daemon response.
+- Exit codes: 0 ok; 1 operational failure; 2 usage; 3 stale generation/version CAS (re-run hint); 4 integration or rename refusal; 5 daemon unreachable; 6 malformed daemon response.
 
 ## How to get to it (user POV)
 

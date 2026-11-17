@@ -32,9 +32,11 @@ type fakeClient struct {
 	replacedID   string
 	replacedBody management.ProviderWrite
 
-	stats      management.StatsResponse
-	statsErr   error
-	statsRange []string
+	stats       management.StatsResponse
+	statsErr    error
+	statsRange  []string
+	renames     []management.ProviderRenameWrite
+	renameReply func(id string, w management.ProviderRenameWrite) (management.ProviderRenameResponse, *management.RenameConflictBody)
 }
 
 func newFakeClient(accounts ...management.Account) *fakeClient {
@@ -157,6 +159,17 @@ func (f *fakeClient) ProvidersReplace(ctx context.Context, id string, w manageme
 		}
 	}
 	return management.ProviderMutationResponse{}, fmt.Errorf("unknown provider %s", id)
+}
+
+func (f *fakeClient) RenameProvider(ctx context.Context, id string, w management.ProviderRenameWrite) (management.ProviderRenameResponse, *management.RenameConflictBody, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renames = append(f.renames, w)
+	if f.renameReply != nil {
+		resp, conflict := f.renameReply(id, w)
+		return resp, conflict, nil
+	}
+	return management.ProviderRenameResponse{Generation: f.generation, From: id, To: w.To, DryRun: w.DryRun}, nil, nil
 }
 
 func (f *fakeClient) Stats(ctx context.Context, statsRange string) (management.StatsResponse, error) {

@@ -69,7 +69,9 @@ type Document struct {
 	Hosts         map[string]Host                `json:"hosts,omitempty"`
 	Integrations  map[string]IntegrationSettings `json:"integrations,omitempty"`
 	VisionSidecar VisionSidecarSettings          `json:"visionSidecar,omitempty"`
-	catalog       catalogLookup                  `json:"-"`
+	// ProviderRenames is the append-only rename ledger; see ProviderRename.
+	ProviderRenames []ProviderRename `json:"providerRenames,omitempty"`
+	catalog         catalogLookup    `json:"-"`
 }
 
 type IntegrationSettings struct {
@@ -489,7 +491,7 @@ func (d Document) validate() error {
 			return fmt.Errorf("%w: integrations.%s", ErrInvalidValue, id)
 		}
 	}
-	return nil
+	return d.validateRenames()
 }
 
 func (p Provider) validateModelSettings(providerID string) error {

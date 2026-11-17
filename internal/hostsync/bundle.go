@@ -6,6 +6,7 @@ package hostsync
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/deLiseLINO/prism/internal/config"
 )
@@ -60,11 +61,14 @@ func Portable(ctx context.Context, doc config.Document, secrets SecretSource) (B
 // providers keep their model catalogs and pinned account, and a login
 // provider that exists only on the host stays. Custom providers keep the
 // host's credential reference; the caller replaces it when the bundle carries
-// a key. Every other section comes from incoming.
+// a key. The rename ledger is the union of both, the host's records first:
+// each machine keeps the time it applied a rename at. Every other section
+// comes from incoming.
 func Merge(local, incoming config.Document) config.Document {
 	out := incoming
 	out.Daemon = local.Daemon
 	out.Hosts = local.Hosts
+	out.ProviderRenames = mergeLedger(local.ProviderRenames, incoming.ProviderRenames)
 	out.Providers = make(map[string]config.Provider, len(incoming.Providers))
 	for id, p := range incoming.Providers {
 		mine, had := local.Providers[id]
@@ -83,6 +87,16 @@ func Merge(local, incoming config.Document) config.Document {
 	for id, mine := range local.Providers {
 		if _, synced := out.Providers[id]; !synced && !mine.Wire.Custom() {
 			out.Providers[id] = mine
+		}
+	}
+	return out
+}
+
+func mergeLedger(local, incoming []config.ProviderRename) []config.ProviderRename {
+	out := slices.Clone(local)
+	for _, r := range incoming {
+		if !slices.ContainsFunc(local, func(x config.ProviderRename) bool { return x.ID == r.ID }) {
+			out = append(out, r)
 		}
 	}
 	return out
