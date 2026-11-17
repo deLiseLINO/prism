@@ -881,6 +881,11 @@ func run(opts options) error {
 	mgmt.SetHostSync(pusher)
 	mgmt.SetUsageStore(usageStore)
 	mgmt.SetRequestLog(rlog)
+	var signingIn func(account.ProviderID) bool
+	if authService != nil {
+		signingIn = authService.Pending
+	}
+	mgmt.SetRenamer(newProviderRenamer(env, signingIn))
 	var webUI http.Handler
 	if opts.webuiDir != "" {
 		webUI = webui.New(opts.webuiDir)

@@ -76,6 +76,7 @@ type Server struct {
 	stats     UsageSource
 	syncer    ModelSyncer
 	reqlog    *requestlog.Journal
+	renamer   ProviderRenamer
 	installer Installer
 	id        string
 }
@@ -105,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/providers/{id}", s.providersReplace)
 	mux.HandleFunc("POST /api/v1/providers/{id}/sync-models", s.providersSyncModels)
 	mux.HandleFunc("PUT /api/v1/providers/{id}/model-mode", s.providersModelMode)
+	mux.HandleFunc("POST /api/v1/providers/{id}/rename", s.providersRename)
 	mux.HandleFunc("DELETE /api/v1/providers/{id}", s.providersDelete)
 	mux.HandleFunc("PUT /api/v1/vision-sidecar", s.visionSidecarPut)
 	mux.HandleFunc("PUT /api/v1/context-window", s.contextWindowPut)
@@ -163,6 +165,7 @@ var routeTemplates = []string{
 	"/api/v1/providers",
 	"/api/v1/providers/{id}",
 	"/api/v1/providers/{id}/sync-models",
+	"/api/v1/providers/{id}/rename",
 	"/api/v1/providers/{id}/model-mode",
 	"/api/v1/accounts",
 	"/api/v1/accounts/{id}",
