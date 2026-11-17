@@ -185,6 +185,45 @@ func (p printer) generation(resp management.GenerationResponse, what string) err
 	return p.text(what + " (generation " + fmt.Sprint(resp.Generation) + ")")
 }
 
+func (p printer) rename(resp management.ProviderRenameResponse) error {
+	if p.json {
+		return p.printJSON(resp)
+	}
+	head := fmt.Sprintf("renamed %s -> %s (generation %d)", resp.From, resp.To, resp.Generation)
+	switch {
+	case resp.DryRun:
+		head = fmt.Sprintf("rename %s -> %s (dry run, nothing changed)", resp.From, resp.To)
+	case resp.AlreadyApplied:
+		head = fmt.Sprintf("renamed %s -> %s (generation %d, already applied)", resp.From, resp.To, resp.Generation)
+	}
+	lines := []string{head}
+	if !resp.AlreadyApplied {
+		accounts := "none"
+		if len(resp.Plan.Accounts) > 0 {
+			accounts = strings.Join(resp.Plan.Accounts, ", ")
+		}
+		lines = append(lines,
+			fmt.Sprintf("  config:   %d references", resp.Plan.ConfigRefs),
+			"  accounts: "+accounts,
+			fmt.Sprintf("  usage:    %d attempts", resp.Plan.UsageAttempts))
+	}
+	for _, w := range resp.Warnings {
+		lines = append(lines, "  warning:  "+w.Detail)
+	}
+	return p.text(lines...)
+}
+
+func (p printer) renameConflict(from, to string, body management.RenameConflictBody) error {
+	if p.json {
+		return p.printJSON(body)
+	}
+	lines := []string{fmt.Sprintf("rename %s -> %s blocked, nothing changed:", from, to)}
+	for _, c := range body.Conflicts {
+		lines = append(lines, fmt.Sprintf("  %-20s %s", c.Kind, c.Detail))
+	}
+	return p.text(lines...)
+}
+
 func (p printer) accounts(resp management.AccountsResponse) error {
 	if p.json {
 		return p.printJSON(resp)

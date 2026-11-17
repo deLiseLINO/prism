@@ -22,6 +22,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/management"
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/quota"
+	"github.com/deLiseLINO/prism/internal/rename"
 )
 
 // fakePool adapts a static snapshot to the management pool interface.
@@ -781,6 +782,67 @@ func TestProvidersRemove(t *testing.T) {
 		if pr.ID == "custom-resp" {
 			t.Fatal("provider still present")
 		}
+	}
+}
+
+// docRenamer renames in the config document only, which is all the CLI
+// sees of a rename.
+type docRenamer struct{ cfg *config.Manager }
+
+func (r docRenamer) Rename(_ context.Context, from, to string, expected uint64, dryRun bool) (rename.Result, error) {
+	snap := r.cfg.Get()
+	if snap.Config.RenameApplied(from, to) {
+		return rename.Result{Generation: snap.Generation, AlreadyApplied: true}, nil
+	}
+	if c := config.CheckRename(snap.Config, from, to); len(c) > 0 {
+		return rename.Result{Generation: snap.Generation}, c
+	}
+	plan := rename.Plan{From: from, To: to, ConfigRefs: config.CountProviderRefs(snap.Config, from), Warnings: []rename.Warning{{Kind: rename.WarningClientIDs, Detail: "client configs written by hand must switch to the new ids"}}}
+	if dryRun {
+		return rename.Result{Generation: snap.Generation, Plan: plan}, nil
+	}
+	next, _, err := config.RenameProvider(snap.Config, from, to, "r1", time.Now())
+	if err != nil {
+		return rename.Result{}, err
+	}
+	updated, err := r.cfg.Update(next, expected)
+	return rename.Result{Generation: updated.Generation, Plan: plan}, err
+}
+
+func TestProvidersRename(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	srv := management.New(env.pool, env.cfg, &fakeCatalog{}, nil, &fakeCreds{store: map[string][]byte{}}, env.auth, env.registry, nil, nil)
+	srv.SetRenamer(docRenamer{cfg: env.cfg})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	env.rt.client = newClient(ts.URL)
+
+	code, out, _ := env.runCLI(t, "providers", "rename", "custom-resp", "edge", "--dry-run")
+	if code != exitOK || !strings.Contains(out, "dry run, nothing changed") || !strings.Contains(out, "warning:") {
+		t.Fatalf("dry run: code=%d out=%q", code, out)
+	}
+	if _, ok := env.cfg.Get().Config.Providers["custom-resp"]; !ok {
+		t.Fatal("dry run renamed the provider")
+	}
+
+	code, out, errOut := env.runCLI(t, "providers", "rename", "custom-resp", "codex")
+	if code != exitRefused || !strings.Contains(out, "provider_exists") || !strings.Contains(errOut, "blocked") {
+		t.Fatalf("conflict: code=%d out=%q err=%q", code, out, errOut)
+	}
+
+	code, out, _ = env.runCLI(t, "providers", "rename", "custom-resp", "edge", "--json")
+	if code != exitOK {
+		t.Fatalf("rename: code=%d out=%q", code, out)
+	}
+	if m := decodeJSON(t, out); m["from"] != "custom-resp" || m["to"] != "edge" {
+		t.Fatalf("rename json: %v", m)
+	}
+	code, out, _ = env.runCLI(t, "providers", "rename", "custom-resp", "edge")
+	if code != exitOK || !strings.Contains(out, "already applied") {
+		t.Fatalf("retry: code=%d out=%q", code, out)
+	}
+	if _, err := parseCommand([]string{"providers", "rename", "only-one"}); err == nil {
+		t.Fatal("rename with one id parsed")
 	}
 }
 

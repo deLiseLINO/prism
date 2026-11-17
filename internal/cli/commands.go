@@ -52,6 +52,8 @@ func (c *command) run(ctx context.Context, rt *cliRuntime) error {
 		return c.runProviderEnable(ctx, rt, p)
 	case "providers-remove":
 		return c.runProviderRemove(ctx, rt, p)
+	case "providers-rename":
+		return c.runProviderRename(ctx, rt, p)
 	case "models-list":
 		return c.runModelsList(ctx, rt, p)
 	case "models-enable", "models-disable":
@@ -577,6 +579,24 @@ func (c *command) runProviderRemove(ctx context.Context, rt *cliRuntime, p print
 		return err
 	}
 	return p.generation(resp, "provider removed: "+c.id)
+}
+
+func (c *command) runProviderRename(ctx context.Context, rt *cliRuntime, p printer) error {
+	list, err := rt.client.providersList(ctx)
+	if err != nil {
+		return err
+	}
+	resp, conflict, err := rt.client.providersRename(ctx, c.id, management.ProviderRenameWrite{To: c.renameTo, ExpectedGeneration: list.Generation, DryRun: c.dryRun})
+	if err != nil {
+		return err
+	}
+	if conflict != nil {
+		if err := p.renameConflict(c.id, c.renameTo, *conflict); err != nil {
+			return err
+		}
+		return exitErr(exitRefused, "rename %s -> %s blocked", c.id, c.renameTo)
+	}
+	return p.rename(resp)
 }
 
 // --- models ---

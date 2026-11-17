@@ -88,44 +88,62 @@ func newClientWithTransport(base string, rt http.RoundTripper) *client {
 }
 
 func (c *client) call(ctx context.Context, method, path string, body any, out any) error {
+	raw, status, err := c.send(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	if status >= 400 {
+		return classify(apiErrorFrom(status, raw))
+	}
+	return decodeResponse(status, raw, out)
+}
+
+// send performs one request and returns the raw body of any status; only
+// transport failures are errors.
+func (c *client) send(ctx context.Context, method, path string, body any) ([]byte, int, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("encode request: %w", err)
+			return nil, 0, fmt.Errorf("encode request: %w", err)
 		}
 		rdr = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rdr)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return exitErr(exitUnreach, "daemon unreachable at %s: %v", c.base, err)
+		return nil, 0, exitErr(exitUnreach, "daemon unreachable at %s: %v", c.base, err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return exitErr(exitFailure, "read response: %v", err)
+		return nil, 0, exitErr(exitFailure, "read response: %v", err)
 	}
-	if resp.StatusCode >= 400 {
-		ae := &apiError{status: resp.StatusCode}
-		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &ae.body); err != nil {
-				ae.rawBody = string(raw)
-			}
+	return raw, resp.StatusCode, nil
+}
+
+func apiErrorFrom(status int, raw []byte) *apiError {
+	ae := &apiError{status: status}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &ae.body); err != nil {
+			ae.rawBody = string(raw)
 		}
-		return classify(ae)
 	}
+	return ae
+}
+
+func decodeResponse(status int, raw []byte, out any) error {
 	if out == nil {
 		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return exitErr(exitMalformed, "malformed response from daemon (status %d): %v", resp.StatusCode, err)
+		return exitErr(exitMalformed, "malformed response from daemon (status %d): %v", status, err)
 	}
 	return nil
 }
@@ -167,6 +185,26 @@ func (c *client) providersDelete(ctx context.Context, id string, generation uint
 	path := "/api/v1/providers/" + escapePath(id) + "?expectedGeneration=" + strconv.FormatUint(generation, 10)
 	err := c.call(ctx, http.MethodDelete, path, nil, &out)
 	return out, err
+}
+
+// providersRename returns the daemon's conflict list on 409 rename_conflict
+// instead of an error, so callers can show every reason at once.
+func (c *client) providersRename(ctx context.Context, id string, w management.ProviderRenameWrite) (management.ProviderRenameResponse, *management.RenameConflictBody, error) {
+	var out management.ProviderRenameResponse
+	raw, status, err := c.send(ctx, http.MethodPost, "/api/v1/providers/"+escapePath(id)+"/rename", w)
+	if err != nil {
+		return out, nil, err
+	}
+	if status == http.StatusConflict {
+		var conflict management.RenameConflictBody
+		if json.Unmarshal(raw, &conflict) == nil && conflict.Error.Code == "rename_conflict" {
+			return out, &conflict, nil
+		}
+	}
+	if status >= 400 {
+		return out, nil, classify(apiErrorFrom(status, raw))
+	}
+	return out, nil, decodeResponse(status, raw, &out)
 }
 
 func (c *client) accountsList(ctx context.Context) (management.AccountsResponse, error) {
