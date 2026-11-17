@@ -40,7 +40,7 @@ func (f *fakeUsageStore) ByProvider(context.Context, time.Time) ([]usage.Provide
 	return nil, nil
 }
 
-func (f *fakeUsageStore) RenameProvider(context.Context, string, string, map[string]string) (int64, error) {
+func (f *fakeUsageStore) RenameProvider(context.Context, string, string, map[string]string, time.Time) (int64, error) {
 	return 0, nil
 }
 

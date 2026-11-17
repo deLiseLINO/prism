@@ -186,7 +186,7 @@ func converge(ctx context.Context, r config.ActiveRename, p config.Provider, s S
 		if stem := config.ClaudeAliasStem(r.From); stem != "" {
 			prefixes[stem] = config.ClaudeAliasStem(r.To)
 		}
-		n, err := s.Usage.RenameProvider(ctx, r.From, r.To, prefixes)
+		n, err := s.Usage.RenameProvider(ctx, r.From, r.To, prefixes, r.At)
 		if err != nil {
 			return changed, err
 		}

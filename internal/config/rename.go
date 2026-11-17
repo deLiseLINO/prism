@@ -15,10 +15,12 @@ import (
 // machine moves its own local data (credentials, account metadata, usage
 // history) to the new id, at startup or on the next reconcile after a crash.
 type ProviderRename struct {
-	ID   string    `json:"id"`
-	From string    `json:"from"`
-	To   string    `json:"to"`
-	At   time.Time `json:"at"`
+	ID   string `json:"id"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// At is when the rename was committed. Usage recorded after it under the
+	// old id stays there: such requests never reached the provider.
+	At time.Time `json:"at"`
 }
 
 // ReservedLoginIDs are provider ids that sign-in recreates on demand, so a
@@ -230,7 +232,7 @@ func (d Document) RenameApplied(from, to string) bool {
 func (d Document) validateRenames() error {
 	seen := make(map[string]bool, len(d.ProviderRenames))
 	for i, r := range d.ProviderRenames {
-		if r.ID == "" || r.From == "" || r.To == "" {
+		if r.ID == "" || r.From == "" || r.To == "" || r.At.IsZero() {
 			return fmt.Errorf("%w: providerRenames[%d]", ErrEmptyField, i)
 		}
 		if r.From == r.To {

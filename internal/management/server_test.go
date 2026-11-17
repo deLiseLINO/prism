@@ -988,7 +988,7 @@ func (f *fakeUsageSource) ByProvider(ctx context.Context, since time.Time) ([]us
 }
 
 func (f *fakeUsageSource) Insert(ctx context.Context, rec usage.Record) error { return nil }
-func (f *fakeUsageSource) RenameProvider(context.Context, string, string, map[string]string) (int64, error) {
+func (f *fakeUsageSource) RenameProvider(context.Context, string, string, map[string]string, time.Time) (int64, error) {
 	return 0, nil
 }
 func (f *fakeUsageSource) CountProvider(context.Context, string) (int64, error) { return 0, nil }

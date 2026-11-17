@@ -307,16 +307,21 @@ func TestDeleteProviderDropsTargetsAndKeepsClientNames(t *testing.T) {
 
 func TestValidateRejectsMalformedLedger(t *testing.T) {
 	doc := validDoc()
-	doc.ProviderRenames = []ProviderRename{{ID: "a", From: "x", To: "x"}}
+	at := time.Unix(100, 0)
+	doc.ProviderRenames = []ProviderRename{{ID: "a", From: "x", To: "x", At: at}}
 	if err := doc.validate(); !errors.Is(err, ErrInvalidValue) {
 		t.Fatalf("self rename: %v", err)
 	}
-	doc.ProviderRenames = []ProviderRename{{ID: "a", From: "x", To: "y"}, {ID: "a", From: "y", To: "z"}}
+	doc.ProviderRenames = []ProviderRename{{ID: "a", From: "x", To: "y", At: at}, {ID: "a", From: "y", To: "z", At: at}}
 	if err := doc.validate(); !errors.Is(err, ErrInvalidValue) {
 		t.Fatalf("duplicate id: %v", err)
 	}
 	doc.ProviderRenames = []ProviderRename{{From: "x", To: "y"}}
 	if err := doc.validate(); !errors.Is(err, ErrEmptyField) {
 		t.Fatalf("missing id: %v", err)
+	}
+	doc.ProviderRenames = []ProviderRename{{ID: "a", From: "x", To: "y"}}
+	if err := doc.validate(); !errors.Is(err, ErrEmptyField) {
+		t.Fatalf("missing time: %v", err)
 	}
 }

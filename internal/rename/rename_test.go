@@ -138,6 +138,24 @@ func TestConvergeMovesCustomProviderDataAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestConvergeKeepsRequestsSentUnderTheOldIDAfterTheRename(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, config.WireOpenAIChat)
+	f.seedUsage(t, "before", "gw/m1", "gw")
+	doc := f.renamed(t)
+	// The client still sends the old id; the request finds no provider.
+	late := usage.Record{RequestID: "after", Timestamp: doc.ProviderRenames[0].At.Add(time.Second), Model: "gw/m1", Protocol: "chat", Status: "failed", Reason: "no plan"}
+	if err := f.usage.Insert(ctx, late); err != nil {
+		t.Fatal(err)
+	}
+	if out := Converge(ctx, doc, f.stores); len(out) != 1 || out[0].Err != nil {
+		t.Fatalf("converge = %+v", out)
+	}
+	if got := modelTotals(t, f.usage); got["edge/m1"] != 1 || got["gw/m1"] != 1 {
+		t.Fatalf("usage by model = %v", got)
+	}
+}
+
 func TestConvergeMovesSignedInAccountsWithTheirMetadata(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, config.WireCodex)
