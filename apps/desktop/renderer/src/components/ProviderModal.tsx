@@ -5,6 +5,7 @@ import { Dialog, DialogSection } from './Patterns'
 import { useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
 import { WIRE_OPTIONS, wireLabel } from '../wires'
+import { RenameChanges, useRenameDraft } from './ProviderRename'
 
 const BASE_URL_WIRES: readonly string[] = ['responses', 'messages', 'chat']
 
@@ -21,13 +22,14 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? '')
   const [apiKey, setApiKey] = useState('')
   const task = useTask()
+  const rename = useRenameDraft(existing?.id ?? null, id, generation)
 
   const idMissing = id.trim() === ''
   const baseURLMissing =
     BASE_URL_WIRES.includes(wire) &&
     baseURL.trim() === '' &&
     (existing === null || (existing.baseURL ?? '') === '')
-  const invalid = idMissing || baseURLMissing
+  const invalid = idMissing || baseURLMissing || rename.problem !== null || (rename.renaming && !rename.ready)
 
   async function save(): Promise<void> {
     if (invalid) return
@@ -45,10 +47,28 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
       ...(trimmedKey === '' ? {} : { credential: trimmedKey }),
       expectedGeneration: generation,
     }
-    const ok = await task.run(() =>
-      existing === null ? api.createProvider(write) : api.replaceProvider(existing.id, write),
-    )
-    if (ok === undefined) return
+    if (existing === null) {
+      if ((await task.run(() => api.createProvider(write))) === undefined) return
+    } else {
+      let current = { id: existing.id, generation }
+      if (rename.renaming) {
+        const outcome = await task.run(() => api.renameProvider(existing.id, { to: rename.to, expectedGeneration: generation }))
+        if (outcome === undefined) return
+        if (outcome.kind === 'blocked') {
+          rename.blockedOnCommit(outcome.conflicts)
+          return
+        }
+        current = { id: rename.to, generation: outcome.response.generation }
+      }
+      const fieldsChanged =
+        wire !== existing.wire || (trimmedBase !== '' && trimmedBase !== (existing.baseURL ?? '')) || trimmedKey !== ''
+      if (!rename.renaming || fieldsChanged) {
+        const saved = await task.run(() =>
+          api.replaceProvider(current.id, { ...write, id: current.id, expectedGeneration: current.generation }),
+        )
+        if (saved === undefined) return
+      }
+    }
     setApiKey('')
     onSaved(id.trim())
   }
@@ -72,18 +92,22 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
       }
       error={
         task.error !== null ? (
-          <Banner tone="error" title="Save failed">
+          <Banner tone="error" title={task.error instanceof ApiError && task.error.code === 'rename_incomplete' ? 'Rename saved, data still moving' : 'Save failed'}>
             {describeError(task.error)}
             {task.error instanceof ApiError && task.error.code === 'stale_generation' ? (
-              <Button tone="ghost" size="sm" onClick={() => onSaved(id.trim())}>Re-fetch configuration</Button>
+              <Button tone="ghost" size="sm" onClick={() => onSaved(existing?.id ?? id.trim())}>Re-fetch configuration</Button>
             ) : null}
           </Banner>
         ) : undefined
       }
     >
       <DialogSection label="Identity">
-        <Field label="ID" htmlFor="prov-id">
-          <TextInput id="prov-id" value={id} onChange={setId} disabled={existing !== null} />
+        <Field
+          label="ID"
+          htmlFor="prov-id"
+          hint={existing === null ? undefined : rename.problem ?? 'Clients see this provider’s models as <id>/<model>.'}
+        >
+          <TextInput id="prov-id" value={id} onChange={setId} autoComplete="off" spellCheck={false} />
         </Field>
         <div className="field">
           <span className="dlg__field-label">Wire</span>
@@ -118,6 +142,7 @@ export function ProviderModal({ existing, generation, onCancel, onSaved }: Provi
           <TextInput id="prov-base" value={baseURL} onChange={setBaseURL} />
         </Field>
       </DialogSection>
+      {existing !== null && rename.renaming && rename.problem === null ? <RenameChanges from={existing.id} rename={rename} /> : null}
       <DialogSection label="Credential">
         <Field
           label="API key"

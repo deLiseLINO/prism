@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { previewFromOutcome, renameDraftProblem } from '../renderer/src/components/RenameProviderModal'
+import { previewFromOutcome, renameDraftProblem } from '../renderer/src/components/ProviderRename'
 
-describe('rename provider dialog', () => {
+describe('provider id rename in the editor', () => {
   it('flags ids outside the provider id grammar and ignores the unchanged id', () => {
     expect(renameDraftProblem('gw', 'gw')).toBeNull()
     expect(renameDraftProblem('gw', '')).toBeNull()
