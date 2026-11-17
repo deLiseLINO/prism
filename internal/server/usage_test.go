@@ -40,6 +40,12 @@ func (f *fakeUsageStore) ByProvider(context.Context, time.Time) ([]usage.Provide
 	return nil, nil
 }
 
+func (f *fakeUsageStore) RenameProvider(context.Context, string, string, map[string]string) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeUsageStore) CountProvider(context.Context, string) (int64, error) { return 0, nil }
+
 func (f *fakeUsageStore) snapshot() []usage.Record {
 	f.mu.Lock()
 	defer f.mu.Unlock()

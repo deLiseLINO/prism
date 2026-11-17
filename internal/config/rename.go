@@ -27,18 +27,17 @@ type ProviderRename struct {
 var ReservedLoginIDs = []string{string(WireCodex), string(WireAntigravity), string(WireCline)}
 
 // ValidProviderID is the provider id grammar for new ids: ASCII letters,
-// digits, '_' and '-'. ':' separates account ids and '/' separates models,
-// and anything else would be rewritten when the id becomes a directory name.
+// digits, '_' and '-', with at least one letter or digit. ':' separates
+// account ids and '/' separates models, anything else would be rewritten
+// when the id becomes a directory name, and an id without letters or digits
+// has no Claude model alias.
 func ValidProviderID(id string) bool {
-	if id == "" {
-		return false
-	}
 	for _, c := range []byte(id) {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
 			return false
 		}
 	}
-	return true
+	return Sanitize(id) != ""
 }
 
 type RenameConflictKind string
@@ -110,7 +109,7 @@ func CheckRename(d Document, from, to string) RenameConflicts {
 		}
 	}
 	shadowed := func(section, key string) {
-		if strings.HasPrefix(key, to+"/") || strings.HasPrefix(key, claudeAliasStem(to)) {
+		if strings.HasPrefix(key, to+"/") || strings.HasPrefix(key, ClaudeAliasStem(to)) {
 			add(ConflictModelShadowed, "%s key %q already claims a model id of %q", section, key, to)
 		}
 	}

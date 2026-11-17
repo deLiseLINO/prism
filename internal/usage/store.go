@@ -15,6 +15,8 @@ type Store interface {
 	Overview(ctx context.Context, since time.Time) (Aggregate, error)
 	ByModel(ctx context.Context, since time.Time) ([]ModelAggregate, error)
 	ByProvider(ctx context.Context, since time.Time) ([]ProviderAggregate, error)
+	RenameProvider(ctx context.Context, from, to string, modelPrefixes map[string]string) (int64, error)
+	CountProvider(ctx context.Context, provider string) (int64, error)
 }
 
 type dbStore struct {

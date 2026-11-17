@@ -113,8 +113,8 @@ func renameRef(kind RefKind, value, from, to string) (string, bool) {
 		if rest, ok := strings.CutPrefix(value, from+"/"); ok {
 			return to + "/" + rest, true
 		}
-		if rest, ok := strings.CutPrefix(value, claudeAliasStem(from)); ok && claudeAliasStem(from) != "" {
-			return claudeAliasStem(to) + rest, true
+		if stem := ClaudeAliasStem(from); stem != "" && strings.HasPrefix(value, stem) {
+			return ClaudeAliasStem(to) + value[len(stem):], true
 		}
 	case RefRouteValue, RefAliasValue, RefVisionTarget:
 		if rest, ok := strings.CutPrefix(value, from+"/"); ok {
@@ -132,9 +132,9 @@ func renameRef(kind RefKind, value, from, to string) (string, bool) {
 	return value, false
 }
 
-// claudeAliasStem is the "claude-<provider>--" prefix the messages ingress
+// ClaudeAliasStem is the "claude-<provider>--" prefix the messages ingress
 // uses for a provider's models, or "" when the id sanitizes to nothing.
-func claudeAliasStem(provider string) string {
+func ClaudeAliasStem(provider string) string {
 	p := Sanitize(provider)
 	if p == "" {
 		return ""

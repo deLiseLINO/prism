@@ -151,7 +151,7 @@ func jsonStrings(v any, out *[]string) {
 }
 
 func namesProvider(s, id string) bool {
-	return s == id || strings.HasPrefix(s, id+"/") || strings.HasPrefix(s, id+":") || strings.HasPrefix(s, claudeAliasStem(id))
+	return s == id || strings.HasPrefix(s, id+"/") || strings.HasPrefix(s, id+":") || strings.HasPrefix(s, ClaudeAliasStem(id))
 }
 
 func TestRenameProviderLeavesNoReferenceToOldID(t *testing.T) {

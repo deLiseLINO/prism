@@ -276,6 +276,13 @@ func (r *Registry) Replace(id account.ProviderID, runner Runner) error {
 	return nil
 }
 
+// Remove drops the runner of id. Requests already holding it finish.
+func (r *Registry) Remove(id account.ProviderID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.runners, id)
+}
+
 func (r *Registry) Lookup(id account.ProviderID) (Runner, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
