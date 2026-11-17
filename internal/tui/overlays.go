@@ -36,6 +36,9 @@ func (m Model) currentOverlayModal() string {
 		}
 		return m.renderIntegrationsModal()
 	}
+	if m.Rename != nil {
+		return m.renderRenameModal()
+	}
 	if m.ActionMenuVisible {
 		return m.renderActionMenuModal()
 	}

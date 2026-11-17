@@ -73,6 +73,8 @@ type Model struct {
 
 	DeleteConfirm bool
 	PinConfirm    bool
+	// Rename is the open rename-provider overlay, nil when closed.
+	Rename *renameState
 
 	UpdatePromptVisible bool
 	UpdatePromptVersion string
@@ -170,6 +172,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.StatsVisible {
 			return m.handleStatsOverlay(keyStr)
+		}
+		if m.Rename != nil {
+			return m.handleRename(msg)
 		}
 		if m.ActionMenuVisible {
 			return m.handleActionMenu(keyStr)
@@ -282,6 +287,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.defaultProgress.Width = barWidth
 		m.shortProgress.Width = barWidth
+
+	case RenameResultMsg:
+		return m.applyRenameResult(msg)
+
+	case RenameProvidersMsg:
+		return m.applyRenameProviders(msg)
 
 	case AccountsMsg:
 		m.ProviderFilter = normalizeProviderFilter(m.ProviderFilter)
