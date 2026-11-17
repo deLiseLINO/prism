@@ -117,18 +117,16 @@ export function RenameProviderModal({ provider, generation, onCancel, onRenamed 
           <TextInput id="prov-rename-to" value={draft} onChange={setDraft} autoComplete="off" spellCheck={false} />
         </Field>
       </DialogSection>
-      {conflicts !== null ? (
-        <Banner tone="error" title="Rename blocked, nothing changed">
-          {conflicts.map((c) => (
-            <span key={c.kind + c.detail} className="rename-issue">{c.detail}</span>
-          ))}
-        </Banner>
-      ) : null}
-      {preview.kind === 'failed' && preview.to === to ? (
-        <Banner tone="error" title="Check failed">{describeError(preview.error)}</Banner>
-      ) : null}
       <DialogSection label="What changes" meta={preview.kind === 'checking' ? 'checking…' : undefined}>
-        {preview.kind === 'ready' && preview.to === to ? (
+        {conflicts !== null ? (
+          <Banner tone="error" title="Rename blocked, nothing changed">
+            {conflicts.map((c) => (
+              <span key={c.kind + c.detail} className="rename-issue">{c.detail}</span>
+            ))}
+          </Banner>
+        ) : preview.kind === 'failed' && preview.to === to ? (
+          <Banner tone="error" title="Check failed">{describeError(preview.error)}</Banner>
+        ) : preview.kind === 'ready' && preview.to === to ? (
           <RenamePlan from={provider.id} preview={preview.response} />
         ) : (
           <p className="field__hint">
