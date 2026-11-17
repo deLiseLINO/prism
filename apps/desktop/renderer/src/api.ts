@@ -18,7 +18,10 @@ import type {
   PoolSettingsView,
   ProviderModelMode,
   ProviderMutationResponse,
+  ProviderRenameResponse,
+  ProviderRenameWrite,
   ProvidersView,
+  RenameConflictBody,
 
   QuotaResponse,
   StatsRange,
@@ -97,6 +100,26 @@ async function callOn<T>(
   return unwrap<T>(reply, expectedStatus)
 }
 
+// A rename the daemon refused comes back as its conflict list rather than
+// an error, so the rename dialog can show every reason at once.
+export type RenameOutcome =
+  | { readonly kind: 'ok'; readonly response: ProviderRenameResponse }
+  | { readonly kind: 'blocked'; readonly conflicts: RenameConflictBody['conflicts'] }
+
+function isRenameConflict(body: unknown): body is RenameConflictBody {
+  if (typeof body !== 'object' || body === null) return false
+  const value = body as { error?: { code?: unknown }; conflicts?: unknown }
+  return value.error?.code === 'rename_conflict' && Array.isArray(value.conflicts)
+}
+
+async function renameOn(host: HostId, id: string, body: ProviderRenameWrite): Promise<RenameOutcome> {
+  const path = `/api/v1/providers/${encodeURIComponent(id)}/rename`
+  const reply = await bridge.management.call({ method: 'POST', path, body, ...(host !== 'local' ? { host } : {}) })
+  if (reply.status === 409 && isRenameConflict(reply.body)) return { kind: 'blocked', conflicts: reply.body.conflicts }
+  if (!reply.ok || reply.status !== 200) noteFailedRequest({ method: 'POST', path, status: reply.status, code: errorCode(reply) })
+  return { kind: 'ok', response: unwrap<ProviderRenameResponse>(reply) }
+}
+
 
 interface AccountMutationWrite {
   readonly version: number
@@ -145,6 +168,9 @@ export const api = {
       'DELETE',
       `/api/v1/providers/${encodeURIComponent(id)}?expectedGeneration=${expectedGeneration}`,
     )
+  },
+  renameProvider(id: string, body: ProviderRenameWrite): Promise<RenameOutcome> {
+    return renameOn(currentHost(), id, body)
   },
   visionSidecar(body: VisionSidecarWrite): Promise<VisionSidecarWrite> {
     return call('PUT', '/api/v1/vision-sidecar', body)

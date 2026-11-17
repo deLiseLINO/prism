@@ -124,6 +124,60 @@ export interface ProviderMutationResponse {
   readonly provider: ProviderView
 }
 
+// Body of POST /api/v1/providers/{id}/rename. `dryRun` runs every check and reports the plan
+// without changing anything.
+export interface ProviderRenameWrite {
+  readonly to: string
+  readonly expectedGeneration: number
+  readonly dryRun?: boolean
+}
+
+export type RenameConflictKind =
+  | 'not_found'
+  | 'invalid_id'
+  | 'same_id'
+  | 'provider_exists'
+  | 'dir_collision'
+  | 'reserved_login_id'
+  | 'model_shadowed'
+  | 'credentials_orphan'
+  | 'accounts_orphan'
+  | 'auth_in_progress'
+  | 'rename_in_progress'
+
+export type RenameWarningKind = 'usage_merge' | 'client_model_ids'
+
+export interface RenameIssueView<K extends string = string> {
+  readonly kind: K
+  readonly detail: string
+}
+
+export interface RenamePlanView {
+  readonly configRefs: number
+  readonly accounts: readonly string[]
+  readonly usageAttempts: number
+}
+
+// 200 answer of a rename or its dry run. `provider` is the renamed provider, absent on a dry
+// run; `alreadyApplied` marks a repeated request for a rename the config already shows.
+export interface ProviderRenameResponse {
+  readonly generation: number
+  readonly from: string
+  readonly to: string
+  readonly dryRun?: boolean
+  readonly alreadyApplied?: boolean
+  readonly plan: RenamePlanView
+  readonly warnings?: readonly RenameIssueView<RenameWarningKind>[]
+  readonly provider?: ProviderView
+}
+
+// 409 body of a refused rename; nothing changed.
+export interface RenameConflictBody {
+  readonly error: { readonly code: 'rename_conflict'; readonly message: string }
+  readonly generation: number
+  readonly conflicts: readonly RenameIssueView<RenameConflictKind>[]
+}
+
 // Quota snapshot rendered by the daemon for a single account (and embedded in every account
 // view). `limit` is omitted by the daemon when unknown; `windowEnd` is always serialized and
 // is the Go zero time ("0001-01-01T00:00:00Z") when never observed.
