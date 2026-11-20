@@ -208,7 +208,12 @@ func (e *streamEncoder) ResponseFailure(terminal canon.Event) (canon.Failure, bo
 				unsafe = unsafe || block.kind != blockText
 			}
 			if unsafe {
-				return canon.Failure{Reason: canon.FailUpstreamTransport, Message: "upstream response interrupted before completion"}, true
+				message := "upstream response interrupted before completion"
+				if reason == canon.IncompleteUpstreamStall {
+					// Clients retry a turn whose error names a stream stall.
+					message = "upstream stream stall: no data within the wait limit"
+				}
+				return canon.Failure{Reason: canon.FailUpstreamTransport, Message: message}, true
 			}
 		}
 	}
