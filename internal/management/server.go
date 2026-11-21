@@ -110,6 +110,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/providers/{id}", s.providersDelete)
 	mux.HandleFunc("PUT /api/v1/vision-sidecar", s.visionSidecarPut)
 	mux.HandleFunc("PUT /api/v1/context-window", s.contextWindowPut)
+	mux.HandleFunc("GET /api/v1/experimental", s.experimentalGet)
+	mux.HandleFunc("PUT /api/v1/experimental/{flag}", s.experimentalFlagPut)
 	mux.HandleFunc("GET /api/v1/accounts", s.accountsList)
 	mux.HandleFunc("DELETE /api/v1/accounts/{id}", s.accountsDelete)
 	mux.HandleFunc("POST /api/v1/accounts/{id}/pause", s.accountPause)

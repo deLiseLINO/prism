@@ -56,6 +56,7 @@ var nonProviderFields = []string{
 	"Hosts{key}",
 	"Hosts{}.Address",
 	"Integrations{key}",
+	"Experimental{key}",
 	"ProviderRenames[].ID",
 	"ProviderRenames[].From",
 	"ProviderRenames[].To",

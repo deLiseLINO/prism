@@ -245,6 +245,7 @@ func cloneDocument(d Document) Document {
 		Hosts:           cloneMap(d.Hosts),
 		Integrations:    cloneMap(d.Integrations),
 		VisionSidecar:   d.VisionSidecar,
+		Experimental:    cloneMap(d.Experimental),
 		ProviderRenames: append([]ProviderRename(nil), d.ProviderRenames...),
 		catalog:         d.catalog,
 	}

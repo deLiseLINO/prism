@@ -31,6 +31,7 @@ import type {
   UsageView,
   VisionSidecarWrite,
   ContextWindowWrite,
+  ExperimentalView,
 } from '@prism/contracts'
 import { noteFailedRequest } from './diagnostics'
 
@@ -177,6 +178,13 @@ export const api = {
   },
   contextWindow(body: ContextWindowWrite): Promise<ContextWindowWrite> {
     return call('PUT', '/api/v1/context-window', body)
+  },
+  // Experimental flags describe this window's machine, so they always go to the local daemon.
+  experimental(): Promise<ExperimentalView> {
+    return callOn('local', 'GET', '/api/v1/experimental')
+  },
+  setExperimentalFlag(flag: string, enabled: boolean): Promise<ExperimentalView> {
+    return callOn('local', 'PUT', `/api/v1/experimental/${encodeURIComponent(flag)}`, { enabled })
   },
   accounts(): Promise<AccountsView> {
     return call('GET', '/api/v1/accounts')

@@ -31,13 +31,15 @@ type ApplyResponse struct {
 // SecretSource reads a custom provider's API key by its credential reference.
 type SecretSource func(ctx context.Context, provider, ref string) (secret []byte, present bool, err error)
 
-// Portable builds the Bundle for doc. Hosts and the daemon listen address
-// describe this machine only, so they stay behind. Login providers carry no
-// API key: their accounts are signed in on each machine separately.
+// Portable builds the Bundle for doc. Hosts, the daemon listen address and
+// the experimental flags describe this machine only, so they stay behind.
+// Login providers carry no API key: their accounts are signed in on each
+// machine separately.
 func Portable(ctx context.Context, doc config.Document, secrets SecretSource) (Bundle, error) {
 	out := Bundle{Document: doc, Secrets: map[string]string{}}
 	out.Document.Hosts = nil
 	out.Document.Daemon = config.Daemon{}
+	out.Document.Experimental = nil
 	providers := make(map[string]config.Provider, len(doc.Providers))
 	for id, p := range doc.Providers {
 		if p.Wire.Custom() && p.APIKeyRef != "" {
@@ -56,18 +58,19 @@ func Portable(ctx context.Context, doc config.Document, secrets SecretSource) (B
 	return out, nil
 }
 
-// Merge lays incoming over local. The host keeps its own daemon section and
-// host list, and everything tied to its own signed-in accounts: login
-// providers keep their model catalogs and pinned account, and a login
-// provider that exists only on the host stays. Custom providers keep the
-// host's credential reference; the caller replaces it when the bundle carries
-// a key. The rename ledger is the union of both, the host's records first:
-// each machine keeps the time it applied a rename at. Every other section
-// comes from incoming.
+// Merge lays incoming over local. The host keeps its own daemon section,
+// host list and experimental flags, and everything tied to its own signed-in
+// accounts: login providers keep their model catalogs and pinned account, and
+// a login provider that exists only on the host stays. Custom providers keep
+// the host's credential reference; the caller replaces it when the bundle
+// carries a key. The rename ledger is the union of both, the host's records
+// first: each machine keeps the time it applied a rename at. Every other
+// section comes from incoming.
 func Merge(local, incoming config.Document) config.Document {
 	out := incoming
 	out.Daemon = local.Daemon
 	out.Hosts = local.Hosts
+	out.Experimental = local.Experimental
 	out.ProviderRenames = mergeLedger(local.ProviderRenames, incoming.ProviderRenames)
 	out.Providers = make(map[string]config.Provider, len(incoming.Providers))
 	for id, p := range incoming.Providers {

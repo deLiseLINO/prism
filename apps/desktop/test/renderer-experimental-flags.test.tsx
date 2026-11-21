@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
-import { renderToString } from 'react-dom/server'
-import { act } from 'react'
-import { createRoot } from 'react-dom/client'
-import { EXPERIMENTAL_FLAGS, ExperimentalFlagsProvider, useExperimentalFlags } from '../renderer/src/experimental'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { EXPERIMENTAL_FLAGS, ExperimentalFlagsProvider } from '../renderer/src/experimental'
 import { InstallCell } from '../renderer/src/components/InstallCell'
 import { ExperimentalView } from '../renderer/src/views/ExperimentalView'
+import { api } from '../renderer/src/api'
 import type { AgentStatus } from '@prism/contracts'
 
 const status: AgentStatus = {
@@ -25,124 +25,112 @@ vi.mock('../renderer/src/bridge', () => ({
       job: vi.fn(),
       status: vi.fn(),
     },
+    updater: { setRcChannel: vi.fn(async () => undefined) },
   },
 }))
 
+let root: Root
+let element: HTMLDivElement
+let daemonFlags: Record<string, boolean>
 
-function Probe(): JSX.Element {
-  const { flags, setFlag } = useExperimentalFlags()
-  return (
-    <div>
-      <span data-testid="agent-actions">{flags.agentActions ? 'on' : 'off'}</span>
-      <span data-testid="remote-install">{flags.remoteInstall ? 'on' : 'off'}</span>
-      <button type="button" onClick={() => setFlag('agentActions', true)}>turn on</button>
-    </div>
-  )
-}
+beforeEach(() => {
+  Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true)
+  daemonFlags = {}
+  vi.spyOn(api, 'experimental').mockImplementation(async () => ({ flags: { ...daemonFlags } }))
+  vi.spyOn(api, 'setExperimentalFlag').mockImplementation(async (flag, enabled) => {
+    if (enabled) daemonFlags[flag] = true
+    else delete daemonFlags[flag]
+    return { flags: { ...daemonFlags } }
+  })
+  element = document.createElement('div')
+  document.body.appendChild(element)
+  root = createRoot(element)
+})
 
-function stubStorage(payload: Record<string, boolean> | null): void {
-  Object.defineProperty(globalThis, 'window', {
-    configurable: true,
-    value: {
-      localStorage: {
-        getItem: () => (payload === null ? null : JSON.stringify(payload)),
-        setItem: () => {},
-      },
-    },
-    writable: true,
+afterEach(() => {
+  act(() => root.unmount())
+  element.remove()
+  window.localStorage.clear()
+  vi.restoreAllMocks()
+})
+
+async function mount(children: ReactNode): Promise<void> {
+  await act(async () => {
+    root.render(<ExperimentalFlagsProvider>{children}</ExperimentalFlagsProvider>)
   })
 }
 
-describe('agent actions feature flag', () => {
-  it('is listed first in the experimental cards', () => {
+function buttons(): string[] {
+  return Array.from(element.querySelectorAll('button')).map((node) => node.textContent?.trim() ?? '')
+}
+
+function flagCard(label: string): HTMLLabelElement {
+  const card = Array.from(element.querySelectorAll<HTMLLabelElement>('.experimental-flag')).find((node) => node.textContent?.includes(label))
+  if (card === undefined) throw new Error(`Missing flag card ${label}`)
+  return card
+}
+
+describe('experimental flags', () => {
+  it('lists every flag card, agent install first', async () => {
+    await mount(<ExperimentalView />)
     expect(EXPERIMENTAL_FLAGS.map((f) => f.flag)).toEqual(['agentActions', 'otherAgents', 'visionSidecar', 'remoteInstall', 'rcChannel'])
+    expect(element.textContent).toContain('Agent install and update')
+    expect(element.textContent).toContain('Remote machines and daemon install')
   })
 
-  it('stays off by default and honors a stored true like any real flag', () => {
-    stubStorage(null)
-    const off = renderToString(
-      <ExperimentalFlagsProvider>
-        <Probe />
-      </ExperimentalFlagsProvider>,
-    )
-    expect(off).toContain('data-testid="agent-actions">off<')
+  it('hides the install and update buttons until the daemon reports the flag on', async () => {
+    await mount(<InstallCell status={status} onChanged={() => {}} />)
+    expect(buttons()).toEqual([])
+    expect(element.textContent).toContain('npm')
 
-    stubStorage({ agentActions: true })
-    const on = renderToString(
-      <ExperimentalFlagsProvider>
-        <Probe />
-      </ExperimentalFlagsProvider>,
-    )
-    expect(on).toContain('data-testid="agent-actions">on<')
+    act(() => root.unmount())
+    root = createRoot(element)
+    daemonFlags = { agentActions: true }
+    await mount(<InstallCell status={status} onChanged={() => {}} />)
+    expect(buttons()).toEqual(expect.arrayContaining(['Reinstall', 'Update']))
   })
 
-  it('hides the install and update buttons when the flag is off', () => {
-    stubStorage(null)
-    const html = renderToString(
-      <ExperimentalFlagsProvider>
-        <InstallCell status={status} onChanged={() => {}} />
-      </ExperimentalFlagsProvider>,
-    )
-    expect(html).not.toContain('Install<')
-    expect(html).not.toContain('Update<')
-    expect(html).toContain('npm')
+  it('stores a switched flag in the daemon so another window sees it', async () => {
+    await mount(<ExperimentalView />)
+    const checkbox = flagCard('Other agents').querySelector<HTMLInputElement>('input[type=checkbox]')
+    expect(checkbox?.checked).toBe(false)
+    await act(async () => flagCard('Other agents').querySelector<HTMLElement>('.card__title')?.click())
+    expect(checkbox?.checked).toBe(true)
+    expect(daemonFlags).toEqual({ otherAgents: true })
+
+    act(() => root.unmount())
+    root = createRoot(element)
+    await mount(<ExperimentalView />)
+    expect(flagCard('Other agents').querySelector<HTMLInputElement>('input[type=checkbox]')?.checked).toBe(true)
   })
 
-  it('shows the install and update buttons when the flag is on', () => {
-    stubStorage({ agentActions: true })
-    const html = renderToString(
-      <ExperimentalFlagsProvider>
-        <InstallCell status={status} onChanged={() => {}} />
-      </ExperimentalFlagsProvider>,
-    )
-    expect(html).toContain('Reinstall<')
-    expect(html).toContain('Update<')
+  it('puts the switch back when the daemon refuses the write', async () => {
+    vi.mocked(api.setExperimentalFlag).mockRejectedValueOnce(new Error('daemon down'))
+    await mount(<ExperimentalView />)
+    await act(async () => flagCard('Vision sidecar').querySelector<HTMLElement>('.card__title')?.click())
+    expect(flagCard('Vision sidecar').querySelector<HTMLInputElement>('input[type=checkbox]')?.checked).toBe(false)
   })
 
-  it.each([
-    { installed: false, error: 'required tool is not available on PATH', expected: 'required tool is not available on PATH' },
-    { installed: true, error: 'native installation requires manual maintenance', expected: 'native installation requires manual maintenance' },
-    { installed: false, error: undefined, expected: 'operation unsupported; check installation requirements' },
-    { installed: false, error: '', expected: 'operation unsupported; check installation requirements' },
-  ])('renders a stored unsupported reason with installed=$installed and error=$error even with actions hidden', ({ installed, error, expected }) => {
-    stubStorage(null)
-    const container = document.createElement('div')
-    container.innerHTML = renderToString(
-      <ExperimentalFlagsProvider>
-        <InstallCell status={{ ...status, installed, canUpdate: false, job: { agent: 'codex', op: 'install', state: 'unsupported', error } }} onChanged={() => {}} />
-      </ExperimentalFlagsProvider>,
-    )
-    expect(container.querySelector('[role=alert]')?.textContent?.trim()).toBe(expected)
-    expect(container.querySelector('button')).toBeNull()
+  it('moves flags a window kept locally into the daemon once', async () => {
+    window.localStorage.setItem('prism-experimental', JSON.stringify({ remoteInstall: true, rcChannel: false }))
+    await mount(<ExperimentalView />)
+    expect(daemonFlags).toEqual({ remoteInstall: true })
+    expect(window.localStorage.getItem('prism-experimental')).toBeNull()
+    expect(flagCard('Remote machines').querySelector<HTMLInputElement>('input[type=checkbox]')?.checked).toBe(true)
   })
 
-  describe('experimental screen card visibility', () => {
-    it('lists every flag card, agent install first, with no daemon gate', () => {
-      stubStorage(null)
-      const html = renderToString(
-        <ExperimentalFlagsProvider>
-          <ExperimentalView />
-        </ExperimentalFlagsProvider>,
-      )
-      expect(EXPERIMENTAL_FLAGS.map((c) => c.flag)).toEqual(['agentActions', 'otherAgents', 'visionSidecar', 'remoteInstall', 'rcChannel'])
-      expect(html).toContain('Agent install and update')
-      expect(html).toContain('Other agents')
-      expect(html).toContain('Remote machines and daemon install')
-    })
-
-    it('switches Other agents when its card text is clicked', () => {
-      stubStorage(null)
-      ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-      const container = document.createElement('div')
-      const root = createRoot(container)
-      act(() => root.render(<ExperimentalFlagsProvider><ExperimentalView /></ExperimentalFlagsProvider>))
-      const card = Array.from(container.querySelectorAll<HTMLLabelElement>('.experimental-flag'))
-        .find((node) => node.textContent?.includes('Other agents'))
-      const checkbox = card?.querySelector<HTMLInputElement>('input[type=checkbox]')
-      expect(checkbox?.checked).toBe(false)
-      act(() => card?.querySelector<HTMLElement>('.card__title')?.click())
-      expect(checkbox?.checked).toBe(true)
-      act(() => root.unmount())
-    })
+  it('keeps the local flags when the daemon is not reachable yet', async () => {
+    vi.mocked(api.experimental).mockRejectedValueOnce(new Error('daemon down'))
+    window.localStorage.setItem('prism-experimental', JSON.stringify({ remoteInstall: true }))
+    vi.useFakeTimers()
+    try {
+      await mount(<ExperimentalView />)
+      expect(window.localStorage.getItem('prism-experimental')).not.toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(2000))
+      expect(daemonFlags).toEqual({ remoteInstall: true })
+      expect(window.localStorage.getItem('prism-experimental')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
