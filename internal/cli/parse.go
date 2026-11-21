@@ -28,16 +28,18 @@ type command struct {
 	affinity     string
 
 	// providers
-	id           string
-	wire         string
-	baseURL      string
-	defaultModel string
-	models       []string
-	credFile     string
-	credStdin    bool
-	enable       bool
-	renameTo     string
-	dryRun       bool
+	id                string
+	wire              string
+	baseURL           string
+	fallbackURLs      []string
+	clearFallbackURLs bool
+	defaultModel      string
+	models            []string
+	credFile          string
+	credStdin         bool
+	enable            bool
+	renameTo          string
+	dryRun            bool
 
 	// combos / routes
 	comboID  string
@@ -139,28 +141,30 @@ func usageFail(help string, format string, a ...any) error {
 // specs extend it so --json is legal everywhere and unknown flags are errors.
 func globalFlags() map[string]bool {
 	return map[string]bool{
-		"json":            false,
-		"no-open":         false,
-		"session":         true,
-		"version":         true,
-		"priority":        true,
-		"wire":            true,
-		"endpoint":        true,
-		"base-url":        true,
-		"default-model":   true,
-		"model":           true,
-		"models":          true,
-		"credential-file": true,
-		"stdin":           false,
-		"weight":          true,
-		"alias":           true,
-		"sticky-limit":    true,
-		"strategy":        true,
-		"value":           true,
-		"target":          true,
-		"force":           false,
-		"range":           true,
-		"dry-run":         false,
+		"json":                false,
+		"no-open":             false,
+		"session":             true,
+		"version":             true,
+		"priority":            true,
+		"wire":                true,
+		"endpoint":            true,
+		"base-url":            true,
+		"fallback-url":        true,
+		"clear-fallback-urls": false,
+		"default-model":       true,
+		"model":               true,
+		"models":              true,
+		"credential-file":     true,
+		"stdin":               false,
+		"weight":              true,
+		"alias":               true,
+		"sticky-limit":        true,
+		"strategy":            true,
+		"value":               true,
+		"target":              true,
+		"force":               false,
+		"range":               true,
+		"dry-run":             false,
 	}
 }
 
@@ -215,15 +219,21 @@ var helpAccounts = `Usage: prism accounts list [--json]
 `
 
 var helpProviders = `Usage: prism providers list [--json]
-       prism providers add <id> --wire <wire> [--endpoint URL] [--default-model M]
-                              [--model M ...] [--credential-file PATH | --stdin] [--json]
-       prism providers edit <id> [--wire W] [--endpoint URL] [--default-model M]
-                               [--model M ...] [--credential-file PATH | --stdin] [--json]
+       prism providers add <id> --wire <wire> [--endpoint URL] [--fallback-url URL ...]
+                              [--default-model M] [--model M ...]
+                              [--credential-file PATH | --stdin] [--json]
+       prism providers edit <id> [--wire W] [--endpoint URL]
+                               [--fallback-url URL ... | --clear-fallback-urls]
+                               [--default-model M] [--model M ...]
+                               [--credential-file PATH | --stdin] [--json]
        prism providers enable <id> [--json]
        prism providers disable <id> [--json]
        prism providers remove <id> [--json]
        prism providers rename <id> <new-id> [--dry-run] [--json]
 Wires: codex, antigravity, responses, chat, messages
+--fallback-url names another instance of the same service (responses, chat,
+messages), tried in the given order when the endpoint is unreachable or
+answers 502/503/504. On edit it replaces the stored list.
 `
 
 var helpModels = `Usage: prism models list [--json]
@@ -474,6 +484,16 @@ func parseProviders(args []string, spec map[string]bool) (*command, error) {
 				return nil, usageFail(helpProviders, "use either --endpoint or --base-url, not both")
 			}
 			cmd.baseURL = v
+		}
+		cmd.fallbackURLs = fs.all("fallback-url")
+		if fs.has("clear-fallback-urls") {
+			if sub == "add" {
+				return nil, usageFail(helpProviders, "--clear-fallback-urls applies to providers edit only")
+			}
+			if len(cmd.fallbackURLs) > 0 {
+				return nil, usageFail(helpProviders, "use either --fallback-url or --clear-fallback-urls, not both")
+			}
+			cmd.clearFallbackURLs = true
 		}
 		if v, ok := fs.val("default-model"); ok {
 			cmd.defaultModel = v

@@ -149,7 +149,7 @@ func (p printer) providers(resp management.ProvidersResponse) error {
 	if p.json {
 		return p.printJSON(resp)
 	}
-	headers := []string{"ID", "WIRE", "ENABLED", "MODELS", "CRED", "BASE"}
+	headers := []string{"ID", "WIRE", "ENABLED", "MODELS", "CRED", "BASE", "FALLBACKS"}
 	rows := make([][]string, 0, len(resp.Providers))
 	for _, pr := range resp.Providers {
 		enabled := "yes"
@@ -163,6 +163,7 @@ func (p printer) providers(resp management.ProvidersResponse) error {
 			fmt.Sprintf("%d", len(pr.Models)),
 			pr.Credential.State,
 			pr.BaseURL,
+			strings.Join(pr.FallbackBaseURLs, ","),
 		})
 	}
 	if err := p.table(headers, rows); err != nil {

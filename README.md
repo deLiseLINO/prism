@@ -33,6 +33,15 @@ prism upgrade         # update prism (brew and go installs)
 
 The daemon listens on `127.0.0.1:10200`. The UI, the CLI and the desktop app share it.
 
+A `chat`, `responses` or `messages` provider can list more instances of the same service. Prism sends each request to the endpoint first and moves to the next address, in the given order, when the current one refuses the connection, does not connect within 10 seconds, or answers 502, 503 or 504 before any output reaches the client. Other answers, 4xx and 429 included, come back as they are. A failed address is tried last for the next 30 seconds. All addresses use the provider's credential, and model listing uses them too.
+
+```
+prism providers add dia --wire chat --endpoint http://100.99.36.90:8085/v1 \
+  --fallback-url http://100.99.36.91:8085/v1 --fallback-url http://10.0.0.5:8085/v1
+prism providers edit dia --fallback-url http://10.0.0.5:8085/v1   # replace the list
+prism providers edit dia --clear-fallback-urls                    # remove all fallback addresses
+```
+
 Anthropic Messages requests retain client `cache_control` markers and system block boundaries when routed to a Messages provider. No additional settings are required. Prism does not add cache markers to requests that omit them.
 
 Chat providers may send `tool_calls: null` in stream chunks. Prism treats it as no tool-call update and preserves text and active tool calls. Non-null tool-call values must still be arrays.

@@ -160,6 +160,33 @@ func TestValidateRejectsResponsesProviderWithoutBaseURL(t *testing.T) {
 	}
 }
 
+func TestValidateFallbackBaseURLs(t *testing.T) {
+	const base = "http://100.99.36.90:8085/v1"
+	cases := []struct {
+		name string
+		p    Provider
+		ok   bool
+	}{
+		{"chat with fallbacks", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{"http://10.0.0.2:8085/v1", "https://dia.example/v1"}}, true},
+		{"messages with fallback", Provider{Wire: WireAnthropicMessages, BaseURL: "https://a.example", FallbackBaseURLs: []string{"https://b.example"}}, true},
+		{"no fallbacks", Provider{Wire: WireOpenAIResponses, BaseURL: base}, true},
+		{"login wire", Provider{Wire: WireCodex, FallbackBaseURLs: []string{"http://10.0.0.2/v1"}}, false},
+		{"messages without base", Provider{Wire: WireAnthropicMessages, FallbackBaseURLs: []string{"https://b.example"}}, false},
+		{"not a URL", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{"10.0.0.2:8085"}}, false},
+		{"other scheme", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{"ftp://10.0.0.2/v1"}}, false},
+		{"same as primary", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{base + "/"}}, false},
+		{"repeated fallback", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{"http://10.0.0.2/v1", "http://10.0.0.2/v1"}}, false},
+	}
+	for _, c := range cases {
+		d := validDoc()
+		d.Providers["custom"] = c.p
+		err := d.validate()
+		if c.ok && err != nil || !c.ok && !errors.Is(err, ErrInvalidValue) {
+			t.Fatalf("%s: got %v", c.name, err)
+		}
+	}
+}
+
 func TestValidateRejectsWrongSchemaVersion(t *testing.T) {
 	d := validDoc()
 	d.Version = 99

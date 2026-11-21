@@ -30,6 +30,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/canon"
 	modelcat "github.com/deLiseLINO/prism/internal/catalog"
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/failover"
 	"github.com/deLiseLINO/prism/internal/hostsync"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/management"
@@ -240,7 +241,7 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	if err != nil {
 		return nil, err
 	}
-	req, err := modelsRequest(ctx, p, string(blob))
+	req, err := modelsRequest(failover.WithEndpoints(ctx, id, p.BaseURL, p.FallbackBaseURLs), p, string(blob))
 	if err != nil {
 		return nil, err
 	}
@@ -779,9 +780,10 @@ func run(opts options) error {
 	}
 	creds := credentialStore{file: credFile, pool: pool, publication: &credentialPublication{cfg: cfg, refs: map[string]string{}}}
 	registry := provider.NewRegistry()
-	client := &http.Client{Timeout: 30 * time.Second}
+	upstream := &failover.Transport{Base: http.DefaultTransport, Logf: log.Printf}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: upstream}
 	quotas := newQuotaTable(pool, cfg, client)
-	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client, &http.Client{})
+	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client, &http.Client{Transport: upstream})
 	pool.SetPolicyWriter(func(a account.Account) error {
 		env.reposMu.Lock()
 		repo := env.repos[a.Provider]

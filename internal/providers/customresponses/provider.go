@@ -27,6 +27,7 @@ type KeyResolver func(ctx context.Context, target provider.Target, lease account
 type Options struct {
 	ExtraHeaders []Header
 	Models       []provider.Model
+	Client       *http.Client
 }
 
 type Runner struct {
@@ -41,7 +42,7 @@ var (
 )
 
 func New(resolve KeyResolver, opts Options) *Runner {
-	return &Runner{resolve: resolve, extra: opts.ExtraHeaders, models: opts.Models}
+	return &Runner{resolve: resolve, extra: opts.ExtraHeaders, models: opts.Models, client: opts.Client}
 }
 
 type upstreamRequest struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/deLiseLINO/prism/internal/failover"
 	"github.com/deLiseLINO/prism/internal/provider"
 )
 
@@ -21,6 +22,7 @@ func (d wireDispatcher) Run(ctx context.Context, req provider.RunRequest, sink p
 			return provider.CredentialRunError(err)
 		}
 	}
+	ctx = failover.WithEndpoints(ctx, string(req.Target.Provider), req.Target.BaseURL, req.Target.FallbackBaseURLs)
 	switch req.Target.Wire {
 	case provider.WireResponses:
 		return d.responses.Run(ctx, req, sink)
@@ -45,5 +47,6 @@ func (d wireDispatcher) GenerateImage(ctx context.Context, req provider.ImageReq
 			return provider.ImageResponse{}, provider.CredentialRunError(err)
 		}
 	}
+	ctx = failover.WithEndpoints(ctx, string(req.Target.Provider), req.Target.BaseURL, req.Target.FallbackBaseURLs)
 	return d.images.GenerateImage(ctx, req)
 }

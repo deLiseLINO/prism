@@ -367,6 +367,12 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	if body.BaseURL != nil {
 		next.BaseURL = *body.BaseURL
 	}
+	if body.FallbackBaseURLs != nil {
+		next.FallbackBaseURLs = nil
+		if len(*body.FallbackBaseURLs) > 0 {
+			next.FallbackBaseURLs = *body.FallbackBaseURLs
+		}
+	}
 	if body.APIKeyRef != nil {
 		next.APIKeyRef = *body.APIKeyRef
 	}
@@ -826,23 +832,24 @@ func (s *Server) providerView(ctx context.Context, doc config.Document, id strin
 	}
 	doc.Providers = map[string]config.Provider{id: p}
 	return Provider{
-		ID:             id,
-		Wire:           string(p.Wire),
-		BaseURL:        p.BaseURL,
-		DefaultModel:   p.DefaultModel,
-		ModelMode:      string(p.ModelMode),
-		Models:         p.Models,
-		DisabledModels: p.DisabledModels,
-		SyncedModels:   p.SyncedModels,
-		RawModels:      rawModelsForProvider(p),
-		Discovered:     p.Discovered,
-		ResolvedImage:  resolvedImages(doc, id, p),
-		ResolvedFacts:  resolvedFacts(doc, id, p),
-		ModelSettings:  p.ModelSettings,
-		Enabled:        p.Enabled,
-		Pool:           p.Pool,
-		Wait:           p.Wait,
-		Credential:     ProviderCredential{State: state},
+		ID:               id,
+		Wire:             string(p.Wire),
+		BaseURL:          p.BaseURL,
+		FallbackBaseURLs: p.FallbackBaseURLs,
+		DefaultModel:     p.DefaultModel,
+		ModelMode:        string(p.ModelMode),
+		Models:           p.Models,
+		DisabledModels:   p.DisabledModels,
+		SyncedModels:     p.SyncedModels,
+		RawModels:        rawModelsForProvider(p),
+		Discovered:       p.Discovered,
+		ResolvedImage:    resolvedImages(doc, id, p),
+		ResolvedFacts:    resolvedFacts(doc, id, p),
+		ModelSettings:    p.ModelSettings,
+		Enabled:          p.Enabled,
+		Pool:             p.Pool,
+		Wait:             p.Wait,
+		Credential:       ProviderCredential{State: state},
 	}, nil
 }
 

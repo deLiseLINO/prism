@@ -31,6 +31,7 @@ var nonProviderFields = []string{
 	"Daemon.Listen",
 	"Providers{}.Wire",
 	"Providers{}.BaseURL",
+	"Providers{}.FallbackBaseURLs[]",
 	"Providers{}.DefaultModel",
 	"Providers{}.ModelMode",
 	"Providers{}.ModelCatalogs[].BaseURL",

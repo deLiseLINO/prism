@@ -51,23 +51,24 @@ type ProviderCredential struct {
 }
 
 type Provider struct {
-	ID             string                            `json:"id"`
-	Wire           string                            `json:"wire"`
-	BaseURL        string                            `json:"baseURL,omitempty"`
-	DefaultModel   string                            `json:"defaultModel,omitempty"`
-	ModelMode      string                            `json:"modelMode,omitempty"`
-	Models         []string                          `json:"models,omitempty"`
-	DisabledModels []string                          `json:"disabledModels,omitempty"`
-	SyncedModels   []string                          `json:"syncedModels,omitempty"`
-	RawModels      []string                          `json:"rawModels,omitempty"`
-	Discovered     map[string]config.DiscoveredFacts `json:"discovered,omitempty"`
-	ResolvedImage  map[string]bool                   `json:"resolvedImage,omitempty"`
-	ResolvedFacts  map[string]ResolvedFacts          `json:"resolvedFacts,omitempty"`
-	ModelSettings  map[string]config.ModelSettings   `json:"modelSettings,omitempty"`
-	Enabled        *bool                             `json:"enabled,omitempty"`
-	Pool           *config.PoolSettings              `json:"pool,omitempty"`
-	Wait           *config.WaitSettings              `json:"wait,omitempty"`
-	Credential     ProviderCredential                `json:"credential"`
+	ID               string                            `json:"id"`
+	Wire             string                            `json:"wire"`
+	BaseURL          string                            `json:"baseURL,omitempty"`
+	FallbackBaseURLs []string                          `json:"fallbackBaseURLs,omitempty"`
+	DefaultModel     string                            `json:"defaultModel,omitempty"`
+	ModelMode        string                            `json:"modelMode,omitempty"`
+	Models           []string                          `json:"models,omitempty"`
+	DisabledModels   []string                          `json:"disabledModels,omitempty"`
+	SyncedModels     []string                          `json:"syncedModels,omitempty"`
+	RawModels        []string                          `json:"rawModels,omitempty"`
+	Discovered       map[string]config.DiscoveredFacts `json:"discovered,omitempty"`
+	ResolvedImage    map[string]bool                   `json:"resolvedImage,omitempty"`
+	ResolvedFacts    map[string]ResolvedFacts          `json:"resolvedFacts,omitempty"`
+	ModelSettings    map[string]config.ModelSettings   `json:"modelSettings,omitempty"`
+	Enabled          *bool                             `json:"enabled,omitempty"`
+	Pool             *config.PoolSettings              `json:"pool,omitempty"`
+	Wait             *config.WaitSettings              `json:"wait,omitempty"`
+	Credential       ProviderCredential                `json:"credential"`
 }
 
 type ResolvedFacts struct {
@@ -173,6 +174,7 @@ type ProviderWrite struct {
 	ID                 string                           `json:"id"`
 	Wire               string                           `json:"wire"`
 	BaseURL            *string                          `json:"baseURL,omitempty"`
+	FallbackBaseURLs   *[]string                        `json:"fallbackBaseURLs,omitempty"`
 	APIKeyRef          *string                          `json:"apiKeyRef,omitempty"`
 	DefaultModel       *string                          `json:"defaultModel,omitempty"`
 	ModelMode          *string                          `json:"modelMode,omitempty"`

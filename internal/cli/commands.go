@@ -487,6 +487,10 @@ func (c *command) runProviderWrite(ctx context.Context, rt *cliRuntime, p printe
 	if c.baseURL != "" {
 		w.BaseURL = &c.baseURL
 	}
+	if len(c.fallbackURLs) > 0 || c.clearFallbackURLs {
+		fallbacks := append([]string{}, c.fallbackURLs...)
+		w.FallbackBaseURLs = &fallbacks
+	}
 	if c.defaultModel != "" {
 		w.DefaultModel = &c.defaultModel
 	}
