@@ -55,6 +55,7 @@ type Provider struct {
 	Wire             string                            `json:"wire"`
 	BaseURL          string                            `json:"baseURL,omitempty"`
 	FallbackBaseURLs []string                          `json:"fallbackBaseURLs,omitempty"`
+	EndpointMode     string                            `json:"endpointMode,omitempty"`
 	DefaultModel     string                            `json:"defaultModel,omitempty"`
 	ModelMode        string                            `json:"modelMode,omitempty"`
 	Models           []string                          `json:"models,omitempty"`
@@ -175,6 +176,7 @@ type ProviderWrite struct {
 	Wire               string                           `json:"wire"`
 	BaseURL            *string                          `json:"baseURL,omitempty"`
 	FallbackBaseURLs   *[]string                        `json:"fallbackBaseURLs,omitempty"`
+	EndpointMode       *string                          `json:"endpointMode,omitempty"`
 	APIKeyRef          *string                          `json:"apiKeyRef,omitempty"`
 	DefaultModel       *string                          `json:"defaultModel,omitempty"`
 	ModelMode          *string                          `json:"modelMode,omitempty"`

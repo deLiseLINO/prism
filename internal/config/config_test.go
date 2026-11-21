@@ -160,7 +160,7 @@ func TestValidateRejectsResponsesProviderWithoutBaseURL(t *testing.T) {
 	}
 }
 
-func TestValidateFallbackBaseURLs(t *testing.T) {
+func TestValidateEndpoints(t *testing.T) {
 	const base = "http://100.99.36.90:8085/v1"
 	cases := []struct {
 		name string
@@ -176,6 +176,10 @@ func TestValidateFallbackBaseURLs(t *testing.T) {
 		{"other scheme", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{"ftp://10.0.0.2/v1"}}, false},
 		{"same as primary", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{base + "/"}}, false},
 		{"repeated fallback", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{"http://10.0.0.2/v1", "http://10.0.0.2/v1"}}, false},
+		{"spread chat", Provider{Wire: WireOpenAIChat, BaseURL: base, FallbackBaseURLs: []string{"http://10.0.0.2/v1"}, EndpointMode: EndpointModeSpread}, true},
+		{"explicit failover", Provider{Wire: WireOpenAIChat, BaseURL: base, EndpointMode: EndpointModeFailover}, true},
+		{"unknown mode", Provider{Wire: WireOpenAIChat, BaseURL: base, EndpointMode: "random"}, false},
+		{"spread login wire", Provider{Wire: WireCodex, EndpointMode: EndpointModeSpread}, false},
 	}
 	for _, c := range cases {
 		d := validDoc()

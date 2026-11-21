@@ -33,6 +33,7 @@ type command struct {
 	baseURL           string
 	fallbackURLs      []string
 	clearFallbackURLs bool
+	endpointMode      string
 	defaultModel      string
 	models            []string
 	credFile          string
@@ -151,6 +152,8 @@ func globalFlags() map[string]bool {
 		"base-url":            true,
 		"fallback-url":        true,
 		"clear-fallback-urls": false,
+		"spread":              false,
+		"no-spread":           false,
 		"default-model":       true,
 		"model":               true,
 		"models":              true,
@@ -220,10 +223,12 @@ var helpAccounts = `Usage: prism accounts list [--json]
 
 var helpProviders = `Usage: prism providers list [--json]
        prism providers add <id> --wire <wire> [--endpoint URL] [--fallback-url URL ...]
+                              [--spread]
                               [--default-model M] [--model M ...]
                               [--credential-file PATH | --stdin] [--json]
        prism providers edit <id> [--wire W] [--endpoint URL]
                                [--fallback-url URL ... | --clear-fallback-urls]
+                               [--spread | --no-spread]
                                [--default-model M] [--model M ...]
                                [--credential-file PATH | --stdin] [--json]
        prism providers enable <id> [--json]
@@ -233,7 +238,10 @@ var helpProviders = `Usage: prism providers list [--json]
 Wires: codex, antigravity, responses, chat, messages
 --fallback-url names another instance of the same service (responses, chat,
 messages), tried in the given order when the endpoint is unreachable or
-answers 502/503/504. On edit it replaces the stored list.
+answers 429/502/503/504 before any output. On edit it replaces the stored list.
+--spread sends each client session to its own address among the endpoint and
+the fallbacks instead of always starting at the endpoint; --no-spread goes
+back to failover.
 `
 
 var helpModels = `Usage: prism models list [--json]
@@ -494,6 +502,17 @@ func parseProviders(args []string, spec map[string]bool) (*command, error) {
 				return nil, usageFail(helpProviders, "use either --fallback-url or --clear-fallback-urls, not both")
 			}
 			cmd.clearFallbackURLs = true
+		}
+		spread, noSpread := fs.has("spread"), fs.has("no-spread")
+		switch {
+		case spread && noSpread:
+			return nil, usageFail(helpProviders, "use either --spread or --no-spread, not both")
+		case noSpread && sub == "add":
+			return nil, usageFail(helpProviders, "--no-spread applies to providers edit only")
+		case spread:
+			cmd.endpointMode = "spread"
+		case noSpread:
+			cmd.endpointMode = "failover"
 		}
 		if v, ok := fs.val("default-model"); ok {
 			cmd.defaultModel = v

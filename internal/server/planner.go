@@ -137,6 +137,7 @@ func enabledTarget(d config.Document, providerID, model string) (provider.Target
 		Wire:             wireFor(d.ResolveWire(providerID, model)),
 		BaseURL:          p.BaseURL,
 		FallbackBaseURLs: p.FallbackBaseURLs,
+		SpreadEndpoints:  p.Spread(),
 		APIKeyRef:        p.APIKeyRef,
 		Model:            canon.ModelID(model),
 		ImageInput:       d.ResolveImageInput(providerID, model),

@@ -32,6 +32,7 @@ var nonProviderFields = []string{
 	"Providers{}.Wire",
 	"Providers{}.BaseURL",
 	"Providers{}.FallbackBaseURLs[]",
+	"Providers{}.EndpointMode",
 	"Providers{}.DefaultModel",
 	"Providers{}.ModelMode",
 	"Providers{}.ModelCatalogs[].BaseURL",

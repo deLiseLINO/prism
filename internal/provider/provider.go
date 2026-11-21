@@ -29,6 +29,7 @@ type Target struct {
 	Wire             Wire
 	BaseURL          string
 	FallbackBaseURLs []string
+	SpreadEndpoints  bool
 	APIKeyRef        string
 	Model            canon.ModelID
 	ImageInput       bool
