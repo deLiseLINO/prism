@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -113,20 +114,23 @@ type ModelCatalog struct {
 }
 
 type Provider struct {
-	Wire           Wire                       `json:"wire"`
-	BaseURL        string                     `json:"baseURL,omitempty"`
-	APIKeyRef      string                     `json:"apiKeyRef,omitempty"`
-	DefaultModel   string                     `json:"defaultModel,omitempty"`
-	ModelMode      ModelMode                  `json:"modelMode,omitempty"`
-	ModelCatalogs  []ModelCatalog             `json:"modelCatalogs,omitempty"`
-	Models         []string                   `json:"models,omitempty"`
-	DisabledModels []string                   `json:"disabledModels,omitempty"`
-	SyncedModels   []string                   `json:"syncedModels,omitempty"`
-	Discovered     map[string]DiscoveredFacts `json:"discovered,omitempty"`
-	ModelSettings  map[string]ModelSettings   `json:"modelSettings,omitempty"`
-	Enabled        *bool                      `json:"enabled,omitempty"`
-	Pool           *PoolSettings              `json:"pool,omitempty"`
-	Wait           *WaitSettings              `json:"wait,omitempty"`
+	Wire    Wire   `json:"wire"`
+	BaseURL string `json:"baseURL,omitempty"`
+	// FallbackBaseURLs are further instances of the same service, tried in
+	// order when BaseURL is unreachable. They share BaseURL's credential.
+	FallbackBaseURLs []string                   `json:"fallbackBaseURLs,omitempty"`
+	APIKeyRef        string                     `json:"apiKeyRef,omitempty"`
+	DefaultModel     string                     `json:"defaultModel,omitempty"`
+	ModelMode        ModelMode                  `json:"modelMode,omitempty"`
+	ModelCatalogs    []ModelCatalog             `json:"modelCatalogs,omitempty"`
+	Models           []string                   `json:"models,omitempty"`
+	DisabledModels   []string                   `json:"disabledModels,omitempty"`
+	SyncedModels     []string                   `json:"syncedModels,omitempty"`
+	Discovered       map[string]DiscoveredFacts `json:"discovered,omitempty"`
+	ModelSettings    map[string]ModelSettings   `json:"modelSettings,omitempty"`
+	Enabled          *bool                      `json:"enabled,omitempty"`
+	Pool             *PoolSettings              `json:"pool,omitempty"`
+	Wait             *WaitSettings              `json:"wait,omitempty"`
 }
 
 func (p Provider) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
@@ -408,6 +412,9 @@ func (d Document) validate() error {
 		if needsBaseURL(p.Wire) && p.BaseURL == "" {
 			return fmt.Errorf("%w: providers.%s.baseURL required for wire %q", ErrInvalidValue, id, p.Wire)
 		}
+		if err := p.validateFallbackBaseURLs(id); err != nil {
+			return err
+		}
 		for _, m := range p.DisabledModels {
 			if !contains(p.Models, m) {
 				return fmt.Errorf("%w: providers.%s.disabledModels %q does not name a configured model", ErrInvalidValue, id, m)
@@ -524,6 +531,31 @@ func (p Provider) validateModelSettings(providerID string) error {
 				return fmt.Errorf("%w: providers.%s.baseURL required for modelSettings[%s].wire %q", ErrInvalidValue, providerID, model, s.Wire)
 			}
 		}
+	}
+	return nil
+}
+
+func (p Provider) validateFallbackBaseURLs(providerID string) error {
+	if len(p.FallbackBaseURLs) == 0 {
+		return nil
+	}
+	if !p.Wire.Custom() {
+		return fmt.Errorf("%w: providers.%s.fallbackBaseURLs not allowed for wire %q", ErrInvalidValue, providerID, p.Wire)
+	}
+	if p.BaseURL == "" {
+		return fmt.Errorf("%w: providers.%s.fallbackBaseURLs need a baseURL", ErrInvalidValue, providerID)
+	}
+	seen := []string{strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")}
+	for _, raw := range p.FallbackBaseURLs {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || raw != strings.TrimSpace(raw) {
+			return fmt.Errorf("%w: providers.%s.fallbackBaseURLs %q is not an http(s) URL", ErrInvalidValue, providerID, raw)
+		}
+		key := strings.TrimRight(raw, "/")
+		if slices.Contains(seen, key) {
+			return fmt.Errorf("%w: providers.%s.fallbackBaseURLs %q repeats another base URL", ErrInvalidValue, providerID, raw)
+		}
+		seen = append(seen, key)
 	}
 	return nil
 }

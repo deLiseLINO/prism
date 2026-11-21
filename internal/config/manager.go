@@ -249,6 +249,7 @@ func cloneDocument(d Document) Document {
 		catalog:         d.catalog,
 	}
 	for id, p := range d.Providers {
+		p.FallbackBaseURLs = append([]string(nil), p.FallbackBaseURLs...)
 		p.Models = append([]string(nil), p.Models...)
 		p.DisabledModels = append([]string(nil), p.DisabledModels...)
 		p.SyncedModels = append([]string(nil), p.SyncedModels...)

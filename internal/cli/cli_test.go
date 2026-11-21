@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -856,6 +857,60 @@ func TestProviderCredentialFromStdinNotArgv(t *testing.T) {
 	_, err := parseCommand([]string{"providers", "add", "x", "--wire", "chat", "--stdin", "--credential-file", "f"})
 	if err == nil {
 		t.Fatal("expected parse failure for stdin+credential-file")
+	}
+}
+
+func TestProvidersFallbackURLsRoundTrip(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	fallbacks := func() []string {
+		t.Helper()
+		list, err := env.clientList(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pr := range list.Providers {
+			if pr.ID == "dia" {
+				return pr.FallbackBaseURLs
+			}
+		}
+		t.Fatal("dia not in providers")
+		return nil
+	}
+	code, _, errOut := env.runCLI(t, "providers", "add", "dia", "--wire", "chat",
+		"--endpoint", "http://100.99.36.90:8085/v1",
+		"--fallback-url", "http://10.0.0.2:8085/v1", "--fallback-url=http://10.0.0.3:8085/v1")
+	if code != exitOK {
+		t.Fatalf("add code=%d stderr=%s", code, errOut)
+	}
+	if got := fallbacks(); !slices.Equal(got, []string{"http://10.0.0.2:8085/v1", "http://10.0.0.3:8085/v1"}) {
+		t.Fatalf("fallbacks after add: %q", got)
+	}
+	code, _, errOut = env.runCLI(t, "providers", "edit", "dia", "--endpoint", "http://100.99.36.91:8085/v1")
+	if code != exitOK || len(fallbacks()) != 2 {
+		t.Fatalf("edit without fallback flags changed the list: code=%d stderr=%s list=%q", code, errOut, fallbacks())
+	}
+	code, _, errOut = env.runCLI(t, "providers", "edit", "dia", "--fallback-url", "http://10.0.0.3:8085/v1")
+	if got := fallbacks(); code != exitOK || !slices.Equal(got, []string{"http://10.0.0.3:8085/v1"}) {
+		t.Fatalf("replace: code=%d stderr=%s list=%q", code, errOut, got)
+	}
+	code, _, errOut = env.runCLI(t, "providers", "edit", "dia", "--clear-fallback-urls")
+	if got := fallbacks(); code != exitOK || len(got) != 0 {
+		t.Fatalf("clear: code=%d stderr=%s list=%q", code, errOut, got)
+	}
+	code, _, _ = env.runCLI(t, "providers", "edit", "dia", "--fallback-url", "http://100.99.36.91:8085/v1")
+	if code == exitOK || len(fallbacks()) != 0 {
+		t.Fatalf("fallback equal to the endpoint was stored: code=%d", code)
+	}
+}
+
+func TestProvidersFallbackFlagConflicts(t *testing.T) {
+	for _, args := range [][]string{
+		{"providers", "add", "x", "--wire", "chat", "--endpoint", "http://a/v1", "--clear-fallback-urls"},
+		{"providers", "edit", "x", "--fallback-url", "http://b/v1", "--clear-fallback-urls"},
+	} {
+		if _, err := parseCommand(args); err == nil {
+			t.Fatalf("parsed %q", args)
+		}
 	}
 }
 

@@ -133,15 +133,16 @@ func enabledTarget(d config.Document, providerID, model string) (provider.Target
 		return provider.Target{}, config.ErrInvalidTarget
 	}
 	return provider.Target{
-		Provider:        account.ProviderID(providerID),
-		Wire:            wireFor(d.ResolveWire(providerID, model)),
-		BaseURL:         p.BaseURL,
-		APIKeyRef:       p.APIKeyRef,
-		Model:           canon.ModelID(model),
-		ImageInput:      d.ResolveImageInput(providerID, model),
-		MaxOutputTokens: d.ResolveMaxOutput(providerID, model),
-		Policy:          selectionPolicy(p.Pool),
-		Wait:            waitPolicy(p.Wait),
+		Provider:         account.ProviderID(providerID),
+		Wire:             wireFor(d.ResolveWire(providerID, model)),
+		BaseURL:          p.BaseURL,
+		FallbackBaseURLs: p.FallbackBaseURLs,
+		APIKeyRef:        p.APIKeyRef,
+		Model:            canon.ModelID(model),
+		ImageInput:       d.ResolveImageInput(providerID, model),
+		MaxOutputTokens:  d.ResolveMaxOutput(providerID, model),
+		Policy:           selectionPolicy(p.Pool),
+		Wait:             waitPolicy(p.Wait),
 	}, nil
 }
 

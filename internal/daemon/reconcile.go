@@ -16,6 +16,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/auth"
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/failover"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/anthropic"
@@ -232,8 +233,8 @@ func (e *daemonEnv) buildRunner(id string, p config.Provider) (provider.Runner, 
 	case config.WireOpenAIResponses, config.WireOpenAIChat, config.WireAnthropicMessages:
 		return wireDispatcher{
 			creds:     &e.creds,
-			responses: customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{}),
-			chat:      customchat.New(customKey{e.creds}.Resolve, customchat.Options{}),
+			responses: customresponses.New(customKey{e.creds}.Resolve, customresponses.Options{Client: e.streamClient}),
+			chat:      customchat.New(customKey{e.creds}.Resolve, customchat.Options{Client: e.streamClient}),
 			messages:  anthropicRunner{runner: anthropic.New(anthropic.Options{BaseURL: p.BaseURL, HTTP: e.streamClient}), creds: e.creds, provider: providerID},
 			images:    customimages.New(customKey{e.creds}.Resolve, e.streamClient),
 		}, nil
@@ -358,7 +359,8 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 			return
 		}
 		e.lastDiscover[pid] = e.now()
-		models, err := fetchModels(ctx, e.client, current, e.storedKey(ctx, pid, current.APIKeyRef))
+		listCtx := failover.WithEndpoints(ctx, id, current.BaseURL, current.FallbackBaseURLs)
+		models, err := fetchModels(listCtx, e.client, current, e.storedKey(ctx, pid, current.APIKeyRef))
 		if err != nil {
 			log.Printf("prism: discover models for %s: %v", id, err)
 			e.saveDoc(id, p, doc, snap.Generation)
