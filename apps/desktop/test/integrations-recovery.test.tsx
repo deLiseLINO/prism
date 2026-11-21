@@ -27,7 +27,7 @@ function status(partial: Partial<IntegrationStatus> = {}): IntegrationStatus {
 
 beforeEach(() => {
   Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true)
-  window.localStorage.setItem('prism-experimental', JSON.stringify({ otherAgents: true }))
+  vi.spyOn(api, 'experimental').mockImplementation(async () => ({ flags: { otherAgents: true } }))
   element = document.createElement('div')
   document.body.appendChild(element)
   root = createRoot(element)

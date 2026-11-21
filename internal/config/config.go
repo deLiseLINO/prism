@@ -70,6 +70,9 @@ type Document struct {
 	Hosts         map[string]Host                `json:"hosts,omitempty"`
 	Integrations  map[string]IntegrationSettings `json:"integrations,omitempty"`
 	VisionSidecar VisionSidecarSettings          `json:"visionSidecar,omitempty"`
+	// Experimental holds the app's experimental flags that are on. They
+	// belong to this machine and stay out of host sync.
+	Experimental map[string]bool `json:"experimental,omitempty"`
 	// ProviderRenames is the append-only rename ledger; see ProviderRename.
 	ProviderRenames []ProviderRename `json:"providerRenames,omitempty"`
 	catalog         catalogLookup    `json:"-"`

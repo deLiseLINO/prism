@@ -91,6 +91,12 @@ export interface ContextWindowWrite {
   readonly expectedGeneration: number
 }
 
+// Mirrors internal/management/experimental.go ExperimentalResponse, returned by
+// GET /api/v1/experimental and PUT /api/v1/experimental/{flag}. Lists only the flags that are on.
+export interface ExperimentalView {
+  readonly flags: Readonly<Record<string, boolean>>
+}
+
 export interface DiscoveredFacts {
   readonly contextWindow?: number
   readonly maxOutput?: number

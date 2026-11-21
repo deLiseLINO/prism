@@ -290,3 +290,20 @@ func TestMergeUnionsRenameLedgersKeepingTheHostRecords(t *testing.T) {
 		t.Fatalf("a bundle without a ledger must keep the host ledger, got %+v", got)
 	}
 }
+
+func TestExperimentalFlagsStayOnTheirMachine(t *testing.T) {
+	main := mainDoc(nil)
+	main.Experimental = map[string]bool{"remoteInstall": true}
+	bundle, err := hostsync.Portable(context.Background(), main, func(context.Context, string, string) ([]byte, bool, error) { return nil, false, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Document.Experimental != nil {
+		t.Fatalf("bundle carries the main flags: %v", bundle.Document.Experimental)
+	}
+	local := mainDoc(nil)
+	local.Experimental = map[string]bool{"otherAgents": true}
+	if got := hostsync.Merge(local, main).Experimental; len(got) != 1 || !got["otherAgents"] {
+		t.Fatalf("merged flags = %v, want the host's own", got)
+	}
+}
