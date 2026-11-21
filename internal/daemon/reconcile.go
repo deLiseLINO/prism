@@ -359,7 +359,7 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 			return
 		}
 		e.lastDiscover[pid] = e.now()
-		listCtx := failover.WithEndpoints(ctx, id, current.BaseURL, current.FallbackBaseURLs)
+		listCtx := failover.WithEndpoints(ctx, failover.Endpoints{Provider: id, Primary: current.BaseURL, Fallbacks: current.FallbackBaseURLs, Spread: current.Spread()})
 		models, err := fetchModels(listCtx, e.client, current, e.storedKey(ctx, pid, current.APIKeyRef))
 		if err != nil {
 			log.Printf("prism: discover models for %s: %v", id, err)

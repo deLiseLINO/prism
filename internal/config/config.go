@@ -106,6 +106,23 @@ const (
 
 func (m ModelMode) Valid() bool { return m == "" || m == ModelModeLogical || m == ModelModeRaw }
 
+// EndpointMode says how requests use a provider's BaseURL and
+// FallbackBaseURLs. Failover, the default, sends every request to BaseURL
+// first. Spread pins each client session to one of all the addresses.
+type EndpointMode string
+
+const (
+	EndpointModeFailover EndpointMode = "failover"
+	EndpointModeSpread   EndpointMode = "spread"
+)
+
+func (m EndpointMode) Valid() bool {
+	return m == "" || m == EndpointModeFailover || m == EndpointModeSpread
+}
+
+// Spread reports whether requests are spread across all addresses.
+func (p Provider) Spread() bool { return p.EndpointMode == EndpointModeSpread }
+
 type ModelCatalog struct {
 	BaseURL   string   `json:"baseURL"`
 	Account   string   `json:"account"`
@@ -116,9 +133,11 @@ type ModelCatalog struct {
 type Provider struct {
 	Wire    Wire   `json:"wire"`
 	BaseURL string `json:"baseURL,omitempty"`
-	// FallbackBaseURLs are further instances of the same service, tried in
-	// order when BaseURL is unreachable. They share BaseURL's credential.
+	// FallbackBaseURLs are further instances of the same service, tried
+	// when an address is unreachable, unavailable or rate limited. They
+	// share BaseURL's credential.
 	FallbackBaseURLs []string                   `json:"fallbackBaseURLs,omitempty"`
+	EndpointMode     EndpointMode               `json:"endpointMode,omitempty"`
 	APIKeyRef        string                     `json:"apiKeyRef,omitempty"`
 	DefaultModel     string                     `json:"defaultModel,omitempty"`
 	ModelMode        ModelMode                  `json:"modelMode,omitempty"`
@@ -412,7 +431,7 @@ func (d Document) validate() error {
 		if needsBaseURL(p.Wire) && p.BaseURL == "" {
 			return fmt.Errorf("%w: providers.%s.baseURL required for wire %q", ErrInvalidValue, id, p.Wire)
 		}
-		if err := p.validateFallbackBaseURLs(id); err != nil {
+		if err := p.validateEndpoints(id); err != nil {
 			return err
 		}
 		for _, m := range p.DisabledModels {
@@ -535,7 +554,13 @@ func (p Provider) validateModelSettings(providerID string) error {
 	return nil
 }
 
-func (p Provider) validateFallbackBaseURLs(providerID string) error {
+func (p Provider) validateEndpoints(providerID string) error {
+	if !p.EndpointMode.Valid() {
+		return fmt.Errorf("%w: providers.%s.endpointMode %q (want failover or spread)", ErrInvalidValue, providerID, p.EndpointMode)
+	}
+	if p.Spread() && !p.Wire.Custom() {
+		return fmt.Errorf("%w: providers.%s.endpointMode %q not allowed for wire %q", ErrInvalidValue, providerID, p.EndpointMode, p.Wire)
+	}
 	if len(p.FallbackBaseURLs) == 0 {
 		return nil
 	}

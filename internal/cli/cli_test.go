@@ -914,6 +914,57 @@ func TestProvidersFallbackFlagConflicts(t *testing.T) {
 	}
 }
 
+func TestProvidersSpreadRoundTrip(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	mode := func() string {
+		t.Helper()
+		list, err := env.clientList(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pr := range list.Providers {
+			if pr.ID == "dia" {
+				return pr.EndpointMode
+			}
+		}
+		t.Fatal("dia not in providers")
+		return ""
+	}
+	code, _, errOut := env.runCLI(t, "providers", "add", "dia", "--wire", "chat",
+		"--endpoint", "http://100.99.36.90:8085/v1", "--fallback-url", "http://10.0.0.2:8085/v1")
+	if code != exitOK || mode() != "" {
+		t.Fatalf("add: code=%d stderr=%s mode=%q", code, errOut, mode())
+	}
+	code, _, errOut = env.runCLI(t, "providers", "edit", "dia", "--spread")
+	if code != exitOK || mode() != "spread" {
+		t.Fatalf("spread: code=%d stderr=%s mode=%q", code, errOut, mode())
+	}
+	code, out, errOut := env.runCLI(t, "providers", "list")
+	if code != exitOK || !strings.Contains(out, "MODE") || !strings.Contains(out, "spread") {
+		t.Fatalf("list: code=%d stderr=%s out=%s", code, errOut, out)
+	}
+	code, out, _ = env.runCLI(t, "providers", "list", "--json")
+	if code != exitOK || !strings.Contains(out, `"endpointMode": "spread"`) && !strings.Contains(out, `"endpointMode":"spread"`) {
+		t.Fatalf("list --json: code=%d out=%s", code, out)
+	}
+	code, _, errOut = env.runCLI(t, "providers", "edit", "dia", "--endpoint", "http://100.99.36.91:8085/v1")
+	if code != exitOK || mode() != "spread" {
+		t.Fatalf("edit without mode flags changed it: code=%d stderr=%s mode=%q", code, errOut, mode())
+	}
+	code, _, errOut = env.runCLI(t, "providers", "edit", "dia", "--no-spread")
+	if code != exitOK || mode() != "" {
+		t.Fatalf("no-spread: code=%d stderr=%s mode=%q", code, errOut, mode())
+	}
+	for _, args := range [][]string{
+		{"providers", "edit", "dia", "--spread", "--no-spread"},
+		{"providers", "add", "x", "--wire", "chat", "--endpoint", "http://a/v1", "--no-spread"},
+	} {
+		if _, err := parseCommand(args); err == nil {
+			t.Fatalf("parsed %q", args)
+		}
+	}
+}
+
 // --- models ---
 
 func TestModelsListAndToggle(t *testing.T) {

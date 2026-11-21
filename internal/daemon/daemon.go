@@ -241,7 +241,7 @@ func (m modelSyncer) remoteModelsCustom(ctx context.Context, id string, p config
 	if err != nil {
 		return nil, err
 	}
-	req, err := modelsRequest(failover.WithEndpoints(ctx, id, p.BaseURL, p.FallbackBaseURLs), p, string(blob))
+	req, err := modelsRequest(failover.WithEndpoints(ctx, failover.Endpoints{Provider: id, Primary: p.BaseURL, Fallbacks: p.FallbackBaseURLs, Spread: p.Spread()}), p, string(blob))
 	if err != nil {
 		return nil, err
 	}

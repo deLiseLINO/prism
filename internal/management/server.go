@@ -373,6 +373,12 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 			next.FallbackBaseURLs = *body.FallbackBaseURLs
 		}
 	}
+	if body.EndpointMode != nil {
+		next.EndpointMode = config.EndpointMode(*body.EndpointMode)
+		if next.EndpointMode == config.EndpointModeFailover {
+			next.EndpointMode = ""
+		}
+	}
 	if body.APIKeyRef != nil {
 		next.APIKeyRef = *body.APIKeyRef
 	}
@@ -836,6 +842,7 @@ func (s *Server) providerView(ctx context.Context, doc config.Document, id strin
 		Wire:             string(p.Wire),
 		BaseURL:          p.BaseURL,
 		FallbackBaseURLs: p.FallbackBaseURLs,
+		EndpointMode:     string(p.EndpointMode),
 		DefaultModel:     p.DefaultModel,
 		ModelMode:        string(p.ModelMode),
 		Models:           p.Models,

@@ -149,12 +149,16 @@ func (p printer) providers(resp management.ProvidersResponse) error {
 	if p.json {
 		return p.printJSON(resp)
 	}
-	headers := []string{"ID", "WIRE", "ENABLED", "MODELS", "CRED", "BASE", "FALLBACKS"}
+	headers := []string{"ID", "WIRE", "ENABLED", "MODELS", "CRED", "BASE", "FALLBACKS", "MODE"}
 	rows := make([][]string, 0, len(resp.Providers))
 	for _, pr := range resp.Providers {
 		enabled := "yes"
 		if pr.Enabled != nil && !*pr.Enabled {
 			enabled = "no"
+		}
+		mode := pr.EndpointMode
+		if mode == "" && len(pr.FallbackBaseURLs) > 0 {
+			mode = "failover"
 		}
 		rows = append(rows, []string{
 			pr.ID,
@@ -164,6 +168,7 @@ func (p printer) providers(resp management.ProvidersResponse) error {
 			pr.Credential.State,
 			pr.BaseURL,
 			strings.Join(pr.FallbackBaseURLs, ","),
+			mode,
 		})
 	}
 	if err := p.table(headers, rows); err != nil {

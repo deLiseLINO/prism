@@ -491,6 +491,9 @@ func (c *command) runProviderWrite(ctx context.Context, rt *cliRuntime, p printe
 		fallbacks := append([]string{}, c.fallbackURLs...)
 		w.FallbackBaseURLs = &fallbacks
 	}
+	if c.endpointMode != "" {
+		w.EndpointMode = &c.endpointMode
+	}
 	if c.defaultModel != "" {
 		w.DefaultModel = &c.defaultModel
 	}

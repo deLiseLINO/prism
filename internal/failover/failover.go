@@ -1,4 +1,4 @@
-// Package failover sends an upstream request to the next base URL of a
+// Package failover sends an upstream request to another base URL of a
 // provider when the current one cannot answer. A runner opts in per request
 // by carrying the provider's base URLs in the request context; requests
 // without them pass straight through.
@@ -6,12 +6,17 @@ package failover
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,35 +27,57 @@ import (
 const (
 	DefaultCooldown       = 30 * time.Second
 	DefaultConnectTimeout = 10 * time.Second
+	// MaxRateLimitCooldown bounds how long a Retry-After keeps a base at the
+	// back of the order.
+	MaxRateLimitCooldown = 5 * time.Minute
 )
+
+// sessionMemory bounds how many sessions per transport have their last
+// base remembered for move logs.
+const sessionMemory = 4096
 
 var errConnectTimeout = errors.New("connect timeout")
 
 type endpointsKey struct{}
 
+// Endpoints are the addresses of one provider's service. In failover mode
+// Primary is tried first and Fallbacks follow in order. In Spread mode each
+// Session prefers its own base, picked by rendezvous hashing over all of
+// them; requests without a Session rotate through the bases.
+type Endpoints struct {
+	Provider  string
+	Primary   string
+	Fallbacks []string
+	Spread    bool
+	Session   string
+}
+
 type endpoints struct {
 	provider string
 	bases    []string
+	spread   bool
+	session  string
 }
 
-// WithEndpoints marks requests made under ctx as calls to provider, whose
-// service answers at primary and, in order, at each fallback.
-func WithEndpoints(ctx context.Context, provider, primary string, fallbacks []string) context.Context {
-	if primary == "" || len(fallbacks) == 0 {
+// WithEndpoints marks requests made under ctx as calls to e.Provider. A
+// provider with a single address is left unmarked.
+func WithEndpoints(ctx context.Context, e Endpoints) context.Context {
+	if e.Primary == "" || len(e.Fallbacks) == 0 {
 		return ctx
 	}
-	bases := make([]string, 0, 1+len(fallbacks))
-	bases = append(bases, primary)
-	bases = append(bases, fallbacks...)
-	return context.WithValue(ctx, endpointsKey{}, endpoints{provider: provider, bases: bases})
+	bases := make([]string, 0, 1+len(e.Fallbacks))
+	bases = append(bases, e.Primary)
+	bases = append(bases, e.Fallbacks...)
+	return context.WithValue(ctx, endpointsKey{}, endpoints{provider: e.Provider, bases: bases, spread: e.Spread, session: e.Session})
 }
 
-// Transport tries a marked request on each base URL in order until one
-// answers. A connection failure, a connect timeout, or a 502/503/504 moves on
-// to the next base; any other response, 4xx and 429 included, is the
-// service's answer. Once response headers are returned nothing is retried,
-// so a stream that already reached the caller is never replayed. A base that
-// failed is tried after the healthy ones for Cooldown.
+// Transport tries a marked request on each base URL in turn until one
+// answers. A connection failure, a connect timeout, a 502/503/504 or a 429
+// moves on to the next base; any other response is the service's answer.
+// Once response headers are returned nothing is retried, so a stream that
+// already reached the caller is never replayed. A base that failed is tried
+// after the healthy ones for Cooldown, or for the 429's Retry-After. When
+// every base fails, the last answer is returned as it is.
 type Transport struct {
 	Base           http.RoundTripper
 	Cooldown       time.Duration
@@ -58,9 +85,11 @@ type Transport struct {
 	Logf           func(format string, args ...any)
 	Now            func() time.Time
 
-	mu      sync.Mutex
-	down    map[string]time.Time
-	serving map[string]string
+	mu       sync.Mutex
+	down     map[string]time.Time
+	serving  map[string]string
+	sessions map[string]string
+	next     map[string]int
 }
 
 type candidate struct {
@@ -82,40 +111,74 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if req.Context().Err() != nil {
 			return resp, err
 		}
-		if err == nil && !unavailable(resp.StatusCode) {
+		if err == nil && !retryable(resp.StatusCode) {
 			t.served(ep, c.base)
 			return resp, nil
 		}
-		t.markDown(c.base)
-		if i == len(cands)-1 {
+		cooldown := t.cooldown()
+		if err == nil && resp.StatusCode == http.StatusTooManyRequests {
+			cooldown = retryAfter(resp.Header, t.now(), cooldown)
+		}
+		t.markDown(c.base, cooldown)
+		last := i == len(cands)-1
+		switch {
+		case err != nil:
+			if !last {
+				t.logf("prism: provider %s: %s unavailable (%s), trying %s", ep.provider, c.base, err, cands[i+1].base)
+			}
+		case resp.StatusCode == http.StatusTooManyRequests:
+			if last {
+				t.logf("prism: provider %s: %s rate limited (429), cooling down %s; every address refused", ep.provider, c.base, cooldown)
+			} else {
+				t.logf("prism: provider %s: %s rate limited (429), cooling down %s, trying %s", ep.provider, c.base, cooldown, cands[i+1].base)
+			}
+		case !last:
+			t.logf("prism: provider %s: %s unavailable (%s), trying %s", ep.provider, c.base, resp.Status, cands[i+1].base)
+		}
+		if last {
 			return resp, err
 		}
-		reason := ""
-		if err != nil {
-			reason = err.Error()
-		} else {
-			reason = resp.Status
+		if resp != nil {
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
 		}
-		t.logf("prism: provider %s: %s unavailable (%s), trying %s", ep.provider, c.base, reason, cands[i+1].base)
 	}
 	return nil, errors.New("failover: no candidate base URL")
 }
 
-func unavailable(status int) bool {
-	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+func retryable(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
-// candidates maps the request URL onto every base, healthy bases first, each
-// group in configured order. A base the URL cannot be mapped onto is left out.
+// retryAfter reads a 429's Retry-After, in seconds or as an HTTP date, and
+// falls back to def when it is absent or not in the future.
+func retryAfter(h http.Header, now time.Time, def time.Duration) time.Duration {
+	v := strings.TrimSpace(h.Get("Retry-After"))
+	if v == "" {
+		return def
+	}
+	var d time.Duration
+	if secs, err := strconv.Atoi(v); err == nil {
+		d = time.Duration(secs) * time.Second
+	} else if at, err := http.ParseTime(v); err == nil {
+		d = at.Sub(now)
+	}
+	if d <= 0 {
+		return def
+	}
+	return min(d, MaxRateLimitCooldown)
+}
+
+// candidates maps the request URL onto every base in the mode's order,
+// healthy bases first. A base the URL cannot be mapped onto is left out.
 func (t *Transport) candidates(ep endpoints, raw string) []candidate {
 	primary := ep.bases[0]
-	var healthy, cooling []candidate
 	now := t.now()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for _, base := range ep.bases {
+	var healthy, cooling []candidate
+	for _, base := range t.order(ep) {
 		mapped, ok := rebase(raw, primary, base)
 		if !ok {
 			if base == primary {
@@ -135,6 +198,44 @@ func (t *Transport) candidates(ep endpoints, raw string) []candidate {
 		}
 	}
 	return append(healthy, cooling...)
+}
+
+// order lists the bases in the order the mode prefers them. Callers hold mu.
+func (t *Transport) order(ep endpoints) []string {
+	if !ep.spread {
+		return ep.bases
+	}
+	if ep.session == "" {
+		if t.next == nil {
+			t.next = map[string]int{}
+		}
+		start := t.next[ep.provider] % len(ep.bases)
+		t.next[ep.provider] = (start + 1) % len(ep.bases)
+		return append(slices.Clone(ep.bases[start:]), ep.bases[:start]...)
+	}
+	out := slices.Clone(ep.bases)
+	scores := make(map[string]uint64, len(out))
+	for _, base := range out {
+		scores[base] = rendezvous(ep.session, base)
+	}
+	slices.SortStableFunc(out, func(a, b string) int {
+		switch sa, sb := scores[a], scores[b]; {
+		case sa > sb:
+			return -1
+		case sa < sb:
+			return 1
+		}
+		return 0
+	})
+	return out
+}
+
+func rendezvous(session, base string) uint64 {
+	h := sha256.New()
+	h.Write([]byte(session))
+	h.Write([]byte{0})
+	h.Write([]byte(base))
+	return binary.BigEndian.Uint64(h.Sum(nil))
 }
 
 // rebase rewrites raw, a URL built from the base from, onto the base to.
@@ -203,26 +304,48 @@ func (b cancelOnClose) Close() error {
 	return err
 }
 
-func (t *Transport) markDown(base string) {
-	cooldown := t.Cooldown
-	if cooldown <= 0 {
-		cooldown = DefaultCooldown
+func (t *Transport) cooldown() time.Duration {
+	if t.Cooldown > 0 {
+		return t.Cooldown
 	}
+	return DefaultCooldown
+}
+
+func (t *Transport) markDown(base string, cooldown time.Duration) {
 	until := t.now().Add(cooldown)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.down == nil {
 		t.down = map[string]time.Time{}
 	}
-	t.down[base] = until
+	if until.After(t.down[base]) {
+		t.down[base] = until
+	}
 }
 
-// served records which base answered for the provider and logs when that
-// moves off the primary or back to it.
+// served records which base answered and logs a move: per provider in
+// failover mode, per session in spread mode.
 func (t *Transport) served(ep endpoints, base string) {
-	primary := ep.bases[0]
 	t.mu.Lock()
 	delete(t.down, base)
+	if ep.spread {
+		if ep.session == "" {
+			t.mu.Unlock()
+			return
+		}
+		key := ep.provider + "\x00" + ep.session
+		prev, ok := t.sessions[key]
+		if t.sessions == nil || len(t.sessions) >= sessionMemory && !ok {
+			t.sessions = map[string]string{}
+		}
+		t.sessions[key] = base
+		t.mu.Unlock()
+		if ok && prev != base {
+			t.logf("prism: provider %s: session %s moved from %s to %s", ep.provider, sessionLabel(ep.session), prev, base)
+		}
+		return
+	}
+	primary := ep.bases[0]
 	prev, ok := t.serving[ep.provider]
 	if !ok {
 		prev = primary
@@ -239,6 +362,12 @@ func (t *Transport) served(ep endpoints, base string) {
 	default:
 		t.logf("prism: provider %s: serving from fallback %s", ep.provider, base)
 	}
+}
+
+// sessionLabel names a session in logs without printing the client's id.
+func sessionLabel(session string) string {
+	sum := sha256.Sum256([]byte(session))
+	return hex.EncodeToString(sum[:4])
 }
 
 func (t *Transport) base() http.RoundTripper {
