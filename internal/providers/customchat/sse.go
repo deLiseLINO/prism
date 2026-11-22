@@ -99,11 +99,17 @@ type streamer struct {
 	finished        bool
 	finishReason    string
 	terminalEmitted bool
+
+	retryFault bool
+	emitted    bool
 }
 
-func (r *Runner) runStream(body io.Reader, sink provider.Sink, custom customTools) error {
-	st := &streamer{sink: sink, custom: custom}
+func (r *Runner) runStream(body io.Reader, sink provider.Sink, custom customTools, retryFault bool) error {
+	st := &streamer{sink: sink, custom: custom, retryFault: retryFault}
 	err := readFrames(body, st.handleFrame)
+	if errors.Is(err, errModelFault) {
+		return err
+	}
 	if err != nil && !errors.Is(err, errTerminalDone) {
 		var runErr provider.RunError
 		if errors.As(err, &runErr) {
@@ -130,6 +136,7 @@ func (s *streamer) closeTerminal() error {
 }
 
 func (s *streamer) emit(ev canon.Event) error {
+	s.emitted = true
 	if err := s.sink.Emit(ev); err != nil {
 		return runError(provider.UnsafeReplay, provider.ClassTransport, true, false, 0, err)
 	}
@@ -217,7 +224,10 @@ func (s *streamer) handleFrame(f sseFrame) error {
 		s.finishReason = reason
 		status, known := finishStatus(reason)
 		if !known {
-			return s.failUnknown(fmt.Sprintf("upstream finish reason %q is not representable", reason))
+			if s.retryFault && !s.emitted && modelFault(reason) {
+				return errModelFault
+			}
+			return s.failUnknown(finishFailureMessage(reason))
 		}
 		if reason == "length" {
 			s.tools = nil
@@ -606,6 +616,28 @@ func finishStatus(reason string) (canon.Status, bool) {
 	default:
 		return canon.Status{}, false
 	}
+}
+
+// errModelFault marks a response the upstream model ended with a fault before
+// any output was emitted. The same request can succeed when sent again.
+var errModelFault = errors.New("customchat: upstream model fault")
+
+// modelFault reports finish reasons that name a fault of the upstream model
+// instead of an end of its output. Upstreams differ in letter case.
+func modelFault(reason string) bool {
+	switch strings.ToLower(reason) {
+	case "error", "malformed_response", "malformed_function_call", "unexpected_tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func finishFailureMessage(reason string) string {
+	if modelFault(reason) {
+		return fmt.Sprintf("upstream model returned a faulty response (finish reason %q)", reason)
+	}
+	return fmt.Sprintf("upstream finish reason %q is not representable", reason)
 }
 
 // maxFrameLine bounds one SSE line. A terminal frame can repeat the whole
