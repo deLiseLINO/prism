@@ -870,6 +870,38 @@ func TestNonStreamingInterruptedTurnReportsError(t *testing.T) {
 	}
 }
 
+func TestInterruptedStreamNamesStall(t *testing.T) {
+	cases := map[canon.IncompleteReason]string{
+		canon.IncompleteUpstreamStall: "upstream stream stall: no data within the wait limit",
+		canon.IncompleteAdapterEOF:    "upstream response interrupted before completion",
+	}
+	for reason, want := range cases {
+		var buf bytes.Buffer
+		eg := New(&buf, true)
+		if err := eg.Begin(ResponseHeader{ID: "m", Model: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range []canon.Event{
+			canon.ItemStarted{Item: canon.FunctionCall{ID: "f1", CallID: "call_1", Name: "lookup"}},
+			canon.ToolArgumentsDelta{ItemID: "f1", Bytes: []byte(`{"id":`)},
+			canon.TurnFinished{Status: canon.Incomplete(reason)},
+		} {
+			if err := eg.Frame(ev); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := eg.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		frames := parseFrames(t, buf.String())
+		last := frames[len(frames)-1]
+		body := last.data["error"].(map[string]any)
+		if last.name != "error" || body["type"] != "api_error" || body["message"] != want {
+			t.Fatalf("reason %d: last frame = %s %v, want api_error %q", reason, last.name, body, want)
+		}
+	}
+}
+
 func TestFinishOnlyContentIsStreamedAsDeltas(t *testing.T) {
 	out, _ := runStream(t, ResponseHeader{ID: "msg_1", Model: "m"}, []canon.Event{
 		canon.ItemStarted{Item: canon.ReasoningItem{ID: "r1"}},
