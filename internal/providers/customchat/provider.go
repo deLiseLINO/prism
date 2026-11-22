@@ -91,7 +91,7 @@ func (r *Runner) buildUpstream(target provider.Target, key string, req canon.Req
 	}, nil
 }
 
-func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) (result error) {
+func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider.Sink) error {
 	if err := validateTarget(req.Target); err != nil {
 		return runError(provider.TerminalOmitted, provider.ClassInvalidRequest, false, false, 0, err)
 	}
@@ -116,6 +116,17 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 		ctx, cancel = context.WithTimeout(ctx, req.Target.Timeout)
 		defer cancel()
 	}
+	custom := customToolNames(req.Request.Tools)
+	err = r.runOnce(ctx, req, up, sink, custom, true)
+	if errors.Is(err, errModelFault) {
+		err = r.runOnce(ctx, req, up, sink, custom, false)
+	}
+	return err
+}
+
+// runOnce sends the request once. With retryFault set, a model fault that
+// ends the response before any output returns errModelFault and emits nothing.
+func (r *Runner) runOnce(ctx context.Context, req provider.RunRequest, up *upstreamRequest, sink provider.Sink, custom customTools, retryFault bool) (result error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, up.URL, bytes.NewReader(up.Body))
 	if err != nil {
 		return runError(provider.TerminalOmitted, provider.ClassInvalidRequest, false, false, 0, err)
@@ -148,11 +159,10 @@ func (r *Runner) Run(ctx context.Context, req provider.RunRequest, sink provider
 	if resp.StatusCode >= 300 {
 		return openaierr.HTTPError(resp, "customchat")
 	}
-	custom := customToolNames(req.Request.Tools)
 	if req.Request.Stream && !isJSONBody(resp.Header.Get("Content-Type")) {
-		return r.runStream(resp.Body, sink, custom)
+		return r.runStream(resp.Body, sink, custom, retryFault)
 	}
-	return r.runAggregate(resp.Body, sink, custom)
+	return r.runAggregate(resp.Body, sink, custom, retryFault)
 }
 
 func validateTarget(target provider.Target) error {

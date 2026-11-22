@@ -53,7 +53,7 @@ type aggregateToolCall struct {
 	} `json:"function"`
 }
 
-func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customTools) error {
+func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customTools, retryFault bool) error {
 	raw, err := io.ReadAll(io.LimitReader(body, 100<<20))
 	if err != nil {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
@@ -118,7 +118,10 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 	}
 	status, known := finishStatus(choice.FinishReason)
 	if !known {
-		message := fmt.Sprintf("upstream finish reason %q is not representable", choice.FinishReason)
+		if retryFault && modelFault(choice.FinishReason) {
+			return errModelFault
+		}
+		message := finishFailureMessage(choice.FinishReason)
 		if err := emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}}); err != nil {
 			return err
 		}
