@@ -164,7 +164,7 @@ describe('managing a remote machine', () => {
     await act(async () => button(row('edge'), 'Manage').click())
     const banner = (): string => element.querySelector('.banner')?.textContent ?? ''
     expect(banner()).toContain('Managing edge')
-    expect(banner()).toContain('Settings sync from this machine. Changes made here are replaced on the next sync.')
+    expect(banner()).toContain('Settings sync with this machine. Changes made here are sent to it on the next sync.')
 
     await act(async () => button(row('workmac'), 'Manage').click())
     expect(banner()).toContain('Managing workmac')

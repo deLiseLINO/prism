@@ -862,17 +862,6 @@ func run(opts options) error {
 		}
 		return out
 	})
-	pusher := hostsync.NewPusher(hostsync.Options{
-		Config: cfg,
-		Secrets: func(ctx context.Context, id, ref string) ([]byte, bool, error) {
-			return credFile.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
-		},
-		Transport: hostsync.SSHTransport("ssh"),
-		Interval:  time.Minute,
-		Settle:    500 * time.Millisecond,
-		Timeout:   30 * time.Second,
-		Now:       time.Now,
-	})
 	installer := agentinstall.NewManager(daemonEnv, agentinstall.ExecRunner{}, os.Stat, time.Now, agentinstall.FetchScript)
 	planner := server.NewConfigPlanner(cfg)
 	rlog := requestlog.New(500, time.Now)
@@ -880,6 +869,20 @@ func run(opts options) error {
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, pool: pool, refresher: refresher, client: client}, installer)
 	mgmt.SetID(daemonID)
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
+	secrets := func(ctx context.Context, id, ref string) ([]byte, bool, error) {
+		return credFile.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
+	}
+	mgmt.SetSyncBase(hostsync.NewBaseFile(filepath.Join(filepath.Dir(opts.configPath), "sync-base.json")), secrets)
+	pusher := hostsync.NewPusher(hostsync.Options{
+		Config:    cfg,
+		Secrets:   secrets,
+		Transport: hostsync.SSHTransport("ssh"),
+		Interval:  time.Minute,
+		Settle:    500 * time.Millisecond,
+		Timeout:   30 * time.Second,
+		Now:       time.Now,
+		Adopt:     mgmt.AdoptHostEdits,
+	})
 	mgmt.SetHostSync(pusher)
 	mgmt.SetUsageStore(usageStore)
 	mgmt.SetRequestLog(rlog)

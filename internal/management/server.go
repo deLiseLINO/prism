@@ -63,22 +63,24 @@ type AccountStore interface {
 }
 
 type Server struct {
-	pool      account.Pool
-	cfg       ConfigStore
-	catalog   Catalog
-	quota     provider.QuotaSource
-	creds     CredentialStore
-	auth      Auth
-	ints      *integrations.Registry
-	hostSync  HostSync
-	routes    [][]string
-	store     AccountStore
-	stats     UsageSource
-	syncer    ModelSyncer
-	reqlog    *requestlog.Journal
-	renamer   ProviderRenamer
-	installer Installer
-	id        string
+	pool        account.Pool
+	cfg         ConfigStore
+	catalog     Catalog
+	quota       provider.QuotaSource
+	creds       CredentialStore
+	auth        Auth
+	ints        *integrations.Registry
+	hostSync    HostSync
+	syncBase    SyncBase
+	syncSecrets hostsync.SecretSource
+	routes      [][]string
+	store       AccountStore
+	stats       UsageSource
+	syncer      ModelSyncer
+	reqlog      *requestlog.Journal
+	renamer     ProviderRenamer
+	installer   Installer
+	id          string
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer, installer Installer) *Server {
@@ -137,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/hosts/{host}", s.hostsDelete)
 	mux.HandleFunc("PUT /api/v1/hosts/{host}/auto-sync", s.hostsAutoSync)
 	mux.HandleFunc("PUT "+hostsync.ConfigPath, s.syncConfigApply)
+	mux.HandleFunc("GET "+hostsync.EditsPath, s.syncEdits)
 
 	mux.HandleFunc("GET /api/v1/integrations", s.integrationsList)
 	mux.HandleFunc("GET /api/v1/integrations/{client}", s.integrationGet)
@@ -190,6 +193,7 @@ var routeTemplates = []string{
 	"/api/v1/hosts/{host}",
 	"/api/v1/hosts/{host}/auto-sync",
 	"/api/v1/sync/config",
+	"/api/v1/sync/edits",
 	"/api/v1/integrations",
 	"/api/v1/integrations/{client}",
 	"/api/v1/integrations/{client}/apply",

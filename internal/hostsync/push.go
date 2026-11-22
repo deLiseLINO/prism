@@ -53,6 +53,9 @@ type Options struct {
 	Settle  time.Duration
 	Timeout time.Duration
 	Now     func() time.Time
+	// Adopt lays the edits a host made over the main config before the push,
+	// so they reach every host instead of being overwritten.
+	Adopt func(ctx context.Context, host string, edits Edits) error
 }
 
 // Pusher pushes the main config to every installed host with auto sync on.
@@ -115,8 +118,9 @@ func (p *Pusher) settle(ctx context.Context, changes <-chan struct{}) bool {
 	}
 }
 
-// PushAll sends the current config to every installed host with auto sync
-// on, in parallel, and records each outcome.
+// PushAll first takes the edits each installed host with auto sync on made
+// since its last push, then sends the resulting config to every one of them,
+// in parallel, and records each outcome.
 func (p *Pusher) PushAll(ctx context.Context) {
 	snap := p.opts.Config.Get()
 	targets := map[string]config.Host{}
@@ -135,16 +139,78 @@ func (p *Pusher) PushAll(ctx context.Context) {
 	if len(targets) == 0 {
 		return
 	}
-	body, err := p.encode(ctx, snap.Config)
+	ids := slices.Sorted(maps.Keys(targets))
+	editErrs := p.takeEdits(ctx, ids, targets)
+	body, err := p.encode(ctx, p.opts.Config.Get().Config)
 	var wg sync.WaitGroup
-	for _, id := range slices.Sorted(maps.Keys(targets)) {
+	for _, id := range ids {
 		if err != nil {
 			p.record(id, err)
 			continue
 		}
-		wg.Go(func() { p.record(id, p.push(ctx, targets[id], body)) })
+		wg.Go(func() {
+			err := p.push(ctx, targets[id], body)
+			if err == nil {
+				err = editErrs[id]
+			}
+			p.record(id, err)
+		})
 	}
 	wg.Wait()
+}
+
+// takeEdits pulls every host's edits in parallel and adopts them one host at
+// a time. A host that cannot be reached has its push fail too, so only other
+// failures are returned, to be shown once the push itself succeeds.
+func (p *Pusher) takeEdits(ctx context.Context, ids []string, targets map[string]config.Host) map[string]error {
+	edits := make([]Edits, len(ids))
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Go(func() { edits[i], errs[i] = p.fetchEdits(ctx, targets[id]) })
+	}
+	wg.Wait()
+	out := map[string]error{}
+	for i, id := range ids {
+		if errs[i] == nil && !edits[i].Empty() && p.opts.Adopt != nil {
+			errs[i] = p.opts.Adopt(ctx, id, edits[i])
+		}
+		if errs[i] != nil {
+			out[id] = fmt.Errorf("could not take the changes made on the machine: %w", errs[i])
+		}
+	}
+	return out
+}
+
+// fetchEdits asks host for its edits. A host too old to report them has none.
+func (p *Pusher) fetchEdits(ctx context.Context, host config.Host) (Edits, error) {
+	ctx, cancel := context.WithTimeout(ctx, p.opts.Timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://prism"+EditsPath, nil)
+	if err != nil {
+		return Edits{}, err
+	}
+	resp, err := p.opts.Transport(ctx, host, req)
+	if err != nil {
+		return Edits{}, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return Edits{}, err
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var edits Edits
+		if err := json.Unmarshal(raw, &edits); err != nil {
+			return Edits{}, err
+		}
+		return edits, nil
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		return Edits{}, nil
+	default:
+		return Edits{}, fmt.Errorf("%s", errorMessage(resp.StatusCode, raw))
+	}
 }
 
 func (p *Pusher) encode(ctx context.Context, doc config.Document) ([]byte, error) {

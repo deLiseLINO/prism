@@ -10,6 +10,19 @@ import (
 	"github.com/deLiseLINO/prism/internal/hostsync"
 )
 
+// SyncBase stores the last bundle this machine applied as a host.
+type SyncBase interface {
+	Load() (hostsync.Base, bool, error)
+	Save(hostsync.Base) error
+}
+
+// SetSyncBase lets this machine, as a host, keep its own edits across pushes
+// and report them to the main machine. secrets reads this machine's API keys.
+func (s *Server) SetSyncBase(base SyncBase, secrets hostsync.SecretSource) {
+	s.syncBase = base
+	s.syncSecrets = secrets
+}
+
 // syncConfigApply takes the config the main machine pushed and lays it over
 // this daemon's document. API keys go through the credential store, so the
 // document only ever holds this machine's own references. An identical
@@ -18,9 +31,16 @@ import (
 // this machine's own data under an old provider id moves with it; a rename
 // this machine refuses blocks the whole sync until the conflict is fixed,
 // because merging without it would leave the old provider beside the new.
+// Edits made here since the last push survive where the main machine left
+// the same entry untouched; the main machine takes them on its next pull.
 func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 	body, ok := decodeJSON[hostsync.Bundle](w, r)
 	if !ok {
+		return
+	}
+	base, err := s.loadSyncBase()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "sync_base", err.Error())
 		return
 	}
 	start := s.cfg.Get().Generation
@@ -33,9 +53,17 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 	for range 3 {
 		snap := s.cfg.Get()
 		next := hostsync.Merge(snap.Config, body.Document)
+		if base != nil {
+			edits, err := hostsync.Diff(r.Context(), *base, snap.Config, s.syncSecrets)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "credential_store", err.Error())
+				return
+			}
+			next = hostsync.Keep(next, snap.Config, *base, body.Document, edits)
+		}
 		for id, secret := range body.Secrets {
 			p, synced := next.Providers[id]
-			if !synced || !p.Wire.Custom() {
+			if !synced || !p.Wire.Custom() || hostsync.KeepsKey(base, id, secret) {
 				continue
 			}
 			ref, err := s.creds.Stage(r.Context(), id, p.APIKeyRef, []byte(secret))
@@ -47,6 +75,7 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 			next.Providers[id] = p
 		}
 		if config.Equivalent(next, snap.Config) {
+			s.saveSyncBase(body)
 			writeJSON(w, http.StatusOK, hostsync.ApplyResponse{Changed: snap.Generation != start, Generation: snap.Generation})
 			return
 		}
@@ -59,10 +88,87 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.publishSynced(snap.Config, updated.Config)
+		s.saveSyncBase(body)
 		writeJSON(w, http.StatusOK, hostsync.ApplyResponse{Changed: true, Generation: updated.Generation})
 		return
 	}
 	writeError(w, http.StatusConflict, "stale_generation", "config kept changing while the sync was applied")
+}
+
+// syncEdits reports what this machine changed since the last push. A machine
+// that never applied a push has no edits.
+func (s *Server) syncEdits(w http.ResponseWriter, r *http.Request) {
+	base, err := s.loadSyncBase()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "sync_base", err.Error())
+		return
+	}
+	var edits hostsync.Edits
+	if base != nil {
+		edits, err = hostsync.Diff(r.Context(), *base, s.cfg.Get().Config, s.syncSecrets)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "credential_store", err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, edits)
+}
+
+// AdoptHostEdits lays the edits a host reported over this machine's config,
+// so the next push carries them to every host.
+func (s *Server) AdoptHostEdits(ctx context.Context, host string, edits hostsync.Edits) error {
+	for range 3 {
+		snap := s.cfg.Get()
+		next := hostsync.Apply(snap.Config, edits)
+		for id, secret := range edits.Secrets {
+			p, ok := next.Providers[id]
+			if !ok || !p.Wire.Custom() {
+				continue
+			}
+			ref, err := s.creds.Stage(ctx, id, p.APIKeyRef, []byte(secret))
+			if err != nil {
+				return err
+			}
+			p.APIKeyRef = ref
+			next.Providers[id] = p
+		}
+		if config.Equivalent(next, snap.Config) {
+			return nil
+		}
+		updated, err := s.cfg.Update(next, snap.Generation)
+		if errors.Is(err, config.ErrStaleGeneration) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		s.publishSynced(snap.Config, updated.Config)
+		log.Printf("prism: sync host %s: took its edits", host)
+		return nil
+	}
+	return config.ErrStaleGeneration
+}
+
+func (s *Server) loadSyncBase() (*hostsync.Base, error) {
+	if s.syncBase == nil {
+		return nil, nil
+	}
+	base, ok, err := s.syncBase.Load()
+	if err != nil || !ok {
+		return nil, err
+	}
+	return &base, nil
+}
+
+// saveSyncBase records the applied bundle. A failure is logged: the next push
+// records it again, and until then edits are measured against the older base.
+func (s *Server) saveSyncBase(body hostsync.Bundle) {
+	if s.syncBase == nil {
+		return
+	}
+	if err := s.syncBase.Save(hostsync.NewBase(body)); err != nil {
+		log.Printf("prism: save sync base: %v", err)
+	}
 }
 
 // publishSynced makes new API keys live and drops the keys of custom

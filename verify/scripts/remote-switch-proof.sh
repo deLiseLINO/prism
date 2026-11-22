@@ -5,8 +5,8 @@
 # off, then drives the real UI: Manage switches every view to the remote
 # daemon; the banner shows the remote host; Back to this machine restores local
 # data. Then clicking the Auto sync row turns sync on, the row reports Synced,
-# the remote daemon holds this machine's config, and the banner warns that the
-# remote settings are replaced on the next sync.
+# the remote daemon holds this machine's config, and the banner says that
+# changes made there are sent to this machine on the next sync.
 set -euo pipefail
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -267,7 +267,7 @@ grep -q '"state":"synced"' "$EVID_WORK/hosts-after-sync.json" || fail "daemon do
 curl -sf "http://127.0.0.1:$REMOTE_PORT/api/v1/providers" > "$EVID_WORK/remote-providers-after-sync.json" || fail "remote providers after sync"
 grep -q 'gpt-5.6-luna' "$EVID_WORK/remote-providers-after-sync.json" || fail "remote daemon did not receive this machine's providers"
 
-echo "==> the banner warns that remote settings are replaced on the next sync"
+echo "==> the banner says remote changes are sent to this machine on the next sync"
 cdp_eval "await (async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   const selfRow = [...document.querySelectorAll('.mach-item')].find((n) => n.querySelector('.lrow__title > span:first-child')?.textContent.trim() === 'self')
@@ -280,7 +280,7 @@ cdp_eval "await (async () => {
   }
   const bannerText = document.querySelector('.banner')?.innerText ?? ''
   if (!bannerText.includes('Managing self')) throw new Error('remote banner did not appear')
-  if (!bannerText.includes('Settings sync from this machine. Changes made here are replaced on the next sync.')) throw new Error('sync note missing from the banner: ' + bannerText)
+  if (!bannerText.includes('Settings sync with this machine. Changes made here are sent to it on the next sync.')) throw new Error('sync note missing from the banner: ' + bannerText)
   const back = [...document.querySelectorAll('.banner__action button')].find((n) => n.textContent.trim() === 'Back to this machine')
   if (back) back.click()
   return {bannerText}

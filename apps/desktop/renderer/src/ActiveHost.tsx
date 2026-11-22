@@ -46,7 +46,7 @@ export function RemoteBanner(): JSX.Element {
         <p className="banner__title">Managing {host}</p>
         <p className="banner__detail">Views and actions go to that machine's daemon over SSH.</p>
         {synced ? (
-          <p className="banner__detail">Settings sync from this machine. Changes made here are replaced on the next sync.</p>
+          <p className="banner__detail">Settings sync with this machine. Changes made here are sent to it on the next sync.</p>
         ) : null}
       </div>
       <div className="banner__action">
