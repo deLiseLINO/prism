@@ -230,6 +230,43 @@ func (p printer) renameConflict(from, to string, body management.RenameConflictB
 	return p.text(lines...)
 }
 
+func (p printer) connect(resp management.ConnectResponse) error {
+	if p.json {
+		return p.printJSON(resp)
+	}
+	plan := resp.Plan
+	lines := []string{"id:       " + plan.ID, "wire:     " + plan.Wire}
+	for i, endpoint := range append([]string{plan.BaseURL}, plan.FallbackBaseURLs...) {
+		if i == 0 {
+			endpoint += " (primary)"
+		}
+		lines = append(lines, "endpoint: "+endpoint)
+	}
+	models := "none, discovered on save"
+	switch {
+	case len(plan.Models) > 0:
+		models = strings.Join(plan.Models, ", ")
+		if plan.DefaultModel != "" {
+			models += " (default " + plan.DefaultModel + ")"
+		}
+	case resp.Provider != nil && len(resp.Provider.Models) > 0:
+		models = strings.Join(resp.Provider.Models, ", ") + " (discovered)"
+	case resp.Applied:
+		models = "none"
+	}
+	key := "none"
+	if plan.HasKey {
+		key = plan.KeyPreview
+	}
+	lines = append(lines, "mode:     "+plan.EndpointMode, "models:   "+models, "key:      "+key)
+	if resp.Applied {
+		lines = append(lines, fmt.Sprintf("provider saved: %s (generation %d)", plan.ID, resp.Generation))
+	} else {
+		lines = append(lines, "dry run, nothing changed")
+	}
+	return p.text(lines...)
+}
+
 func (p printer) accounts(resp management.AccountsResponse) error {
 	if p.json {
 		return p.printJSON(resp)

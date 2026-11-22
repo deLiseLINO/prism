@@ -19,6 +19,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/agentinstall"
 	"github.com/deLiseLINO/prism/internal/auth"
 	"github.com/deLiseLINO/prism/internal/config"
+	"github.com/deLiseLINO/prism/internal/connectlink"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/management"
 	"github.com/deLiseLINO/prism/internal/provider"
@@ -1557,5 +1558,108 @@ func TestStatsParseRanges(t *testing.T) {
 	}
 	if _, err := parseCommand([]string{"stats", "--bogus"}); err == nil {
 		t.Fatal("expected parse failure for unknown flag")
+	}
+}
+
+// --- connect ---
+
+const connectKey = "sk-connect-secret-value"
+
+func connectTestLink(id string, models ...string) string {
+	return connectlink.Link{
+		ID:        id,
+		Wire:      "chat",
+		Endpoints: []string{"http://10.0.0.1:8080/v1", "http://10.0.0.2:8080/v1"},
+		Models:    models,
+		Key:       connectKey,
+	}.String()
+}
+
+func TestConnectAddsProviderWithoutPrintingKey(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	before := env.cfg.Get().Generation
+	code, out, errOut := env.runCLI(t, "connect", connectTestLink("edge", "m1"))
+	if code != exitOK {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	saved := fmt.Sprintf("provider saved: edge (generation %d)", before+1)
+	for _, want := range []string{"id:       edge", "endpoint: http://10.0.0.1:8080/v1 (primary)", "endpoint: http://10.0.0.2:8080/v1", "mode:     failover", "models:   m1", "key:      sk-c…", saved} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out+errOut, connectKey) {
+		t.Fatalf("key printed: stdout=%q stderr=%q", out, errOut)
+	}
+	p, ok := env.cfg.Get().Config.Providers["edge"]
+	if !ok || p.BaseURL != "http://10.0.0.1:8080/v1" || !slices.Equal(p.FallbackBaseURLs, []string{"http://10.0.0.2:8080/v1"}) || !slices.Equal(p.Models, []string{"m1"}) {
+		t.Fatalf("stored = %+v", p)
+	}
+	list, err := env.clientList(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range list.Providers {
+		if pr.ID == "edge" && pr.Credential.State != "set" {
+			t.Fatalf("credential state = %q", pr.Credential.State)
+		}
+	}
+
+	code, out, errOut = env.runCLI(t, "connect", connectTestLink("gw"), "--json")
+	if code != exitOK {
+		t.Fatalf("json code=%d stderr=%s", code, errOut)
+	}
+	if m := decodeJSON(t, out); m["applied"] != true || m["provider"] == nil {
+		t.Fatalf("connect json: %v", m)
+	}
+	if !strings.Contains(errOut, "warning:") {
+		t.Fatalf("missing discovery warning on stderr: %q", errOut)
+	}
+	if strings.Contains(out+errOut, connectKey) {
+		t.Fatalf("key printed: stdout=%q stderr=%q", out, errOut)
+	}
+}
+
+func TestConnectDryRunChangesNothing(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	before := env.cfg.Get().Generation
+	code, out, errOut := env.runCLI(t, "connect", connectTestLink("edge", "m1"), "--dry-run")
+	if code != exitOK {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "nothing changed") || strings.Contains(out, "provider saved") || strings.Contains(out+errOut, connectKey) {
+		t.Fatalf("dry run output: %q", out)
+	}
+	snap := env.cfg.Get()
+	if _, ok := snap.Config.Providers["edge"]; ok || snap.Generation != before {
+		t.Fatalf("dry run wrote: generation %d -> %d", before, snap.Generation)
+	}
+}
+
+func TestConnectRefusals(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	before := env.cfg.Get().Generation
+	code, _, errOut := env.runCLI(t, "connect", "prism://connect?v=2&id=edge&wire=chat&endpoint=http://10.0.0.1:8080/v1&key="+connectKey)
+	if code != exitFailure || !strings.Contains(errOut, "invalid_link") || strings.Contains(errOut, connectKey) {
+		t.Fatalf("bad link: code=%d stderr=%q", code, errOut)
+	}
+	code, out, errOut := env.runCLI(t, "connect", connectTestLink("custom-resp", "m1"))
+	if code != exitConflict || !strings.Contains(errOut, "already_exists") || strings.Contains(out+errOut, "re-run") {
+		t.Fatalf("existing id: code=%d stderr=%q", code, errOut)
+	}
+	if env.cfg.Get().Generation != before {
+		t.Fatal("refused connect changed the config")
+	}
+	for _, args := range [][]string{
+		{"connect"},
+		{"connect", connectTestLink("edge"), "--stdin"},
+		{"connect", connectTestLink("edge"), connectTestLink("gw")},
+	} {
+		if code, _, _ := env.runCLI(t, args...); code != exitUsage {
+			t.Errorf("%v: code=%d want %d", args[:1], code, exitUsage)
+		}
+	}
+	if cmd := mustParse(t, "connect", "--stdin", "--dry-run", "--json"); !cmd.linkStdin || !cmd.dryRun || !cmd.json || cmd.link != "" {
+		t.Fatalf("connect --stdin parse: %+v", cmd)
 	}
 }

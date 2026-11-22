@@ -191,6 +191,39 @@ type ProviderWrite struct {
 	ExpectedGeneration uint64                           `json:"expectedGeneration"`
 }
 
+// ConnectRequest adds the provider a prism://connect link describes. DryRun
+// validates the link and reports the plan without changing anything.
+type ConnectRequest struct {
+	Link   string `json:"link"`
+	DryRun bool   `json:"dryRun,omitempty"`
+}
+
+// ConnectPlan is the provider a link describes. KeyPreview is the masked
+// key; the key itself never leaves the daemon.
+type ConnectPlan struct {
+	ID               string   `json:"id"`
+	Wire             string   `json:"wire"`
+	BaseURL          string   `json:"baseURL"`
+	FallbackBaseURLs []string `json:"fallbackBaseURLs"`
+	EndpointMode     string   `json:"endpointMode"`
+	Models           []string `json:"models"`
+	DefaultModel     string   `json:"defaultModel"`
+	KeyPreview       string   `json:"keyPreview"`
+	HasKey           bool     `json:"hasKey"`
+	Exists           bool     `json:"exists"`
+}
+
+// ConnectResponse answers a connect or its dry run. Provider is the created
+// provider, null on a dry run. Warning names why model discovery after the
+// create did not fill the model list.
+type ConnectResponse struct {
+	Applied    bool        `json:"applied"`
+	Generation uint64      `json:"generation"`
+	Plan       ConnectPlan `json:"plan"`
+	Provider   *Provider   `json:"provider"`
+	Warning    string      `json:"warning"`
+}
+
 type VisionSidecarWrite struct {
 	Enabled            bool   `json:"enabled"`
 	Target             string `json:"target,omitempty"`

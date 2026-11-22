@@ -45,6 +45,8 @@ func classify(err error) error {
 		return err
 	}
 	switch {
+	case ae.status == http.StatusConflict && ae.body.Error.Code == "already_exists":
+		return exitErr(exitConflict, "%s", ae.Error())
 	case ae.status == http.StatusConflict:
 		return exitErr(exitConflict, "%s (configuration changed since your last read; re-run the command to pick up the new generation)", ae.Error())
 	case ae.status >= 400 && ae.status < 500 && ae.body.Error.Code == "refused":
@@ -205,6 +207,12 @@ func (c *client) providersRename(ctx context.Context, id string, w management.Pr
 		return out, nil, classify(apiErrorFrom(status, raw))
 	}
 	return out, nil, decodeResponse(status, raw, &out)
+}
+
+func (c *client) connect(ctx context.Context, w management.ConnectRequest) (management.ConnectResponse, error) {
+	var out management.ConnectResponse
+	err := c.call(ctx, http.MethodPost, "/api/v1/connect", w, &out)
+	return out, err
 }
 
 func (c *client) accountsList(ctx context.Context) (management.AccountsResponse, error) {
