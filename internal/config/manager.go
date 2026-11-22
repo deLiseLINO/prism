@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -26,6 +27,9 @@ type Manager struct {
 	snap        Snapshot
 	configJSON  []byte
 	subscribers []chan struct{}
+	// diskProblem is the last disk read failure Current logged, so a broken
+	// file is reported once instead of on every request.
+	diskProblem string
 }
 
 type fileFormat struct {
@@ -54,10 +58,17 @@ func Open(path string) (*Manager, error) {
 }
 
 func loadSnapshot(path string) (Snapshot, error) {
-	b, err := os.ReadFile(path)
+	snap, err := readSnapshot(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Snapshot{Config: Document{Version: SchemaVersion}}, nil
 	}
+	return snap, err
+}
+
+// readSnapshot parses the file at path. Read failures come back as the
+// *fs.PathError from the read; parse and validation failures do not.
+func readSnapshot(path string) (Snapshot, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -81,25 +92,62 @@ func (m *Manager) Get() Snapshot {
 	return cloneSnapshot(m.snap)
 }
 
+// Current returns the config published on disk. A valid file that differs
+// from memory, such as one edited outside prism, is adopted and announced to
+// subscribers, so callers check credential references against the config
+// that is actually published. A file that is missing, does not parse or
+// fails validation keeps the last good snapshot. A file that cannot be read
+// fails closed. Each disk problem is logged once.
 func (m *Manager) Current() (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	snap, err := loadSnapshot(m.path)
+	disk, err := readSnapshot(m.path)
+	if err != nil {
+		missing := errors.Is(err, fs.ErrNotExist)
+		var pathErr *fs.PathError
+		if !missing && errors.As(err, &pathErr) {
+			m.reportDiskLocked("refusing requests until it can be read", err)
+			return Snapshot{}, err
+		}
+		if !missing || m.snap.Generation != 0 {
+			m.reportDiskLocked("keeping the last good config", err)
+		}
+		return cloneSnapshot(m.snap), nil
+	}
+	m.diskProblem = ""
+	adopted, err := m.adoptLocked(disk)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if snap.Generation != m.snap.Generation {
-		return Snapshot{}, ErrStaleGeneration
+	if adopted {
+		log.Printf("prism: config: adopted %s changed outside prism (generation %d)", m.path, disk.Generation)
+		return cloneSnapshot(m.snap), nil
 	}
-	diskConfig, err := json.Marshal(snap.Config)
+	disk.Config.catalog = m.snap.Config.catalog
+	return disk, nil
+}
+
+// adoptLocked makes a valid disk snapshot the current one when it differs
+// from memory and reports whether it did.
+func (m *Manager) adoptLocked(disk Snapshot) (bool, error) {
+	encoded, err := json.Marshal(disk.Config)
 	if err != nil {
-		return Snapshot{}, err
+		return false, err
 	}
-	if !bytes.Equal(diskConfig, m.configJSON) {
-		return Snapshot{}, ErrStaleGeneration
+	if disk.Generation == m.snap.Generation && bytes.Equal(encoded, m.configJSON) {
+		return false, nil
 	}
-	snap.Config.catalog = m.snap.Config.catalog
-	return snap, nil
+	disk.Config.catalog = m.snap.Config.catalog
+	m.snap, m.configJSON = disk, encoded
+	m.notifyChanged()
+	return true, nil
+}
+
+func (m *Manager) reportDiskLocked(action string, err error) {
+	if problem := err.Error(); problem != m.diskProblem {
+		m.diskProblem = problem
+		log.Printf("prism: config: %s, %s is unusable: %v", action, m.path, err)
+	}
 }
 
 func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
@@ -120,22 +168,12 @@ func (m *Manager) Update(next Document, expected uint64) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if disk.Generation != m.snap.Generation {
-		encoded, err := json.Marshal(disk.Config)
-		if err != nil {
-			return Snapshot{}, err
-		}
-		disk.Config.catalog = m.snap.Config.catalog
-		m.snap, m.configJSON = disk, encoded
-		m.notifyChanged()
-		return Snapshot{}, fmt.Errorf("%w: file advanced to %d", ErrStaleGeneration, disk.Generation)
-	}
-	encodedDisk, err := json.Marshal(disk.Config)
+	adopted, err := m.adoptLocked(disk)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if !bytes.Equal(encodedDisk, m.configJSON) {
-		return Snapshot{}, ErrStaleGeneration
+	if adopted {
+		return Snapshot{}, fmt.Errorf("%w: file changed at generation %d", ErrStaleGeneration, disk.Generation)
 	}
 	encoded, err := json.Marshal(next)
 	if err != nil {
