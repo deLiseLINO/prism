@@ -74,18 +74,7 @@ func Merge(local, incoming config.Document) config.Document {
 	out.ProviderRenames = mergeLedger(local.ProviderRenames, incoming.ProviderRenames)
 	out.Providers = make(map[string]config.Provider, len(incoming.Providers))
 	for id, p := range incoming.Providers {
-		mine, had := local.Providers[id]
-		if !had || mine.Wire != p.Wire {
-			mine = config.Provider{}
-		}
-		if p.Wire.Custom() {
-			p.APIKeyRef = mine.APIKeyRef
-		} else {
-			p.APIKeyRef = ""
-			p.ModelCatalogs = mine.ModelCatalogs
-		}
-		p.Pool = mergePool(p.Pool, mine.Pool, !p.Wire.Custom())
-		out.Providers[id] = p
+		out.Providers[id] = adopt(p, local.Providers[id])
 	}
 	for id, mine := range local.Providers {
 		if _, synced := out.Providers[id]; !synced && !mine.Wire.Custom() {
@@ -93,6 +82,23 @@ func Merge(local, incoming config.Document) config.Document {
 		}
 	}
 	return out
+}
+
+// adopt takes p from another machine and keeps mine's machine-local parts:
+// the key reference of a custom provider, the catalogs and pinned account of
+// a login provider, and the accounts path.
+func adopt(p, mine config.Provider) config.Provider {
+	if mine.Wire != p.Wire {
+		mine = config.Provider{}
+	}
+	if p.Wire.Custom() {
+		p.APIKeyRef = mine.APIKeyRef
+	} else {
+		p.APIKeyRef = ""
+		p.ModelCatalogs = mine.ModelCatalogs
+	}
+	p.Pool = mergePool(p.Pool, mine.Pool, !p.Wire.Custom())
+	return p
 }
 
 func mergeLedger(local, incoming []config.ProviderRename) []config.ProviderRename {

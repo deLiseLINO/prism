@@ -122,9 +122,11 @@ func TestPushAllSyncsInstalledHostsAndReportsEachOutcome(t *testing.T) {
 		Config:  main,
 		Secrets: mainSecrets,
 		Transport: func(ctx context.Context, host config.Host, req *http.Request) (*http.Response, error) {
-			mu.Lock()
-			called = append(called, host.Address)
-			mu.Unlock()
+			if req.Method == http.MethodPut {
+				mu.Lock()
+				called = append(called, host.Address)
+				mu.Unlock()
+			}
 			route, ok := routes[host.Address]
 			if !ok {
 				t.Errorf("pushed to %s, which is not installed or has auto sync off", host.Address)
