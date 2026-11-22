@@ -193,6 +193,153 @@ func TestStartedSpreadStreamIsNotReplayed(t *testing.T) {
 	}
 }
 
+// silentURL is a base URL that accepts connections and never answers.
+func silentURL(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	return "http://" + l.Addr().String() + "/v1"
+}
+
+func TestSilentBaseFailsOverAfterHeaderTimeout(t *testing.T) {
+	tr, _, l := newTransport()
+	tr.HeaderTimeout = 200 * time.Millisecond
+	silent := silentURL(t)
+	fallback := newUpstream(t, status(http.StatusOK))
+	ctx, cancel := context.WithTimeout(WithEndpoints(context.Background(), Endpoints{Provider: "dia", Primary: silent, Fallbacks: []string{fallback.URL + "/v1"}}), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, silent+"/chat/completions", strings.NewReader(`{"model":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := (&http.Client{Transport: tr}).Do(req)
+	if err != nil {
+		t.Fatalf("silent base was waited on: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || fallback.hits.Load() != 1 {
+		t.Fatalf("status %d fallback hits %d", resp.StatusCode, fallback.hits.Load())
+	}
+	if got := <-fallback.bodies; got != `/v1/chat/completions {"model":"m"}` {
+		t.Fatalf("fallback saw %q", got)
+	}
+	if !l.contains(silent + " unavailable (response header timeout after 200ms") {
+		t.Fatalf("logs %q", l.lines)
+	}
+}
+
+func TestHeaderTimeoutDoesNotCutStreamingBody(t *testing.T) {
+	tr, _, _ := newTransport()
+	tr.HeaderTimeout = 100 * time.Millisecond
+	primary := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond)
+		_, _ = io.WriteString(w, "data: done\n\n")
+	})
+	fallback := newUpstream(t, status(http.StatusOK))
+	resp := post(t, tr, primary.URL+"/v1", fallback.URL+"/v1")
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || string(body) != "data: done\n\n" {
+		t.Fatalf("body %q err %v", body, err)
+	}
+}
+
+func TestBrokenStreamCoolsBaseDown(t *testing.T) {
+	tr, _, l := newTransport()
+	var cut atomic.Bool
+	cut.Store(true)
+	primary := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		if !cut.Load() {
+			status(http.StatusOK)(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"partial\":true}\n\n")
+		w.(http.Flusher).Flush()
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		conn.Close()
+	})
+	fallback := newUpstream(t, status(http.StatusOK))
+	base, alt := primary.URL+"/v1", fallback.URL+"/v1"
+	resp := post(t, tr, base, alt)
+	if _, err := io.ReadAll(resp.Body); err == nil {
+		t.Fatal("cut stream read cleanly")
+	}
+	if !l.contains(base+" stream broke (") || !l.contains("cooling down 30s") {
+		t.Fatalf("logs %q", l.lines)
+	}
+	cut.Store(false)
+	if resp := post(t, tr, base, alt); resp.StatusCode != http.StatusOK || primary.hits.Load() != 1 || fallback.hits.Load() != 1 {
+		t.Fatalf("broken base tried first: status %d primary %d fallback %d", resp.StatusCode, primary.hits.Load(), fallback.hits.Load())
+	}
+}
+
+func TestCallerCancelMidStreamDoesNotCoolBase(t *testing.T) {
+	tr, _, l := newTransport()
+	var first atomic.Bool
+	first.Store(true)
+	primary := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		if !first.CompareAndSwap(true, false) {
+			status(http.StatusOK)(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"partial\":true}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	fallback := newUpstream(t, status(http.StatusOK))
+	base, alt := primary.URL+"/v1", fallback.URL+"/v1"
+	ctx, cancel := context.WithCancel(WithEndpoints(context.Background(), Endpoints{Provider: "dia", Primary: base, Fallbacks: []string{alt}}))
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", strings.NewReader(`{"model":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := (&http.Client{Transport: tr}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, err := resp.Body.Read(make([]byte, 64)); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if _, err := io.ReadAll(resp.Body); err == nil {
+		t.Fatal("cancelled stream read cleanly")
+	}
+	if l.contains("stream broke") {
+		t.Fatalf("caller cancel cooled the base: %q", l.lines)
+	}
+	if resp := post(t, tr, base, alt); resp.StatusCode != http.StatusOK || primary.hits.Load() != 2 || fallback.hits.Load() != 0 {
+		t.Fatalf("status %d primary %d fallback %d", resp.StatusCode, primary.hits.Load(), fallback.hits.Load())
+	}
+}
+
 func TestRateLimitFailsOverAndHonoursRetryAfter(t *testing.T) {
 	tr, clk, l := newTransport()
 	var limited atomic.Bool
