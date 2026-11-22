@@ -57,6 +57,21 @@ const bridge: PrismBridge = {
     snapshot: (title: string, detail: string) => ipcRenderer.invoke(IpcChannel.reportSnapshot, { title, detail }),
     send: (target: 'issue' | 'bot', title: string, detail: string, screenshot: string | null, context?: ReportContext) => ipcRenderer.invoke(IpcChannel.reportSend, { target, title, detail, screenshot, ...(context === undefined ? {} : { context }) }),
   },
+  connect: {
+    takePending: () => ipcRenderer.invoke(IpcChannel.connectLinkTake),
+    // The event only signals a new link; taking it through main hands each link out once.
+    onLink: (listener) => {
+      const handler = (): void => {
+        void ipcRenderer.invoke(IpcChannel.connectLinkTake).then((link: string | null) => {
+          if (link !== null) listener(link)
+        })
+      }
+      ipcRenderer.on(IpcChannel.connectLinkEvent, handler)
+      return () => {
+        ipcRenderer.removeListener(IpcChannel.connectLinkEvent, handler)
+      }
+    },
+  },
 }
 
 contextBridge.exposeInMainWorld('prism', bridge)

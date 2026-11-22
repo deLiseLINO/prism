@@ -24,6 +24,8 @@ export const IpcChannel = {
   updaterSetRcChannel: 'prism:updater-set-rc-channel',
   reportSnapshot: 'prism:report-snapshot',
   reportSend: 'prism:report-send',
+  connectLinkEvent: 'prism:connect-link-event',
+  connectLinkTake: 'prism:connect-link-take',
 } as const
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel]

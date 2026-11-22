@@ -53,6 +53,10 @@ export interface PrismBridge {
     readonly snapshot: (title: string, detail: string) => Promise<ReportSnapshot>
     readonly send: (target: ReportTarget, title: string, detail: string, screenshot: string | null, context?: ReportContext) => Promise<string | null>
   }
+  readonly connect: {
+    readonly takePending: () => Promise<string | null>
+    readonly onLink: (listener: (link: string) => void) => Unsubscribe
+  }
 }
 
 export type ReportTarget = 'issue' | 'bot'

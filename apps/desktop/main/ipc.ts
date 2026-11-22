@@ -11,6 +11,7 @@ import { titleBarOptions } from './window'
 import { applyWindowMaterial, parseWindowMaterialRequest } from './window-material'
 import type { UpdaterService } from './updater/updater'
 import { buildSnapshot, reportSource, sendReport } from './report'
+import type { PendingConnectLink } from './connect-link'
 
 export interface IpcWiring {
   readonly supervisor: DaemonSupervisor
@@ -19,6 +20,7 @@ export interface IpcWiring {
   readonly updater: UpdaterService
   readonly agents: AgentsApi
   readonly hostInstaller: HostInstallDeps
+  readonly connectLinks: PendingConnectLink
 }
 
 export type { HostInstallDeps } from './hosts/install'
@@ -155,6 +157,10 @@ export function registerIpc(wiring: IpcWiring): void {
     const screenshot = await captureWindow(event.sender)
     const source = reportSource(wiring.supervisor.status, () => wiring.supervisor.logFile())
     return sendReport(source, report.target, report.title, report.detail, screenshot, report.context)
+  })
+  ipcMain.handle(IpcChannel.connectLinkTake, (event) => {
+    trustedSender(event)
+    return wiring.connectLinks.take()
   })
 }
 

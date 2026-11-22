@@ -29,6 +29,15 @@ describe('management path validation', () => {
     ).toMatchObject({ path: '/api/v1/stats?range=7d' })
   })
 
+  it('accepts a connect link in the POST body', () => {
+    const body = { link: 'prism://connect?v=1&id=edge&wire=responses&endpoint=http%3A%2F%2F10.0.0.1%3A8080%2Fv1', dryRun: true }
+    expect(validateManagementCall({ method: 'POST', path: '/api/v1/connect', body })).toEqual({
+      method: 'POST',
+      path: '/api/v1/connect',
+      body,
+    })
+  })
+
   it('rejects traversal, fragments, unknown queries, and DELETE bodies', () => {
     const invalid = [
       '/api/v1/../../secret',

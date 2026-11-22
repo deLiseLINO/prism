@@ -3,6 +3,8 @@ import type {
   AccountView,
   AccountsView,
   AuthStartView,
+  ConnectRequest,
+  ConnectResponse,
   AuthStatusView,
   HostAutoSyncWrite,
   HostId,
@@ -146,6 +148,10 @@ export const api = {
   },
   replaceProvider(id: string, body: ProviderWrite): Promise<ProviderMutationResponse> {
     return call('PUT', `/api/v1/providers/${encodeURIComponent(id)}`, body)
+  },
+  connect(host: HostId, link: string, dryRun: boolean): Promise<ConnectResponse> {
+    const body: ConnectRequest = { link, dryRun }
+    return callOn(host, 'POST', '/api/v1/connect', body)
   },
   setProviderModelMode(
     id: string,

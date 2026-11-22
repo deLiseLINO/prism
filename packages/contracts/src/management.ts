@@ -130,6 +130,37 @@ export interface ProviderMutationResponse {
   readonly provider: ProviderView
 }
 
+// Body of POST /api/v1/connect. Without `dryRun` the daemon adds the provider the link describes.
+export interface ConnectRequest {
+  readonly link: string
+  readonly dryRun?: boolean
+}
+
+// The provider a connect link describes. The key itself never leaves the daemon; `keyPreview`
+// is its masked form and `exists` tells whether the id is already configured.
+export interface ConnectPlan {
+  readonly id: string
+  readonly wire: 'responses' | 'chat' | 'messages'
+  readonly baseURL: string
+  readonly fallbackBaseURLs: readonly string[]
+  readonly endpointMode: 'failover' | 'spread'
+  readonly models: readonly string[]
+  readonly defaultModel: string
+  readonly keyPreview: string
+  readonly hasKey: boolean
+  readonly exists: boolean
+}
+
+// Response of POST /api/v1/connect. `provider` is set only once the plan is applied; `warning`
+// explains a model discovery that failed after the provider was saved.
+export interface ConnectResponse {
+  readonly applied: boolean
+  readonly generation: number
+  readonly plan: ConnectPlan
+  readonly provider: ProviderView | null
+  readonly warning: string
+}
+
 // Body of POST /api/v1/providers/{id}/rename. `dryRun` runs every check and reports the plan
 // without changing anything.
 export interface ProviderRenameWrite {
