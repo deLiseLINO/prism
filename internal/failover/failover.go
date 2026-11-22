@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/providers/openaierr"
@@ -27,6 +28,12 @@ import (
 const (
 	DefaultCooldown       = 30 * time.Second
 	DefaultConnectTimeout = 10 * time.Second
+	// DefaultHeaderTimeout bounds the wait for response headers once a
+	// connection is up. Streaming upstreams answer headers within seconds,
+	// but gateways that ignore stream:true and image generation send them
+	// only after the whole answer, which can take a few minutes; the budget
+	// stays above the longest such wait so it only cuts a base that hangs.
+	DefaultHeaderTimeout = 5 * time.Minute
 	// MaxRateLimitCooldown bounds how long a Retry-After keeps a base at the
 	// back of the order.
 	MaxRateLimitCooldown = 5 * time.Minute
@@ -36,7 +43,10 @@ const (
 // base remembered for move logs.
 const sessionMemory = 4096
 
-var errConnectTimeout = errors.New("connect timeout")
+var (
+	errConnectTimeout = errors.New("connect timeout")
+	errHeaderTimeout  = errors.New("response header timeout")
+)
 
 type endpointsKey struct{}
 
@@ -72,16 +82,19 @@ func WithEndpoints(ctx context.Context, e Endpoints) context.Context {
 }
 
 // Transport tries a marked request on each base URL in turn until one
-// answers. A connection failure, a connect timeout, a 502/503/504 or a 429
-// moves on to the next base; any other response is the service's answer.
-// Once response headers are returned nothing is retried, so a stream that
-// already reached the caller is never replayed. A base that failed is tried
-// after the healthy ones for Cooldown, or for the 429's Retry-After. When
-// every base fails, the last answer is returned as it is.
+// answers. A connection failure, a connect timeout, no response headers
+// within HeaderTimeout, a 502/503/504 or a 429 moves on to the next base;
+// any other response is the service's answer. Once response headers are
+// returned nothing is retried, so a stream that already reached the caller
+// is never replayed. A base that failed is tried after the healthy ones for
+// Cooldown, or for the 429's Retry-After; so is a base whose response body
+// broke off before it ended. When every base fails, the last answer is
+// returned as it is.
 type Transport struct {
 	Base           http.RoundTripper
 	Cooldown       time.Duration
 	ConnectTimeout time.Duration
+	HeaderTimeout  time.Duration
 	Logf           func(format string, args ...any)
 	Now            func() time.Time
 
@@ -107,7 +120,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return t.base().RoundTrip(req)
 	}
 	for i, c := range cands {
-		resp, err := t.attempt(req, c, i > 0)
+		resp, err := t.attempt(req, ep, c, i > 0)
 		if req.Context().Err() != nil {
 			return resp, err
 		}
@@ -258,14 +271,19 @@ func rebase(raw, from, to string) (string, bool) {
 
 // attempt sends req to c. A replay reads a fresh copy of the body; the first
 // attempt consumes the caller's.
-func (t *Transport) attempt(req *http.Request, c candidate, replay bool) (*http.Response, error) {
+func (t *Transport) attempt(req *http.Request, ep endpoints, c candidate, replay bool) (*http.Response, error) {
 	ctx, cancel := context.WithCancelCause(req.Context())
-	timeout := t.ConnectTimeout
-	if timeout <= 0 {
-		timeout = DefaultConnectTimeout
+	connect := t.ConnectTimeout
+	if connect <= 0 {
+		connect = DefaultConnectTimeout
 	}
-	timer := time.AfterFunc(timeout, func() { cancel(errConnectTimeout) })
-	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { timer.Stop() }})
+	header := t.HeaderTimeout
+	if header <= 0 {
+		header = DefaultHeaderTimeout
+	}
+	wait := &deadline{cancel: cancel}
+	wait.arm(connect, errConnectTimeout)
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { wait.arm(header, errHeaderTimeout) }})
 	r := req.Clone(ctx)
 	if r.URL.String() != c.url.String() {
 		r.URL = c.url
@@ -274,31 +292,89 @@ func (t *Transport) attempt(req *http.Request, c candidate, replay bool) (*http.
 	if replay && req.Body != nil && req.Body != http.NoBody {
 		body, err := req.GetBody()
 		if err != nil {
-			timer.Stop()
+			wait.stop()
 			cancel(nil)
 			return nil, err
 		}
 		r.Body = body
 	}
 	resp, err := t.base().RoundTrip(r)
-	timer.Stop()
+	wait.stop()
 	if err != nil {
-		if errors.Is(context.Cause(ctx), errConnectTimeout) {
-			err = fmt.Errorf("%w after %s: %w", errConnectTimeout, timeout, err)
+		switch cause := context.Cause(ctx); {
+		case errors.Is(cause, errConnectTimeout):
+			err = fmt.Errorf("%w after %s: %w", errConnectTimeout, connect, err)
+		case errors.Is(cause, errHeaderTimeout):
+			err = fmt.Errorf("%w after %s: %w", errHeaderTimeout, header, err)
 		}
 		cancel(nil)
 		return nil, err
 	}
-	resp.Body = cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	resp.Body = &streamBody{ReadCloser: resp.Body, ctx: ctx, cancel: cancel, broke: func(err error) {
+		cooldown := t.cooldown()
+		t.markDown(c.base, cooldown)
+		t.logf("prism: provider %s: %s stream broke (%s), cooling down %s", ep.provider, c.base, err, cooldown)
+	}}
 	return resp, nil
 }
 
-type cancelOnClose struct {
-	io.ReadCloser
+// deadline cancels an attempt when its current phase runs out of time. Once
+// stopped it never fires, so it cannot cut a body that is already streaming.
+type deadline struct {
+	mu     sync.Mutex
+	timer  *time.Timer
+	done   bool
 	cancel context.CancelCauseFunc
 }
 
-func (b cancelOnClose) Close() error {
+func (d *deadline) arm(after time.Duration, cause error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.done {
+		return
+	}
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+	d.timer = time.AfterFunc(after, func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if !d.done {
+			d.cancel(cause)
+		}
+	})
+}
+
+func (d *deadline) stop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.done = true
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+}
+
+// streamBody ends the attempt's context on Close and reports a body that
+// fails before its end while neither the caller nor Close stopped it.
+type streamBody struct {
+	io.ReadCloser
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	broke  func(error)
+	closed atomic.Bool
+	once   sync.Once
+}
+
+func (b *streamBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) && !b.closed.Load() && b.ctx.Err() == nil {
+		b.once.Do(func() { b.broke(err) })
+	}
+	return n, err
+}
+
+func (b *streamBody) Close() error {
+	b.closed.Store(true)
 	err := b.ReadCloser.Close()
 	b.cancel(nil)
 	return err
