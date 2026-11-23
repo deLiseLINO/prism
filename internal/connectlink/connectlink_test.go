@@ -41,6 +41,58 @@ func TestParseMinimalLink(t *testing.T) {
 	}
 }
 
+func TestParseWebLink(t *testing.T) {
+	params := "v=1&id=edge&wire=chat&endpoint=http%3A%2F%2F10.0.0.1%3A8080%2Fv1&model=m1&key=" + testKey
+	want, err := Parse("prism://connect?" + params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		"https://edge.example/connect#" + params,
+		"HTTPS://edge.example:8443/connect/#" + params,
+	} {
+		got, err := Parse(raw)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", raw, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Parse(%q) = %+v, want %+v", raw, got, want)
+		}
+	}
+}
+
+func TestParseRejectsWebLink(t *testing.T) {
+	params := "v=1&id=edge&wire=chat&endpoint=http://10.0.0.1:8080/v1&key=" + testKey
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"plain http", "http://edge.example/connect#" + params, "prism://connect"},
+		{"wrong path", "https://edge.example/add#" + params, "https://<host>/connect#"},
+		{"parameters in query", "https://edge.example/connect?" + params, "https://<host>/connect#"},
+		{"query and fragment", "https://edge.example/connect?a=b#" + params, "https://<host>/connect#"},
+		{"user info", "https://u:p@edge.example/connect#" + params, "https://<host>/connect#"},
+		{"no host", "https:///connect#" + params, "https://<host>/connect#"},
+		{"no fragment", "https://edge.example/connect", "no parameters"},
+		{"empty fragment", "https://edge.example/connect#", "no parameters"},
+		{"second fragment", "https://edge.example/connect#" + params + "#x", "fragment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.raw)
+			if err == nil {
+				t.Fatalf("Parse(%q) succeeded", tc.raw)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not mention %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), testKey) {
+				t.Fatalf("error %q contains the key", err)
+			}
+		})
+	}
+}
+
 func TestStringRoundTrip(t *testing.T) {
 	for _, l := range []Link{
 		{ID: "gw", Wire: "chat", Endpoints: []string{"http://10.0.0.1:8080/v1"}},

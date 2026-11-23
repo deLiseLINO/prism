@@ -1636,6 +1636,21 @@ func TestConnectDryRunChangesNothing(t *testing.T) {
 	}
 }
 
+func TestConnectAcceptsWebLink(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	web := "https://edge.example/connect#" + strings.TrimPrefix(connectTestLink("edge", "m1"), "prism://connect?")
+	code, out, errOut := env.runCLI(t, "connect", web)
+	if code != exitOK {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "provider saved: edge") || strings.Contains(out+errOut, connectKey) {
+		t.Fatalf("web link output: stdout=%q stderr=%q", out, errOut)
+	}
+	if p, ok := env.cfg.Get().Config.Providers["edge"]; !ok || p.BaseURL != "http://10.0.0.1:8080/v1" {
+		t.Fatalf("stored = %+v", p)
+	}
+}
+
 func TestConnectRefusals(t *testing.T) {
 	env := newDaemonEnv(t, nil)
 	before := env.cfg.Get().Generation

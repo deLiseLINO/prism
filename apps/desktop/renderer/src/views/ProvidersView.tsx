@@ -562,7 +562,7 @@ function PasteLinkDialog({ onCancel, onSubmit }: { readonly onCancel: () => void
           spellCheck={false}
           autoFocus
           aria-label="Connect link"
-          placeholder={'prism://connect?v=1&id=edge&wire=responses&endpoint=…'}
+          placeholder={'prism://connect?v=1&id=edge&… or https://…/connect#v=1&id=edge&…'}
           onChange={(event) => setValue(event.target.value)}
         />
       </DialogSection>

@@ -1,0 +1,8 @@
+// Connect link page: https://<host>/connect#<parameters>.
+// Deploy: npx wrangler deploy -c wrangler.connect.jsonc
+{
+  "name": "prism-connect",
+  "main": "worker/connect.ts",
+  "compatibility_date": "2026-09-27",
+  "workers_dev": true
+}
