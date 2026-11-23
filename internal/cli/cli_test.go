@@ -1636,6 +1636,18 @@ func TestConnectDryRunChangesNothing(t *testing.T) {
 	}
 }
 
+func TestConnectDryRunPrintsModelWires(t *testing.T) {
+	env := newDaemonEnv(t, nil)
+	link := "prism://connect?v=1&id=edge&wire=responses&endpoint=http://10.0.0.1:8080/v1&model=m1&model=m2&modelWire=m2:messages&key=" + connectKey
+	code, out, errOut := env.runCLI(t, "connect", link, "--dry-run")
+	if code != exitOK {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "wire:     responses\n") || !strings.Contains(out, "wire:     messages for m2\n") || strings.Contains(out, "for m1") {
+		t.Fatalf("dry run output: %q", out)
+	}
+}
+
 func TestConnectAcceptsWebLink(t *testing.T) {
 	env := newDaemonEnv(t, nil)
 	web := "https://edge.example/connect#" + strings.TrimPrefix(connectTestLink("edge", "m1"), "prism://connect?")

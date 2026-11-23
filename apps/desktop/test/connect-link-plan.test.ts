@@ -10,6 +10,7 @@ function plan(overrides: Partial<ConnectPlan> = {}): ConnectPlan {
     fallbackBaseURLs: ['http://10.0.0.2:8080/v1'],
     endpointMode: 'failover',
     models: ['m1', 'm2'],
+    modelWires: [],
     defaultModel: '',
     keyPreview: 'sk-a…',
     hasKey: true,
@@ -59,6 +60,14 @@ describe('connect plan rows', () => {
     expect(rows).toContainEqual({ kind: 'text', label: 'Models', value: 'discovered after adding' })
     expect(rows).toContainEqual({ kind: 'text', label: 'Default model', value: 'm1' })
     expect(rows).toContainEqual({ kind: 'text', label: 'Key', value: 'none' })
+  })
+
+  it('lists per-model wires after the models', () => {
+    const rows = connectPlanRows(plan({ modelWires: [{ model: 'm1', wire: 'messages' }, { model: 'm2', wire: 'chat' }] }))
+    const labels = rows.map((row) => row.label)
+    expect(labels.indexOf('Model wires')).toBe(labels.indexOf('Models') + 1)
+    expect(rows).toContainEqual({ kind: 'text', label: 'Model wires', value: 'm1: anthropic, m2: openai-completions' })
+    expect(connectPlanRows(plan()).map((row) => row.label)).not.toContain('Model wires')
   })
 
   it('blocks a plan whose id already exists', () => {

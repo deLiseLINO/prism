@@ -199,18 +199,25 @@ type ConnectRequest struct {
 }
 
 // ConnectPlan is the provider a link describes. KeyPreview is the masked
-// key; the key itself never leaves the daemon.
+// key; the key itself never leaves the daemon. ModelWires are the per-model
+// wire overrides, saved as modelSettings[model].wire.
 type ConnectPlan struct {
-	ID               string   `json:"id"`
-	Wire             string   `json:"wire"`
-	BaseURL          string   `json:"baseURL"`
-	FallbackBaseURLs []string `json:"fallbackBaseURLs"`
-	EndpointMode     string   `json:"endpointMode"`
-	Models           []string `json:"models"`
-	DefaultModel     string   `json:"defaultModel"`
-	KeyPreview       string   `json:"keyPreview"`
-	HasKey           bool     `json:"hasKey"`
-	Exists           bool     `json:"exists"`
+	ID               string             `json:"id"`
+	Wire             string             `json:"wire"`
+	BaseURL          string             `json:"baseURL"`
+	FallbackBaseURLs []string           `json:"fallbackBaseURLs"`
+	EndpointMode     string             `json:"endpointMode"`
+	Models           []string           `json:"models"`
+	ModelWires       []ConnectModelWire `json:"modelWires"`
+	DefaultModel     string             `json:"defaultModel"`
+	KeyPreview       string             `json:"keyPreview"`
+	HasKey           bool               `json:"hasKey"`
+	Exists           bool               `json:"exists"`
+}
+
+type ConnectModelWire struct {
+	Model string `json:"model"`
+	Wire  string `json:"wire"`
 }
 
 // ConnectResponse answers a connect or its dry run. Provider is the created

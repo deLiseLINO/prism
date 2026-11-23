@@ -91,6 +91,10 @@ func connectPlan(link connectlink.Link, exists bool) ConnectPlan {
 	if link.Spread {
 		mode = config.EndpointModeSpread
 	}
+	modelWires := make([]ConnectModelWire, len(link.ModelWires))
+	for i, w := range link.ModelWires {
+		modelWires[i] = ConnectModelWire{Model: w.Model, Wire: w.Wire}
+	}
 	return ConnectPlan{
 		ID:               link.ID,
 		Wire:             link.Wire,
@@ -98,6 +102,7 @@ func connectPlan(link connectlink.Link, exists bool) ConnectPlan {
 		FallbackBaseURLs: append([]string{}, link.Endpoints[1:]...),
 		EndpointMode:     string(mode),
 		Models:           append([]string{}, link.Models...),
+		ModelWires:       modelWires,
 		DefaultModel:     link.DefaultModel,
 		KeyPreview:       connectlink.MaskKey(link.Key),
 		HasKey:           link.Key != "",
@@ -116,6 +121,13 @@ func connectWrite(link connectlink.Link) ProviderWrite {
 	}
 	if link.DefaultModel != "" {
 		w.DefaultModel = &link.DefaultModel
+	}
+	if len(link.ModelWires) > 0 {
+		settings := make(map[string]config.ModelSettings, len(link.ModelWires))
+		for _, mw := range link.ModelWires {
+			settings[mw.Model] = config.ModelSettings{Wire: config.Wire(mw.Wire)}
+		}
+		w.ModelSettings = &settings
 	}
 	return w
 }

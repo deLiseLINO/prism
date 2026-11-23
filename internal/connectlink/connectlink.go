@@ -27,20 +27,30 @@ const WebPath = "/connect"
 const errStart = "link must start with prism://connect or https://<host>/connect#"
 
 // Link is one provider definition. Endpoints[0] is the base URL; the rest
-// are fallback base URLs in order.
+// are fallback base URLs in order. ModelWires override Wire for single
+// models, in link order.
 type Link struct {
 	ID           string
 	Wire         string
 	Endpoints    []string
 	Spread       bool
 	Models       []string
+	ModelWires   []ModelWire
 	DefaultModel string
 	Key          string
 }
 
-var knownParams = []string{"v", "id", "wire", "endpoint", "mode", "model", "defaultModel", "key"}
+// ModelWire is the wire one model is served on instead of the provider's.
+// In a link it is modelWire=<model>:<wire>; the wire comes after the last ':',
+// so model ids may contain ':'.
+type ModelWire struct {
+	Model string
+	Wire  string
+}
 
-var repeatableParams = []string{"endpoint", "model"}
+var knownParams = []string{"v", "id", "wire", "endpoint", "mode", "model", "modelWire", "defaultModel", "key"}
+
+var repeatableParams = []string{"endpoint", "model", "modelWire"}
 
 // Parse validates raw and returns the provider it describes. Error texts are
 // shown to users as they are, so none of them may quote the key or the raw
@@ -140,6 +150,26 @@ func Parse(raw string) (Link, error) {
 	if slices.Contains(l.Models, "") {
 		return Link{}, errors.New("link has an empty model")
 	}
+	for _, value := range q["modelWire"] {
+		i := strings.LastIndex(value, ":")
+		if i < 0 {
+			return Link{}, errors.New("link has a modelWire without ':', use modelWire=<model>:<wire>")
+		}
+		model, wire := value[:i], value[i+1:]
+		if model == "" {
+			return Link{}, errors.New("link has a modelWire with an empty model")
+		}
+		if !config.Wire(wire).Custom() {
+			return Link{}, fmt.Errorf("modelWire wire %q for model %q is not supported, use responses, chat or messages", wire, model)
+		}
+		if len(l.Models) > 0 && !slices.Contains(l.Models, model) {
+			return Link{}, fmt.Errorf("modelWire model %q is not one of the link's models", model)
+		}
+		if slices.ContainsFunc(l.ModelWires, func(w ModelWire) bool { return w.Model == model }) {
+			return Link{}, fmt.Errorf("modelWire for model %q appears more than once", model)
+		}
+		l.ModelWires = append(l.ModelWires, ModelWire{Model: model, Wire: wire})
+	}
 	if q.Has("defaultModel") {
 		l.DefaultModel = q.Get("defaultModel")
 		if l.DefaultModel == "" {
@@ -191,6 +221,9 @@ func (l Link) String() string {
 	}
 	for _, model := range l.Models {
 		add("model", model)
+	}
+	for _, w := range l.ModelWires {
+		add("modelWire", w.Model+":"+w.Wire)
 	}
 	if l.DefaultModel != "" {
 		add("defaultModel", l.DefaultModel)

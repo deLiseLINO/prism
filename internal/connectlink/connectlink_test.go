@@ -42,10 +42,13 @@ func TestParseMinimalLink(t *testing.T) {
 }
 
 func TestParseWebLink(t *testing.T) {
-	params := "v=1&id=edge&wire=chat&endpoint=http%3A%2F%2F10.0.0.1%3A8080%2Fv1&model=m1&key=" + testKey
+	params := "v=1&id=edge&wire=chat&endpoint=http%3A%2F%2F10.0.0.1%3A8080%2Fv1&model=m1&modelWire=m1%3Amessages&key=" + testKey
 	want, err := Parse("prism://connect?" + params)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want.ModelWires, []ModelWire{{Model: "m1", Wire: "messages"}}) {
+		t.Fatalf("model wires = %+v", want.ModelWires)
 	}
 	for _, raw := range []string{
 		"https://edge.example/connect#" + params,
@@ -98,6 +101,8 @@ func TestStringRoundTrip(t *testing.T) {
 		{ID: "gw", Wire: "chat", Endpoints: []string{"http://10.0.0.1:8080/v1"}},
 		{ID: "edge", Wire: "messages", Endpoints: []string{"https://edge.example/v1", "http://10.0.0.2:8080/v1"}, Spread: true, Models: []string{"m1", "m 2&x"}, DefaultModel: "m 2&x", Key: "k+y/=&?#%"},
 		{ID: "router", Wire: "responses", Endpoints: []string{"http://10.0.0.1:8080/v1?a=b&c=d"}, Key: testKey},
+		{ID: "gw", Wire: "responses", Endpoints: []string{"http://10.0.0.1:8080/v1"}, Models: []string{"m1", "ns:m2"}, ModelWires: []ModelWire{{Model: "ns:m2", Wire: "messages"}, {Model: "m1", Wire: "chat"}}, Key: testKey},
+		{ID: "gw", Wire: "responses", Endpoints: []string{"http://10.0.0.1:8080/v1"}, ModelWires: []ModelWire{{Model: "m1", Wire: "chat"}}},
 	} {
 		raw := l.String()
 		got, err := Parse(raw)
@@ -143,6 +148,12 @@ func TestParseRejects(t *testing.T) {
 		{"empty key", "prism://connect?" + base + "&key=", "empty key"},
 		{"bad escape", "prism://connect?" + base + key + "%zz", "percent-encoded"},
 		{"over-long link", "prism://connect?" + base + key + "&model=" + strings.Repeat("m", MaxLength), "longer than"},
+		{"modelWire without colon", "prism://connect?" + base + "&modelWire=m1" + key, "without ':'"},
+		{"modelWire empty model", "prism://connect?" + base + "&modelWire=:chat" + key, "empty model"},
+		{"modelWire unknown wire", "prism://connect?" + base + "&modelWire=m1:codex" + key, "wire \"codex\" for model \"m1\" is not supported"},
+		{"modelWire empty wire", "prism://connect?" + base + "&modelWire=m1:" + key, "is not supported"},
+		{"modelWire unlisted model", "prism://connect?" + base + "&model=m1&modelWire=m2:chat" + key, "not one of the link's models"},
+		{"modelWire repeated model", "prism://connect?" + base + "&modelWire=m1:chat&modelWire=m1:messages" + key, "more than once"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Parse(tc.raw)

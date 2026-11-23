@@ -137,18 +137,27 @@ export interface ConnectRequest {
 }
 
 // The provider a connect link describes. The key itself never leaves the daemon; `keyPreview`
-// is its masked form and `exists` tells whether the id is already configured.
+// is its masked form and `exists` tells whether the id is already configured. `modelWires`
+// are the per-model wire overrides the link sets.
 export interface ConnectPlan {
   readonly id: string
-  readonly wire: 'responses' | 'chat' | 'messages'
+  readonly wire: ConnectWire
   readonly baseURL: string
   readonly fallbackBaseURLs: readonly string[]
   readonly endpointMode: 'failover' | 'spread'
   readonly models: readonly string[]
+  readonly modelWires: readonly ConnectModelWire[]
   readonly defaultModel: string
   readonly keyPreview: string
   readonly hasKey: boolean
   readonly exists: boolean
+}
+
+export type ConnectWire = 'responses' | 'chat' | 'messages'
+
+export interface ConnectModelWire {
+  readonly model: string
+  readonly wire: ConnectWire
 }
 
 // Response of POST /api/v1/connect. `provider` is set only once the plan is applied; `warning`

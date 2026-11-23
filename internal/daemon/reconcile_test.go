@@ -108,6 +108,38 @@ func TestEnsureProviderRegistersCustomRunner(t *testing.T) {
 	}
 }
 
+func TestLoopRegistersAddedProviderOnConfigChange(t *testing.T) {
+	env, mgr := testEnv(t, config.Document{Version: config.SchemaVersion})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	changes := mgr.Subscribe()
+	go func() {
+		defer close(done)
+		env.loop(ctx, changes)
+	}()
+
+	snap := mgr.Get()
+	doc := snap.Config
+	doc.Providers = map[string]config.Provider{"edge": {Wire: config.WireOpenAIChat, BaseURL: "http://127.0.0.1:9/v1", Models: []string{"m1"}}}
+	if _, err := mgr.Update(doc, snap.Generation); err != nil {
+		t.Fatalf("add provider: %v", err)
+	}
+	deadline := time.Now().Add(reconcileInterval / 2)
+	for {
+		if _, ok := env.registry.Lookup("edge"); ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("runner not registered before the reconcile timer fired")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestReconcileFillsEmptyModels(t *testing.T) {
 	var body atomic.Value
 	body.Store(`{"data":[{"id":"m1"},{"id":"m2"}]}`)

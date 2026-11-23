@@ -16,6 +16,7 @@ const PLAN: ConnectPlan = {
   fallbackBaseURLs: ['http://10.0.0.2:8080/v1', 'https://edge.example/v1'],
   endpointMode: 'failover',
   models: [],
+  modelWires: [],
   defaultModel: '',
   keyPreview: 'sk-a…',
   hasKey: true,

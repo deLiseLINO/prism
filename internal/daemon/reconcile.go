@@ -454,13 +454,17 @@ func fetchModels(ctx context.Context, client *http.Client, p config.Provider, ap
 	return out, nil
 }
 
-func (e *daemonEnv) loop(ctx context.Context) {
+// loop reconciles on every config change, so a provider added through the
+// management API serves at once, and on a timer for state outside the config.
+func (e *daemonEnv) loop(ctx context.Context, changes <-chan struct{}) {
 	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-changes:
+			e.reconcileOnce(ctx)
 		case <-ticker.C:
 			e.reconcileOnce(ctx)
 		}

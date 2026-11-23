@@ -898,8 +898,9 @@ func run(opts options) error {
 	}
 	h := server.New(server.Options{Planner: planner, Registry: registry, Pool: pool, Config: cfg, Management: mgmt.Handler(), ManagementToken: opts.mgmtToken, WebUI: webUI, Usage: usageStore, RequestLog: rlog}).Handler()
 	httpServer := &http.Server{Addr: opts.listen, Handler: h}
+	changes := cfg.Subscribe()
 	env.reconcileOnce(ctx)
-	go env.loop(ctx)
+	go env.loop(ctx, changes)
 	go watchIntegrations(ctx, cfg.Subscribe(), intg)
 	go pusher.Run(ctx, cfg.Subscribe())
 	go refreshModelCatalog(ctx, modelCatalog, client)
