@@ -26,6 +26,7 @@ export function connectPlanRows(plan: ConnectPlan): readonly ConnectPlanRow[] {
     { kind: 'endpoints', label: plan.fallbackBaseURLs.length === 0 ? 'Endpoint' : 'Endpoints', endpoints: connectEndpointRows(plan) },
     { kind: 'text', label: 'Mode', value: plan.endpointMode === 'spread' ? 'spread' : 'failover' },
     { kind: 'text', label: 'Models', value: plan.models.length === 0 ? 'discovered after adding' : plan.models.join(', ') },
+    ...(plan.modelWires.length === 0 ? [] : [{ kind: 'text' as const, label: 'Model wires', value: plan.modelWires.map((w) => `${w.model}: ${wireLabel(w.wire)}`).join(', ') }]),
     ...(plan.defaultModel === '' ? [] : [{ kind: 'text' as const, label: 'Default model', value: plan.defaultModel }]),
     { kind: 'text', label: 'Key', value: plan.hasKey ? plan.keyPreview : 'none' },
   ]

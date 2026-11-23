@@ -57,6 +57,7 @@ func TestConnectDryRunWritesNothing(t *testing.T) {
 		FallbackBaseURLs: []string{"http://10.0.0.2:8080/v1"},
 		EndpointMode:     "spread",
 		Models:           []string{"m1"},
+		ModelWires:       []ConnectModelWire{},
 		KeyPreview:       "sk-c…",
 		HasKey:           true,
 	}
@@ -121,6 +122,31 @@ func TestConnectFailoverLinkStoresNoMode(t *testing.T) {
 	}
 	if p := env.cfg.Get().Config.Providers["edge"]; p.EndpointMode != "" {
 		t.Fatalf("endpoint mode = %q, want unset", p.EndpointMode)
+	}
+}
+
+func TestConnectAppliesModelWires(t *testing.T) {
+	env := newEnv(t)
+	link := connectLink("m1", "m2", "m3")
+	link.ModelWires = []connectlink.ModelWire{{Model: "m2", Wire: "messages"}, {Model: "m3", Wire: "chat"}}
+	rec := postConnect(t, env, link.String(), true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dry run status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	wantWires := []ConnectModelWire{{Model: "m2", Wire: "messages"}, {Model: "m3", Wire: "chat"}}
+	if got := decodeBody[ConnectResponse](t, rec); !reflect.DeepEqual(got.Plan.ModelWires, wantWires) {
+		t.Fatalf("dry run model wires = %+v, want %+v", got.Plan.ModelWires, wantWires)
+	}
+	if rec := postConnect(t, env, link.String(), false); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	doc := env.cfg.Get().Config
+	want := map[string]config.ModelSettings{"m2": {Wire: config.WireAnthropicMessages}, "m3": {Wire: config.WireOpenAIChat}}
+	if got := doc.Providers["edge"].ModelSettings; !reflect.DeepEqual(got, want) {
+		t.Fatalf("model settings = %+v, want %+v", got, want)
+	}
+	if doc.ResolveWire("edge", "m1") != config.WireOpenAIResponses || doc.ResolveWire("edge", "m2") != config.WireAnthropicMessages {
+		t.Fatalf("resolved wires m1=%q m2=%q", doc.ResolveWire("edge", "m1"), doc.ResolveWire("edge", "m2"))
 	}
 }
 

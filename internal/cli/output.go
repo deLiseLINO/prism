@@ -258,7 +258,11 @@ func (p printer) connect(resp management.ConnectResponse) error {
 	if plan.HasKey {
 		key = plan.KeyPreview
 	}
-	lines = append(lines, "mode:     "+plan.EndpointMode, "models:   "+models, "key:      "+key)
+	lines = append(lines, "mode:     "+plan.EndpointMode, "models:   "+models)
+	for _, w := range plan.ModelWires {
+		lines = append(lines, "wire:     "+w.Wire+" for "+w.Model)
+	}
+	lines = append(lines, "key:      "+key)
 	if resp.Applied {
 		lines = append(lines, fmt.Sprintf("provider saved: %s (generation %d)", plan.ID, resp.Generation))
 	} else {

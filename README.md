@@ -53,6 +53,8 @@ prism connect --dry-run 'https://connect.delise.cyou/connect#v=1&id=edge&wire=ch
 prism connect --stdin    # read the link from standard input, out of the shell history
 ```
 
+A link can serve single models on another wire than the provider's with `modelWire=<model>:<wire>` (`responses`, `chat` or `messages`), one per model, for example `model=m1&model=m2&modelWire=m2:messages`. The models a link lists route right after `prism connect`, with no `prism models enable`.
+
 Anthropic Messages requests retain client `cache_control` markers and system block boundaries when routed to a Messages provider. No additional settings are required. Prism does not add cache markers to requests that omit them.
 
 Chat providers may send `tool_calls: null` in stream chunks. Prism treats it as no tool-call update and preserves text and active tool calls. Non-null tool-call values must still be arrays.
