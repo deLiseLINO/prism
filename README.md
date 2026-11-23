@@ -33,6 +33,14 @@ prism upgrade         # update prism (brew and go installs)
 
 The daemon listens on `127.0.0.1:10200`. The UI, the CLI and the desktop app share it.
 
+A `chat`, `responses` or `messages` provider gets its models from its `/models` listing. Prism reads the listing when the provider is added and again every hour, and adds the models that are new. Models the listing stops naming stay until you press Sync in the app, so a short listing never removes combo or route targets. When the listing fails, Prism logs it once, keeps the models it has and tries again every 5 minutes. A model given with `--model` is added next to the listed ones and does not stop the listing, so leave `--model` out when the provider lists its models. For a provider without a listing, `--no-discovery` keeps only the `--model` models:
+
+```
+prism providers add relay --wire messages --endpoint http://127.0.0.1:8085/v1 --stdin < key
+prism providers edit relay --no-discovery --model model-a   # no listing: hand-set models only
+prism providers edit relay --discovery                      # read the listing again
+```
+
 A `chat`, `responses` or `messages` provider can list more instances of the same service. Prism sends each request to the endpoint first and moves to the next address, in the given order, when the current one refuses the connection, does not connect within 10 seconds, or answers 429, 502, 503 or 504 before any output reaches the client. Other answers come back as they are, and nothing is retried once output has started. A failed address is tried last for the next 30 seconds; after a 429 it waits for the answer's `Retry-After` instead, up to 5 minutes. If every address fails, the client gets the last answer unchanged. All addresses use the provider's credential, and model listing uses them too. A provider with a single address behaves as before: its 429 reaches the client.
 
 With `--spread` the provider uses all addresses at once instead of always starting at the endpoint. Each client session keeps to one address, chosen by hashing the session over the addresses, so the instance's account binding and prompt cache stay warm. The session is the client's `X-Session-Id` header (`session_id` on the responses route), or else the first user message. Requests without either rotate through the addresses. When the session's address fails or is cooling down, the session moves to the next address in its hash order and returns once the cooldown ends. The daemon logs each 429 cooldown and each session move.

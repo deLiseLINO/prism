@@ -302,6 +302,7 @@ func cloneDocument(d Document) Document {
 			v := *p.Enabled
 			p.Enabled = &v
 		}
+		p.Discovery = cloneBool(p.Discovery)
 		if p.Pool != nil {
 			pool := *p.Pool
 			p.Pool = &pool

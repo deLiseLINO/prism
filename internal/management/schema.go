@@ -67,6 +67,7 @@ type Provider struct {
 	ResolvedFacts    map[string]ResolvedFacts          `json:"resolvedFacts,omitempty"`
 	ModelSettings    map[string]config.ModelSettings   `json:"modelSettings,omitempty"`
 	Enabled          *bool                             `json:"enabled,omitempty"`
+	Discovery        *bool                             `json:"discovery,omitempty"`
 	Pool             *config.PoolSettings              `json:"pool,omitempty"`
 	Wait             *config.WaitSettings              `json:"wait,omitempty"`
 	Credential       ProviderCredential                `json:"credential"`
@@ -185,6 +186,7 @@ type ProviderWrite struct {
 	SyncedModels       *[]string                        `json:"syncedModels,omitempty"`
 	ModelSettings      *map[string]config.ModelSettings `json:"modelSettings,omitempty"`
 	Enabled            *bool                            `json:"enabled,omitempty"`
+	Discovery          *bool                            `json:"discovery,omitempty"`
 	Pool               *config.PoolSettings             `json:"pool,omitempty"`
 	Wait               *config.WaitSettings             `json:"wait,omitempty"`
 	Credential         string                           `json:"credential,omitempty"`

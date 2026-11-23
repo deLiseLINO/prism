@@ -496,6 +496,7 @@ func (c *command) runProviderWrite(ctx context.Context, rt *cliRuntime, p printe
 	if c.endpointMode != "" {
 		w.EndpointMode = &c.endpointMode
 	}
+	w.Discovery = c.discovery
 	if c.defaultModel != "" {
 		w.DefaultModel = &c.defaultModel
 	}

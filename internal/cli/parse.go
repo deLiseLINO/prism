@@ -34,6 +34,7 @@ type command struct {
 	fallbackURLs      []string
 	clearFallbackURLs bool
 	endpointMode      string
+	discovery         *bool
 	defaultModel      string
 	models            []string
 	credFile          string
@@ -158,6 +159,8 @@ func globalFlags() map[string]bool {
 		"clear-fallback-urls": false,
 		"spread":              false,
 		"no-spread":           false,
+		"discovery":           false,
+		"no-discovery":        false,
 		"default-model":       true,
 		"model":               true,
 		"models":              true,
@@ -228,12 +231,13 @@ var helpAccounts = `Usage: prism accounts list [--json]
 
 var helpProviders = `Usage: prism providers list [--json]
        prism providers add <id> --wire <wire> [--endpoint URL] [--fallback-url URL ...]
-                              [--spread]
+                              [--spread] [--no-discovery]
                               [--default-model M] [--model M ...]
                               [--credential-file PATH | --stdin] [--json]
        prism providers edit <id> [--wire W] [--endpoint URL]
                                [--fallback-url URL ... | --clear-fallback-urls]
                                [--spread | --no-spread]
+                               [--discovery | --no-discovery]
                                [--default-model M] [--model M ...]
                                [--credential-file PATH | --stdin] [--json]
        prism providers enable <id> [--json]
@@ -247,6 +251,11 @@ answers 429/502/503/504 before any output. On edit it replaces the stored list.
 --spread sends each client session to its own address among the endpoint and
 the fallbacks instead of always starting at the endpoint; --no-spread goes
 back to failover.
+Models come from the provider's /models listing: prism reads it when the
+provider is added and again every hour, so leave out --model when the
+provider lists its models. --model adds a model the listing lacks; listed
+models still arrive. --no-discovery stops reading the listing, leaving only
+the --model models; --discovery turns it back on.
 `
 
 var helpConnect = `Usage: prism connect <link> [--dry-run] [--json]
@@ -530,6 +539,15 @@ func parseProviders(args []string, spec map[string]bool) (*command, error) {
 			cmd.endpointMode = "spread"
 		case noSpread:
 			cmd.endpointMode = "failover"
+		}
+		discovery, noDiscovery := fs.has("discovery"), fs.has("no-discovery")
+		switch {
+		case discovery && noDiscovery:
+			return nil, usageFail(helpProviders, "use either --discovery or --no-discovery, not both")
+		case discovery && sub == "add":
+			return nil, usageFail(helpProviders, "--discovery applies to providers edit only; discovery is on by default")
+		case discovery || noDiscovery:
+			cmd.discovery = &discovery
 		}
 		if v, ok := fs.val("default-model"); ok {
 			cmd.defaultModel = v

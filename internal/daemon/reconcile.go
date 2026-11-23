@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -16,7 +15,6 @@ import (
 	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/auth"
 	"github.com/deLiseLINO/prism/internal/config"
-	"github.com/deLiseLINO/prism/internal/failover"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/provider"
 	"github.com/deLiseLINO/prism/internal/providers/anthropic"
@@ -31,9 +29,9 @@ import (
 
 const (
 	reconcileInterval  = 10 * time.Second
+	discoverEvery      = time.Hour
 	discoverRetryAfter = 5 * time.Minute
 	discoverTimeout    = 15 * time.Second
-	discoverModelCap   = 200
 )
 
 type daemonEnv struct {
@@ -51,8 +49,12 @@ type daemonEnv struct {
 	refresher      *auth.Refresher
 	wires          map[account.ProviderID]config.Wire
 	lastDiscover   map[account.ProviderID]time.Time
-	codex          *integrations.CodexIntegration
-	now            func() time.Time
+	discoverFailed map[account.ProviderID]bool
+	// refreshModels adds the models a provider lists to its config and
+	// returns how many it added.
+	refreshModels func(ctx context.Context, id string) (int, error)
+	codex         *integrations.CodexIntegration
+	now           func() time.Time
 	// renameMu orders rename cutovers against reconcile passes, so a pass
 	// never builds a renamed provider before its data has moved.
 	renameMu sync.Mutex
@@ -73,6 +75,7 @@ func newDaemonEnv(credentialPath string, cfg *config.Manager, pool auth.PoolRegi
 		flows:          map[account.ProviderID]auth.Flow{},
 		wires:          map[account.ProviderID]config.Wire{},
 		lastDiscover:   map[account.ProviderID]time.Time{},
+		discoverFailed: map[account.ProviderID]bool{},
 		now:            time.Now,
 	}
 }
@@ -353,42 +356,48 @@ func (e *daemonEnv) syncCustomProvider(ctx context.Context, id string, p config.
 		current.APIKeyRef = id + ":default"
 		doc.Providers[id] = current
 	}
-	if len(current.Models) == 0 {
-		if since := e.now().Sub(e.lastDiscover[pid]); since < discoverRetryAfter {
-			e.saveDoc(id, p, doc, snap.Generation)
-			return
-		}
-		e.lastDiscover[pid] = e.now()
-		listCtx := failover.WithEndpoints(ctx, failover.Endpoints{Provider: id, Primary: current.BaseURL, Fallbacks: current.FallbackBaseURLs, Spread: current.Spread()})
-		models, err := fetchModels(listCtx, e.client, current, e.storedKey(ctx, pid, current.APIKeyRef))
-		if err != nil {
-			log.Printf("prism: discover models for %s: %v", id, err)
-			e.saveDoc(id, p, doc, snap.Generation)
-			return
-		}
-		ids := make([]string, len(models))
-		discovered := maps.Clone(current.Discovered)
-		for i, m := range models {
-			ids[i] = m.ID
-			if m.Kind != "" {
-				if discovered == nil {
-					discovered = map[string]config.DiscoveredFacts{}
-				}
-				discovered[m.ID] = config.DiscoveredFacts{Kind: m.Kind}
-			}
-		}
-		current.Discovered = discovered
-		current.Models = ids
-		current.SyncedModels = ids
-		doc.Providers[id] = current
-		log.Printf("prism: provider %s models discovered (%d)", id, len(models))
-	}
 	e.saveDoc(id, p, doc, snap.Generation)
+	if current.DiscoveryEnabled() && e.refreshModels != nil {
+		e.discoverModels(ctx, id)
+	}
+}
+
+// discoverModels lists the provider's models once an hour, or five minutes
+// after a failed listing. A provider that does not list its models keeps
+// the ones set by hand; its failure is logged once until a listing works.
+func (e *daemonEnv) discoverModels(ctx context.Context, id string) {
+	pid := account.ProviderID(id)
+	wait := discoverEvery
+	if e.discoverFailed[pid] {
+		wait = discoverRetryAfter
+	}
+	if last, ok := e.lastDiscover[pid]; ok && e.now().Sub(last) < wait {
+		return
+	}
+	e.lastDiscover[pid] = e.now()
+	listCtx, cancel := context.WithTimeout(ctx, discoverTimeout)
+	defer cancel()
+	added, err := e.refreshModels(listCtx, id)
+	if errors.Is(err, config.ErrStaleGeneration) {
+		delete(e.lastDiscover, pid)
+		return
+	}
+	if err != nil {
+		if !e.discoverFailed[pid] {
+			log.Printf("prism: discover models for %s: %v; models set by hand stay, retrying every %s", id, err, discoverRetryAfter)
+		}
+		e.discoverFailed[pid] = true
+		return
+	}
+	delete(e.discoverFailed, pid)
+	if added > 0 {
+		log.Printf("prism: provider %s models discovered (%d new)", id, added)
+	}
 }
 
 func (e *daemonEnv) saveDoc(id string, prev config.Provider, doc config.Document, generation uint64) {
 	current := doc.Providers[id]
-	if current.APIKeyRef == prev.APIKeyRef && len(current.Models) == len(prev.Models) {
+	if current.APIKeyRef == prev.APIKeyRef {
 		return
 	}
 	updated, err := e.cfg.Update(doc, generation)
@@ -409,49 +418,6 @@ func (e *daemonEnv) storedKey(ctx context.Context, providerID account.ProviderID
 		return ""
 	}
 	return string(b)
-}
-
-func fetchModels(ctx context.Context, client *http.Client, p config.Provider, apiKey string) ([]listedModel, error) {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, discoverTimeout)
-	defer cancel()
-	req, err := modelsRequest(reqCtx, p, apiKey)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("models endpoint returned %s", resp.Status)
-	}
-	var list struct {
-		Data []json.RawMessage `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	out := make([]listedModel, 0, len(list.Data))
-	for _, raw := range list.Data {
-		m, ok := parseOpenAIModel(raw)
-		if !ok || seen[m.ID] {
-			continue
-		}
-		seen[m.ID] = true
-		out = append(out, m)
-		if len(out) >= discoverModelCap {
-			break
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("models endpoint returned no models")
-	}
-	return out, nil
 }
 
 // loop reconciles on every config change, so a provider added through the

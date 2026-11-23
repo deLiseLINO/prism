@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -41,6 +42,8 @@ func testEnv(t *testing.T, doc config.Document) (*daemonEnv, *config.Manager) {
 		http.DefaultClient,
 		http.DefaultClient,
 	)
+	env.refreshModels = management.New(nil, mgr, nil, nil, env.creds, nil, integrations.NewRegistry(),
+		modelSyncer{creds: env.creds, client: http.DefaultClient}, nil).RefreshModels
 	return env, mgr
 }
 
@@ -53,44 +56,6 @@ func modelsServer(t *testing.T, body string, check func(r *http.Request)) *httpt
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}))
-}
-
-func TestFetchModelsParsesOpenAIList(t *testing.T) {
-	var auth string
-	srv := modelsServer(t, `{"object":"list","data":[{"id":"b"},{"id":"a"},{"id":"a"},{"id":""},{"id":"img-model-a","output_modalities":["image"]}]}`, func(r *http.Request) {
-		auth = r.Header.Get("Authorization")
-	})
-	defer srv.Close()
-
-	got, err := fetchModels(context.Background(), srv.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: srv.URL + "/v1"}, "secret-key")
-	if err != nil {
-		t.Fatalf("fetch models: %v", err)
-	}
-	if len(got) != 3 || got[0].ID != "b" || got[1].ID != "a" || got[2].ID != "img-model-a" {
-		t.Fatalf("unexpected models: %v", got)
-	}
-	if got[0].Kind != "" || got[2].Kind != config.ModelKindImage {
-		t.Fatalf("kinds = %q %q, want chat and image", got[0].Kind, got[2].Kind)
-	}
-	if auth != "Bearer secret-key" {
-		t.Fatalf("auth header not forwarded: %q", auth)
-	}
-}
-
-func TestFetchModelsFailsCleanly(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-	if _, err := fetchModels(context.Background(), srv.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: srv.URL}, ""); err == nil {
-		t.Fatal("expected error on 500")
-	}
-
-	empty := modelsServer(t, `{"data":[]}`, nil)
-	defer empty.Close()
-	if _, err := fetchModels(context.Background(), empty.Client(), config.Provider{Wire: config.WireOpenAIChat, BaseURL: empty.URL}, ""); err == nil {
-		t.Fatal("expected error on empty list")
-	}
 }
 
 func TestEnsureProviderRegistersCustomRunner(t *testing.T) {
@@ -155,7 +120,6 @@ func TestReconcileFillsEmptyModels(t *testing.T) {
 			"edge": {Wire: config.WireOpenAIResponses, BaseURL: srv.URL + "/v1"},
 		},
 	})
-	env.lastDiscover["edge"] = time.Now().Add(-10 * time.Minute)
 	env.reconcileOnce(context.Background())
 
 	got := mgr.Get().Config.Providers["edge"].Models
@@ -196,7 +160,6 @@ func TestReconcileDiscoveryMarksImageModels(t *testing.T) {
 			"edge": {Wire: config.WireOpenAIChat, BaseURL: srv.URL + "/v1"},
 		},
 	})
-	env.lastDiscover["edge"] = time.Now().Add(-10 * time.Minute)
 	env.reconcileOnce(context.Background())
 
 	doc := mgr.Get().Config
@@ -241,8 +204,8 @@ func TestReconcileSetsKeyRefFromStoredCredential(t *testing.T) {
 	}
 }
 
-func TestReconcileKeepsExistingModels(t *testing.T) {
-	srv := modelsServer(t, `{"data":[{"id":"intruder"}]}`, nil)
+func TestReconcileAddsListedModelsToHandSetOnes(t *testing.T) {
+	srv := modelsServer(t, `{"data":[{"id":"listed"}]}`, nil)
 	defer srv.Close()
 
 	env, mgr := testEnv(t, config.Document{
@@ -254,9 +217,98 @@ func TestReconcileKeepsExistingModels(t *testing.T) {
 
 	env.reconcileOnce(context.Background())
 
-	got := mgr.Get().Config.Providers["edge"].Models
-	if len(got) != 1 || got[0] != "pinned" {
-		t.Fatalf("existing models overwritten: %v", got)
+	got := mgr.Get().Config.Providers["edge"]
+	if !slices.Equal(got.Models, []string{"listed", "pinned"}) || !slices.Equal(got.SyncedModels, []string{"listed"}) {
+		t.Fatalf("models = %v synced = %v, want the listed model next to the pinned one", got.Models, got.SyncedModels)
+	}
+}
+
+func TestReconcileWithDiscoveryOffKeepsHandSetModels(t *testing.T) {
+	var listed atomic.Bool
+	srv := modelsServer(t, `{"data":[{"id":"listed"}]}`, func(*http.Request) { listed.Store(true) })
+	defer srv.Close()
+
+	off := false
+	env, mgr := testEnv(t, config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"edge": {Wire: config.WireOpenAIResponses, BaseURL: srv.URL, Models: []string{"pinned"}, Discovery: &off},
+		},
+	})
+
+	env.reconcileOnce(context.Background())
+
+	if got := mgr.Get().Config.Providers["edge"].Models; !slices.Equal(got, []string{"pinned"}) || listed.Load() {
+		t.Fatalf("models = %v, listing read = %v; want only the pinned model and no listing", got, listed.Load())
+	}
+}
+
+func TestReconcileRefreshesModelsHourlyWithoutDroppingAny(t *testing.T) {
+	var body atomic.Value
+	body.Store(`{"data":[{"id":"m1"},{"id":"m2"}]}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body.Load().(string)))
+	}))
+	defer srv.Close()
+
+	env, mgr := testEnv(t, config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"edge": {Wire: config.WireOpenAIChat, BaseURL: srv.URL + "/v1"},
+		},
+		Combos: map[string]config.Combo{
+			"pair": {Strategy: config.ComboFailover, Targets: []config.Target{{Provider: "edge", Model: "m1"}}},
+		},
+	})
+	now := time.Now()
+	env.now = func() time.Time { return now }
+	env.reconcileOnce(context.Background())
+
+	body.Store(`{"data":[{"id":"m2"},{"id":"m3"}]}`)
+	now = now.Add(discoverEvery - time.Minute)
+	env.reconcileOnce(context.Background())
+	if got := mgr.Get().Config.Providers["edge"].Models; !slices.Equal(got, []string{"m1", "m2"}) {
+		t.Fatalf("models before the hour = %v, want the first listing", got)
+	}
+
+	now = now.Add(2 * time.Minute)
+	env.reconcileOnce(context.Background())
+	doc := mgr.Get().Config
+	if got := doc.Providers["edge"].Models; !slices.Equal(got, []string{"m1", "m2", "m3"}) {
+		t.Fatalf("models after the hour = %v, want m3 added and m1 kept", got)
+	}
+	if got := doc.Combos["pair"].Targets; len(got) != 1 || got[0].Model != "m1" {
+		t.Fatalf("combo targets = %v, want the m1 target kept", got)
+	}
+}
+
+func TestReconcileKeepsHandSetModelsWhenListingFails(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	env, mgr := testEnv(t, config.Document{
+		Version: config.SchemaVersion,
+		Providers: map[string]config.Provider{
+			"edge": {Wire: config.WireOpenAIChat, BaseURL: srv.URL, Models: []string{"pinned"}},
+		},
+	})
+	now := time.Now()
+	env.now = func() time.Time { return now }
+	env.reconcileOnce(context.Background())
+	env.reconcileOnce(context.Background())
+	now = now.Add(discoverRetryAfter + time.Second)
+	env.reconcileOnce(context.Background())
+
+	if got := mgr.Get().Config.Providers["edge"].Models; !slices.Equal(got, []string{"pinned"}) {
+		t.Fatalf("models = %v, want the pinned model kept", got)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("listing read %d times, want once and once more after the retry delay", got)
 	}
 }
 

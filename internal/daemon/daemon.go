@@ -867,6 +867,7 @@ func run(opts options) error {
 	rlog := requestlog.New(500, time.Now)
 	daemonID := uuid.NewString()
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, pool: pool, refresher: refresher, client: client}, installer)
+	env.refreshModels = mgmt.RefreshModels
 	mgmt.SetID(daemonID)
 	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
 	secrets := func(ctx context.Context, id, ref string) ([]byte, bool, error) {
