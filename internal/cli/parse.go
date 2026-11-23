@@ -252,10 +252,11 @@ back to failover.
 var helpConnect = `Usage: prism connect <link> [--dry-run] [--json]
        prism connect --stdin [--dry-run] [--json]
 Adds the provider a connect link describes. Both forms work:
-prism://connect?<parameters> and https://<host>/connect#<parameters>. An
-existing provider is never overwritten. --stdin reads the link from standard
-input so its key stays out of the shell history. --dry-run shows the provider
-and changes nothing.
+prism://connect?<parameters> and
+https://connect.delise.cyou/connect#<parameters> (any https host serving
+/connect). An existing provider is never overwritten. --stdin reads the link
+from standard input so its key stays out of the shell history. --dry-run shows
+the provider and changes nothing.
 `
 
 var helpModels = `Usage: prism models list [--json]

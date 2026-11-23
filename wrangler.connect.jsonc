@@ -1,8 +1,10 @@
-// Connect link page: https://<host>/connect#<parameters>.
-// Deploy: npx wrangler deploy -c wrangler.connect.jsonc
+// Connect link page: https://connect.delise.cyou/connect#<parameters>.
+// Deploy with CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID of the account
+// that owns the delise.cyou zone: npx wrangler deploy -c wrangler.connect.jsonc
 {
   "name": "prism-connect",
   "main": "worker/connect.ts",
   "compatibility_date": "2026-09-27",
-  "workers_dev": true
+  "workers_dev": false,
+  "routes": [{ "pattern": "connect.delise.cyou", "custom_domain": true }]
 }
