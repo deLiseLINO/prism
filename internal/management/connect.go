@@ -10,7 +10,7 @@ import (
 	"github.com/deLiseLINO/prism/internal/connectlink"
 )
 
-// connect adds the provider a prism://connect link describes. A link never
+// connect adds the provider a connect link describes. A link never
 // overwrites a provider, and the caller sends no generation: the handler
 // creates against the current one and retries while the config moves.
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {

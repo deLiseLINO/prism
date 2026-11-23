@@ -46,6 +46,13 @@ prism providers edit dia --spread                                 # pin sessions
 prism providers edit dia --no-spread                              # back to failover from the endpoint
 ```
 
+A connect link adds one provider, key included. It comes in two forms with the same parameters: `prism://connect?<parameters>` opens the app, and `https://prism-connect.s8030a.workers.dev/connect#<parameters>` opens a page that hands the link to the installed app and offers the latest release downloads. The web form keeps the parameters after `#`, which browsers never send, so the page server and chat link previews never see the key. Both forms work in the desktop app (Providers → Add from link) and in the CLI:
+
+```
+prism connect --dry-run 'https://prism-connect.s8030a.workers.dev/connect#v=1&id=edge&wire=chat&endpoint=…&key=…'
+prism connect --stdin    # read the link from standard input, out of the shell history
+```
+
 Anthropic Messages requests retain client `cache_control` markers and system block boundaries when routed to a Messages provider. No additional settings are required. Prism does not add cache markers to requests that omit them.
 
 Chat providers may send `tool_calls: null` in stream chunks. Prism treats it as no tool-call update and preserves text and active tool calls. Non-null tool-call values must still be arrays.

@@ -185,7 +185,7 @@ Commands:
   auth login|status         browser OAuth login or session/provider status
   accounts <sub>            list/pause/resume/priority/quota/remove/select
   providers <sub>           list/add/edit/enable/disable/remove/rename
-  connect <link>|--stdin    add the provider a prism://connect link describes
+  connect <link>|--stdin    add the provider a connect link describes
   models <sub>              list/enable/disable
   combos <sub>              list/set/remove
   routes <sub>              list/set/remove
@@ -251,9 +251,11 @@ back to failover.
 
 var helpConnect = `Usage: prism connect <link> [--dry-run] [--json]
        prism connect --stdin [--dry-run] [--json]
-Adds the provider a prism://connect link describes; an existing provider is
-never overwritten. --stdin reads the link from standard input so its key stays
-out of the shell history. --dry-run shows the provider and changes nothing.
+Adds the provider a connect link describes. Both forms work:
+prism://connect?<parameters> and https://<host>/connect#<parameters>. An
+existing provider is never overwritten. --stdin reads the link from standard
+input so its key stays out of the shell history. --dry-run shows the provider
+and changes nothing.
 `
 
 var helpModels = `Usage: prism models list [--json]

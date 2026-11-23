@@ -1,5 +1,9 @@
-// Package connectlink parses and builds prism://connect links, each of which
-// carries one custom provider definition.
+// Package connectlink parses and builds connect links, each of which carries
+// one custom provider definition. A link comes in two forms that carry the
+// same parameters: prism://connect?<parameters> opens the app, and
+// https://<host>/connect#<parameters> opens a web page that hands the link to
+// the app. The web form keeps the parameters in the fragment, which browsers
+// never send, so the page's server and link previews never see the key.
 package connectlink
 
 import (
@@ -16,6 +20,11 @@ import (
 const MaxLength = 8192
 
 const version = "1"
+
+// WebPath is the path of the web form of a link.
+const WebPath = "/connect"
+
+const errStart = "link must start with prism://connect or https://<host>/connect#"
 
 // Link is one provider definition. Endpoints[0] is the base URL; the rest
 // are fallback base URLs in order.
@@ -40,15 +49,19 @@ func Parse(raw string) (Link, error) {
 	if len(raw) > MaxLength {
 		return Link{}, fmt.Errorf("link is longer than %d bytes", MaxLength)
 	}
+	raw, err := appLink(raw)
+	if err != nil {
+		return Link{}, err
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return Link{}, errors.New("link is not a valid URL")
 	}
 	if !strings.EqualFold(u.Scheme, "prism") {
-		return Link{}, errors.New("link must start with prism://connect")
+		return Link{}, errors.New(errStart)
 	}
 	if u.Host != "connect" || u.User != nil {
-		return Link{}, errors.New("link must start with prism://connect")
+		return Link{}, errors.New(errStart)
 	}
 	if u.Path != "" && u.Path != "/" {
 		return Link{}, errors.New("link must have no path after prism://connect")
@@ -140,6 +153,24 @@ func Parse(raw string) (Link, error) {
 		}
 	}
 	return l, nil
+}
+
+// appLink rewrites the web form of a link to the prism:// form and returns
+// any other link unchanged.
+func appLink(raw string) (string, error) {
+	const scheme = "https://"
+	if len(raw) < len(scheme) || !strings.EqualFold(raw[:len(scheme)], scheme) {
+		return raw, nil
+	}
+	page, params, found := strings.Cut(raw, "#")
+	u, err := url.Parse(page)
+	if err != nil || u.Host == "" || u.User != nil || strings.TrimSuffix(u.Path, "/") != WebPath || u.RawQuery != "" || u.ForceQuery {
+		return "", errors.New(errStart)
+	}
+	if !found || params == "" {
+		return "", errors.New("link has no parameters after #")
+	}
+	return "prism://connect?" + params, nil
 }
 
 // String returns the canonical form of l: parameters in a fixed order and

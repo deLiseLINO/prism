@@ -191,7 +191,7 @@ type ProviderWrite struct {
 	ExpectedGeneration uint64                           `json:"expectedGeneration"`
 }
 
-// ConnectRequest adds the provider a prism://connect link describes. DryRun
+// ConnectRequest adds the provider a connect link describes. DryRun
 // validates the link and reports the plan without changing anything.
 type ConnectRequest struct {
 	Link   string `json:"link"`

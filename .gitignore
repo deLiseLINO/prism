@@ -12,3 +12,4 @@ tooling.local.yaml
 .agents/
 
 .grok/
+.wrangler/
