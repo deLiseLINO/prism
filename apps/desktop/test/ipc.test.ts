@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { IpcChannel } from '@prism/contracts'
+import { PendingConnectLink } from '../main/connect-link'
 
 type Handler = (event: unknown, input: unknown) => unknown
 
@@ -235,6 +236,34 @@ describe('shell.openExternal IPC forwarding', () => {
     await expect(handler!(fakeEvent(), 'https://example.com/oauth')).rejects.toThrow(
       /no handler registered/,
     )
+  })
+})
+
+describe('connect link IPC', () => {
+  beforeEach(() => {
+    electronRegistry.handlers.clear()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  it('hands the pending link to the renderer once and rejects destroyed senders', async () => {
+    const connectLinks = new PendingConnectLink()
+    const ipcModule = await import('../main/ipc')
+    ipcModule.registerIpc({
+      supervisor: {} as never,
+      management: {} as never,
+      integrations: {} as never,
+      connectLinks,
+    })
+    const handler = electronRegistry.handlers.get(IpcChannel.connectLinkTake)
+    expect(handler).toBeDefined()
+    connectLinks.offer('prism://connect?v=1&id=edge')
+    expect(() => handler!(fakeEvent(true))).toThrow(/untrusted sender/)
+    expect(handler!(fakeEvent())).toBe('prism://connect?v=1&id=edge')
+    expect(handler!(fakeEvent())).toBeNull()
   })
 })
 

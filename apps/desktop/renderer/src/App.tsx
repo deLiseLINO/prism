@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 
-import type { DaemonStatus, UpdaterStatus } from '@prism/contracts'
+import type { DaemonStatus, HostId, UpdaterStatus } from '@prism/contracts'
 import { ActiveHostProvider, RemoteBanner, useActiveHost } from './ActiveHost'
 import { AppearanceProvider } from './useAppearance'
 import { ExperimentalFlagsProvider, useExperimentalFlags } from './experimental'
@@ -19,6 +19,7 @@ import { bridge } from './bridge'
 import { ExperimentalView } from './views/ExperimentalView'
 import { AppearanceView } from './views/AppearanceView'
 import { BootScreen, useDaemonBoot } from './boot'
+import { ConnectLinkDialog } from './components/ConnectLinkDialog'
 
 const VIEW_ICONS: Record<View, string> = {
   overview: '#i-home',
@@ -63,12 +64,15 @@ function renderView(
   view: View,
   daemon: DaemonStatus | null,
   daemonUnreachable: boolean,
+  providerFocus: string | null,
+  onProviderFocused: () => void,
+  onConnectLink: (link: string) => void,
 ): JSX.Element {
   switch (view) {
     case 'overview':
       return <OverviewView daemon={daemon} daemonUnreachable={daemonUnreachable} />
     case 'providers':
-      return <ProvidersView />
+      return <ProvidersView focus={providerFocus} onFocused={onProviderFocused} onConnectLink={onConnectLink} />
     case 'usage':
       return <UsagePanel />
     case 'stats':
@@ -85,6 +89,12 @@ function renderView(
       return <AppearanceView />
 
   }
+}
+
+interface ConnectTarget {
+  readonly link: string
+  // Machine the provider is added to.
+  readonly host: HostId
 }
 
 export function App(): JSX.Element {
@@ -135,7 +145,7 @@ function AppShell(): JSX.Element {
     window.addEventListener('resize', apply)
     return () => window.removeEventListener('resize', apply)
   }, [])
-  const { host } = useActiveHost()
+  const { host, setHost } = useActiveHost()
 
   useEffect(() => {
     if (!machinesVisible && view === 'machines') navigateTo('overview', true)
@@ -182,6 +192,32 @@ function AppShell(): JSX.Element {
       unsubscribe()
     }
   }, [])
+
+  const [connect, setConnect] = useState<ConnectTarget | null>(null)
+  // A link that arrived while the open dialog was adding a provider; shown once that dialog closes.
+  const [heldConnect, setHeldConnect] = useState<ConnectTarget | null>(null)
+  const connectBusyRef = useRef(false)
+  const onConnectBusy = useCallback((busy: boolean): void => {
+    connectBusyRef.current = busy
+  }, [])
+  const openConnect = useCallback((next: ConnectTarget): void => {
+    if (connectBusyRef.current) setHeldConnect(next)
+    else setConnect(next)
+  }, [])
+  const closeConnect = (): void => {
+    const fresh = heldConnect !== null && (heldConnect.link !== connect?.link || heldConnect.host !== connect?.host)
+    setConnect(fresh ? heldConnect : null)
+    setHeldConnect(null)
+  }
+  const [providerFocus, setProviderFocus] = useState<string | null>(null)
+  useEffect(() => {
+    // Links from the operating system always go to this machine, whatever machine the window is managing.
+    const unsubscribe = bridge.connect.onLink((link) => openConnect({ link, host: 'local' }))
+    void bridge.connect.takePending().then((link) => {
+      if (link !== null) openConnect({ link, host: 'local' })
+    }, () => {})
+    return unsubscribe
+  }, [openConnect])
 
   useEffect(() => {
     const unsubscribe = bridge.updater.onStatus(setUpdater)
@@ -294,12 +330,27 @@ function AppShell(): JSX.Element {
             <>
               <RemoteBanner />
               <Fragment key={host}>
-                {renderView(view, daemon, daemonUnreachable)}
+                {renderView(view, daemon, daemonUnreachable, providerFocus, () => setProviderFocus(null), (link) => openConnect({ link, host }))}
               </Fragment>
             </>
           )}
         </div>
       </main>
+      {connect !== null ? (
+        <ConnectLinkDialog
+          key={`${connect.host}\n${connect.link}`}
+          link={connect.link}
+          host={connect.host}
+          onBusyChange={onConnectBusy}
+          onCancel={closeConnect}
+          onAdded={(id) => {
+            closeConnect()
+            setHost(connect.host)
+            setProviderFocus(id)
+            navigateTo('providers')
+          }}
+        />
+      ) : null}
     </div>
   )
 }

@@ -1,0 +1,149 @@
+package connectlink
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+const testKey = "sk-link-secret-value"
+
+func TestParseValidLink(t *testing.T) {
+	raw := "PRISM://connect/?v=1&id=edge&wire=responses" +
+		"&endpoint=http%3A%2F%2F10.0.0.1%3A8080%2Fv1&endpoint=http://10.0.0.2:8080/v1&endpoint=https://edge.example/v1" +
+		"&mode=spread&model=m1&model=m%202&defaultModel=m1&key=" + testKey
+	got, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Link{
+		ID:           "edge",
+		Wire:         "responses",
+		Endpoints:    []string{"http://10.0.0.1:8080/v1", "http://10.0.0.2:8080/v1", "https://edge.example/v1"},
+		Spread:       true,
+		Models:       []string{"m1", "m 2"},
+		DefaultModel: "m1",
+		Key:          testKey,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseMinimalLink(t *testing.T) {
+	got, err := Parse("prism://connect?v=1&id=gw&wire=chat&endpoint=http://10.0.0.1:8080/v1&mode=failover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Link{ID: "gw", Wire: "chat", Endpoints: []string{"http://10.0.0.1:8080/v1"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Parse = %+v, want %+v", got, want)
+	}
+}
+
+func TestStringRoundTrip(t *testing.T) {
+	for _, l := range []Link{
+		{ID: "gw", Wire: "chat", Endpoints: []string{"http://10.0.0.1:8080/v1"}},
+		{ID: "edge", Wire: "messages", Endpoints: []string{"https://edge.example/v1", "http://10.0.0.2:8080/v1"}, Spread: true, Models: []string{"m1", "m 2&x"}, DefaultModel: "m 2&x", Key: "k+y/=&?#%"},
+		{ID: "router", Wire: "responses", Endpoints: []string{"http://10.0.0.1:8080/v1?a=b&c=d"}, Key: testKey},
+	} {
+		raw := l.String()
+		got, err := Parse(raw)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", raw, err)
+		}
+		if !reflect.DeepEqual(got, l) {
+			t.Fatalf("round trip of %q = %+v, want %+v", raw, got, l)
+		}
+		if got.String() != raw {
+			t.Fatalf("String not canonical: %q then %q", raw, got.String())
+		}
+	}
+}
+
+func TestParseRejects(t *testing.T) {
+	base := "v=1&id=edge&wire=chat&endpoint=http://10.0.0.1:8080/v1"
+	key := "&key=" + testKey
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"wrong scheme", "https://connect?" + base + key, "prism://connect"},
+		{"wrong host", "prism://link?" + base + key, "prism://connect"},
+		{"host with port", "prism://connect:80?" + base + key, "prism://connect"},
+		{"path", "prism://connect/add?" + base + key, "path"},
+		{"missing version", "prism://connect?id=edge&wire=chat&endpoint=http://10.0.0.1:8080/v1" + key, "no version"},
+		{"unsupported version", "prism://connect?v=2&id=edge&wire=chat&endpoint=http://10.0.0.1:8080/v1" + key, "version \"2\" is not supported"},
+		{"missing id", "prism://connect?v=1&wire=chat&endpoint=http://10.0.0.1:8080/v1" + key, "no provider id"},
+		{"bad id", "prism://connect?v=1&id=edge:a&wire=chat&endpoint=http://10.0.0.1:8080/v1" + key, "provider id"},
+		{"missing wire", "prism://connect?v=1&id=edge&endpoint=http://10.0.0.1:8080/v1" + key, "no wire"},
+		{"non-custom wire", "prism://connect?v=1&id=edge&wire=codex&endpoint=http://10.0.0.1:8080/v1" + key, "wire \"codex\" is not supported"},
+		{"missing endpoint", "prism://connect?v=1&id=edge&wire=chat" + key, "no endpoint"},
+		{"non-http endpoint", "prism://connect?" + base + "&endpoint=ftp://10.0.0.2/v1" + key, "not an absolute http or https URL"},
+		{"relative endpoint", "prism://connect?v=1&id=edge&wire=chat&endpoint=/v1" + key, "not an absolute http or https URL"},
+		{"duplicate endpoint", "prism://connect?" + base + "&endpoint=http://10.0.0.1:8080/v1/" + key, "repeats another endpoint"},
+		{"bad mode", "prism://connect?" + base + "&mode=random" + key, "endpoint mode"},
+		{"unknown parameter", "prism://connect?" + base + "&modle=m1" + key, "unsupported parameter"},
+		{"bare fragment", "prism://connect?" + base + "&key=abc#", "fragment"},
+		{"repeated id", "prism://connect?" + base + "&id=gw" + key, "more than once"},
+		{"empty model", "prism://connect?" + base + "&model=" + key, "empty model"},
+		{"empty key", "prism://connect?" + base + "&key=", "empty key"},
+		{"bad escape", "prism://connect?" + base + key + "%zz", "percent-encoded"},
+		{"over-long link", "prism://connect?" + base + key + "&model=" + strings.Repeat("m", MaxLength), "longer than"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.raw)
+			if err == nil {
+				t.Fatalf("Parse(%q) succeeded", tc.raw)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not mention %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), testKey) {
+				t.Fatalf("error %q contains the key", err)
+			}
+		})
+	}
+}
+
+func TestParseErrorNeverQuotesLink(t *testing.T) {
+	for _, raw := range []string{
+		"prism://conn ect?key=" + testKey,
+		"prism://connect?v=1&id=edge&wire=chat&endpoint=http://10.0.0.1:8080/v1&key=" + testKey + "#frag",
+		"%zzprism://connect?key=" + testKey,
+	} {
+		_, err := Parse(raw)
+		if err == nil {
+			t.Fatalf("Parse(%q) succeeded", raw)
+		}
+		if strings.Contains(err.Error(), testKey) {
+			t.Fatalf("error %q contains the key", err)
+		}
+	}
+}
+
+func TestParseErrorHidesKeyWithUnencodedAmpersand(t *testing.T) {
+	raw := "prism://connect?v=1&id=edge&wire=chat&endpoint=http://10.0.0.1:8080/v1&key=sk-abc&XyZ9secretTail"
+	_, err := Parse(raw)
+	if err == nil {
+		t.Fatalf("Parse(%q) succeeded", raw)
+	}
+	if strings.Contains(err.Error(), "XyZ9secretTail") || strings.Contains(err.Error(), "sk-abc") {
+		t.Fatalf("error %q contains part of the key", err)
+	}
+}
+
+func TestMaskKey(t *testing.T) {
+	for key, want := range map[string]string{
+		"":          "",
+		"abc":       "****",
+		"abcd":      "****",
+		"sk-abcdef": "sk-a…",
+		"ключ-1234": "ключ…",
+	} {
+		if got := MaskKey(key); got != want {
+			t.Errorf("MaskKey(%q) = %q, want %q", key, got, want)
+		}
+	}
+}

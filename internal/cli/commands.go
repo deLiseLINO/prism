@@ -54,6 +54,8 @@ func (c *command) run(ctx context.Context, rt *cliRuntime) error {
 		return c.runProviderRemove(ctx, rt, p)
 	case "providers-rename":
 		return c.runProviderRename(ctx, rt, p)
+	case "connect":
+		return c.runConnect(ctx, rt, p)
 	case "models-list":
 		return c.runModelsList(ctx, rt, p)
 	case "models-enable", "models-disable":
@@ -604,6 +606,31 @@ func (c *command) runProviderRename(ctx context.Context, rt *cliRuntime, p print
 		return exitErr(exitRefused, "rename %s -> %s blocked", c.id, c.renameTo)
 	}
 	return p.rename(resp)
+}
+
+// runConnect applies at once unless --dry-run: running the command is the
+// consent. The daemon parses the link, so the key is only ever sent, never
+// printed.
+func (c *command) runConnect(ctx context.Context, rt *cliRuntime, p printer) error {
+	link := c.link
+	if c.linkStdin {
+		b, err := readAllStdin()
+		if err != nil {
+			return exitErr(exitFailure, "read link from stdin: %v", err)
+		}
+		link = strings.TrimSpace(b)
+		if link == "" {
+			return exitErr(exitFailure, "link input on stdin is empty")
+		}
+	}
+	resp, err := rt.client.connect(ctx, management.ConnectRequest{Link: link, DryRun: c.dryRun})
+	if err != nil {
+		return err
+	}
+	if resp.Warning != "" {
+		fmt.Fprintf(rt.stderr, "prism: warning: %s\n", resp.Warning)
+	}
+	return p.connect(resp)
 }
 
 // --- models ---

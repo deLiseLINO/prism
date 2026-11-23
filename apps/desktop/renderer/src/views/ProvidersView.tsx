@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ModelSettingsView, ProviderView, ProvidersView as ProvidersViewData } from '@prism/contracts'
 import { AsyncBoundary, Banner, Button, Confirm, Empty, SearchInput, Toggle } from '../components/Ui'
-import { PageHeader, StatusChip } from '../components/Patterns'
+import { Dialog, DialogSection, PageHeader, StatusChip } from '../components/Patterns'
 import { useAsync, useTask, describeError } from '../useAsync'
 import { ApiError, api, type ProviderWrite } from '../api'
 import { ModelSettingsModal, draftToSettings, type ModelSettingsDraft } from '../components/ModelSettingsModal'
@@ -537,13 +537,65 @@ function ProviderDetail({ provider, generation, globalContextWindow, modelFilter
   )
 }
 
-export function ProvidersView(): JSX.Element {
+function PasteLinkDialog({ onCancel, onSubmit }: { readonly onCancel: () => void; readonly onSubmit: (link: string) => void }): JSX.Element {
+  const [value, setValue] = useState('')
+  const link = value.trim()
+
+  return (
+    <Dialog
+      label="Add provider from link"
+      title="Add provider from link"
+      onClose={onCancel}
+      footer={
+        <>
+          <span className="ctl-spacer" />
+          <Button tone="ghost" onClick={onCancel}>Cancel</Button>
+          <Button tone="primary" disabled={link === ''} onClick={() => onSubmit(link)}>Continue</Button>
+        </>
+      }
+    >
+      <DialogSection>
+        <textarea
+          className="st-input st-input--mono st-input--area"
+          value={value}
+          rows={5}
+          spellCheck={false}
+          autoFocus
+          aria-label="Connect link"
+          placeholder={'prism://connect?v=1&id=edge&wire=responses&endpoint=…'}
+          onChange={(event) => setValue(event.target.value)}
+        />
+      </DialogSection>
+    </Dialog>
+  )
+}
+
+export interface ProvidersViewProps {
+  // Provider to select once, set after a connect link added it from another view.
+  readonly focus: string | null
+  readonly onFocused: () => void
+  // Opens the connect dialog for a pasted link; the app owns that dialog.
+  readonly onConnectLink: (link: string) => void
+}
+
+export function ProvidersView({ focus, onFocused, onConnectLink }: ProvidersViewProps): JSX.Element {
   const providers = useAsync<ProvidersViewData>(() => api.providers(), [])
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(focus)
   const [query, setQuery] = useState('')
+  const [pastingLink, setPastingLink] = useState(false)
   const deleteTask = useTask()
+  const focusOnMountRef = useRef(true)
+  useEffect(() => {
+    const onMount = focusOnMountRef.current
+    focusOnMountRef.current = false
+    if (focus === null) return
+    setSelected(focus)
+    setQuery('')
+    if (!onMount) providers.refresh()
+    onFocused()
+  }, [focus])
   // Ordering snapshot mirrors the model list: taken when the rail first gets
   // data, never on toggles. Toggling a provider only flips its switch; the
   // order updates when the view next mounts (tab switch).
@@ -610,9 +662,14 @@ export function ProvidersView(): JSX.Element {
         icon="#i-plug"
         title="Providers"
         actions={
-          <Button tone="primary" onClick={() => setCreating(true)}>
-            New provider
-          </Button>
+          <>
+            <Button tone="ghost" onClick={() => setPastingLink(true)}>
+              Add from link
+            </Button>
+            <Button tone="primary" onClick={() => setCreating(true)}>
+              New provider
+            </Button>
+          </>
         }
       />
       <AsyncBoundary<ProvidersViewData>
@@ -644,7 +701,12 @@ export function ProvidersView(): JSX.Element {
               <Empty
                 icon="#i-plug"
                 title="No providers configured."
-                action={<Button tone="primary" onClick={() => setCreating(true)}>New provider</Button>}
+                action={
+                  <div className="ctl-row">
+                    <Button tone="ghost" onClick={() => setPastingLink(true)}>Add from link</Button>
+                    <Button tone="primary" onClick={() => setCreating(true)}>New provider</Button>
+                  </div>
+                }
               >
                 Add a provider to start routing requests.
               </Empty>
@@ -745,6 +807,15 @@ export function ProvidersView(): JSX.Element {
             )
           }}
         </AsyncBoundary>
+      ) : null}
+      {pastingLink ? (
+        <PasteLinkDialog
+          onCancel={() => setPastingLink(false)}
+          onSubmit={(link) => {
+            setPastingLink(false)
+            onConnectLink(link)
+          }}
+        />
       ) : null}
     </section>
   )

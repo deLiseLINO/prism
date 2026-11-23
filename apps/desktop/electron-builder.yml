@@ -26,6 +26,10 @@ publish:
     repo: prism
     channel: latest
 detectUpdateChannel: false
+protocols:
+  - name: Prism
+    schemes:
+      - prism
 mac:
   category: Utilities
   binaries:
@@ -68,6 +72,7 @@ linux:
   desktop:
     entry:
       Comment: Prism — local-first AI workbench
+      MimeType: x-scheme-handler/prism;
   executableName: prism-desktop
   artifactName: ${productName}-${version}-${arch}.${ext}
   target:

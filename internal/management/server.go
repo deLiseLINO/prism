@@ -107,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/providers", s.providersCreate)
 	mux.HandleFunc("PUT /api/v1/providers/{id}", s.providersReplace)
 	mux.HandleFunc("POST /api/v1/providers/{id}/sync-models", s.providersSyncModels)
+	mux.HandleFunc("POST /api/v1/connect", s.connect)
 	mux.HandleFunc("PUT /api/v1/providers/{id}/model-mode", s.providersModelMode)
 	mux.HandleFunc("POST /api/v1/providers/{id}/rename", s.providersRename)
 	mux.HandleFunc("DELETE /api/v1/providers/{id}", s.providersDelete)
@@ -172,6 +173,7 @@ var routeTemplates = []string{
 	"/api/v1/providers/{id}/sync-models",
 	"/api/v1/providers/{id}/rename",
 	"/api/v1/providers/{id}/model-mode",
+	"/api/v1/connect",
 	"/api/v1/accounts",
 	"/api/v1/accounts/{id}",
 	"/api/v1/accounts/{id}/pause",
@@ -361,7 +363,23 @@ func (s *Server) providersReplace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string, body ProviderWrite, expected uint64) {
-	snap := s.cfg.Get()
+	updated, err := s.commitProvider(r.Context(), s.cfg.Get(), id, body, expected)
+	if err != nil {
+		writeMutationError(w, err)
+		return
+	}
+	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+}
+
+// commitProvider lays body over provider id of snap, stages its credential,
+// writes the document under expected and publishes the credential. A stale
+// generation comes back as the config error so callers can retry.
+func (s *Server) commitProvider(ctx context.Context, snap config.Snapshot, id string, body ProviderWrite, expected uint64) (config.Snapshot, error) {
 	doc := snap.Config
 	if doc.Providers == nil {
 		doc.Providers = map[string]config.Provider{}
@@ -425,45 +443,34 @@ func (s *Server) applyProvider(w http.ResponseWriter, r *http.Request, id string
 	}
 	previous := snap.Config.Providers[id]
 	if body.Credential != "" {
-		ref, err := s.creds.Stage(r.Context(), id, previous.APIKeyRef, []byte(body.Credential))
+		ref, err := s.creds.Stage(ctx, id, previous.APIKeyRef, []byte(body.Credential))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "credential_store", err.Error())
-			return
+			return config.Snapshot{}, &httpError{status: http.StatusInternalServerError, code: "credential_store", message: err.Error()}
 		}
 		next.APIKeyRef = ref
 	} else if body.APIKeyRef != nil {
 		if next.APIKeyRef != previous.APIKeyRef && !(previous.APIKeyRef == "" && next.APIKeyRef == id+":default") {
 			if next.APIKeyRef == "" {
-				writeError(w, http.StatusBadRequest, "invalid_document", "cannot clear a published credential reference")
-				return
+				return config.Snapshot{}, &httpError{status: http.StatusBadRequest, code: "invalid_document", message: "cannot clear a published credential reference"}
 			}
-			writeError(w, http.StatusBadRequest, "invalid_document", "supply credential to publish a new credential reference")
-			return
+			return config.Snapshot{}, &httpError{status: http.StatusBadRequest, code: "invalid_document", message: "supply credential to publish a new credential reference"}
 		}
 		if next.APIKeyRef != "" {
-			set, err := s.creds.Configured(r.Context(), id, next.APIKeyRef)
+			set, err := s.creds.Configured(ctx, id, next.APIKeyRef)
 			if err != nil || !set {
-				writeError(w, http.StatusBadRequest, "invalid_document", "credential reference is not available for provider")
-				return
+				return config.Snapshot{}, &httpError{status: http.StatusBadRequest, code: "invalid_document", message: "credential reference is not available for provider"}
 			}
 		}
 	}
 	doc.Providers[id] = next
 	updated, err := s.cfg.Update(doc, expected)
 	if err != nil {
-		writeConfigError(w, err)
-		return
+		return config.Snapshot{}, err
 	}
 	if err := s.creds.Committed(context.Background(), id, previous, next); err != nil {
-		writeError(w, http.StatusInternalServerError, "credential_publication", err.Error())
-		return
+		return config.Snapshot{}, &httpError{status: http.StatusInternalServerError, code: "credential_publication", message: err.Error()}
 	}
-	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+	return updated, nil
 }
 
 func (s *Server) providersDelete(w http.ResponseWriter, r *http.Request) {
@@ -547,16 +554,29 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "unsupported", "model sync is not wired")
 		return
 	}
-	snap := s.cfg.Get()
-	p, exists := snap.Config.Providers[id]
-	if !exists {
-		writeError(w, http.StatusNotFound, "not_found", "provider "+id+" not found")
+	updated, err := s.syncModels(r.Context(), s.cfg.Get(), id, expected)
+	if err != nil {
+		writeMutationError(w, err)
 		return
 	}
-	listing, err := s.syncer.RemoteModels(r.Context(), id, p)
+	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "upstream", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+}
+
+// syncModels merges the provider's remote model listing into snap and
+// writes it under expected. The caller makes sure a syncer is wired.
+func (s *Server) syncModels(ctx context.Context, snap config.Snapshot, id string, expected uint64) (config.Snapshot, error) {
+	p, exists := snap.Config.Providers[id]
+	if !exists {
+		return config.Snapshot{}, &httpError{status: http.StatusNotFound, code: "not_found", message: "provider " + id + " not found"}
+	}
+	listing, err := s.syncer.RemoteModels(ctx, id, p)
+	if err != nil {
+		return config.Snapshot{}, &httpError{status: http.StatusBadGateway, code: "upstream", message: err.Error()}
 	}
 	doc := snap.Config
 	next := doc.Providers[id]
@@ -677,17 +697,7 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 	if len(unroutable) > 0 {
 		dropRemovedModelTargets(&doc, id, unroutable)
 	}
-	updated, err := s.cfg.Update(doc, expected)
-	if err != nil {
-		writeConfigError(w, err)
-		return
-	}
-	v, err := s.providerView(r.Context(), updated.Config, id, updated.Config.Providers[id])
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, ProviderMutationResponse{Generation: updated.Generation, Provider: v})
+	return s.cfg.Update(doc, expected)
 }
 
 func dropRemovedModelTargets(doc *config.Document, providerID string, removed map[string]bool) {
@@ -1545,6 +1555,24 @@ func writeConfigError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
+}
+
+// httpError is a failure that already knows its HTTP status and code.
+type httpError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e *httpError) Error() string { return e.message }
+
+func writeMutationError(w http.ResponseWriter, err error) {
+	var he *httpError
+	if errors.As(err, &he) {
+		writeError(w, he.status, he.code, he.message)
+		return
+	}
+	writeConfigError(w, err)
 }
 
 func writeAccountError(w http.ResponseWriter, err error) {

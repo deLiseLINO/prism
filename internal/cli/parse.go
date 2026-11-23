@@ -42,6 +42,10 @@ type command struct {
 	renameTo          string
 	dryRun            bool
 
+	// connect
+	link      string
+	linkStdin bool
+
 	// combos / routes
 	comboID  string
 	routeKey string
@@ -181,6 +185,7 @@ Commands:
   auth login|status         browser OAuth login or session/provider status
   accounts <sub>            list/pause/resume/priority/quota/remove/select
   providers <sub>           list/add/edit/enable/disable/remove/rename
+  connect <link>|--stdin    add the provider a prism://connect link describes
   models <sub>              list/enable/disable
   combos <sub>              list/set/remove
   routes <sub>              list/set/remove
@@ -242,6 +247,13 @@ answers 429/502/503/504 before any output. On edit it replaces the stored list.
 --spread sends each client session to its own address among the endpoint and
 the fallbacks instead of always starting at the endpoint; --no-spread goes
 back to failover.
+`
+
+var helpConnect = `Usage: prism connect <link> [--dry-run] [--json]
+       prism connect --stdin [--dry-run] [--json]
+Adds the provider a prism://connect link describes; an existing provider is
+never overwritten. --stdin reads the link from standard input so its key stays
+out of the shell history. --dry-run shows the provider and changes nothing.
 `
 
 var helpModels = `Usage: prism models list [--json]
@@ -313,6 +325,8 @@ func parseCommand(args []string) (*command, error) {
 		return parseAccounts(args[1:], spec)
 	case "providers":
 		return parseProviders(args[1:], spec)
+	case "connect":
+		return parseConnect(args[1:], spec)
 	case "models":
 		return parseModels(args[1:], spec)
 	case "combos":
@@ -576,6 +590,25 @@ func validWire(w string) bool {
 		return true
 	}
 	return false
+}
+
+func parseConnect(args []string, spec map[string]bool) (*command, error) {
+	pos, fs := scanFlags(args, spec)
+	if err := rejectUnknown(fs, helpConnect); err != nil {
+		return nil, err
+	}
+	cmd := &command{verb: "connect", json: fs.has("json"), linkStdin: fs.has("stdin"), dryRun: fs.has("dry-run")}
+	switch {
+	case len(pos) > 1:
+		return nil, usageFail(helpConnect, "connect takes one link")
+	case len(pos) == 1 && cmd.linkStdin:
+		return nil, usageFail(helpConnect, "link input: use either a link argument or --stdin, not both")
+	case len(pos) == 0 && !cmd.linkStdin:
+		return nil, usageFail(helpConnect, "connect requires a link or --stdin")
+	case len(pos) == 1:
+		cmd.link = pos[0]
+	}
+	return cmd, nil
 }
 
 func parseModels(args []string, spec map[string]bool) (*command, error) {

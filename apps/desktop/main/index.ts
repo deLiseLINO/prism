@@ -16,6 +16,7 @@ import { locateResource } from './daemon/resources'
 import { bundledRemoteBinary } from './daemon/locate'
 import { maintainHostDaemons, type HostInstallDeps } from './hosts/install'
 import { createMainWindow } from './window'
+import { CONNECT_LINK_SCHEME, PendingConnectLink, findConnectLink, isConnectLink } from './connect-link'
 
 const COMMAND_TIMEOUT_MS = 20_000
 const HEALTH_POLL_MS = 5_000
@@ -27,6 +28,8 @@ const STABILITY_WINDOW_MS = 60_000
 // Remote machines install prism from the release matching this app's version.
 const RELEASE_DOWNLOAD_URL = 'https://github.com/deLiseLINO/prism/releases/download'
 
+const connectLinks = new PendingConnectLink()
+
 async function bootstrap(): Promise<void> {
   const env = process.env
   const config = await loadDesktopConfig()
@@ -34,6 +37,12 @@ async function bootstrap(): Promise<void> {
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
+  }
+  if (process.defaultApp) {
+    const entry = process.argv[1]
+    if (entry !== undefined) app.setAsDefaultProtocolClient(CONNECT_LINK_SCHEME, process.execPath, [path.resolve(entry)])
+  } else {
+    app.setAsDefaultProtocolClient(CONNECT_LINK_SCHEME)
   }
   const iconPath = locateResource('icon.png')
   const icon = nativeImage.createFromPath(iconPath)
@@ -97,8 +106,17 @@ async function bootstrap(): Promise<void> {
     showWindow()
   })
 
-  app.on('second-instance', () => {
+  connectLinks.subscribe(() => {
     showWindow()
+    if (mainWindow !== null && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IpcChannel.connectLinkEvent)
+    }
+  })
+  offerConnectLink(findConnectLink(process.argv))
+
+  app.on('second-instance', (_event, argv) => {
+    showWindow()
+    offerConnectLink(findConnectLink(argv))
   })
 
   app.on('activate', () => {
@@ -127,7 +145,7 @@ async function bootstrap(): Promise<void> {
       releaseBaseUrl: RELEASE_DOWNLOAD_URL,
       bundledBinary: bundledRemoteBinary,
     }
-    registerIpc({ supervisor, proxies, integrations, updater, agents, hostInstaller })
+    registerIpc({ supervisor, proxies, integrations, updater, agents, hostInstaller, connectLinks })
 
 
     proxies.start()
@@ -158,6 +176,16 @@ async function bootstrap(): Promise<void> {
     updater.start()
   })
 }
+
+function offerConnectLink(link: string | null): void {
+  if (link !== null) connectLinks.offer(link)
+}
+
+// macOS can deliver a link before the app is ready, so this listener cannot wait for bootstrap.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (isConnectLink(url)) connectLinks.offer(url)
+})
 
 void bootstrap()
 
