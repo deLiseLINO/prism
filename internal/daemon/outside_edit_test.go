@@ -38,9 +38,11 @@ func newCountingUpstream(t *testing.T) *countingUpstream {
 
 func outsideEditRuntime(t *testing.T, edge, side string) (*daemonEnv, *config.Manager, http.Handler) {
 	t.Helper()
+	// The upstreams count inference calls, so these providers list no models.
+	off := false
 	env, mgr := testEnv(t, config.Document{Version: config.SchemaVersion, Providers: map[string]config.Provider{
-		"edge": {Wire: config.WireOpenAIChat, BaseURL: edge + "/v1", Models: []string{"model"}, APIKeyRef: "edge:default"},
-		"side": {Wire: config.WireOpenAIChat, BaseURL: side + "/v1", Models: []string{"model"}, APIKeyRef: "side:default"},
+		"edge": {Wire: config.WireOpenAIChat, BaseURL: edge + "/v1", Models: []string{"model"}, APIKeyRef: "edge:default", Discovery: &off},
+		"side": {Wire: config.WireOpenAIChat, BaseURL: side + "/v1", Models: []string{"model"}, APIKeyRef: "side:default", Discovery: &off},
 	}})
 	for _, id := range []string{"edge", "side"} {
 		if err := env.creds.file.Put(context.Background(), account.ProviderID(id), account.AccountID(id+":default"), 1, []byte(id+"-key")); err != nil {

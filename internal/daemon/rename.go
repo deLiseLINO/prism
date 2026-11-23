@@ -59,6 +59,7 @@ func (e *daemonEnv) dropProvider(id string) {
 	delete(e.flows, providerID)
 	delete(e.wires, providerID)
 	delete(e.lastDiscover, providerID)
+	delete(e.discoverFailed, providerID)
 	if e.creds.publication != nil {
 		e.creds.publication.mu.Lock()
 		delete(e.creds.publication.refs, id)

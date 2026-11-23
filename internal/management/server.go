@@ -1,6 +1,7 @@
 package management
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -432,6 +433,12 @@ func (s *Server) commitProvider(ctx context.Context, snap config.Snapshot, id st
 	if body.Enabled != nil {
 		next.Enabled = body.Enabled
 	}
+	if body.Discovery != nil {
+		next.Discovery = nil
+		if !*body.Discovery {
+			next.Discovery = body.Discovery
+		}
+	}
 	if body.Pool != nil {
 		next.Pool = body.Pool
 	}
@@ -568,7 +575,9 @@ func (s *Server) providersSyncModels(w http.ResponseWriter, r *http.Request) {
 }
 
 // syncModels merges the provider's remote model listing into snap and
-// writes it under expected. The caller makes sure a syncer is wired.
+// writes it under expected. Models the listing no longer names leave the
+// provider, and so do the combo, route and alias targets that used them.
+// The caller makes sure a syncer is wired.
 func (s *Server) syncModels(ctx context.Context, snap config.Snapshot, id string, expected uint64) (config.Snapshot, error) {
 	p, exists := snap.Config.Providers[id]
 	if !exists {
@@ -579,7 +588,55 @@ func (s *Server) syncModels(ctx context.Context, snap config.Snapshot, id string
 		return config.Snapshot{}, &httpError{status: http.StatusBadGateway, code: "upstream", message: err.Error()}
 	}
 	doc := snap.Config
-	next := doc.Providers[id]
+	mergeListing(&doc, id, listing)
+	return s.cfg.Update(doc, expected)
+}
+
+// RefreshModels adds the models provider id lists now. Models it stopped
+// listing stay, so a short or failed listing never drops the combos,
+// routes and aliases that use them; the sync action removes them. Nothing
+// is written when the listing changes nothing. It returns how many models
+// the provider gained.
+func (s *Server) RefreshModels(ctx context.Context, id string) (int, error) {
+	snap := s.cfg.Get()
+	p, exists := snap.Config.Providers[id]
+	if !exists {
+		return 0, nil
+	}
+	listing, err := s.syncer.RemoteModels(ctx, id, p)
+	if err != nil {
+		return 0, err
+	}
+	for _, model := range p.SyncedModels {
+		if !slices.ContainsFunc(listing.Models, func(row ListedModel) bool { return row.ID == model }) {
+			facts := p.Discovered[model]
+			listing.Models = append(listing.Models, ListedModel{ID: model, ContextWindow: facts.ContextWindow, MaxOutput: facts.MaxOutput, Image: facts.Image, Kind: facts.Kind})
+		}
+	}
+	before, err := json.Marshal(snap.Config)
+	if err != nil {
+		return 0, err
+	}
+	doc := snap.Config
+	mergeListing(&doc, id, listing)
+	after, err := json.Marshal(doc)
+	if err != nil {
+		return 0, err
+	}
+	if bytes.Equal(before, after) {
+		return 0, nil
+	}
+	if _, err := s.cfg.Update(doc, snap.Generation); err != nil {
+		return 0, err
+	}
+	return len(doc.Providers[id].Models) - len(p.Models), nil
+}
+
+// mergeListing lays listing over provider id of doc. Models set by hand,
+// the ones outside SyncedModels, stay.
+func mergeListing(doc *config.Document, id string, listing ModelListing) {
+	p := doc.Providers[id]
+	next := p
 	if next.Wire == config.WireAntigravity && listing.Catalog != nil {
 		c := *listing.Catalog
 		c.RawModels = slices.Clone(c.RawModels)
@@ -653,8 +710,8 @@ func (s *Server) syncModels(ctx context.Context, snap config.Snapshot, id string
 	next.Discovered = discoveredFromList(remote)
 	doc.Providers[id] = next
 	if !rawNative {
-		foldRawModelSettings(&doc, id)
-		foldDiscovered(&doc, id)
+		foldRawModelSettings(doc, id)
+		foldDiscovered(doc, id)
 	}
 	if next.ModelMode == config.ModelModeRaw && !rawNative {
 		next = switchModelMode(doc.Providers[id], config.ModelModeRaw)
@@ -695,9 +752,8 @@ func (s *Server) syncModels(ctx context.Context, snap config.Snapshot, id string
 		}
 	}
 	if len(unroutable) > 0 {
-		dropRemovedModelTargets(&doc, id, unroutable)
+		dropRemovedModelTargets(doc, id, unroutable)
 	}
-	return s.cfg.Update(doc, expected)
 }
 
 func dropRemovedModelTargets(doc *config.Document, providerID string, removed map[string]bool) {
@@ -870,6 +926,7 @@ func (s *Server) providerView(ctx context.Context, doc config.Document, id strin
 		ResolvedFacts:    resolvedFacts(doc, id, p),
 		ModelSettings:    p.ModelSettings,
 		Enabled:          p.Enabled,
+		Discovery:        p.Discovery,
 		Pool:             p.Pool,
 		Wait:             p.Wait,
 		Credential:       ProviderCredential{State: state},

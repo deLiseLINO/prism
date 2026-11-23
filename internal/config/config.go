@@ -151,11 +151,18 @@ type Provider struct {
 	Discovered       map[string]DiscoveredFacts `json:"discovered,omitempty"`
 	ModelSettings    map[string]ModelSettings   `json:"modelSettings,omitempty"`
 	Enabled          *bool                      `json:"enabled,omitempty"`
-	Pool             *PoolSettings              `json:"pool,omitempty"`
-	Wait             *WaitSettings              `json:"wait,omitempty"`
+	// Discovery turns model discovery off when false. With it on, the
+	// daemon keeps adding the models the provider lists to Models, next to
+	// the ones set by hand.
+	Discovery *bool         `json:"discovery,omitempty"`
+	Pool      *PoolSettings `json:"pool,omitempty"`
+	Wait      *WaitSettings `json:"wait,omitempty"`
 }
 
 func (p Provider) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
+
+// DiscoveryEnabled reports whether the daemon lists the provider's models.
+func (p Provider) DiscoveryEnabled() bool { return p.Discovery == nil || *p.Discovery }
 
 const DefaultContextWindow = 256000
 
