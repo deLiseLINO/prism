@@ -7,8 +7,6 @@ import { MachinesView, syncLabel } from '../renderer/src/views/MachinesView'
 import { ActiveHostProvider, RemoteBanner } from '../renderer/src/ActiveHost'
 import { api, ApiError } from '../renderer/src/api'
 
-vi.mock('../renderer/src/bridge', () => ({ bridge: {} }))
-
 const LOCAL: HostView = { id: 'local', local: true, status: 'ok' }
 
 let root: Root
