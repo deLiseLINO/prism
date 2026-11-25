@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { HostId, HostInstallReply } from '@prism/contracts'
+import { bridge } from './bridge'
 
 export type InstallPhase = 'probe' | 'upload' | 'start' | 'verify' | 'register'
 
@@ -54,7 +55,7 @@ export async function startInstall(host: HostId): Promise<void> {
   if (current !== undefined && current.phase !== null) return
   runs.set(host, { host, phase: 'probe', error: null, notice: null, done: false })
   emit()
-  const reply: HostInstallReply | undefined = await window.prism.integrations.installDaemon({ host })
+  const reply: HostInstallReply | undefined = await bridge.integrations.installDaemon({ host })
   let ok = false
   if (reply !== undefined && reply.ok) {
     runs.set(host, { host, phase: null, error: null, notice: reply.notice, done: true })

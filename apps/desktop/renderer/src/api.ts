@@ -280,7 +280,7 @@ export const api = {
 }
 
 async function localCall<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, expectedStatus = 200): Promise<T> {
-  const reply = await window.prism.management.call({ method, path, ...(body === undefined ? {} : { body }) })
+  const reply = await bridge.management.call({ method, path, ...(body === undefined ? {} : { body }) })
   if (!reply.ok || reply.status !== expectedStatus) noteFailedRequest({ method, path, status: reply.status, code: errorCode(reply) })
   return unwrap<T>(reply, expectedStatus)
 }
