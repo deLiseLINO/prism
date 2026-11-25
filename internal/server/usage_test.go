@@ -135,6 +135,15 @@ func TestUsageRecordedPerTurn(t *testing.T) {
 	if records := store.snapshot(); recRemote.Code != http.StatusOK || len(records) != 2 || records[1].ClientLabel != "" {
 		t.Fatalf("remote request must succeed without client attribution: status=%d records=%+v", recRemote.Code, records)
 	}
+	req = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"test-model","stream":true,"input":"hi"}`))
+	req.Header.Set("X-Prism-Client", "forged")
+	req.RemoteAddr = "[::1]:12345"
+	req.Header.Add("X-Prism-Client", "team-a")
+	recDuplicate := httptest.NewRecorder()
+	h.ServeHTTP(recDuplicate, req)
+	if records := store.snapshot(); recDuplicate.Code != http.StatusOK || len(records) != 3 || records[2].ClientLabel != "" {
+		t.Fatalf("duplicate labels must not be attributed: status=%d, records=%d", recDuplicate.Code, len(records))
+	}
 }
 
 func TestUsageRecordsZeroTerminal(t *testing.T) {
