@@ -12,6 +12,55 @@ var (
 	base = time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 )
 
+func TestConcurrentUpgradePreservesUsage(t *testing.T) {
+	path := dbPath(t)
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(schema + `INSERT INTO requests (request_id, ts, model, protocol, status, usage_kind, output_tokens)
+VALUES ('old', 1, 'model', 'chat', 'completed', 'reported', 7)`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 4)
+	for range cap(results) {
+		go func() {
+			s, err := Open(path)
+			if err == nil {
+				err = s.Close()
+			}
+			results <- err
+		}()
+	}
+	for range cap(results) {
+		if err := <-results; err != nil {
+			t.Error(err)
+		}
+	}
+	s := open(t, path)
+	mustInsert(t, s, Record{RequestID: "new", ClientLabel: "team-a", Usage: Usage{OutputTokens: 11}})
+	rows, err := s.(*dbStore).db.Query("SELECT client_label, output_tokens FROM requests ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for i, want := range []struct {
+		label string
+		tokens int
+	}{{"", 7}, {"team-a", 11}} {
+		var label string
+		var tokens int
+		if !rows.Next() {
+			t.Fatalf("missing row %d: %v", i, rows.Err())
+		}
+		if err := rows.Scan(&label, &tokens); err != nil || label != want.label || tokens != want.tokens {
+			t.Fatalf("row %d = (%q, %d), err=%v", i, label, tokens, err)
+		}
+	}
+}
+
 func open(t *testing.T, path string) Store {
 	t.Helper()
 	s, err := Open(path)

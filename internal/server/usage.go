@@ -18,7 +18,11 @@ func usageClientLabel(r *http.Request) string {
 	if !loopback(r.RemoteAddr) {
 		return ""
 	}
-	label := r.Header.Get("X-Prism-Client")
+	values := r.Header.Values("X-Prism-Client")
+	if len(values) != 1 {
+		return ""
+	}
+	label := values[0]
 	if len(label) > 128 {
 		return ""
 	}

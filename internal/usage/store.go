@@ -60,58 +60,46 @@ CREATE INDEX IF NOT EXISTS idx_attempts_provider ON attempts(provider);
 `
 
 func Open(path string) (Store, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)")
+	db, err := sql.Open("sqlite", "file:"+path+"?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, fmt.Errorf("usage: open %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("usage: apply schema: %w", err)
-	}
-	for _, table := range []string{"requests", "attempts"} {
-		rows, err := db.Query("PRAGMA table_info(" + table + ")")
-		if err != nil {
-			db.Close()
-			return nil, fmt.Errorf("usage: inspect schema: %w", err)
-		}
-		found := false
-		for rows.Next() {
-			var cid, notNull, primary int
-			var name, kind string
-			var defaultValue any
-			if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primary); err != nil {
-				rows.Close()
-				db.Close()
-				return nil, fmt.Errorf("usage: inspect column: %w", err)
-			}
-			found = found || name == "cache_write_tokens"
-		}
-		iterationErr := rows.Err()
-		rows.Close()
-		if iterationErr != nil {
-			db.Close()
-			return nil, fmt.Errorf("usage: inspect columns: %w", iterationErr)
-		}
-		if !found {
-			if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0"); err != nil {
-				db.Close()
-				return nil, fmt.Errorf("usage: migrate cache writes: %w", err)
-			}
-		}
-	}
-	var hasClientLabel bool
-	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info('requests') WHERE name = 'client_label')`).Scan(&hasClientLabel); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("usage: inspect client label: %w", err)
-	}
-	if !hasClientLabel {
-		if _, err := db.Exec("ALTER TABLE requests ADD COLUMN client_label TEXT NOT NULL DEFAULT ''"); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("usage: migrate client label: %w", err)
-		}
+		return nil, fmt.Errorf("usage: migrate schema: %w", err)
 	}
 	return &dbStore{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(schema); err != nil {
+		return err
+	}
+	for _, column := range [...]struct{ table, name, definition string }{
+		{"requests", "cache_write_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"attempts", "cache_write_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"requests", "client_label", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name = ?)`, column.table, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.Exec("ALTER TABLE " + column.table + " ADD COLUMN " + column.name + " " + column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := tx.Exec("CREATE INDEX IF NOT EXISTS idx_requests_client_ts ON requests(client_label, ts)"); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *dbStore) Close() error {
