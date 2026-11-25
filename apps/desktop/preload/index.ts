@@ -20,7 +20,6 @@ const bridge: PrismBridge = {
     rollback: (request) => ipcRenderer.invoke(IpcChannel.integrationRollback, request),
     status: () => ipcRenderer.invoke(IpcChannel.integrationStatus),
     hosts: () => ipcRenderer.invoke(IpcChannel.hostsList),
-    installDaemon: (request) => ipcRenderer.invoke(IpcChannel.hostsInstall, request),
   },
 
   agents: {

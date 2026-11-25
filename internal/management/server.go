@@ -82,6 +82,11 @@ type Server struct {
 	renamer     ProviderRenamer
 	installer   Installer
 	id          string
+
+	hostCtx       context.Context
+	hostInstaller HostInstaller
+	hostTransport hostsync.Transport
+	installs      hostInstalls
 }
 
 func New(pool account.Pool, cfg ConfigStore, catalog Catalog, qs provider.QuotaSource, creds CredentialStore, auth Auth, ints *integrations.Registry, syncer ModelSyncer, installer Installer) *Server {
@@ -140,6 +145,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/hosts/{host}", s.hostsReplace)
 	mux.HandleFunc("DELETE /api/v1/hosts/{host}", s.hostsDelete)
 	mux.HandleFunc("PUT /api/v1/hosts/{host}/auto-sync", s.hostsAutoSync)
+	mux.HandleFunc("POST /api/v1/hosts/{host}/install", s.hostsInstallStart)
+	mux.HandleFunc("GET /api/v1/hosts/{host}/install", s.hostsInstallStatus)
 	mux.HandleFunc("PUT "+hostsync.ConfigPath, s.syncConfigApply)
 	mux.HandleFunc("GET "+hostsync.EditsPath, s.syncEdits)
 
@@ -163,7 +170,13 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeError(w, http.StatusNotFound, "not_found", "unknown route")
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if host := r.Header.Get(HostHeader); host != "" && host != HostIDLocal {
+			s.forwardToHost(w, r, host)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 var routeTemplates = []string{
@@ -195,6 +208,7 @@ var routeTemplates = []string{
 	"/api/v1/hosts",
 	"/api/v1/hosts/{host}",
 	"/api/v1/hosts/{host}/auto-sync",
+	"/api/v1/hosts/{host}/install",
 	"/api/v1/sync/config",
 	"/api/v1/sync/edits",
 	"/api/v1/integrations",

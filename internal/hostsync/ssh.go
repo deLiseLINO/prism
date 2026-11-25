@@ -63,6 +63,8 @@ func roundTrip(cmd *exec.Cmd, req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+const maxResponse = 16 << 20
+
 func exchange(stdin io.Writer, stdout io.Reader, req *http.Request) (*http.Response, []byte, error) {
 	if err := req.Write(stdin); err != nil {
 		return nil, nil, err
@@ -72,9 +74,12 @@ func exchange(stdin io.Writer, stdout io.Reader, req *http.Request) (*http.Respo
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(body) > maxResponse {
+		return nil, nil, fmt.Errorf("response from the host exceeds %d bytes", maxResponse)
 	}
 	return resp, body, nil
 }

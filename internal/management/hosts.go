@@ -4,6 +4,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/hostsync"
@@ -93,6 +94,10 @@ func (s *Server) hostsCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_document", "host id and address are required")
 		return
 	}
+	if strings.HasPrefix(body.Address, "-") {
+		writeError(w, http.StatusBadRequest, "invalid_document", "host address must not start with -")
+		return
+	}
 	if body.ID == HostIDLocal {
 		writeError(w, http.StatusBadRequest, "invalid_document", "host id "+HostIDLocal+" is reserved for this machine")
 		return
@@ -131,6 +136,10 @@ func (s *Server) hostsReplace(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Address == "" {
 		writeError(w, http.StatusBadRequest, "invalid_document", "host address is required")
+		return
+	}
+	if strings.HasPrefix(body.Address, "-") {
+		writeError(w, http.StatusBadRequest, "invalid_document", "host address must not start with -")
 		return
 	}
 	if body.DaemonPort < 0 || body.DaemonPort > 65535 {

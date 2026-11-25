@@ -6,7 +6,6 @@ export const IpcChannel = {
   integrationRollback: 'prism:integration-rollback',
   integrationStatus: 'prism:integration-status',
   hostsList: 'prism:hosts-list',
-  hostsInstall: 'prism:hosts-install',
   agentInstall: 'prism:agent-install',
   agentUpdate: 'prism:agent-update',
   agentJob: 'prism:agent-job',
