@@ -33,6 +33,15 @@ prism upgrade         # update prism (brew and go installs)
 
 The daemon listens on `127.0.0.1:10200`. The UI, the CLI and the desktop app share it.
 
+For downstream usage accounting, a reverse proxy on the same host can set
+`X-Prism-Client` to a non-secret client ID after authentication. Bind Prism to
+loopback, treat local callers as trusted, and overwrite or strip the header on
+every forwarded route. Prism ignores this header on non-loopback connections.
+The label is not a credential and does not grant access.
+
+The usage database stores the label in `requests.client_label` next to token
+counts. Unlabelled requests and historical rows have an empty label.
+
 A `chat`, `responses` or `messages` provider gets its models from its `/models` listing. Prism reads the listing when the provider is added and again every hour, and adds the models that are new. Models the listing stops naming stay until you press Sync in the app, so a short listing never removes combo or route targets. When the listing fails, Prism logs it once, keeps the models it has and tries again every 5 minutes. A model given with `--model` is added next to the listed ones and does not stop the listing, so leave `--model` out when the provider lists its models. For a provider without a listing, `--no-discovery` keeps only the `--model` models:
 
 ```

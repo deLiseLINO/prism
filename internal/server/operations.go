@@ -396,7 +396,7 @@ func (s *Server) handleCompact(w http.ResponseWriter, r *http.Request) {
 	turnReq.Input = compactionTurnInput(req.Input)
 	router := routing.NewRouter(s.pool, operationRunners{registry: s.registry, input: req.Input, output: &sink.output}, s.planner, s.group, s.rlog)
 	res := router.Turn(r.Context(), turnReq, facts, notStartedLifecycle{}, sink)
-	s.recordUsage(facts, req, protocolResponses, res, start)
+	s.recordUsage(usageClientLabel(r), facts, req, protocolResponses, res, start)
 	if failed, ok := res.Terminal.(routing.Failed); ok {
 		if res.RetryAfter > 0 {
 			seconds := int64(res.RetryAfter / time.Second)

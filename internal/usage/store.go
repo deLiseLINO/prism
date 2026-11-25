@@ -100,6 +100,17 @@ func Open(path string) (Store, error) {
 			}
 		}
 	}
+	var hasClientLabel bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info('requests') WHERE name = 'client_label')`).Scan(&hasClientLabel); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("usage: inspect client label: %w", err)
+	}
+	if !hasClientLabel {
+		if _, err := db.Exec("ALTER TABLE requests ADD COLUMN client_label TEXT NOT NULL DEFAULT ''"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("usage: migrate client label: %w", err)
+		}
+	}
 	return &dbStore{db: db}, nil
 }
 
@@ -120,12 +131,12 @@ func (s *dbStore) Insert(ctx context.Context, rec Record) error {
 	res, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO requests
   (request_id, ts, model, protocol, status, reason, usage_kind,
-   input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens, duration_ms, cache_write_tokens)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+   input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens, duration_ms, cache_write_tokens, client_label)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.RequestID, rec.Timestamp.UnixNano(), rec.Model, rec.Protocol, rec.Status, rec.Reason,
 		rec.UsageKind.String(),
 		rec.Usage.InputTokens, rec.Usage.OutputTokens, rec.Usage.CachedInputTokens,
-		rec.Usage.ReasoningTokens, rec.Usage.TotalTokens, rec.Duration.Milliseconds(), rec.Usage.CacheWriteInputTokens)
+		rec.Usage.ReasoningTokens, rec.Usage.TotalTokens, rec.Duration.Milliseconds(), rec.Usage.CacheWriteInputTokens, rec.ClientLabel)
 	if err != nil {
 		return fmt.Errorf("usage: insert request: %w", err)
 	}
