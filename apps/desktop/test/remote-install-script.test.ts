@@ -4,7 +4,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSy
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { REMOTE_INSTALL_SCRIPT } from '../main/hosts/remote-script'
+
+// The daemon embeds this script and pipes it to the remote machine's sh.
+const REMOTE_INSTALL_SCRIPT = readFileSync(path.join(import.meta.dirname, '../../../internal/hostinstall/remote-install.sh'), 'utf8')
 
 // The script runs against a fake machine: a private HOME, a PATH without
 // systemd or launchd, a curl that serves releases from a directory, and a

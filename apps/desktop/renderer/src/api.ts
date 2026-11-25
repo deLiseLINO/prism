@@ -8,6 +8,7 @@ import type {
   AuthStatusView,
   HostAutoSyncWrite,
   HostId,
+  HostInstallStatus,
   HostMutationResponse,
   HostsView,
   HostWrite,
@@ -276,6 +277,14 @@ export const api = {
 
   localSetHostAutoSync(id: string, body: HostAutoSyncWrite): Promise<HostMutationResponse> {
     return localCall('PUT', `/api/v1/hosts/${encodeURIComponent(id)}/auto-sync`, body)
+  },
+
+  localInstallHost(id: string): Promise<HostInstallStatus> {
+    return localCall('POST', `/api/v1/hosts/${encodeURIComponent(id)}/install`, undefined, 202)
+  },
+
+  localHostInstall(id: string): Promise<HostInstallStatus> {
+    return localCall('GET', `/api/v1/hosts/${encodeURIComponent(id)}/install`)
   },
 }
 

@@ -34,7 +34,7 @@ const buildCwd = scriptDir
 // Bundled daemon matrix: every supported platform/arch gets its own binary so
 // the packaged app works on any build host (e.g. an arm64 mac producing an
 // x64 dmg). The main process picks the right one via process.platform/arch
-// (see main/daemon/locate.ts, main/hosts/install.ts, and daemon-targets.mjs).
+// (see main/daemon/locate.ts, internal/hostinstall, and daemon-targets.mjs).
 const { daemonTargets, selectDaemonTargets } = await import('./daemon-targets.mjs')
 const selectedDaemons = selectDaemonTargets(daemonTargets, process.env.PRISM_DAEMON_TARGETS)
 // Stale binaries from a previous daemonTargets matrix must not ship.

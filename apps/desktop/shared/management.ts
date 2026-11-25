@@ -21,7 +21,10 @@ export class ManagementProxy {
     try {
       const response = await fetch(this.baseUrl + request.path, {
         method: request.method,
-        headers: request.body === undefined ? undefined : { 'content-type': 'application/json' },
+        headers: {
+          ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(request.host === undefined ? {} : { 'x-prism-host': request.host }),
+        },
         body: request.body === undefined ? undefined : JSON.stringify(request.body),
         signal: AbortSignal.timeout(MANAGEMENT_TIMEOUT_MS),
       })

@@ -63,7 +63,6 @@ const webIntegrations: PrismBridge['integrations'] = {
     }
     return reply.body as HostsView
   },
-  installDaemon: () => Promise.reject(new Error('prism: daemon install is only available in the desktop app')),
 }
 
 const webAgents: PrismBridge['agents'] = {

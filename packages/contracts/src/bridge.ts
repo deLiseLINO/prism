@@ -3,7 +3,6 @@ import type { AgentJob, AgentJobReply, AgentJobRequest, AgentsView } from './age
 import type { HostsView, IntegrationApplyResult, IntegrationRequest, IntegrationStatus } from './integrations'
 
 import type { ManagementCall, ManagementReply } from './management'
-import type { HostInstallReply, HostInstallRequest } from './hostinstall'
 import type { UpdaterStatus } from './updater'
 import type { DesktopWindowMaterial } from './ipc'
 
@@ -22,7 +21,6 @@ export interface PrismBridge {
     readonly rollback: (request: IntegrationRequest) => Promise<IntegrationApplyResult>
     readonly status: () => Promise<readonly IntegrationStatus[]>
     readonly hosts: () => Promise<HostsView>
-    readonly installDaemon: (request: HostInstallRequest) => Promise<HostInstallReply>
   }
 
   readonly agents: {

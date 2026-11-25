@@ -31,6 +31,7 @@ import (
 	modelcat "github.com/deLiseLINO/prism/internal/catalog"
 	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/failover"
+	"github.com/deLiseLINO/prism/internal/hostinstall"
 	"github.com/deLiseLINO/prism/internal/hostsync"
 	"github.com/deLiseLINO/prism/internal/integrations"
 	"github.com/deLiseLINO/prism/internal/management"
@@ -874,10 +875,11 @@ func run(opts options) error {
 		return credFile.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
 	}
 	mgmt.SetSyncBase(hostsync.NewBaseFile(filepath.Join(filepath.Dir(opts.configPath), "sync-base.json")), secrets)
+	sshTransport := hostsync.SSHTransport("ssh")
 	pusher := hostsync.NewPusher(hostsync.Options{
 		Config:    cfg,
 		Secrets:   secrets,
-		Transport: hostsync.SSHTransport("ssh"),
+		Transport: sshTransport,
 		Interval:  time.Minute,
 		Settle:    500 * time.Millisecond,
 		Timeout:   30 * time.Second,
@@ -885,6 +887,18 @@ func run(opts options) error {
 		Adopt:     mgmt.AdoptHostEdits,
 	})
 	mgmt.SetHostSync(pusher)
+	remotePort, err := strconv.Atoi(os.Getenv("PRISM_REMOTE_DAEMON_PORT"))
+	if err != nil || remotePort <= 0 || remotePort > 65535 {
+		remotePort = hostinstall.DefaultPort
+	}
+	mgmt.SetHostInstaller(ctx, &hostinstall.Installer{
+		SSH:            "ssh",
+		Version:        buildinfo.Version,
+		ReleaseBaseURL: hostinstall.ReleaseBaseURL,
+		Port:           remotePort,
+		Binary:         hostinstall.LocalBinary,
+		HTTP:           &http.Client{},
+	}, sshTransport)
 	mgmt.SetUsageStore(usageStore)
 	mgmt.SetRequestLog(rlog)
 	var signingIn func(account.ProviderID) bool

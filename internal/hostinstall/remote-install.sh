@@ -1,14 +1,14 @@
-// The POSIX shell program the desktop pipes to `ssh <host> sh -s -- …` to
-// install and run prismd on a remote macOS or Linux machine. It only needs
-// sh, uname, tar and a sha256 tool; curl or wget is used when the machine can
-// download the release itself.
-//
-// Usage: sh -s -- --version V --port P --base-url URL [--archive PATH --sha256 HEX | --binary PATH]
-//
-// stdout carries key=value lines for the desktop. Exit 20 means the machine
-// could not download the release and needs the archive uploaded. Any other
-// failure exits non-zero with one `prism-remote: …` line on stderr.
-export const REMOTE_INSTALL_SCRIPT = `set -u
+# The POSIX shell program the daemon pipes to `ssh <host> sh -s -- …` to
+# install and run prismd on a remote macOS or Linux machine. It only needs
+# sh, uname, tar and a sha256 tool; curl or wget is used when the machine can
+# download the release itself.
+#
+# Usage: sh -s -- --version V --port P --base-url URL [--archive PATH --sha256 HEX | --binary PATH]
+#
+# stdout carries key=value lines for the daemon. Exit 20 means the machine
+# could not download the release and needs the archive uploaded. Any other
+# failure exits non-zero with one `prism-remote: …` line on stderr.
+set -u
 # Braces make sh read the whole script before running any of it, so no
 # command below can swallow the rest of the script from stdin.
 {
@@ -24,11 +24,11 @@ while [ $# -gt 0 ]; do
     --archive) ARCHIVE=$2; shift 2 ;;
     --sha256) SHA=$2; shift 2 ;;
     --binary) BINARY=$2; shift 2 ;;
-    *) printf 'prism-remote: unknown argument %s\\n' "$1" >&2; exit 2 ;;
+    *) printf 'prism-remote: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
 done
-die() { printf 'prism-remote: %s\\n' "$1" >&2; exit "\${2:-1}"; }
-say() { printf '%s\\n' "$1"; }
+die() { printf 'prism-remote: %s\n' "$1" >&2; exit "${2:-1}"; }
+say() { printf '%s\n' "$1"; }
 [ -n "$VERSION" ] && [ -n "$PORT" ] || die "--version and --port are required" 2
 
 os=$(uname -s)
@@ -46,7 +46,7 @@ case "$arch" in
   aarch64|arm64) arch=arm64 ;;
   *) die "prism has no build for the $arch processor" 10 ;;
 esac
-TARGET="\${os}_\${arch}"
+TARGET="${os}_${arch}"
 say "target=$TARGET"
 
 DIR="$ROOT/versions/$VERSION"
@@ -87,7 +87,7 @@ if ! { [ -x "$DIR/prism" ] && [ "$(cat "$DIR/.install-complete" 2>/dev/null)" = 
   if [ -n "$BINARY" ]; then
     cp "$BINARY" "$STAGE/prism" && chmod 755 "$STAGE/prism" || die "cannot unpack the uploaded prism"
   else
-    name="prism_\${VERSION}_\${TARGET}.tar.gz"
+    name="prism_${VERSION}_${TARGET}.tar.gz"
     if [ -z "$ARCHIVE" ]; then
       if [ -z "$BASE" ] || ! fetch "$BASE/v$VERSION/SHA256SUMS" "$STAGE/SHA256SUMS" || ! fetch "$BASE/v$VERSION/$name" "$STAGE/$name"; then
         say "need=archive"
@@ -103,7 +103,7 @@ if ! { [ -x "$DIR/prism" ] && [ "$(cat "$DIR/.install-complete" 2>/dev/null)" = 
     rm -f "$STAGE/$name" "$STAGE/SHA256SUMS"
   fi
   ran=$("$STAGE/prism" version 2>&1) || die "the prism $TARGET build does not run on this machine: $ran" 13
-  printf '%s\\n' "$VERSION" > "$STAGE/.install-complete"
+  printf '%s\n' "$VERSION" > "$STAGE/.install-complete"
   rm -rf "$DIR" && mv "$STAGE" "$DIR" || die "cannot move prism into $DIR"
   state=installed
 fi
@@ -116,7 +116,7 @@ probe() {
   elif command -v wget >/dev/null 2>&1; then wget -q -T 2 -O - "$url" 2>/dev/null
   else return 1; fi
 }
-version_of() { sed -n 's/.*"version":"\\([^"]*\\)".*/\\1/p'; }
+version_of() { sed -n 's/.*"version":"\([^"]*\)".*/\1/p'; }
 owned_pids() { pgrep -f "$ROOT/[^ ]*prism daemon --listen 127.0.0.1:$PORT" 2>/dev/null; }
 
 uid=$(id -u)
@@ -127,13 +127,13 @@ if [ "$os" = linux ] && command -v systemctl >/dev/null 2>&1; then
   fi
   # The user manager must share this HOME, or it would never read our unit.
   if menv=$(systemctl --user show-environment 2>/dev/null); then
-    mconf=$(printf '%s\\n' "$menv" | sed -n 's/^XDG_CONFIG_HOME=//p')
-    [ "$(printf '%s\\n' "$menv" | sed -n 's/^HOME=//p')" = "$HOME" ] && service=systemd
+    mconf=$(printf '%s\n' "$menv" | sed -n 's/^XDG_CONFIG_HOME=//p')
+    [ "$(printf '%s\n' "$menv" | sed -n 's/^HOME=//p')" = "$HOME" ] && service=systemd
   fi
 elif [ "$os" = darwin ] && launchctl print "gui/$uid" >/dev/null 2>&1; then
   service=launchd
 fi
-UNIT_PATH="\${mconf:-$HOME/.config}/systemd/user/$UNIT"
+UNIT_PATH="${mconf:-$HOME/.config}/systemd/user/$UNIT"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 running=$(probe)
@@ -149,7 +149,7 @@ if [ "$state" = current ] && [ "$previous" = "$DIR" ] && [ -n "$running" ] &&
     launchd) [ -f "$PLIST" ] && launchctl print "gui/$uid/$LABEL" >/dev/null 2>&1 && settled=yes ;;
     none) settled=yes ;;
   esac
-  if [ "\${settled:-}" = yes ]; then
+  if [ "${settled:-}" = yes ]; then
     say "state=current"; say "service=$service"; say "version=$VERSION"
     exit 0
   fi
@@ -190,10 +190,10 @@ UNIT_EOF
   if [ "$service" = systemd ]; then
     linger=$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null)
     if [ "$linger" != yes ] && loginctl enable-linger "$(id -un)" >/dev/null 2>&1; then linger=yes; fi
-    say "linger=\${linger:-unknown}"
+    say "linger=${linger:-unknown}"
   fi
 elif [ "$service" = launchd ]; then
-  xml() { printf '%s' "$1" | sed -e 's/&/\\&amp;/g' -e 's/</\\&lt;/g' -e 's/>/\\&gt;/g'; }
+  xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
   mkdir -p "$(dirname "$PLIST")"
   cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -234,4 +234,3 @@ say "state=$state"
 say "service=$service"
 say "version=$VERSION"
 }
-`

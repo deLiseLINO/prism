@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import type { HostInstallReply, HostInstallRequest, HostView, ProvidersView } from '@prism/contracts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { HostInstallStatus, HostView, ProvidersView } from '@prism/contracts'
 import { MachinesView, syncLabel } from '../renderer/src/views/MachinesView'
 import { ActiveHostProvider, RemoteBanner } from '../renderer/src/ActiveHost'
 import { api, ApiError } from '../renderer/src/api'
@@ -12,7 +12,6 @@ const LOCAL: HostView = { id: 'local', local: true, status: 'ok' }
 let root: Root
 let element: HTMLDivElement
 let hosts: HostView[]
-let installDaemon: Mock<(request: HostInstallRequest) => Promise<HostInstallReply>>
 
 beforeEach(() => {
   Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true)
@@ -20,8 +19,7 @@ beforeEach(() => {
   document.body.appendChild(element)
   root = createRoot(element)
   hosts = [LOCAL]
-  installDaemon = vi.fn<(request: HostInstallRequest) => Promise<HostInstallReply>>()
-  Reflect.set(window, 'prism', { integrations: { installDaemon } })
+  vi.spyOn(api, 'localHostInstall').mockImplementation(async () => ({ running: false, reply: null }))
   vi.spyOn(api, 'localHosts').mockImplementation(async () => ({ hosts }))
   vi.spyOn(api, 'localProviders').mockImplementation(async () => ({ generation: 7 }) as ProvidersView)
 })
@@ -29,7 +27,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   element.remove()
-  Reflect.deleteProperty(window, 'prism')
   vi.restoreAllMocks()
 })
 
@@ -74,8 +71,8 @@ describe('adding a machine', () => {
       hosts = [LOCAL, { id: body.id, local: false, status: 'not_installed', address: body.address }]
       return { generation: 8, host: hosts[1]! }
     })
-    const { promise, resolve } = Promise.withResolvers<HostInstallReply>()
-    installDaemon.mockReturnValue(promise)
+    const { promise, resolve } = Promise.withResolvers<HostInstallStatus>()
+    const install = vi.spyOn(api, 'localInstallHost').mockReturnValue(promise)
     await mount()
 
     await act(async () => {
@@ -85,11 +82,11 @@ describe('adding a machine', () => {
     await act(async () => button(element, 'Add machine').click())
 
     expect(create).toHaveBeenCalledWith({ id: 'box', address: 'user@box', expectedGeneration: 7 })
-    expect(installDaemon).toHaveBeenCalledWith({ host: 'box' })
+    expect(install).toHaveBeenCalledWith('box')
     expect(button(row('box'), 'Installing…').disabled).toBe(true)
     expect(button(row('box'), 'Manage').disabled).toBe(true)
 
-    await act(async () => resolve({ ok: false, host: 'box', phase: 'probe', reason: 'ssh probe failed: no route to host' }))
+    await act(async () => resolve({ running: false, reply: { ok: false, host: 'box', phase: 'probe', reason: 'ssh probe failed: no route to host' } }))
 
     expect(row('box').querySelector('[role=alert]')?.textContent).toBe('ssh probe failed: no route to host')
     expect(button(row('box'), 'Retry install').disabled).toBe(false)

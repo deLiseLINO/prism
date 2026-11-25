@@ -33,12 +33,10 @@ export type MachineScopeState =
       readonly setScope: (scope: MachineScope) => void
     }
 
-// Scoped reads need the desktop bridge: the web UI's same-origin proxy ignores `host` and
-// would silently answer every machine with local data.
 export function useMachineScope(): MachineScopeState {
   const { flags } = useExperimentalFlags()
   const { host } = useActiveHost()
-  const enabled = flags.remoteInstall && 'prism' in window
+  const enabled = flags.remoteInstall
   const [machines, setMachines] = useState<readonly Machine[]>([])
   const [scope, setScope] = useState<MachineScope>(ALL_MACHINES)
 

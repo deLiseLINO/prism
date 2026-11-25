@@ -5,7 +5,6 @@ import { IntegrationApi, parseIntegrationRequest } from '../shared/integrations'
 import { AgentsApi, parseAgentJobRequest } from '../shared/agents'
 import { ManagementProxy, validateManagementCall } from '../shared/management'
 import type { HostProxyRegistry } from './hosts/registry'
-import { installHostDaemon, parseHostInstallRequest, type HostInstallDeps } from './hosts/install'
 import { evaluateExternalNavigation, DEFAULT_NAVIGATION_POLICY } from './window/navigation'
 import { titleBarOptions } from './window'
 import { applyWindowMaterial, parseWindowMaterialRequest } from './window-material'
@@ -19,11 +18,8 @@ export interface IpcWiring {
   readonly integrations: IntegrationApi
   readonly updater: UpdaterService
   readonly agents: AgentsApi
-  readonly hostInstaller: HostInstallDeps
   readonly connectLinks: PendingConnectLink
 }
-
-export type { HostInstallDeps } from './hosts/install'
 
 function openExternal(url: unknown): Promise<void> {
   if (typeof url !== 'string' || url === '') {
@@ -79,10 +75,6 @@ export function registerIpc(wiring: IpcWiring): void {
   ipcMain.handle(IpcChannel.hostsList, (event) => {
     trustedSender(event)
     return wiring.integrations.hosts()
-  })
-  ipcMain.handle(IpcChannel.hostsInstall, async (event, input: unknown) => {
-    trustedSender(event)
-    return installHostDaemon(wiring.hostInstaller, parseHostInstallRequest(input))
   })
 
   ipcMain.handle(IpcChannel.shellOpenExternal, (event, input: unknown) => {

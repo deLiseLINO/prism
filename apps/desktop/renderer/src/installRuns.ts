@@ -1,6 +1,9 @@
 import { useSyncExternalStore } from 'react'
 import type { HostId, HostInstallReply } from '@prism/contracts'
-import { bridge } from './bridge'
+import { api } from './api'
+import { describeError } from './useAsync'
+
+const POLL_MS = 1_000
 
 export type InstallPhase = 'probe' | 'upload' | 'start' | 'verify' | 'register'
 
@@ -55,15 +58,23 @@ export async function startInstall(host: HostId): Promise<void> {
   if (current !== undefined && current.phase !== null) return
   runs.set(host, { host, phase: 'probe', error: null, notice: null, done: false })
   emit()
-  const reply: HostInstallReply | undefined = await bridge.integrations.installDaemon({ host })
+  let reply: HostInstallReply | null
+  try {
+    let status = await api.localInstallHost(host)
+    while (status.running) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+      status = await api.localHostInstall(host)
+    }
+    reply = status.reply
+  } catch (error) {
+    reply = { ok: false, host, phase: 'probe', reason: `the install request failed: ${describeError(error instanceof Error ? error : new Error(String(error)))}` }
+  }
   let ok = false
-  if (reply !== undefined && reply.ok) {
-    runs.set(host, { host, phase: null, error: null, notice: reply.notice, done: true })
+  if (reply?.ok === true) {
+    runs.set(host, { host, phase: null, error: null, notice: reply.notice ?? null, done: true })
     ok = true
-  } else if (reply !== undefined) {
-    runs.set(host, { host, phase: null, error: reply.reason, notice: null, done: false })
   } else {
-    runs.set(host, { host, phase: null, error: 'the install request failed', notice: null, done: false })
+    runs.set(host, { host, phase: null, error: reply?.reason ?? 'the install finished without a result', notice: null, done: false })
   }
   emit()
   for (const listener of settledListeners) listener(host, ok)
