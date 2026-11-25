@@ -159,7 +159,7 @@ func (s *Server) turn(w http.ResponseWriter, r *http.Request, proto protocol) {
 		}
 	}
 	p.finish(res)
-	s.recordUsage(facts, req, proto, res, start)
+	s.recordUsage(usageClientLabel(r), facts, req, proto, res, start)
 }
 
 func bufferedStatus(proto protocol, terminal routing.Terminal) int {

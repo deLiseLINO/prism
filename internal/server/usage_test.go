@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -76,7 +77,11 @@ func TestUsageRecordedPerTurn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}, store)
-	rec := postJSON(t, h, "/v1/responses", `{"model":"test-model","stream":true,"input":"hi"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"test-model","stream":true,"input":"hi"}`))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Prism-Client", "team-a")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
@@ -85,6 +90,9 @@ func TestUsageRecordedPerTurn(t *testing.T) {
 		t.Fatalf("records = %d, want 1", len(records))
 	}
 	got := records[0]
+	if got.ClientLabel != "team-a" {
+		t.Fatalf("usage client label = %q, want team-a", got.ClientLabel)
+	}
 	if got.RequestID == "" {
 		t.Fatalf("request id empty")
 	}
@@ -118,6 +126,14 @@ func TestUsageRecordedPerTurn(t *testing.T) {
 	}
 	if !got.Timestamp.Equal(clock.Now().Add(-got.Duration)) {
 		t.Fatalf("timestamp = %v, want turn start", got.Timestamp)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"test-model","stream":true,"input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("X-Prism-Client", "forged")
+	recRemote := httptest.NewRecorder()
+	h.ServeHTTP(recRemote, req)
+	if records := store.snapshot(); recRemote.Code != http.StatusOK || len(records) != 2 || records[1].ClientLabel != "" {
+		t.Fatalf("remote request must succeed without client attribution: status=%d records=%+v", recRemote.Code, records)
 	}
 }
 

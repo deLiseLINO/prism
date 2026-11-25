@@ -69,7 +69,7 @@ func (s *Server) handleImageGenerations(w http.ResponseWriter, r *http.Request) 
 	facts := execution.Facts{RequestID: execution.RequestID(newRequestID()), Client: execution.ClientOMP}
 	start := s.clock.Now()
 	res := s.images.Generate(r.Context(), canon.ModelID(model), target, facts, upstream)
-	s.recordImageUsage(facts, model, target, res, start)
+	s.recordImageUsage(usageClientLabel(r), facts, model, target, res, start)
 	if res.Failure != nil {
 		if res.Failure.Reason == canon.FailClientClosed {
 			return
@@ -183,18 +183,19 @@ func imageErrorType(status int) string {
 	}
 }
 
-func (s *Server) recordImageUsage(facts execution.Facts, model string, target provider.Target, res routing.ImageResult, start time.Time) {
+func (s *Server) recordImageUsage(clientLabel string, facts execution.Facts, model string, target provider.Target, res routing.ImageResult, start time.Time) {
 	if s.usage == nil {
 		return
 	}
 	rec := usage.Record{
-		RequestID: string(facts.RequestID),
-		Timestamp: start,
-		Model:     model,
-		Protocol:  imagesProtocol,
-		Status:    res.Outcome,
-		UsageKind: usage.StatusZero,
-		Duration:  s.clock.Now().Sub(start),
+		RequestID:   string(facts.RequestID),
+		ClientLabel: clientLabel,
+		Timestamp:   start,
+		Model:       model,
+		Protocol:    imagesProtocol,
+		Status:      res.Outcome,
+		UsageKind:   usage.StatusZero,
+		Duration:    s.clock.Now().Sub(start),
 	}
 	if res.Attempted {
 		rec.Attempts = []usage.Attempt{{Provider: string(target.Provider), Model: string(target.Model), Outcome: res.Outcome}}

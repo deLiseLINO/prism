@@ -37,16 +37,17 @@ type Attempt struct {
 }
 
 type Record struct {
-	RequestID string
-	Timestamp time.Time
-	Model     string
-	Protocol  string
-	Status    string
-	Reason    string
-	Usage     Usage
-	UsageKind Status
-	Attempts  []Attempt
-	Duration  time.Duration
+	RequestID   string
+	ClientLabel string
+	Timestamp   time.Time
+	Model       string
+	Protocol    string
+	Status      string
+	Reason      string
+	Usage       Usage
+	UsageKind   Status
+	Attempts    []Attempt
+	Duration    time.Duration
 }
 
 type Aggregate struct {

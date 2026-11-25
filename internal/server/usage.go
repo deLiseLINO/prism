@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/deLiseLINO/prism/internal/canon"
@@ -11,17 +12,36 @@ import (
 	"github.com/deLiseLINO/prism/internal/usage"
 )
 
-func (s *Server) recordUsage(facts execution.Facts, req canon.Request, proto protocol, res routing.TurnResult, start time.Time) {
+// Only a local gateway may supply an accounting label. It must overwrite
+// or remove the header on every route it proxies.
+func usageClientLabel(r *http.Request) string {
+	if !loopback(r.RemoteAddr) {
+		return ""
+	}
+	label := r.Header.Get("X-Prism-Client")
+	if len(label) > 128 {
+		return ""
+	}
+	for _, c := range label {
+		if c < 0x21 || c > 0x7e || c == ',' {
+			return ""
+		}
+	}
+	return label
+}
+
+func (s *Server) recordUsage(clientLabel string, facts execution.Facts, req canon.Request, proto protocol, res routing.TurnResult, start time.Time) {
 	if s.usage == nil {
 		return
 	}
 	rec := usage.Record{
-		RequestID: string(facts.RequestID),
-		Timestamp: start,
-		Model:     string(req.Model),
-		Protocol:  proto.String(),
-		Duration:  s.clock.Now().Sub(start),
-		Attempts:  make([]usage.Attempt, len(res.Trace)),
+		RequestID:   string(facts.RequestID),
+		ClientLabel: clientLabel,
+		Timestamp:   start,
+		Model:       string(req.Model),
+		Protocol:    proto.String(),
+		Duration:    s.clock.Now().Sub(start),
+		Attempts:    make([]usage.Attempt, len(res.Trace)),
 	}
 	for i, tr := range res.Trace {
 		rec.Attempts[i] = usage.Attempt{
