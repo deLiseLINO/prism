@@ -85,3 +85,54 @@ func TestModelFaultFinishIsSentAgainOnce(t *testing.T) {
 		})
 	}
 }
+
+// A hyphenated or upper-case finish reason means the same as the OpenAI one.
+// A reason with no meaning fails as an upstream error, not an overload that
+// clients retry without end.
+func TestFinishReasonSpellings(t *testing.T) {
+	cases := []struct {
+		name, reason string
+		wantReason   canon.IncompleteReason
+		wantFailed   bool
+	}{
+		{name: "hyphen", reason: "content-filter", wantReason: canon.IncompleteContentFilter},
+		{name: "upper case", reason: "CONTENT_FILTER", wantReason: canon.IncompleteContentFilter},
+		{name: "unknown", reason: "sideways", wantFailed: true},
+	}
+	for _, tc := range cases {
+		for _, stream := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s stream=%t", tc.name, stream), func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprintf(w, "data: {\"id\":\"x\",\"choices\":[{\"delta\":{\"content\":\"no\"},\"finish_reason\":%q}]}\n\ndata: [DONE]\n\n", tc.reason)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprintf(w, `{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"no"},"finish_reason":%q}]}`, tc.reason)
+				}))
+				defer srv.Close()
+				c := &collector{}
+				err := New(staticKey, Options{}).Run(context.Background(), provider.RunRequest{Request: testRequest(stream), Target: testTarget(srv.URL)}, c)
+				last := c.events[len(c.events)-1]
+				if tc.wantFailed {
+					failed, ok := last.(canon.TurnFailed)
+					if !ok || err == nil {
+						t.Fatalf("terminal = %T, err = %v; want TurnFailed and an error", last, err)
+					}
+					if failed.Failure.Reason != canon.FailUpstreamTransport {
+						t.Fatalf("failure reason = %d, want FailUpstreamTransport", failed.Failure.Reason)
+					}
+					return
+				}
+				finished, ok := last.(canon.TurnFinished)
+				if !ok || err != nil {
+					t.Fatalf("terminal = %T, err = %v; want TurnFinished", last, err)
+				}
+				if r, incomplete := finished.Status.Reason(); !incomplete || r != tc.wantReason {
+					t.Fatalf("status reason = %d (incomplete %t), want %d", r, incomplete, tc.wantReason)
+				}
+			})
+		}
+	}
+}

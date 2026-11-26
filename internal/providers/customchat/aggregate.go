@@ -101,7 +101,7 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 	if err != nil {
 		return runError(provider.Retryable, provider.ClassTransport, true, true, 0, err)
 	}
-	if choice.FinishReason == "length" {
+	if normalFinish(choice.FinishReason) == "length" {
 		choice.Message.ToolCalls = nil
 	}
 	for i, tc := range choice.Message.ToolCalls {
@@ -121,11 +121,11 @@ func (r *Runner) runAggregate(body io.Reader, sink provider.Sink, custom customT
 		if retryFault && modelFault(choice.FinishReason) {
 			return errModelFault
 		}
-		message := finishFailureMessage(choice.FinishReason)
-		if err := emit(canon.TurnFailed{Failure: canon.Failure{Reason: canon.FailUnknown, Message: message}}); err != nil {
+		failure := finishFailure(choice.FinishReason)
+		if err := emit(canon.TurnFailed{Failure: failure}); err != nil {
 			return err
 		}
-		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(message))
+		return runError(provider.TerminalEmitted, provider.ClassServer, true, false, 0, errors.New(failure.Message))
 	}
 	responseID := payload.ID
 	if responseID == "" {
