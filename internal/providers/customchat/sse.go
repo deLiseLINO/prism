@@ -227,9 +227,9 @@ func (s *streamer) handleFrame(f sseFrame) error {
 			if s.retryFault && !s.emitted && modelFault(reason) {
 				return errModelFault
 			}
-			return s.failUnknown(finishFailureMessage(reason))
+			return s.failFinish(reason)
 		}
-		if reason == "length" {
+		if normalFinish(reason) == "length" {
 			s.tools = nil
 		}
 		if err := s.finishItems(); err != nil {
@@ -562,11 +562,12 @@ func (s *streamer) failedTurn(raw []byte) error {
 	return s.emitFailed(canon.Failure{Reason: canon.FailUnknown, Message: openaierr.Text(parsed), Provider: &copied})
 }
 
-func (s *streamer) failUnknown(message string) error {
+// failFinish ends the turn on a finish reason with no canonical status.
+func (s *streamer) failFinish(reason string) error {
 	if s.terminalEmitted {
 		return s.protocolError("upstream emitted a second terminal event")
 	}
-	return s.emitFailed(canon.Failure{Reason: canon.FailUnknown, Message: message})
+	return s.emitFailed(finishFailure(reason))
 }
 
 func (s *streamer) emitFailed(failure canon.Failure) error {
@@ -605,8 +606,15 @@ func streamIndex(value any) (int, bool) {
 	return int(index), err == nil && index >= 0 && index <= 1<<53-1
 }
 
+// normalFinish folds the spellings upstreams use for the OpenAI finish
+// reasons: upper case from Gemini-backed gateways, a hyphen from gateways
+// that write "content-filter".
+func normalFinish(reason string) string {
+	return strings.ReplaceAll(strings.ToLower(reason), "-", "_")
+}
+
 func finishStatus(reason string) (canon.Status, bool) {
-	switch reason {
+	switch normalFinish(reason) {
 	case "stop", "tool_calls", "function_call":
 		return canon.Completed(), true
 	case "length":
@@ -623,9 +631,9 @@ func finishStatus(reason string) (canon.Status, bool) {
 var errModelFault = errors.New("customchat: upstream model fault")
 
 // modelFault reports finish reasons that name a fault of the upstream model
-// instead of an end of its output. Upstreams differ in letter case.
+// instead of an end of its output.
 func modelFault(reason string) bool {
-	switch strings.ToLower(reason) {
+	switch normalFinish(reason) {
 	case "error", "malformed_response", "malformed_function_call", "unexpected_tool_call":
 		return true
 	default:
@@ -633,11 +641,15 @@ func modelFault(reason string) bool {
 	}
 }
 
-func finishFailureMessage(reason string) string {
+// finishFailure describes a finish reason with no canonical status. The
+// upstream answered, so the failure names it. Left unknown, routing would
+// label it server_overloaded, and clients retry an overload without end.
+func finishFailure(reason string) canon.Failure {
+	message := fmt.Sprintf("upstream finish reason %q is not representable", reason)
 	if modelFault(reason) {
-		return fmt.Sprintf("upstream model returned a faulty response (finish reason %q)", reason)
+		message = fmt.Sprintf("upstream model returned a faulty response (finish reason %q)", reason)
 	}
-	return fmt.Sprintf("upstream finish reason %q is not representable", reason)
+	return canon.Failure{Reason: canon.FailUpstreamTransport, Message: message}
 }
 
 // maxFrameLine bounds one SSE line. A terminal frame can repeat the whole
