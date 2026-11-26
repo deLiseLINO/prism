@@ -631,10 +631,13 @@ func finishStatus(reason string) (canon.Status, bool) {
 var errModelFault = errors.New("customchat: upstream model fault")
 
 // modelFault reports finish reasons that name a fault of the upstream model
-// instead of an end of its output.
+// instead of an end of its output. A stop without a stated cause ("other",
+// "unknown", "unspecified") counts too: a gateway lost the stop code or the
+// model gave up, and the same request usually succeeds when sent again.
 func modelFault(reason string) bool {
 	switch normalFinish(reason) {
-	case "error", "malformed_response", "malformed_function_call", "unexpected_tool_call":
+	case "error", "malformed_response", "malformed_function_call", "unexpected_tool_call",
+		"other", "unknown", "unspecified", "finish_reason_unspecified":
 		return true
 	default:
 		return false
@@ -644,10 +647,12 @@ func modelFault(reason string) bool {
 // finishFailure describes a finish reason with no canonical status. The
 // upstream answered, so the failure names it. Left unknown, routing would
 // label it server_overloaded, and clients retry an overload without end.
+// A model fault reads "provider returned error", the wording clients retry
+// as a transient upstream failure.
 func finishFailure(reason string) canon.Failure {
 	message := fmt.Sprintf("upstream finish reason %q is not representable", reason)
 	if modelFault(reason) {
-		message = fmt.Sprintf("upstream model returned a faulty response (finish reason %q)", reason)
+		message = fmt.Sprintf("upstream provider returned error finish reason %q", reason)
 	}
 	return canon.Failure{Reason: canon.FailUpstreamTransport, Message: message}
 }

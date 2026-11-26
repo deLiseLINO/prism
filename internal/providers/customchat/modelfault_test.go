@@ -17,8 +17,9 @@ const (
 	goodStream      = "data: {\"id\":\"x\",\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
 	lateFaultStream = "data: {\"id\":\"x\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" +
 		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"malformed_response\"}]}\n\n"
-	faultJSON = `{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"malformed_function_call"}]}`
-	goodJSON  = `{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`
+	otherStream = "data: {\"id\":\"x\",\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"other\"}]}\n\n"
+	faultJSON   = `{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"malformed_function_call"}]}`
+	goodJSON    = `{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`
 )
 
 // A finish reason that names a model fault is sent again once while the
@@ -32,13 +33,16 @@ func TestModelFaultFinishIsSentAgainOnce(t *testing.T) {
 		wantFailure  string
 	}{
 		{name: "stream fault then success", stream: true, bodies: []string{faultStream, goodStream}, wantRequests: 2},
+		{name: "stream stop without cause then success", stream: true, bodies: []string{otherStream, goodStream}, wantRequests: 2},
 		{name: "aggregate fault then success", bodies: []string{faultJSON, goodJSON}, wantRequests: 2},
 		{name: "stream fault twice", stream: true, bodies: []string{faultStream, faultStream}, wantRequests: 2,
-			wantFailure: `upstream model returned a faulty response (finish reason "MALFORMED_RESPONSE")`},
+			wantFailure: `upstream provider returned error finish reason "MALFORMED_RESPONSE"`},
+		{name: "stream stop without cause twice", stream: true, bodies: []string{otherStream, otherStream}, wantRequests: 2,
+			wantFailure: `upstream provider returned error finish reason "other"`},
 		{name: "aggregate fault twice", bodies: []string{faultJSON, faultJSON}, wantRequests: 2,
-			wantFailure: `upstream model returned a faulty response (finish reason "malformed_function_call")`},
+			wantFailure: `upstream provider returned error finish reason "malformed_function_call"`},
 		{name: "stream fault after output", stream: true, bodies: []string{lateFaultStream, goodStream}, wantRequests: 1,
-			wantFailure: `upstream model returned a faulty response (finish reason "malformed_response")`},
+			wantFailure: `upstream provider returned error finish reason "malformed_response"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
