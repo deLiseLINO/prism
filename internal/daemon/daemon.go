@@ -51,6 +51,8 @@ import (
 	"github.com/deLiseLINO/prism/internal/webui"
 )
 
+const pushInterval = time.Minute
+
 type options struct {
 	listen         string
 	configPath     string
@@ -74,9 +76,10 @@ type credentialPublication struct {
 }
 
 type durableAccountStore struct {
-	pool  account.Pool
-	file  *store.FileCredentialStore
-	repos map[account.ProviderID]*account.Repository
+	pool    account.Pool
+	file    *store.FileCredentialStore
+	repos   map[account.ProviderID]*account.Repository
+	changed func()
 }
 
 func (d durableAccountStore) DeleteDurable(ctx context.Context, id account.AccountID) error {
@@ -102,6 +105,9 @@ func (d durableAccountStore) DeleteDurable(ctx context.Context, id account.Accou
 		if err := repo.Delete(provider, id); err != nil && !errors.Is(err, account.ErrNotFound) {
 			return err
 		}
+	}
+	if d.changed != nil {
+		d.changed()
 	}
 	return nil
 }
@@ -785,6 +791,14 @@ func run(opts options) error {
 	client := &http.Client{Timeout: 30 * time.Second, Transport: upstream}
 	quotas := newQuotaTable(pool, cfg, client)
 	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client, &http.Client{Transport: upstream})
+	credentialsChanged := make(chan struct{}, 1)
+	noteCredentials := func() {
+		select {
+		case credentialsChanged <- struct{}{}:
+		default:
+		}
+	}
+	accounts := newAccountSync(env, pool)
 	pool.SetPolicyWriter(func(a account.Account) error {
 		env.reposMu.Lock()
 		repo := env.repos[a.Provider]
@@ -792,9 +806,20 @@ func run(opts options) error {
 		if repo == nil {
 			return account.ErrNotFound
 		}
-		return repo.SavePolicy(a)
+		if err := repo.SavePolicy(a); err != nil {
+			return err
+		}
+		noteCredentials()
+		return nil
 	})
-	refresher, err := auth.NewRefresher(auth.RefresherOptions{File: creds.file, Repos: env.repos, Pool: pool, Flows: env.flows})
+	refresher, err := auth.NewRefresher(auth.RefresherOptions{
+		File:            creds.file,
+		Repos:           env.repos,
+		Pool:            pool,
+		Flows:           env.flows,
+		Published:       func(account.ProviderID, account.AccountID) { noteCredentials() },
+		ReplicaRejected: accounts.noteRejected,
+	})
 	if err != nil {
 		return err
 	}
@@ -828,7 +853,10 @@ func run(opts options) error {
 	var authService *auth.Service
 	if len(env.flows) > 0 {
 		sink := auth.NewFileSink(creds.file, env.repos, pool)
-		sink.OnStored(env.noteStoredAccount)
+		sink.OnStored(func(p account.ProviderID) {
+			env.noteStoredAccount(p)
+			noteCredentials()
+		})
 		authService, err = auth.New(sink, env.flows, auth.Options{})
 		if err != nil {
 			return fmt.Errorf("prism: auth service: %w", err)
@@ -870,7 +898,8 @@ func run(opts options) error {
 	mgmt := management.New(pool, cfg, catalog{cfg}, quotas, creds, authService, intg, modelSyncer{creds: creds, pool: pool, refresher: refresher, client: client}, installer)
 	env.refreshModels = mgmt.RefreshModels
 	mgmt.SetID(daemonID)
-	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos})
+	mgmt.SetAccountStore(durableAccountStore{pool: pool, file: creds.file, repos: env.repos, changed: noteCredentials})
+	mgmt.SetAccountReplicas(accounts)
 	secrets := func(ctx context.Context, id, ref string) ([]byte, bool, error) {
 		return credFile.GetCustomDefaultSecret(ctx, account.ProviderID(id), ref)
 	}
@@ -880,11 +909,13 @@ func run(opts options) error {
 		Config:    cfg,
 		Secrets:   secrets,
 		Transport: sshTransport,
-		Interval:  time.Minute,
+		Interval:  pushInterval,
 		Settle:    500 * time.Millisecond,
 		Timeout:   30 * time.Second,
 		Now:       time.Now,
 		Adopt:     mgmt.AdoptHostEdits,
+		Accounts:  accounts.Replicas,
+		Renew:     accounts.Renew,
 	})
 	mgmt.SetHostSync(pusher)
 	remotePort, err := strconv.Atoi(os.Getenv("PRISM_REMOTE_DAEMON_PORT"))
@@ -917,7 +948,8 @@ func run(opts options) error {
 	env.reconcileOnce(ctx)
 	go env.loop(ctx, changes)
 	go watchIntegrations(ctx, cfg.Subscribe(), intg)
-	go pusher.Run(ctx, cfg.Subscribe())
+	go pusher.Run(ctx, cfg.Subscribe(), credentialsChanged)
+	go accounts.renewAhead(ctx, 2*pushInterval+renewAheadMargin)
 	go refreshModelCatalog(ctx, modelCatalog, client)
 	ln, err := net.Listen("tcp", opts.listen)
 	if err != nil {

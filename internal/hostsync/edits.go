@@ -20,7 +20,8 @@ import (
 const EditsPath = "/api/v1/sync/edits"
 
 // Base is the last bundle a host applied, with every API key replaced by its
-// hash. A host measures its own edits against it.
+// hash. A host measures its own edits against it. Account replicas are never
+// edits, so the base leaves them out and no token reaches its file.
 type Base struct {
 	Document config.Document   `json:"document"`
 	Secrets  map[string]string `json:"secrets,omitempty"`
@@ -37,18 +38,22 @@ func NewBase(bundle Bundle) Base {
 
 // Edits are the shared entries a host changed since its base. A nil entry is
 // one the host removed. Secrets carries the API key of every custom provider
-// whose key the host set or changed.
+// whose key the host set or changed. RejectedTokens is not a config edit: it
+// reports replica access tokens an upstream refused on the host, so the main
+// machine renews them.
 type Edits struct {
-	Providers     map[string]*config.Provider            `json:"providers,omitempty"`
-	Combos        map[string]*config.Combo               `json:"combos,omitempty"`
-	Routes        map[string]*string                     `json:"routes,omitempty"`
-	Aliases       map[string]*string                     `json:"aliases,omitempty"`
-	Integrations  map[string]*config.IntegrationSettings `json:"integrations,omitempty"`
-	ContextWindow *int                                   `json:"contextWindow,omitempty"`
-	VisionSidecar *config.VisionSidecarSettings          `json:"visionSidecar,omitempty"`
-	Secrets       map[string]string                      `json:"secrets,omitempty"`
+	Providers      map[string]*config.Provider            `json:"providers,omitempty"`
+	Combos         map[string]*config.Combo               `json:"combos,omitempty"`
+	Routes         map[string]*string                     `json:"routes,omitempty"`
+	Aliases        map[string]*string                     `json:"aliases,omitempty"`
+	Integrations   map[string]*config.IntegrationSettings `json:"integrations,omitempty"`
+	ContextWindow  *int                                   `json:"contextWindow,omitempty"`
+	VisionSidecar  *config.VisionSidecarSettings          `json:"visionSidecar,omitempty"`
+	Secrets        map[string]string                      `json:"secrets,omitempty"`
+	RejectedTokens []RejectedToken                        `json:"rejectedTokens,omitempty"`
 }
 
+// Empty reports whether e changes no config entry.
 func (e Edits) Empty() bool {
 	return len(e.Providers) == 0 && len(e.Combos) == 0 && len(e.Routes) == 0 && len(e.Aliases) == 0 &&
 		len(e.Integrations) == 0 && e.ContextWindow == nil && e.VisionSidecar == nil && len(e.Secrets) == 0
@@ -105,7 +110,9 @@ func Diff(ctx context.Context, base Base, local config.Document, secrets SecretS
 // Keep puts the host's pending edits back into merged, the result of laying
 // incoming over local. An edit stays only where the main machine left that
 // entry as it was in base; where the main machine changed it, its value wins.
-// The main machine takes the kept edits on its next pull.
+// A kept provider keeps the machine-local parts merged chose for it, such as
+// a login provider's pin and catalogs. The main machine takes the kept edits
+// on its next pull.
 func Keep(merged, local config.Document, base Base, incoming config.Document, edits Edits) config.Document {
 	for id, edit := range edits.Providers {
 		in, inIncoming := incoming.Providers[id]
@@ -120,7 +127,11 @@ func Keep(merged, local config.Document, base Base, incoming config.Document, ed
 		if merged.Providers == nil {
 			merged.Providers = map[string]config.Provider{}
 		}
-		merged.Providers[id] = local.Providers[id]
+		mine := local.Providers[id]
+		if pushed, ok := merged.Providers[id]; ok && pushed.Wire == mine.Wire {
+			mine = adopt(mine, pushed)
+		}
+		merged.Providers[id] = mine
 	}
 	merged.Combos = keepEntries(merged.Combos, base.Document.Combos, incoming.Combos, edits.Combos)
 	merged.Routes = keepEntries(merged.Routes, base.Document.Routes, incoming.Routes, edits.Routes)

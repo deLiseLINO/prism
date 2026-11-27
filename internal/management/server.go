@@ -74,6 +74,7 @@ type Server struct {
 	hostSync    HostSync
 	syncBase    SyncBase
 	syncSecrets hostsync.SecretSource
+	replicas    AccountReplicas
 	routes      [][]string
 	store       AccountStore
 	stats       UsageSource
@@ -1153,6 +1154,9 @@ func (s *Server) accountPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := account.AccountID(r.PathValue("id"))
+	if s.refuseReplica(w, id) {
+		return
+	}
 	if err := s.pool.Pause(r.Context(), id, account.StateVersion(body.Version)); err != nil {
 		writeAccountError(w, err)
 		return
@@ -1166,6 +1170,9 @@ func (s *Server) accountResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := account.AccountID(r.PathValue("id"))
+	if s.refuseReplica(w, id) {
+		return
+	}
 	if err := s.pool.Resume(r.Context(), id, account.StateVersion(body.Version)); err != nil {
 		writeAccountError(w, err)
 		return
@@ -1179,11 +1186,24 @@ func (s *Server) accountPriority(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := account.AccountID(r.PathValue("id"))
+	if s.refuseReplica(w, id) {
+		return
+	}
 	if err := s.pool.UpdatePriority(r.Context(), id, body.Priority, account.StateVersion(body.Version)); err != nil {
 		writeAccountError(w, err)
 		return
 	}
 	s.writeAccountAfter(w, id)
+}
+
+func (s *Server) refuseReplica(w http.ResponseWriter, id account.AccountID) bool {
+	for _, a := range s.pool.Snapshot().Accounts {
+		if a.ID == id && a.Origin == account.OriginMain {
+			writeError(w, http.StatusConflict, "managed_by_main", account.ErrManagedByMain.Error())
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) writeAccountAfter(w http.ResponseWriter, id account.AccountID) {
@@ -1204,6 +1224,9 @@ func (s *Server) accountsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := account.AccountID(r.PathValue("id"))
+	if s.refuseReplica(w, id) {
+		return
+	}
 	if err := ds.DeleteAccount(r.Context(), id); err != nil {
 		writeAccountError(w, err)
 		return
@@ -1547,6 +1570,7 @@ func accountView(a account.Account) Account {
 		Provider:             string(a.Provider),
 		State:                stateName(a.State),
 		Email:                a.Email,
+		Origin:               a.Origin,
 		Priority:             a.Priority,
 		Version:              uint64(a.Version),
 		CredentialGeneration: uint64(a.CredGen),

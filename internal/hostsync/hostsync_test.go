@@ -182,7 +182,7 @@ func TestRunPushesAfterAConfigChange(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pusher.Run(ctx, main.Subscribe())
+	go pusher.Run(ctx, main.Subscribe(), nil)
 	waitFor(t, func() bool { return boxCfg.Get().Config.Routes["default"] == "edge/m" })
 
 	snap := main.Get()
@@ -283,12 +283,12 @@ func TestMergeUnionsRenameLedgersKeepingTheHostRecords(t *testing.T) {
 	local.ProviderRenames = []config.ProviderRename{{ID: "a", From: "gw", To: "edge", At: hostAt}}
 	incoming := mainDoc(nil)
 	incoming.ProviderRenames = []config.ProviderRename{{ID: "a", From: "gw", To: "edge", At: mainAt}, {ID: "b", From: "router", To: "relay", At: mainAt}}
-	got := hostsync.Merge(local, incoming).ProviderRenames
+	got := hostsync.Merge(local, incoming, nil).ProviderRenames
 	want := []config.ProviderRename{local.ProviderRenames[0], incoming.ProviderRenames[1]}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("merged ledger = %+v, want %+v", got, want)
 	}
-	if got := hostsync.Merge(local, mainDoc(nil)).ProviderRenames; len(got) != 1 || got[0] != local.ProviderRenames[0] {
+	if got := hostsync.Merge(local, mainDoc(nil), nil).ProviderRenames; len(got) != 1 || got[0] != local.ProviderRenames[0] {
 		t.Fatalf("a bundle without a ledger must keep the host ledger, got %+v", got)
 	}
 }
@@ -305,7 +305,7 @@ func TestExperimentalFlagsStayOnTheirMachine(t *testing.T) {
 	}
 	local := mainDoc(nil)
 	local.Experimental = map[string]bool{"otherAgents": true}
-	if got := hostsync.Merge(local, main).Experimental; len(got) != 1 || !got["otherAgents"] {
+	if got := hostsync.Merge(local, main, nil).Experimental; len(got) != 1 || !got["otherAgents"] {
 		t.Fatalf("merged flags = %v, want the host's own", got)
 	}
 }

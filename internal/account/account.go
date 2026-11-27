@@ -46,11 +46,14 @@ type CredentialGeneration uint64
 type StateVersion uint64
 
 type Account struct {
-	ID               AccountID
-	Provider         ProviderID
-	Priority         int
-	State            State
-	Email            string
+	ID       AccountID
+	Provider ProviderID
+	Priority int
+	State    State
+	Email    string
+	// Origin is OriginMain for a replica of an account the main machine owns
+	// and empty for an account signed in on this machine.
+	Origin           string
 	CredGen          CredentialGeneration
 	Version          StateVersion
 	Quota            quota.Snapshot
@@ -61,6 +64,10 @@ type Account struct {
 	rejectedFailure  *canon.Failure
 	reauthTransition reauthTransition
 }
+
+// OriginMain marks a replica: the main machine signed the account in, owns
+// its refresh grant and pushes its credential to this machine.
+const OriginMain = "main"
 
 type Lease struct {
 	Provider ProviderID
@@ -166,6 +173,16 @@ var (
 	// (network, timeout, or provider 5xx/429). The prior credential
 	// generation remains valid and untouched.
 	ErrRefreshTransient = errors.New("account: credential refresh failed transiently")
+	// ErrAwaitingMain reports that a replica's credential expired or was
+	// rejected. Only the main machine can renew it; the next push brings a
+	// fresh one, so the account stays usable and nothing is deleted.
+	ErrAwaitingMain = errors.New("account: waiting for fresh credentials from the main machine")
+	// ErrLocalAccount reports that an account was signed in on this machine,
+	// so a replica from the main machine may not replace it.
+	ErrLocalAccount = errors.New("account: account was signed in on this machine")
+	// ErrManagedByMain reports a change to a replica made on this machine.
+	// The main machine owns the account; the change belongs there.
+	ErrManagedByMain = errors.New("account: account is managed on the main machine; change it there")
 )
 
 type pool struct {

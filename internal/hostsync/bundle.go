@@ -16,10 +16,12 @@ const ConfigPath = "/api/v1/sync/config"
 
 // Bundle is the portable part of the main machine's config. Document carries
 // no credential references and no machine-local sections; Secrets maps a
-// custom provider id to its API key.
+// custom provider id to its API key. Accounts lists a replica of every login
+// account the main machine signed in; a host older than the field ignores it.
 type Bundle struct {
 	Document config.Document   `json:"document"`
 	Secrets  map[string]string `json:"secrets,omitempty"`
+	Accounts []Replica         `json:"accounts,omitempty"`
 }
 
 // ApplyResponse is the host's answer to a pushed Bundle.
@@ -33,8 +35,8 @@ type SecretSource func(ctx context.Context, provider, ref string) (secret []byte
 
 // Portable builds the Bundle for doc. Hosts, the daemon listen address and
 // the experimental flags describe this machine only, so they stay behind.
-// Login providers carry no API key: their accounts are signed in on each
-// machine separately.
+// Login providers carry no API key; their accounts travel as replicas, which
+// the caller adds.
 func Portable(ctx context.Context, doc config.Document, secrets SecretSource) (Bundle, error) {
 	out := Bundle{Document: doc, Secrets: map[string]string{}}
 	out.Document.Hosts = nil
@@ -58,15 +60,23 @@ func Portable(ctx context.Context, doc config.Document, secrets SecretSource) (B
 	return out, nil
 }
 
+// Owned lists the accounts of a login provider signed in on the host itself,
+// as opposed to the replicas the main machine pushes.
+type Owned func(provider string) []string
+
 // Merge lays incoming over local. The host keeps its own daemon section,
-// host list and experimental flags, and everything tied to its own signed-in
-// accounts: login providers keep their model catalogs and pinned account, and
-// a login provider that exists only on the host stays. Custom providers keep
-// the host's credential reference; the caller replaces it when the bundle
-// carries a key. The rename ledger is the union of both, the host's records
-// first: each machine keeps the time it applied a rename at. Every other
-// section comes from incoming.
-func Merge(local, incoming config.Document) config.Document {
+// host list and experimental flags, and a login provider that exists only on
+// the host stays. A login provider takes the main machine's pinned account
+// and the model catalogs of its replicas, since the main machine owns those
+// accounts; the host keeps its own pin when it names an account signed in
+// there, and its own catalogs for such accounts. On a single-account wire a
+// local login replaces the replica, so the host keeps its pin there too.
+// Custom providers keep the host's credential reference; the caller replaces
+// it when the bundle carries a key. The rename ledger is the union of both,
+// the host's records first: each machine keeps the time it applied a rename
+// at. Every other section comes from incoming. A nil owned means the host
+// signed nothing in itself.
+func Merge(local, incoming config.Document, owned Owned) config.Document {
 	out := incoming
 	out.Daemon = local.Daemon
 	out.Hosts = local.Hosts
@@ -74,7 +84,11 @@ func Merge(local, incoming config.Document) config.Document {
 	out.ProviderRenames = mergeLedger(local.ProviderRenames, incoming.ProviderRenames)
 	out.Providers = make(map[string]config.Provider, len(incoming.Providers))
 	for id, p := range incoming.Providers {
-		out.Providers[id] = adopt(p, local.Providers[id])
+		var own []string
+		if owned != nil && !p.Wire.Custom() {
+			own = owned(id)
+		}
+		out.Providers[id] = adoptPushed(p, local.Providers[id], own)
 	}
 	for id, mine := range local.Providers {
 		if _, synced := out.Providers[id]; !synced && !mine.Wire.Custom() {
@@ -82,6 +96,35 @@ func Merge(local, incoming config.Document) config.Document {
 		}
 	}
 	return out
+}
+
+func adoptPushed(p, mine config.Provider, owned []string) config.Provider {
+	if p.Wire.Custom() {
+		return adopt(p, mine)
+	}
+	if mine.Wire != p.Wire {
+		mine = config.Provider{}
+	}
+	localPin := ""
+	if mine.Pool != nil {
+		localPin = mine.Pool.PinnedAccount
+	}
+	keepPin := slices.Contains(owned, localPin) || p.Wire.SingleAccount() && len(owned) > 0
+	var catalogs []config.ModelCatalog
+	for _, c := range p.ModelCatalogs {
+		if !slices.Contains(owned, c.Account) {
+			catalogs = append(catalogs, c)
+		}
+	}
+	for _, c := range mine.ModelCatalogs {
+		if slices.Contains(owned, c.Account) {
+			catalogs = append(catalogs, c)
+		}
+	}
+	p.APIKeyRef = ""
+	p.ModelCatalogs = catalogs
+	p.Pool = mergePool(p.Pool, mine.Pool, true, keepPin)
+	return p
 }
 
 // adopt takes p from another machine and keeps mine's machine-local parts:
@@ -97,7 +140,7 @@ func adopt(p, mine config.Provider) config.Provider {
 		p.APIKeyRef = ""
 		p.ModelCatalogs = mine.ModelCatalogs
 	}
-	p.Pool = mergePool(p.Pool, mine.Pool, !p.Wire.Custom())
+	p.Pool = mergePool(p.Pool, mine.Pool, !p.Wire.Custom(), true)
 	return p
 }
 
@@ -111,18 +154,18 @@ func mergeLedger(local, incoming []config.ProviderRename) []config.ProviderRenam
 	return out
 }
 
-func mergePool(incoming, local *config.PoolSettings, login bool) *config.PoolSettings {
+func mergePool(incoming, local *config.PoolSettings, login, localPin bool) *config.PoolSettings {
 	var next config.PoolSettings
 	if incoming != nil {
 		next = *incoming
 	}
 	next.AccountsPath = ""
-	if login {
+	if login && localPin {
 		next.PinnedAccount = ""
 	}
 	if local != nil {
 		next.AccountsPath = local.AccountsPath
-		if login {
+		if login && localPin {
 			next.PinnedAccount = local.PinnedAccount
 		}
 	}

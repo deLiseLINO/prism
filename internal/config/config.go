@@ -41,6 +41,19 @@ func (w Wire) Custom() bool {
 	return w == WireOpenAIResponses || w == WireAnthropicMessages || w == WireOpenAIChat
 }
 
+// RotatesRefreshToken reports whether a login wire's token endpoint issues a
+// new refresh token on every refresh and voids the old one. Such a grant can
+// live on one machine only.
+func (w Wire) RotatesRefreshToken() bool {
+	return w == WireCodex || w == WireCline
+}
+
+// SingleAccount reports whether a login wire keeps one signed-in account per
+// provider: a new login replaces the previous one.
+func (w Wire) SingleAccount() bool {
+	return w == WireCline
+}
+
 type ComboStrategy string
 
 const (

@@ -23,6 +23,25 @@ func (s *Server) SetSyncBase(base SyncBase, secrets hostsync.SecretSource) {
 	s.syncSecrets = secrets
 }
 
+// AccountReplicas keeps, on a host, the replicas of the login accounts the
+// main machine pushes.
+type AccountReplicas interface {
+	// Owned lists the accounts of provider signed in on this machine.
+	Owned(provider string) []string
+	// Apply makes replicas this machine's replica set under doc, the config
+	// the push produced, and serves them at once.
+	Apply(ctx context.Context, doc config.Document, replicas []hostsync.Replica) error
+	// Rejected lists the replica access tokens an upstream refused here and
+	// the main machine has not replaced yet.
+	Rejected() []hostsync.RejectedToken
+}
+
+// SetAccountReplicas lets this machine, as a host, take the main machine's
+// login accounts.
+func (s *Server) SetAccountReplicas(replicas AccountReplicas) {
+	s.replicas = replicas
+}
+
 // syncConfigApply takes the config the main machine pushed and lays it over
 // this daemon's document. API keys go through the credential store, so the
 // document only ever holds this machine's own references. An identical
@@ -33,6 +52,8 @@ func (s *Server) SetSyncBase(base SyncBase, secrets hostsync.SecretSource) {
 // because merging without it would leave the old provider beside the new.
 // Edits made here since the last push survive where the main machine left
 // the same entry untouched; the main machine takes them on its next pull.
+// The pushed account replicas go live last, once their providers are in the
+// config and under their current ids.
 func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 	body, ok := decodeJSON[hostsync.Bundle](w, r)
 	if !ok {
@@ -50,9 +71,13 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var owned hostsync.Owned
+	if s.replicas != nil {
+		owned = s.replicas.Owned
+	}
 	for range 3 {
 		snap := s.cfg.Get()
-		next := hostsync.Merge(snap.Config, body.Document)
+		next := hostsync.Merge(snap.Config, body.Document, owned)
 		if base != nil {
 			edits, err := hostsync.Diff(r.Context(), *base, snap.Config, s.syncSecrets)
 			if err != nil {
@@ -75,6 +100,9 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 			next.Providers[id] = p
 		}
 		if config.Equivalent(next, snap.Config) {
+			if !s.applyReplicas(r.Context(), w, snap.Config, body.Accounts) {
+				return
+			}
 			s.saveSyncBase(body)
 			writeJSON(w, http.StatusOK, hostsync.ApplyResponse{Changed: snap.Generation != start, Generation: snap.Generation})
 			return
@@ -88,6 +116,9 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.publishSynced(snap.Config, updated.Config)
+		if !s.applyReplicas(r.Context(), w, updated.Config, body.Accounts) {
+			return
+		}
 		s.saveSyncBase(body)
 		writeJSON(w, http.StatusOK, hostsync.ApplyResponse{Changed: true, Generation: updated.Generation})
 		return
@@ -95,8 +126,20 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusConflict, "stale_generation", "config kept changing while the sync was applied")
 }
 
-// syncEdits reports what this machine changed since the last push. A machine
-// that never applied a push has no edits.
+func (s *Server) applyReplicas(ctx context.Context, w http.ResponseWriter, doc config.Document, replicas []hostsync.Replica) bool {
+	if s.replicas == nil {
+		return true
+	}
+	if err := s.replicas.Apply(ctx, doc, replicas); err != nil {
+		writeError(w, http.StatusInternalServerError, "account_sync", err.Error())
+		return false
+	}
+	return true
+}
+
+// syncEdits reports what this machine changed since the last push, and the
+// replica access tokens refused here. A machine that never applied a push has
+// no edits.
 func (s *Server) syncEdits(w http.ResponseWriter, r *http.Request) {
 	base, err := s.loadSyncBase()
 	if err != nil {
@@ -110,6 +153,9 @@ func (s *Server) syncEdits(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "credential_store", err.Error())
 			return
 		}
+	}
+	if s.replicas != nil {
+		edits.RejectedTokens = s.replicas.Rejected()
 	}
 	writeJSON(w, http.StatusOK, edits)
 }
