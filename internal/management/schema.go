@@ -269,6 +269,7 @@ type Account struct {
 	Provider             string     `json:"provider"`
 	State                string     `json:"state"`
 	Email                string     `json:"email,omitempty"`
+	Origin               string     `json:"origin,omitempty"`
 	Priority             int        `json:"priority"`
 	Version              uint64     `json:"version"`
 	CredentialGeneration uint64     `json:"credentialGeneration"`

@@ -56,6 +56,12 @@ type Options struct {
 	// Adopt lays the edits a host made over the main config before the push,
 	// so they reach every host instead of being overwritten.
 	Adopt func(ctx context.Context, host string, edits Edits) error
+	// Accounts lists the replicas of the main machine's login accounts for
+	// doc, to push with it.
+	Accounts func(ctx context.Context, doc config.Document) ([]Replica, error)
+	// Renew renews the main machine's credentials whose access tokens a host
+	// reported refused, before the push carries the new ones.
+	Renew func(ctx context.Context, host string, rejected []RejectedToken) error
 }
 
 // Pusher pushes the main config to every installed host with auto sync on.
@@ -82,10 +88,11 @@ func (p *Pusher) Status(id string, host config.Host) Status {
 	return Status{State: StatePending}
 }
 
-// Run pushes at start, after config changes, and every Interval. Host
-// mutations are config changes, so an installed or re-enabled host gets its
-// first push right away.
-func (p *Pusher) Run(ctx context.Context, changes <-chan struct{}) {
+// Run pushes at start, after config changes, after the main machine's login
+// credentials change, and every Interval. Host mutations are config changes,
+// so an installed or re-enabled host gets its first push right away; a
+// renewed credential reaches the hosts before their copy expires.
+func (p *Pusher) Run(ctx context.Context, changes, credentials <-chan struct{}) {
 	ticker := time.NewTicker(p.opts.Interval)
 	defer ticker.Stop()
 	p.PushAll(ctx)
@@ -94,16 +101,17 @@ func (p *Pusher) Run(ctx context.Context, changes <-chan struct{}) {
 		case <-ctx.Done():
 			return
 		case <-changes:
+		case <-credentials:
 		case <-ticker.C:
 		}
-		if !p.settle(ctx, changes) {
+		if !p.settle(ctx, changes, credentials) {
 			return
 		}
 		p.PushAll(ctx)
 	}
 }
 
-func (p *Pusher) settle(ctx context.Context, changes <-chan struct{}) bool {
+func (p *Pusher) settle(ctx context.Context, changes, credentials <-chan struct{}) bool {
 	timer := time.NewTimer(p.opts.Settle)
 	defer timer.Stop()
 	for {
@@ -111,6 +119,8 @@ func (p *Pusher) settle(ctx context.Context, changes <-chan struct{}) bool {
 		case <-ctx.Done():
 			return false
 		case <-changes:
+			timer.Reset(p.opts.Settle)
+		case <-credentials:
 			timer.Reset(p.opts.Settle)
 		case <-timer.C:
 			return true
@@ -160,8 +170,9 @@ func (p *Pusher) PushAll(ctx context.Context) {
 }
 
 // takeEdits pulls every host's edits in parallel and adopts them one host at
-// a time. A host that cannot be reached has its push fail too, so only other
-// failures are returned, to be shown once the push itself succeeds.
+// a time, then renews the credentials each host reported refused. A host that
+// cannot be reached has its push fail too, so only other failures are
+// returned, to be shown once the push itself succeeds.
 func (p *Pusher) takeEdits(ctx context.Context, ids []string, targets map[string]config.Host) map[string]error {
 	edits := make([]Edits, len(ids))
 	errs := make([]error, len(ids))
@@ -172,11 +183,20 @@ func (p *Pusher) takeEdits(ctx context.Context, ids []string, targets map[string
 	wg.Wait()
 	out := map[string]error{}
 	for i, id := range ids {
-		if errs[i] == nil && !edits[i].Empty() && p.opts.Adopt != nil {
-			errs[i] = p.opts.Adopt(ctx, id, edits[i])
-		}
 		if errs[i] != nil {
 			out[id] = fmt.Errorf("could not take the changes made on the machine: %w", errs[i])
+			continue
+		}
+		if !edits[i].Empty() && p.opts.Adopt != nil {
+			if err := p.opts.Adopt(ctx, id, edits[i]); err != nil {
+				out[id] = fmt.Errorf("could not take the changes made on the machine: %w", err)
+				continue
+			}
+		}
+		if len(edits[i].RejectedTokens) > 0 && p.opts.Renew != nil {
+			if err := p.opts.Renew(ctx, id, edits[i].RejectedTokens); err != nil {
+				out[id] = fmt.Errorf("could not renew the credentials the machine reported refused: %w", err)
+			}
 		}
 	}
 	return out
@@ -217,6 +237,11 @@ func (p *Pusher) encode(ctx context.Context, doc config.Document) ([]byte, error
 	bundle, err := Portable(ctx, doc, p.opts.Secrets)
 	if err != nil {
 		return nil, err
+	}
+	if p.opts.Accounts != nil {
+		if bundle.Accounts, err = p.opts.Accounts(ctx, doc); err != nil {
+			return nil, fmt.Errorf("read login accounts: %w", err)
+		}
 	}
 	return json.Marshal(bundle)
 }

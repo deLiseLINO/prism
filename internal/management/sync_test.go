@@ -2,10 +2,13 @@ package management
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/deLiseLINO/prism/internal/account"
 	"github.com/deLiseLINO/prism/internal/config"
 	"github.com/deLiseLINO/prism/internal/hostsync"
 )
@@ -23,8 +26,27 @@ func pushBundle(t *testing.T, e *testEnv, bundle hostsync.Bundle) hostsync.Apply
 	return decodeBody[hostsync.ApplyResponse](t, rec)
 }
 
+// fakeReplicas is a host's replica set: Owned lists the accounts signed in
+// on the host, and every pushed replica list is recorded.
+type fakeReplicas struct {
+	owned    map[string][]string
+	applied  [][]hostsync.Replica
+	rejected []hostsync.RejectedToken
+}
+
+func (f *fakeReplicas) Owned(provider string) []string { return f.owned[provider] }
+
+func (f *fakeReplicas) Apply(_ context.Context, _ config.Document, replicas []hostsync.Replica) error {
+	f.applied = append(f.applied, replicas)
+	return nil
+}
+
+func (f *fakeReplicas) Rejected() []hostsync.RejectedToken { return f.rejected }
+
 func TestSyncConfigApplyKeepsMachineState(t *testing.T) {
 	e := newEnv(t)
+	replicas := &fakeReplicas{owned: map[string][]string{"codex": {"acct-here"}}}
+	e.srv.SetAccountReplicas(replicas)
 	e.creds.store["stale"] = []byte("old-key")
 	local := config.Document{
 		Version: config.SchemaVersion,
@@ -81,6 +103,59 @@ func TestSyncConfigApplyKeepsMachineState(t *testing.T) {
 	again := pushBundle(t, e, bundle)
 	if again.Changed || again.Generation != first.Generation {
 		t.Fatalf("an identical push must write nothing: %+v after %+v", again, first)
+	}
+	if len(replicas.applied) != 2 {
+		t.Fatalf("replicas applied %d times, want on every push", len(replicas.applied))
+	}
+}
+
+func TestSyncConfigApplyAppliesPushedReplicas(t *testing.T) {
+	e := newEnv(t)
+	replicas := &fakeReplicas{}
+	e.srv.SetAccountReplicas(replicas)
+	pushed := []hostsync.Replica{{Provider: "codex", ID: "codex:acct", State: hostsync.ReplicaActive, Credential: []byte(`{"version":1,"access":"at"}`)}}
+	pushBundle(t, e, hostsync.Bundle{
+		Document: config.Document{Version: config.SchemaVersion, Providers: map[string]config.Provider{"codex": {Wire: config.WireCodex, Models: []string{"gpt-5.3"}}}},
+		Accounts: pushed,
+	})
+	if len(replicas.applied) != 1 || len(replicas.applied[0]) != 1 || replicas.applied[0][0].ID != "codex:acct" {
+		t.Fatalf("pushed replicas not applied: %+v", replicas.applied)
+	}
+}
+
+func TestSyncEditsReportRejectedReplicaTokens(t *testing.T) {
+	e := newEnv(t)
+	rejected := []hostsync.RejectedToken{{Provider: "codex", Account: "codex:acct", Hash: hostsync.TokenHash("at")}}
+	e.srv.SetAccountReplicas(&fakeReplicas{rejected: rejected})
+	rec := e.do(t, http.MethodGet, hostsync.EditsPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edits: status %d, body %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"at"`) {
+		t.Fatalf("the edits answer carries the token itself: %s", rec.Body.String())
+	}
+	got := decodeBody[hostsync.Edits](t, rec)
+	if len(got.RejectedTokens) != 1 || got.RejectedTokens[0] != rejected[0] {
+		t.Fatalf("rejected tokens = %+v, want %+v", got.RejectedTokens, rejected)
+	}
+}
+
+func TestReplicaAccountsAreChangedOnTheMainMachineOnly(t *testing.T) {
+	e := newEnv(t)
+	e.pool.accounts = append(e.pool.accounts, account.Account{ID: "codex:main", Provider: "codex", State: account.Active, Origin: account.OriginMain, CredGen: 1, Version: 1})
+	for _, req := range []struct{ method, path, body string }{
+		{http.MethodPost, "/api/v1/accounts/codex:main/pause", `{"version":1}`},
+		{http.MethodPost, "/api/v1/accounts/codex:main/resume", `{"version":1}`},
+		{http.MethodPost, "/api/v1/accounts/codex:main/priority", `{"version":1,"priority":3}`},
+		{http.MethodDelete, "/api/v1/accounts/codex:main", ""},
+	} {
+		rec := e.do(t, req.method, req.path, req.body)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "main machine") {
+			t.Fatalf("%s %s: status %d, body %s", req.method, req.path, rec.Code, rec.Body.String())
+		}
+	}
+	if a := e.pool.accounts[len(e.pool.accounts)-1]; a.State != account.Active || a.Version != 1 {
+		t.Fatalf("a refused change reached the replica: %+v", a)
 	}
 }
 
