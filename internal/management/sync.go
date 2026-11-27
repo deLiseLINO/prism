@@ -126,8 +126,6 @@ func (s *Server) syncConfigApply(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusConflict, "stale_generation", "config kept changing while the sync was applied")
 }
 
-// applyReplicas applies the pushed account replicas after the config they
-// belong to is in place, and writes the failure when that is refused.
 func (s *Server) applyReplicas(ctx context.Context, w http.ResponseWriter, doc config.Document, replicas []hostsync.Replica) bool {
 	if s.replicas == nil {
 		return true

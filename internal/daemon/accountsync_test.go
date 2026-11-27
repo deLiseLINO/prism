@@ -20,9 +20,6 @@ import (
 	"github.com/deLiseLINO/prism/internal/server"
 )
 
-// gateway is an upstream with a token endpoint and a chat endpoint. Chat
-// accepts the access tokens in valid; the token endpoint issues next and
-// rotates the grant.
 type gateway struct {
 	mu      sync.Mutex
 	valid   map[string]bool

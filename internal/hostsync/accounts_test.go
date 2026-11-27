@@ -100,8 +100,6 @@ func TestBaseKeepsNoAccountToken(t *testing.T) {
 	}
 }
 
-// accountHost records what a host received: every pushed bundle and every
-// edits request, and answers edits with the given rejected tokens.
 type accountHost struct {
 	mu       sync.Mutex
 	bundles  []hostsync.Bundle

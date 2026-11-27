@@ -169,16 +169,11 @@ func (r *Refresher) credential(ctx context.Context, lease account.Lease, want de
 	return r.refreshLocked(ctx, lease, repo, rf, want, publication)
 }
 
-// demand is what a caller needs from a credential: an expiry beyond the
-// provider's skew window widened by ahead, and an access token other than
-// rejected, the one the upstream refused.
 type demand struct {
 	rejected string
 	ahead    time.Duration
 }
 
-// met reports whether cred may be dispatched: legacy tokens without an
-// expiry never expire.
 func (d demand) met(cred account.Credential, rf RefreshFlow, now func() time.Time) bool {
 	fresh := cred.ExpiresAt.IsZero() || now().Before(cred.ExpiresAt.Add(-rf.RefreshSkew()-d.ahead))
 	return fresh && (d.rejected == "" || cred.Access != d.rejected)
@@ -256,8 +251,6 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 		return account.Credential{}, err
 	}
 	if replica && prev.Refresh == "" {
-		// The main machine kept the refresh grant: it alone renews the
-		// credential and pushes the new one here.
 		if want.rejected != "" && want.rejected == prev.Access && r.rejected != nil {
 			r.rejected(p, id, want.rejected)
 		}

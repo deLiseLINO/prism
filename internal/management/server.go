@@ -1196,9 +1196,6 @@ func (s *Server) accountPriority(w http.ResponseWriter, r *http.Request) {
 	s.writeAccountAfter(w, id)
 }
 
-// refuseReplica refuses a change to a replica of a main machine account.
-// The main machine owns the account and would restore its state on the next
-// push, so the change is refused here with a pointer to the main machine.
 func (s *Server) refuseReplica(w http.ResponseWriter, id account.AccountID) bool {
 	for _, a := range s.pool.Snapshot().Accounts {
 		if a.ID == id && a.Origin == account.OriginMain {

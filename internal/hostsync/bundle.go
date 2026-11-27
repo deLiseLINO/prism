@@ -98,8 +98,6 @@ func Merge(local, incoming config.Document, owned Owned) config.Document {
 	return out
 }
 
-// adoptPushed takes p from the main machine onto the host, where mine is the
-// host's entry and owned the accounts the host signed in itself.
 func adoptPushed(p, mine config.Provider, owned []string) config.Provider {
 	if p.Wire.Custom() {
 		return adopt(p, mine)
@@ -156,8 +154,6 @@ func mergeLedger(local, incoming []config.ProviderRename) []config.ProviderRenam
 	return out
 }
 
-// mergePool keeps local's accounts path, and for a login provider whose pin
-// stays local, local's pinned account.
 func mergePool(incoming, local *config.PoolSettings, login, localPin bool) *config.PoolSettings {
 	var next config.PoolSettings
 	if incoming != nil {

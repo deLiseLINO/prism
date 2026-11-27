@@ -51,8 +51,6 @@ import (
 	"github.com/deLiseLINO/prism/internal/webui"
 )
 
-// pushInterval is how often the main machine re-pushes its config and login
-// accounts to every host.
 const pushInterval = time.Minute
 
 type options struct {
@@ -78,10 +76,9 @@ type credentialPublication struct {
 }
 
 type durableAccountStore struct {
-	pool  account.Pool
-	file  *store.FileCredentialStore
-	repos map[account.ProviderID]*account.Repository
-	// changed tells hosts' sync that a login account went away.
+	pool    account.Pool
+	file    *store.FileCredentialStore
+	repos   map[account.ProviderID]*account.Repository
 	changed func()
 }
 
@@ -794,8 +791,6 @@ func run(opts options) error {
 	client := &http.Client{Timeout: 30 * time.Second, Transport: upstream}
 	quotas := newQuotaTable(pool, cfg, client)
 	env := newDaemonEnv(opts.credentialPath, cfg, pool, quotas, registry, creds, client, &http.Client{Transport: upstream})
-	// credentialsChanged wakes the pusher when this machine's login accounts
-	// change outside the config, so hosts get them before the next interval.
 	credentialsChanged := make(chan struct{}, 1)
 	noteCredentials := func() {
 		select {

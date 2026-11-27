@@ -26,8 +26,6 @@ func pushBundle(t *testing.T, e *testEnv, bundle hostsync.Bundle) hostsync.Apply
 	return decodeBody[hostsync.ApplyResponse](t, rec)
 }
 
-// fakeReplicas is a host's replica set: Owned lists the accounts signed in
-// on the host, and every pushed replica list is recorded.
 type fakeReplicas struct {
 	owned    map[string][]string
 	applied  [][]hostsync.Replica

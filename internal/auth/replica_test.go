@@ -10,7 +10,6 @@ import (
 	"github.com/deLiseLINO/prism/internal/account"
 )
 
-// seedReplica stores cred as a replica the main machine pushed.
 func (h *harness) seedReplica(cred account.Credential) {
 	h.t.Helper()
 	gen, changed, err := PublishReplica(context.Background(), h.file, h.repo, Replica{Provider: h.provider, ID: h.acc, State: account.Active, Credential: &cred})

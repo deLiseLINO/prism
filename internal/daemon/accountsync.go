@@ -16,25 +16,15 @@ import (
 )
 
 const (
-	// renewAheadEvery is how often the main machine looks for pushed
-	// credentials about to expire.
-	renewAheadEvery = 30 * time.Second
-	// renewAheadMargin pads the renewal window beyond two push intervals.
+	renewAheadEvery  = 30 * time.Second
 	renewAheadMargin = time.Minute
 )
 
-// replicaPool is the pool surface that keeps replicas live without a restart.
 type replicaPool interface {
 	auth.PoolRegistrar
 	PublishCredential(id account.AccountID, gen account.CredentialGeneration, changed bool) error
 }
 
-// accountSync carries login accounts from the main machine to its hosts.
-// On the main machine it lists replicas for the push, renews the credentials
-// hosts report refused and renews pushed credentials ahead of expiry. On a
-// host it stores and serves the replicas pushed to it. The main machine is
-// the only owner: a host never signs a replica in, out or renews a grant
-// that rotates.
 type accountSync struct {
 	env      *daemonEnv
 	pool     replicaPool
@@ -50,9 +40,6 @@ func (s *accountSync) repo(provider string) *account.Repository {
 	return s.env.ensureRepo(account.ProviderID(provider), p.Pool)
 }
 
-// Replicas lists every login account this machine signed in under doc. On a
-// wire whose refresh token rotates the replica carries no refresh token, so
-// only this machine ever spends the grant.
 func (s *accountSync) Replicas(ctx context.Context, doc config.Document) ([]hostsync.Replica, error) {
 	var out []hostsync.Replica
 	for _, id := range slices.Sorted(maps.Keys(doc.Providers)) {
@@ -90,9 +77,6 @@ func (s *accountSync) Replicas(ctx context.Context, doc config.Document) ([]host
 	return out, nil
 }
 
-// Renew renews this machine's credentials whose access tokens host reported
-// refused. A report about a token this machine already replaced needs
-// nothing: the push carries the newer one.
 func (s *accountSync) Renew(ctx context.Context, host string, rejected []hostsync.RejectedToken) error {
 	var errs []error
 	for _, r := range rejected {
@@ -129,10 +113,6 @@ func (s *accountSync) Renew(ctx context.Context, host string, rejected []hostsyn
 	return errors.Join(errs...)
 }
 
-// renewAhead renews, every renewAheadEvery while a host takes pushes, the
-// credentials of rotating-grant wires that expire within the provider's skew
-// plus ahead. Hosts cannot renew those themselves, so each must get the new
-// token from a push before its copy expires.
 func (s *accountSync) renewAhead(ctx context.Context, ahead time.Duration) {
 	ticker := time.NewTicker(renewAheadEvery)
 	defer ticker.Stop()
@@ -173,7 +153,6 @@ func (s *accountSync) renewDue(ctx context.Context, ahead time.Duration) {
 	}
 }
 
-// Owned lists the accounts of provider signed in on this machine.
 func (s *accountSync) Owned(provider string) []string {
 	rows, err := s.repo(provider).Load(account.ProviderID(provider))
 	if err != nil {
@@ -189,8 +168,6 @@ func (s *accountSync) Owned(provider string) []string {
 	return out
 }
 
-// Rejected lists the replica access tokens refused here that are still
-// current.
 func (s *accountSync) Rejected() []hostsync.RejectedToken {
 	return s.rejected.Pending(func(provider, id string) string {
 		providerID, accountID := account.ProviderID(provider), account.AccountID(id)
@@ -210,16 +187,10 @@ func (s *accountSync) Rejected() []hostsync.RejectedToken {
 	})
 }
 
-// noteRejected records that an upstream refused the current access token of
-// a replica, for the main machine to renew.
 func (s *accountSync) noteRejected(p account.ProviderID, id account.AccountID, access string) {
 	s.rejected.Add(string(p), string(id), access)
 }
 
-// Apply makes replicas this host's replica set under doc and serves them
-// without a restart. Accounts signed in here are never replaced or deleted;
-// on a single-account wire a local login replaces the replica altogether.
-// Replicas the main machine no longer has are deleted.
 func (s *accountSync) Apply(ctx context.Context, doc config.Document, replicas []hostsync.Replica) error {
 	s.env.renameMu.Lock()
 	defer s.env.renameMu.Unlock()
@@ -318,9 +289,6 @@ func (s *accountSync) applyReplica(ctx context.Context, repo *account.Repository
 	return err
 }
 
-// live brings the pool entry of r to the stored generation and the main
-// machine's state and priority. A new credential clears a rejection, as a
-// re-login does, and so does the main machine reporting the account usable.
 func (s *accountSync) live(ctx context.Context, r auth.Replica, gen account.CredentialGeneration, changed bool) error {
 	cur, ok := s.poolAccount(r.ID)
 	if !ok || cur.Provider != r.Provider {
