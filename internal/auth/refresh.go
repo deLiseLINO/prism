@@ -33,6 +33,11 @@ type RefresherOptions struct {
 	RefreshFlows map[account.ProviderID]RefreshFlow
 	Now          func() time.Time
 	Wait         time.Duration
+	// Published runs after a refresh stored a new credential generation.
+	Published func(account.ProviderID, account.AccountID)
+	// ReplicaRejected runs when the upstream refused the current access
+	// token of a replica, which only the main machine can renew.
+	ReplicaRejected func(p account.ProviderID, id account.AccountID, access string)
 }
 
 // Refresher is the context-aware credential source behind the Codex and
@@ -50,6 +55,8 @@ type Refresher struct {
 	refreshFlows map[account.ProviderID]RefreshFlow
 	now          func() time.Time
 	wait         time.Duration
+	published    func(account.ProviderID, account.AccountID)
+	rejected     func(account.ProviderID, account.AccountID, string)
 }
 
 func NewRefresher(opts RefresherOptions) (*Refresher, error) {
@@ -75,6 +82,8 @@ func NewRefresher(opts RefresherOptions) (*Refresher, error) {
 		refreshFlows: opts.RefreshFlows,
 		now:          now,
 		wait:         wait,
+		published:    opts.Published,
+		rejected:     opts.ReplicaRejected,
 	}, nil
 }
 
@@ -82,7 +91,15 @@ func NewRefresher(opts RefresherOptions) (*Refresher, error) {
 // expiring outside the provider's skew window is returned unchanged; an
 // expiring one is refreshed at most once per account across processes.
 func (r *Refresher) Credential(ctx context.Context, lease account.Lease) (account.Credential, error) {
-	return r.credential(ctx, lease, "")
+	return r.credential(ctx, lease, demand{})
+}
+
+// RefreshAhead returns the lease account's credential renewed when it
+// expires within the provider's skew window widened by ahead. The main
+// machine renews the credentials it pushes to hosts early with it, so a host
+// gets the new token before its copy expires.
+func (r *Refresher) RefreshAhead(ctx context.Context, lease account.Lease, ahead time.Duration) (account.Credential, error) {
+	return r.credential(ctx, lease, demand{ahead: ahead})
 }
 
 // RefreshRejected renews the credential after the upstream refused rejected
@@ -91,10 +108,10 @@ func (r *Refresher) Credential(ctx context.Context, lease account.Lease) (accoun
 // returned as is; otherwise the refresh grant is exchanged regardless of the
 // recorded expiry, at most once per account across processes.
 func (r *Refresher) RefreshRejected(ctx context.Context, lease account.Lease, rejected string) (account.Credential, error) {
-	return r.credential(ctx, lease, rejected)
+	return r.credential(ctx, lease, demand{rejected: rejected})
 }
 
-func (r *Refresher) credential(ctx context.Context, lease account.Lease, rejected string) (account.Credential, error) {
+func (r *Refresher) credential(ctx context.Context, lease account.Lease, want demand) (account.Credential, error) {
 	if err := ctx.Err(); err != nil {
 		return account.Credential{}, err
 	}
@@ -140,7 +157,7 @@ func (r *Refresher) credential(ctx context.Context, lease account.Lease, rejecte
 			return account.Credential{}, err
 		}
 		cred.Generation = lease.CredGen
-		if usable(cred, rf, r.now, rejected) {
+		if want.met(cred, rf, r.now) {
 			return cred, nil
 		}
 	}
@@ -149,18 +166,22 @@ func (r *Refresher) credential(ctx context.Context, lease account.Lease, rejecte
 		return account.Credential{}, err
 	}
 	defer publication.lock.Release()
-	return r.refreshLocked(ctx, lease, repo, rf, rejected, publication)
+	return r.refreshLocked(ctx, lease, repo, rf, want, publication)
 }
 
-// fresh reports whether the credential may be dispatched: legacy tokens
-// without an expiry never expire, otherwise the expiry must lie beyond the
-// provider's skew window.
-func fresh(cred account.Credential, rf RefreshFlow, now func() time.Time) bool {
-	return cred.ExpiresAt.IsZero() || now().Before(cred.ExpiresAt.Add(-rf.RefreshSkew()))
+// demand is what a caller needs from a credential: an expiry beyond the
+// provider's skew window widened by ahead, and an access token other than
+// rejected, the one the upstream refused.
+type demand struct {
+	rejected string
+	ahead    time.Duration
 }
 
-func usable(cred account.Credential, rf RefreshFlow, now func() time.Time, rejected string) bool {
-	return fresh(cred, rf, now) && (rejected == "" || cred.Access != rejected)
+// met reports whether cred may be dispatched: legacy tokens without an
+// expiry never expire.
+func (d demand) met(cred account.Credential, rf RefreshFlow, now func() time.Time) bool {
+	fresh := cred.ExpiresAt.IsZero() || now().Before(cred.ExpiresAt.Add(-rf.RefreshSkew()-d.ahead))
+	return fresh && (d.rejected == "" || cred.Access != d.rejected)
 }
 
 type credentialPublication struct {
@@ -200,7 +221,7 @@ func waitRefresh(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo *account.Repository, rf RefreshFlow, rejected string, publication credentialPublication) (account.Credential, error) {
+func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo *account.Repository, rf RefreshFlow, want demand, publication credentialPublication) (account.Credential, error) {
 	p, id := lease.Provider, lease.Account
 	gen, err := repo.CurrentGeneration(p, id)
 	if err != nil {
@@ -218,7 +239,7 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 		if err := r.pool.AdvanceGeneration(id, gen); err != nil {
 			return account.Credential{}, err
 		}
-		if usable(cred, rf, r.now, rejected) {
+		if want.met(cred, rf, r.now) {
 			return cred, nil
 		}
 		lease.CredGen = gen
@@ -227,18 +248,30 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 	if err != nil {
 		return account.Credential{}, err
 	}
-	if usable(prev, rf, r.now, rejected) {
+	if want.met(prev, rf, r.now) {
 		return prev, nil
 	}
+	replica, err := repo.IsReplica(p, id)
+	if err != nil {
+		return account.Credential{}, err
+	}
+	if replica && prev.Refresh == "" {
+		// The main machine kept the refresh grant: it alone renews the
+		// credential and pushes the new one here.
+		if want.rejected != "" && want.rejected == prev.Access && r.rejected != nil {
+			r.rejected(p, id, want.rejected)
+		}
+		return account.Credential{}, fmt.Errorf("auth: %s/%s: %w", p, id, account.ErrAwaitingMain)
+	}
 	if prev.Refresh == "" {
-		if rejected != "" {
+		if want.rejected != "" {
 			return account.Credential{}, fmt.Errorf("%w: access token rejected and no refresh grant is stored", account.ErrNeedsReauth)
 		}
 		return account.Credential{}, fmt.Errorf("auth: credential for %s/%s has no refresh grant; reauthenticate", p, id)
 	}
 	next, err := rf.Refresh(ctx, prev)
 	if err != nil {
-		return account.Credential{}, r.classifyRefreshError(ctx, err, lease, repo)
+		return account.Credential{}, r.classifyRefreshError(ctx, err, lease, repo, replica)
 	}
 	if next.Access == "" || next.ExpiresAt.IsZero() {
 		return account.Credential{}, fmt.Errorf("auth: refresh response for %s/%s is incomplete", p, id)
@@ -255,6 +288,9 @@ func (r *Refresher) refreshLocked(ctx context.Context, lease account.Lease, repo
 	}
 	if err := r.pool.AdvanceGeneration(id, nextGen); err != nil {
 		return account.Credential{}, err
+	}
+	if r.published != nil {
+		r.published(p, id)
 	}
 	next.Generation = nextGen
 	return next, nil
@@ -282,14 +318,17 @@ func (r *Refresher) load(ctx context.Context, p account.ProviderID, id account.A
 // classifyRefreshError maps a failed refresh to typed errors. Invalid grants
 // tear down the account; transient network, timeout, and server failures stay
 // retryable and leave the prior generation intact; every other failure is
-// fail-closed without touching stored state.
-func (r *Refresher) classifyRefreshError(ctx context.Context, err error, lease account.Lease, repo *account.Repository) error {
+// fail-closed without touching stored state. A replica is never torn down:
+// the main machine owns its grant and pushes the next credential.
+func (r *Refresher) classifyRefreshError(ctx context.Context, err error, lease account.Lease, repo *account.Repository, replica bool) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
 	var te *TokenError
 	if errors.As(err, &te) {
 		switch {
+		case te.Code == codeInvalidGrant && replica:
+			return fmt.Errorf("auth: %s/%s: %w", lease.Provider, lease.Account, account.ErrAwaitingMain)
 		case te.Code == codeInvalidGrant:
 			if ierr := r.invalidate(ctx, lease, repo); ierr != nil {
 				return fmt.Errorf("%w: revoking the account failed: %v", account.ErrNeedsReauth, ierr)

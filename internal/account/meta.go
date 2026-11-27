@@ -42,6 +42,7 @@ type metaRecord struct {
 	CredGen   uint64     `json:"credGen"`
 	State     string     `json:"state"`
 	Email     string     `json:"email,omitempty"`
+	Origin    string     `json:"origin,omitempty"`
 	Quota     *metaQuota `json:"quota,omitempty"`
 	CreatedAt string     `json:"createdAt"`
 	UpdatedAt string     `json:"updatedAt"`
@@ -127,8 +128,83 @@ func (r *Repository) CASGeneration(providerID ProviderID, id AccountID, fromGen,
 	return r.casGeneration(providerID, id, fromGen, toGen, email, false)
 }
 
+// CASLoginGeneration is CASGeneration for a login on this machine. The login
+// takes the account over from the main machine: a replica row becomes this
+// machine's own, so later pushes never replace or delete it.
 func (r *Repository) CASLoginGeneration(providerID ProviderID, id AccountID, fromGen, toGen CredentialGeneration, email string) error {
 	return r.casGeneration(providerID, id, fromGen, toGen, email, true)
+}
+
+// IsReplica reports whether id is a replica of an account the main machine
+// owns. A missing row is not a replica.
+func (r *Repository) IsReplica(providerID ProviderID, id AccountID) (bool, error) {
+	records, err := r.read(providerID)
+	if err != nil {
+		return false, err
+	}
+	for _, rec := range records {
+		if rec.ID == string(id) {
+			return rec.Origin == OriginMain, nil
+		}
+	}
+	return false, nil
+}
+
+// PutReplica records the main machine's view of a replica: its state,
+// priority and email, and moves its local credential generation from fromGen
+// to toGen (equal when the credential did not change). A row signed in on
+// this machine is refused with ErrLocalAccount; a row at another generation
+// is a stale writer. fromGen 0 with no existing row inserts the replica. An
+// unchanged row writes nothing.
+func (r *Repository) PutReplica(providerID ProviderID, id AccountID, fromGen, toGen CredentialGeneration, email string, state State, priority int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if toGen == 0 {
+		return fmt.Errorf("accounts %s: credential generation must be positive", r.path)
+	}
+	records, err := r.read(providerID)
+	if err != nil {
+		return err
+	}
+	now := r.now().UTC().Format(time.RFC3339)
+	for i := range records {
+		rec := &records[i]
+		if rec.ID != string(id) {
+			continue
+		}
+		if rec.Origin != OriginMain {
+			return ErrLocalAccount
+		}
+		if rec.CredGen != uint64(fromGen) {
+			return ErrStale
+		}
+		if rec.CredGen == uint64(toGen) && rec.State == metaStateFor(state) && rec.Priority == priority && (email == "" || rec.Email == email) {
+			return nil
+		}
+		rec.CredGen = uint64(toGen)
+		rec.State = metaStateFor(state)
+		rec.Priority = priority
+		if email != "" {
+			rec.Email = email
+		}
+		rec.UpdatedAt = now
+		return r.write(metaFile{Version: metaSchemaVersion, Accounts: records})
+	}
+	if fromGen != 0 {
+		return ErrNotFound
+	}
+	records = append(records, metaRecord{
+		ID:        string(id),
+		Provider:  string(providerID),
+		Priority:  priority,
+		CredGen:   uint64(toGen),
+		State:     metaStateFor(state),
+		Email:     email,
+		Origin:    OriginMain,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	return r.write(metaFile{Version: metaSchemaVersion, Accounts: records})
 }
 
 func (r *Repository) casGeneration(providerID ProviderID, id AccountID, fromGen, toGen CredentialGeneration, email string, login bool) error {
@@ -150,8 +226,11 @@ func (r *Repository) casGeneration(providerID ProviderID, id AccountID, fromGen,
 			return ErrStale
 		}
 		records[i].CredGen = uint64(toGen)
-		if login && records[i].State == metaStateNeedsReauth {
-			records[i].State = metaStateActive
+		if login {
+			records[i].Origin = ""
+			if records[i].State == metaStateNeedsReauth {
+				records[i].State = metaStateActive
+			}
 		}
 		if email != "" {
 			records[i].Email = email
@@ -320,6 +399,9 @@ func (r *Repository) read(providerID ProviderID) ([]metaRecord, error) {
 		if rec.State != metaStateActive && rec.State != metaStatePaused && rec.State != metaStateNeedsReauth {
 			return nil, fmt.Errorf("accounts %s: account %q has unknown state %q", r.path, rec.ID, rec.State)
 		}
+		if rec.Origin != "" && rec.Origin != OriginMain {
+			return nil, fmt.Errorf("accounts %s: account %q has unknown origin %q", r.path, rec.ID, rec.Origin)
+		}
 		if _, err := time.Parse(time.RFC3339, rec.CreatedAt); err != nil {
 			return nil, fmt.Errorf("accounts %s: account %q createdAt: %w", r.path, rec.ID, err)
 		}
@@ -399,6 +481,7 @@ func (rec metaRecord) account(providerID ProviderID) (Account, error) {
 		Priority: rec.Priority,
 		State:    state,
 		Email:    rec.Email,
+		Origin:   rec.Origin,
 		CredGen:  CredentialGeneration(rec.CredGen),
 		Quota:    q,
 	}, nil

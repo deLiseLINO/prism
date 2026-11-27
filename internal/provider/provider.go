@@ -105,12 +105,16 @@ func CredentialRunError(err error) RunError {
 }
 
 // CredentialRenewalRunError retains the inference refusal while the renewal
-// failure determines whether the account needs re-authentication.
+// failure determines whether the account needs re-authentication. A replica
+// waiting for the main machine reports that wait instead of the refusal, so
+// the user is not told to sign in again.
 func CredentialRenewalRunError(err error, rejection RunError) RunError {
 	failure := CredentialRunError(err)
 	failure.Accepted = rejection.Accepted
-	failure.Reported = rejection.Reported
 	failure.RetryAfter = rejection.RetryAfter
+	if !errors.Is(err, account.ErrAwaitingMain) {
+		failure.Reported = rejection.Reported
+	}
 	return failure
 }
 
